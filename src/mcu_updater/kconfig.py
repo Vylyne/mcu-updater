@@ -46,6 +46,7 @@ from collections.abc import Iterator
 from types import ModuleType
 from typing import Any, Optional
 
+from . import firmware
 from .errors import KconfigError
 from .paths import Paths
 
@@ -469,7 +470,7 @@ class KconfigSession:
         self.paths = paths
         self.mcu_type = mcu_type
         self.fw = fw
-        self.fw_dir = paths.fw_dir(fw)
+        self.fw_dir = firmware.resolve(paths, fw).source_dir(paths)
         self.config_path = paths.config_file(mcu_type, fw)
         self.dirty = False
         self.created = time.time()

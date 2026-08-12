@@ -24,6 +24,7 @@ import time
 from collections.abc import Iterator
 from typing import Any, Callable, Optional
 
+from . import firmware
 from .config import McuType, Registry
 from .errors import (
     BuildError,
@@ -259,7 +260,7 @@ def makefile_patches(
     source tree is dirty, so klipper's build stamps the firmware version with a
     `-dirty` suffix. That is expected and not a sign of local modifications.
     """
-    fw_dir = paths.fw_dir(fw)
+    fw_dir = firmware.resolve(paths, fw).source_dir(paths)
     patches = [p for p in mcu.fw(fw).makefile_patches if p.is_valid()]
     backups: list[tuple[str, Optional[bytes]]] = []
     try:
@@ -423,7 +424,7 @@ def artifact_status(paths: Paths, mcu_type: str, fw: str) -> ArtifactStatus:
     if cfg_hash and side.get("config_sha256") and cfg_hash != side["config_sha256"]:
         return ArtifactStatus(CONFIG_CHANGED)
 
-    head = git_head(paths.fw_dir(fw))
+    head = git_head(firmware.resolve(paths, fw).source_dir(paths))
     if head and side.get("fw_sha") and head != side["fw_sha"]:
         return ArtifactStatus(SOURCE_CHANGED)
 
@@ -472,7 +473,7 @@ def menuconfig_tty(paths: Paths, mcu_type: str, fw: str, *, pause: bool = True) 
             fw=fw,
         )
 
-    fw_dir = paths.fw_dir(fw)
+    fw_dir = firmware.resolve(paths, fw).source_dir(paths)
     if not os.path.isdir(fw_dir):
         raise SourceTreeMissingError(
             f"source directory {fw_dir} not found.", fw=fw, path=fw_dir
@@ -513,7 +514,8 @@ def build(
     behaviour also moved to the CLI - see cli.py.
     """
     mcu = registry.get(mcu_type)
-    fw_dir = paths.fw_dir(fw)
+    family = firmware.resolve(paths, fw)
+    fw_dir = family.source_dir(paths)
     if not os.path.isdir(fw_dir):
         raise SourceTreeMissingError(
             f"source directory {fw_dir} not found - is {fw} installed?", fw=fw, path=fw_dir
@@ -589,7 +591,7 @@ def build(
     # from the one holding the saved .config.
     os.makedirs(paths.artifact_dir(mcu_type), exist_ok=True)
     bin_out = paths.bin_file(mcu_type, fw)
-    compiled = paths.built_artifact(fw, "bin")
+    compiled = family.built_artifact(paths, "bin")
 
     if dry_run:
         # A real (if inert) file, so artifact/staleness logic downstream is
@@ -611,7 +613,7 @@ def build(
     # RP2040 BOOTSEL mass storage only accepts .uf2 - a .bin copied to the mount
     # is accepted and silently ignored - so stage it whenever the build made one.
     uf2_out: Optional[str] = None
-    compiled_uf2 = paths.built_artifact(fw, "uf2")
+    compiled_uf2 = family.built_artifact(paths, "uf2")
     if not dry_run and os.path.exists(compiled_uf2):
         uf2_out = paths.uf2_file(mcu_type, fw)
         shutil.copyfile(compiled_uf2, uf2_out)

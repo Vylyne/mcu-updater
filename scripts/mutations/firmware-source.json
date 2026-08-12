@@ -1,0 +1,40 @@
+{
+  "_comment": "Firmware family resolution. A source override that is silently ignored builds the wrong tree and reports the result as the right one - the failure is a board flashed with firmware from a repo the user thought they had stopped using.",
+  "file": "src/mcu_updater/firmware.py",
+  "command": [
+    "python",
+    "-m",
+    "pytest",
+    "tests/test_firmware.py",
+    "tests/test_build.py",
+    "tests/test_kconfig.py",
+    "-q"
+  ],
+  "mutations": [
+    {
+      "name": "a configured source tree is honoured, not ignored",
+      "find": "        if self.source:\n            return os.path.expanduser(self.source)",
+      "replace": "        if False:\n            return os.path.expanduser(self.source)"
+    },
+    {
+      "name": "a source path gets ~ expanded",
+      "find": "            return os.path.expanduser(self.source)",
+      "replace": "            return self.source"
+    },
+    {
+      "name": "a fork's own artifact name is used, not the family name",
+      "find": "        return self.artifact or self.name",
+      "replace": "        return self.name"
+    },
+    {
+      "name": "the built artifact is looked for in the family's own tree",
+      "find": "        return os.path.join(self.source_dir(paths), \"out\", f\"{self.artifact_name()}.{ext}\")",
+      "replace": "        return os.path.join(paths.fw_dir(self.name), \"out\", f\"{self.artifact_name()}.{ext}\")"
+    },
+    {
+      "name": "an unconfigured family still resolves to the convention",
+      "find": "    return families.get(fw) or FirmwareFamily(name=fw)",
+      "replace": "    return families.get(fw)"
+    }
+  ]
+}

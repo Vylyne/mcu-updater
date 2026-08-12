@@ -23,6 +23,7 @@ import threading
 import time
 from typing import Optional
 
+from . import firmware
 from .build import Reporter, null_reporter, run_streamed
 from .devices import (
     KATAPULT_FW_NAME,
@@ -56,6 +57,7 @@ def flash_katapult(
     serial: str,
     fw_bin: Optional[str] = None,
     *,
+    fw: Optional[str] = None,
     reporter: Reporter = null_reporter,
     timeout: float = REENUMERATE_TIMEOUT,
 ) -> None:
@@ -76,8 +78,13 @@ def flash_katapult(
             path=flashtool,
         )
 
+    # Which family this board *runs*. Named by the caller because only it has
+    # the McuType; klipper is the default every type had before the key
+    # existed. Getting this wrong writes one firmware at a board expecting
+    # another, so it is not inferred from anything.
+    fw = fw or firmware.DEFAULT_APPLICATION
     if fw_bin is None:
-        fw_bin = paths.bin_file(mcu_type, "klipper")
+        fw_bin = paths.bin_file(mcu_type, fw)
     if not os.path.exists(fw_bin):
         raise FlashError(
             f"firmware binary not found at {fw_bin}. Build it first.",
@@ -137,20 +144,22 @@ def flash_katapult(
             returncode=rc,
         )
 
-    # Note which binary this board now holds. A board only ever reports its klipper
-    # commit, so without this record two builds from the same commit - a changed
-    # .config, an edited makefile-patch source - are indistinguishable, and "flash
-    # only the stale ones" would skip exactly the boards a patch change affected.
+    # Note which binary this board now holds. A board only ever reports its
+    # application commit, so without this record two builds from the same commit -
+    # a changed .config, an edited makefile-patch source - are indistinguishable,
+    # and "flash only the stale ones" would skip exactly the boards a patch
+    # change affected.
     if not settings.dry_run:
         from .build import FlashLog, git_head, read_sidecar
 
-        side = read_sidecar(paths, mcu_type, "klipper") or {}
+        side = read_sidecar(paths, mcu_type, fw) or {}
         FlashLog(paths).record(
             serial,
             mcu_type=mcu_type,
-            fw="klipper",
+            fw=fw,
             bin_sha256=side.get("bin_sha256"),
-            fw_sha=side.get("fw_sha") or git_head(paths.fw_dir("klipper")),
+            fw_sha=side.get("fw_sha")
+            or git_head(firmware.resolve(paths, fw).source_dir(paths)),
         )
 
     reporter("info", f"Flashed {serial} successfully.")

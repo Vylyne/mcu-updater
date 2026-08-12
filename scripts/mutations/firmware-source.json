@@ -8,6 +8,7 @@
     "tests/test_firmware.py",
     "tests/test_build.py",
     "tests/test_kconfig.py",
+    "tests/test_config.py",
     "-q"
   ],
   "mutations": [

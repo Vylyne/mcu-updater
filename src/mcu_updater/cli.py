@@ -169,9 +169,10 @@ def status_cmd(args: argparse.Namespace) -> None:
         mcu = reg.get(name)
         print(f"\n{name}  (chipset={mcu.chipset or '?'})")
 
-        for fw in firmware.names(c.paths):
-            if fw == "katapult" and not mcu.katapult_installed:
-                continue
+        # What this type actually uses, not every family that exists. A board
+        # running cartographer carries klipper config keys too, and listing them
+        # as "not built" is noise about firmware nobody intends to build for it.
+        for fw in mcu.families():
             stale, reason = staleness(c.paths, name, fw)
             if reason == "never_built":
                 print(f"  {fw}: not built")
@@ -275,6 +276,7 @@ def flash_fw_cmd(args: argparse.Namespace) -> None:
                             args.type,
                             mcu.chipset,
                             serial,
+                            fw=mcu.firmware,
                             reporter=stdout_reporter,
                         )
                     except UpdaterError as exc:
@@ -305,11 +307,18 @@ def flash_fw_cmd(args: argparse.Namespace) -> None:
         mcu_type = reg.resolve_serial(args.serial)
         print(f"Resolved serial {args.serial} -> type '{mcu_type}'")
 
-    chipset = reg.get(mcu_type).chipset
+    target = reg.get(mcu_type)
+    chipset = target.chipset
     with exclusive(c.paths, f"flash {mcu_type}/{args.serial}"):
         with klipper_stopped(c.paths, svc, f"flash {args.serial}", reporter=stdout_reporter):
             flash_katapult(
-                c.paths, c.settings, mcu_type, chipset, args.serial, reporter=stdout_reporter
+                c.paths,
+                c.settings,
+                mcu_type,
+                chipset,
+                args.serial,
+                fw=target.firmware,
+                reporter=stdout_reporter,
             )
 
 
@@ -362,6 +371,7 @@ def update_all(args: argparse.Namespace) -> None:
                             mcu.chipset,
                             serial,
                             fw_bin=result.bin_path,
+                            fw=mcu.firmware,
                             reporter=stdout_reporter,
                         )
                     except UpdaterError as exc:

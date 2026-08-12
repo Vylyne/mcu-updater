@@ -517,8 +517,10 @@ def test_each_board_is_waited_for_before_klipper_is_started(bulk, paths, fake_ro
     write_settings(paths, dry_run="false", service_backend="null", enable_flashing="true")
 
     boards = [
-        {"type": EBB, "serial": EBB_A, "chipset": EBB_CHIPSET, "state": "klipper", "reason": "x"},
-        {"type": EBB, "serial": EBB_B, "chipset": EBB_CHIPSET, "state": "klipper", "reason": "x"},
+        {"type": EBB, "serial": EBB_A, "chipset": EBB_CHIPSET, "state": "klipper",
+         "fw": "klipper", "reason": "x"},
+        {"type": EBB, "serial": EBB_B, "chipset": EBB_CHIPSET, "state": "klipper",
+         "fw": "klipper", "reason": "x"},
     ]
     bulk._do_flash_all(_ctx(), boards)
 

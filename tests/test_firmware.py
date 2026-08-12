@@ -288,3 +288,72 @@ def test_a_relocated_tree_is_what_staleness_compares_against(paths, fake_root, m
 
     build_mod.artifact_status(paths, "board", "klipper")
     assert seen == [str(fake_root / "elsewhere")]
+
+
+# --------------------------------------------------------------------------
+# which family a board actually runs
+# --------------------------------------------------------------------------
+
+
+def test_a_type_runs_klipper_unless_it_says_otherwise(paths):
+    """Every [mcu ...] section predating the key means what it always meant."""
+    reg = Registry.load(paths)
+    reg.add_type("bttebb36", "stm32g0b1xx")
+    reg.save(paths)
+    assert Registry.load(paths).get("bttebb36").firmware == "klipper"
+
+
+def test_the_default_is_not_written_back_into_the_file(paths):
+    """The file stays readable rather than filling with restated defaults."""
+    reg = Registry.load(paths)
+    reg.add_type("bttebb36", "stm32g0b1xx")
+    reg.save(paths)
+    assert "firmware:" not in open(paths.main_config, encoding="utf-8").read()
+
+
+def test_a_declared_application_round_trips(paths):
+    _write_firmware(paths, "cartographer", artifact="klipper")
+    reg = Registry.load(paths)
+    reg.add_type("carto_v4", "stm32g431xx")
+    reg.get("carto_v4").firmware = "cartographer"
+    reg.save(paths)
+
+    assert Registry.load(paths).get("carto_v4").firmware == "cartographer"
+
+
+def test_a_misspelt_family_is_refused_rather_than_defaulted(paths):
+    """Defaulting would build and flash klipper at a board running something
+    else - the exact mistake this key exists to prevent."""
+    from mcu_updater.errors import ConfigCorruptError
+
+    reg = Registry.load(paths)
+    reg.add_type("carto_v4", "stm32g431xx")
+    reg.save(paths)
+    text = open(paths.main_config, encoding="utf-8").read()
+    with open(paths.main_config, "w", encoding="utf-8") as fh:
+        fh.write(text.replace("[mcu carto_v4]", "[mcu carto_v4]\nfirmware: cartographr"))
+
+    with pytest.raises(ConfigCorruptError) as exc:
+        Registry.load(paths)
+    assert "cartographr" in str(exc.value)
+    assert "klipper" in str(exc.value)  # names what it does know
+
+
+def test_a_type_lists_only_the_families_it_uses(paths):
+    _write_firmware(paths, "cartographer", artifact="klipper")
+    reg = Registry.load(paths)
+    reg.add_type("carto_v4", "stm32g431xx")
+    reg.get("carto_v4").firmware = "cartographer"
+    reg.save(paths)
+
+    mcu = Registry.load(paths).get("carto_v4")
+    assert mcu.families() == ["cartographer", "katapult"]
+    # ...while still *carrying* klipper's keys, which are harmless and unused.
+    assert "klipper" in mcu.fw_order()
+
+
+def test_a_board_with_no_bootloader_lists_only_its_application(paths):
+    reg = Registry.load(paths)
+    reg.add_type("bare", "stm32f072xb", katapult_installed=False)
+    reg.save(paths)
+    assert Registry.load(paths).get("bare").families() == ["klipper"]

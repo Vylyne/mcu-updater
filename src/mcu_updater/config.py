@@ -103,9 +103,29 @@ class McuType:
     chipset: str = ""
     serials: list[str] = dataclasses.field(default_factory=list)
     fws: dict[str, FwConfig] = dataclasses.field(default_factory=dict)
+    #: Which family this board actually *runs*. A type builds several - klipper,
+    #: katapult, and any declared family - but only one of them is the
+    #: application, and that is the one whose source tree the board's reported
+    #: version should be compared against and whose binary a flash writes.
+    #:
+    #: Defaults to klipper, which is what every type meant before this existed.
+    firmware: str = firmware.DEFAULT_APPLICATION
 
     def fw(self, fw: str) -> FwConfig:
         return self.fws.setdefault(fw, FwConfig())
+
+    def families(self) -> list[str]:
+        """The families this type actually uses: its application, and katapult.
+
+        Distinct from `fw_order()`, which is everything it *carries*. A board
+        running cartographer has klipper config keys too - they are harmless and
+        unused - and listing them as "not built" is noise about a firmware
+        nobody intends to build for it.
+        """
+        out = [self.firmware]
+        if self.katapult_installed and firmware.BOOTLOADER not in out:
+            out.append(firmware.BOOTLOADER)
+        return out
 
     @property
     def katapult_installed(self) -> bool:
@@ -124,7 +144,7 @@ class McuType:
         return first + sorted(fw for fw in self.fws if fw not in FW_TARGETS)
 
     def to_json(self) -> dict[str, Any]:
-        out: dict[str, Any] = {"chipset": self.chipset}
+        out: dict[str, Any] = {"chipset": self.chipset, "firmware": self.firmware}
         for fw in self.fw_order():
             cfg = self.fws.get(fw)
             if cfg is not None:
@@ -229,6 +249,23 @@ class Registry:
                 continue
             mcu = McuType(name=name, chipset=(doc.get(section, "chipset") or "").strip())
             mcu.serials = doc.get_list(section, "serials")
+
+            application = (
+                doc.get(section, "firmware") or firmware.DEFAULT_APPLICATION
+            ).strip()
+            if application not in fw_names:
+                # Refused rather than defaulted. A typo here would otherwise
+                # build and flash klipper at a board that runs something else,
+                # which is exactly the mistake this key exists to prevent.
+                raise ConfigCorruptError(
+                    f"{path}: '{name}' declares firmware '{application}', which is not "
+                    f"a known family. Known: {', '.join(fw_names)}. Declare it with a "
+                    f"[firmware {application}] section, or fix the spelling.",
+                    path=path,
+                    type=name,
+                    value=application,
+                )
+            mcu.firmware = application
             for fw in fw_names:
                 cfg = mcu.fw(fw)
                 cfg.extra_args = (doc.get(section, f"{fw}_extra_args") or "").strip()
@@ -313,6 +350,11 @@ class Registry:
             section = section_name(name)
             doc.set(section, "chipset", mcu.chipset)
             doc.set(section, "serials", list(mcu.serials))
+
+            if mcu.firmware != firmware.DEFAULT_APPLICATION:
+                doc.set(section, "firmware", mcu.firmware)
+            else:
+                doc.remove_option(section, "firmware")
 
             # Only written when it differs from the default, to keep the file
             # readable rather than full of restated defaults.

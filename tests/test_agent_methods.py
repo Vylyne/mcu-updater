@@ -1110,7 +1110,9 @@ def test_mcu_info_joins_serials_to_versions_and_names(paths, live_registry_text)
     assert calls == ["printer.objects.query"]
 
 
-def test_two_boards_of_one_type_can_disagree(paths, live_registry_text, fake_root):
+def test_two_boards_of_one_type_can_disagree(
+    paths, live_registry_text, fake_root, monkeypatch
+):
     """The case a per-type answer cannot express, and the one that exposed this:
     EBBT0 on -711 and EBBT1 on -712, both tracked under bttebb36."""
     with open(paths.registry_file, "w", encoding="utf-8") as fh:
@@ -1125,8 +1127,15 @@ def test_two_boards_of_one_type_can_disagree(paths, live_registry_text, fake_roo
         "230048001750304158373620-if00": {"version": "v0.13.0-623-gaea1bcf5", "mcu": "mcu EBBT1"},
     }
     head = "d7cea5bb1aca70849f28d0bb98ab1b96b9f6db65"
+    # type_status resolves the source head itself now, from the tree its own
+    # firmware is built from - a caller cannot hand it one, because handing it
+    # the wrong tree is exactly how a cartographer board read as behind forever.
+    # The fake root has no git checkout, so stand in for the lookup.
+    from mcu_updater import build as build_mod
 
-    ebb = api.type_status(api.registry(), "bttebb36", versions, head)
+    monkeypatch.setattr(build_mod, "git_head", lambda _d, **_kw: head)
+
+    ebb = api.type_status(api.registry(), "bttebb36", versions)
     by_serial = {s["serial"]: s for s in ebb["serials"]}
     assert by_serial["290055001850304158373620-if00"]["needs_flash"] is False
     assert by_serial["230048001750304158373620-if00"]["needs_flash"] is True

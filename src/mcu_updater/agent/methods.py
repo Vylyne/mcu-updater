@@ -223,28 +223,32 @@ class Api:
         reg: Registry,
         name: str,
         versions: Optional[dict[str, dict[str, str]]] = None,
-        fw_head: Optional[str] = None,
     ) -> dict[str, Any]:
         """One type's state, including what each of its boards is *running*.
 
-        `versions` and `fw_head` are passed in rather than looked up here, because
-        each costs a Moonraker round trip and a caller with ten types would
-        otherwise make ten of them.
+        `versions` is passed in rather than looked up here, because it costs a
+        Moonraker round trip and a caller with ten types would otherwise make
+        ten of them.
+
+        The source head is *not* hoisted, deliberately. It is a git call rather
+        than a round trip, `git_head` caches by directory, and each type must be
+        compared against the tree its own firmware is built from - a board
+        running cartographer measured against upstream klipper reads as behind
+        forever.
         """
         from ..build import git_head
 
         mcu = reg.get(name)
         if versions is None:
             versions = self.mcu_info()
-        if fw_head is None:
-            fw_head = git_head(self.paths.fw_dir("klipper"))
+        fw_head = git_head(firmware.resolve(self.paths, mcu.firmware).source_dir(self.paths))
 
         # Read once per type, not per board: it is one small file, but a ten-board
         # type would otherwise open it ten times.
         from ..build import FlashLog
 
         flashlog = FlashLog(self.paths)
-        artifact_sha = (read_sidecar(self.paths, name, "klipper") or {}).get("bin_sha256")
+        artifact_sha = (read_sidecar(self.paths, name, mcu.firmware) or {}).get("bin_sha256")
 
         serials = []
         for serial in mcu.serials:
@@ -318,12 +322,10 @@ class Api:
         s = self.settings()
         current = self.runner.current() if self.runner else None
         activity = self._printer_activity()
-        from ..build import git_head
 
         versions = self.mcu_info()
-        fw_head = git_head(self.paths.fw_dir("klipper"))
         return {
-            "types": [self.type_status(reg, n, versions, fw_head) for n in reg.names()],
+            "types": [self.type_status(reg, n, versions) for n in reg.names()],
             "bus": self.bus(reg),
             "job": current.to_dict() if current else None,
             "recent": [j.to_dict() for j in self.runner.recent(10)] if self.runner else [],
@@ -443,12 +445,10 @@ class Api:
         return ExclusiveLock(self.paths).holder()
 
     def type_list(self, args: dict) -> dict[str, Any]:
-        from ..build import git_head
 
         reg = self.registry()
         versions = self.mcu_info()
-        fw_head = git_head(self.paths.fw_dir("klipper"))
-        return {"types": [self.type_status(reg, n, versions, fw_head) for n in reg.names()]}
+        return {"types": [self.type_status(reg, n, versions) for n in reg.names()]}
 
     def bus_scan(self, args: dict) -> dict[str, Any]:
         """Everything on the bus, plus the subset worth offering to track.
@@ -942,6 +942,7 @@ class Api:
                     mcu.chipset,
                     serial,
                     fw_bin=fw_bin,
+                    fw=mcu.firmware,
                     reporter=ctx.reporter,
                 )
 
@@ -1973,7 +1974,8 @@ class Api:
         from ..build import FlashLog, git_head, read_sidecar
 
         versions = self.mcu_info()
-        fw_head = git_head(self.paths.fw_dir("klipper"))
+        # Resolved per type below: a board running cartographer must be
+        # compared against its own fork, not upstream klipper.
         flashlog = FlashLog(self.paths)
 
         out: list[dict] = []
@@ -1981,9 +1983,12 @@ class Api:
             if only is not None and name != only:
                 continue
             mcu = reg.get(name)
-            if not os.path.exists(self.paths.bin_file(name, "klipper")):
+            if not os.path.exists(self.paths.bin_file(name, mcu.firmware)):
                 continue
-            artifact_sha = (read_sidecar(self.paths, name, "klipper") or {}).get("bin_sha256")
+            fw_head = git_head(
+                firmware.resolve(self.paths, mcu.firmware).source_dir(self.paths)
+            )
+            artifact_sha = (read_sidecar(self.paths, name, mcu.firmware) or {}).get("bin_sha256")
             for serial in mcu.serials:
                 state, _ = device_state(self.paths, mcu.chipset, serial)
                 if state == STATE_OFFLINE:
@@ -2002,6 +2007,9 @@ class Api:
                             "type": name,
                             "serial": serial,
                             "chipset": mcu.chipset,
+                            # Carried so the flash writes the family this board
+                            # runs rather than assuming klipper.
+                            "fw": mcu.firmware,
                             "state": state,
                             "reason": info["reason"] if scope != "all" else "forced",
                         }
@@ -2075,6 +2083,7 @@ class Api:
                         board["type"],
                         board["chipset"],
                         board["serial"],
+                        fw=board["fw"],
                         reporter=ctx.reporter,
                     )
                     flashed.append({"type": board["type"], "serial": board["serial"]})

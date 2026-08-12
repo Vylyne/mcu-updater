@@ -46,6 +46,16 @@ SECTION_PREFIX = "firmware"
 #: can be removed by editing a config file. Declaring a family adds to these.
 BUILTIN = FW_TARGETS
 
+#: What a board runs unless its `[mcu ...]` section says otherwise. Every type
+#: predating the `firmware:` key runs klipper, so this is also what keeps those
+#: sections meaning exactly what they meant before it existed.
+DEFAULT_APPLICATION = "klipper"
+
+#: The family that puts an application on a board rather than being one. Kept
+#: separate from the application because a type needs *both*: `[mcu carto_v4]`
+#: runs cartographer and is still flashed through katapult.
+BOOTLOADER = "katapult"
+
 
 @dataclasses.dataclass(frozen=True)
 class FirmwareFamily:

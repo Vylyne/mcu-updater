@@ -130,6 +130,31 @@ def test_scan_is_sorted_and_stable(paths, fake_root):
 # --------------------------------------------------------------------------
 
 
+def test_a_display_is_never_offered_for_adoption(paths, fake_root):
+    """Seen on a real printer: `updatefw status` listed a Knomi's CH340 under
+    "Untracked devices on the bus", and the TUI's add-serial picker offered it
+    as a device to track.
+
+    `is_mcu` existed for exactly this, but only the agent applied it - so the
+    panel was safe and the CLI and menu were not, which is the front-ends
+    disagreeing about what counts as a board. The filter belongs in the model.
+    """
+    bus = fake_root / "bus"
+    (bus / "usb-1a86_USB_Serial-if00-port0").write_text("", encoding="utf-8")
+    make_device(bus, "Klipper", "stm32g0b1xx", "a-real-board")
+
+    assert [d.serial for d in find_untracked(paths, set())] == ["a-real-board"]
+
+
+def test_a_board_in_its_bootloader_is_still_offered(paths, fake_root):
+    """The filter must not go too far. A board sitting in Katapult is the most
+    likely thing to want adopting - it is what add-mcu leaves behind."""
+    bus = fake_root / "bus"
+    make_device(bus, "katapult", "stm32g0b1xx", "just-flashed")
+
+    assert [d.serial for d in find_untracked(paths, set())] == ["just-flashed"]
+
+
 def test_a_ch340_adapter_parses_as_a_device_but_is_not_an_mcu(paths, fake_root):
     """usb-1a86_USB_Serial-if00 splits into three parts and so parses cleanly.
     It is a Knomi's serial adapter, not a board - and once the panel offers

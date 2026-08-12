@@ -166,7 +166,19 @@ def find_untracked(
     fw: Optional[str] = None,
     chipset: Optional[str] = None,
 ) -> list[BusDevice]:
-    """Devices on the bus whose serial isn't tracked under any MCU type."""
+    """Boards on the bus whose serial isn't tracked under any MCU type.
+
+    Filtered by `is_mcu`, so a CH340 behind a Knomi never appears here. Every
+    caller is asking "what could I adopt?" - the CLI status listing, both TUI
+    pickers, and the add-mcu wait - and a display offered as an adoptable board
+    is one keystroke from being tracked and having Klipper built and flashed at
+    it.
+
+    The agent already filtered this way (`bus_scan` exposes `is_mcu` and the
+    adoptable list applies it); the CLI and the TUI did not, so the two front
+    ends disagreed about what counted as a board. That is the split
+    `validate_type_name` avoids by living in the model, and this now does too.
+    """
     known = set(known_serials)
     wanted_group: Optional[tuple[str, ...]] = None
     if fw is not None:
@@ -179,6 +191,8 @@ def find_untracked(
 
     out = []
     for dev in scan(paths):
+        if not dev.is_mcu:
+            continue
         if dev.serial in known:
             continue
         if wanted_group is not None and dev.fw.lower() not in wanted_group:

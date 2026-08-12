@@ -19,7 +19,7 @@ import re
 import time
 from typing import Any, Callable, Optional
 
-from .. import API_VERSION, __version__
+from .. import API_VERSION, __version__, firmware
 from ..build import read_sidecar, staleness
 from ..config import Registry
 from ..devices import (
@@ -38,7 +38,7 @@ from ..errors import (
     UpdaterError,
 )
 from ..pairings import PAIRING_TTL as _PAIRING_TTL
-from ..paths import FW_TARGETS, REENUMERATE_TIMEOUT, Paths
+from ..paths import REENUMERATE_TIMEOUT, Paths
 from ..settings import Settings, load_settings, save_settings
 from ..states import (
     ARTIFACT_CHANGED,
@@ -154,6 +154,19 @@ class Api:
     def registry(self) -> Registry:
         return Registry.load(self.paths)
 
+    def _fw_names(self) -> tuple[str, ...]:
+        """Every firmware family, for validating an incoming `fw` parameter.
+
+        Re-read like settings and the registry, for the same reason: somebody
+        may have just added a `[firmware ...]` section, and refusing the family
+        they declared would be a confusing way to find that out.
+
+        Per-*type* loops use `McuType.fw_order()` instead - a loaded registry
+        already carries each type's families, so iterating types costs no
+        further reads on the `fw.status` path.
+        """
+        return firmware.names(self.paths)
+
     def _probe(self, method: str, params: Any = None) -> Any:
         """Ask Moonraker something, tolerating any failure."""
         if self._call is None:
@@ -253,7 +266,7 @@ class Api:
             "name": name,
             "chipset": mcu.chipset,
             "serials": serials,
-            "artifacts": {fw: self.artifact(name, fw) for fw in FW_TARGETS},
+            "artifacts": {fw: self.artifact(name, fw) for fw in mcu.fw_order()},
             "katapult_installed": mcu.katapult_installed,
             # True when at least one board is behind the source tree. Distinct from
             # the artifact being stale: "needs rebuilding" and "needs flashing" are
@@ -261,7 +274,7 @@ class Api:
             # 90 commits behind show as up to date.
             "needs_flash": any(s.get("needs_flash") for s in serials),
         }
-        for fw in FW_TARGETS:
+        for fw in mcu.fw_order():
             cfg = mcu.fw(fw)
             block: dict[str, Any] = {
                 "extra_args": cfg.extra_args,
@@ -464,8 +477,8 @@ class Api:
         if not name:
             raise RpcError("'name' is required", ERR_INVALID_PARAMS)
         reg = self.registry()
-        reg.get(str(name))  # raises UnknownTypeError for an unknown type
-        return {fw: self.artifact(str(name), fw) for fw in FW_TARGETS}
+        mcu = reg.get(str(name))  # raises UnknownTypeError for an unknown type
+        return {fw: self.artifact(str(name), fw) for fw in mcu.fw_order()}
 
     def settings_get(self, args: dict) -> dict[str, Any]:
         return {"settings": dataclasses.asdict(self.settings())}
@@ -695,7 +708,7 @@ class Api:
                         )
                     mcu.chipset = chipset
 
-            for fw in FW_TARGETS:
+            for fw in mcu.fw_order():
                 key = f"{fw}_extra_args"
                 if key in args:
                     mcu.fw(fw).extra_args = str(args.get(key) or "").strip()
@@ -782,9 +795,10 @@ class Api:
         runner = self._require_runner()
         name = args.get("name")
         fw = args.get("fw")
-        if not name or fw not in FW_TARGETS:
+        known = self._fw_names()
+        if not name or fw not in known:
             raise RpcError(
-                f"'name' is required and 'fw' must be one of {list(FW_TARGETS)}",
+                f"'name' is required and 'fw' must be one of {list(known)}",
                 ERR_INVALID_PARAMS,
             )
         name, fw = str(name), str(fw)
@@ -2103,8 +2117,9 @@ class Api:
         runner = self._require_runner()
         scope = self._scope(args)
         fw = str(args.get("fw") or "klipper")
-        if fw not in FW_TARGETS:
-            raise RpcError(f"'fw' must be one of {list(FW_TARGETS)}", ERR_INVALID_PARAMS)
+        known = self._fw_names()
+        if fw not in known:
+            raise RpcError(f"'fw' must be one of {list(known)}", ERR_INVALID_PARAMS)
 
         names = self._types_to_build(self.registry(), fw, scope)
         if not names:
@@ -2460,8 +2475,8 @@ class Api:
         from ..kconfig import kconfiglib_path
 
         out = {}
-        for fw in FW_TARGETS:
-            fw_dir = self.paths.fw_dir(fw)
+        for fw in self._fw_names():
+            fw_dir = firmware.resolve(self.paths, fw).source_dir(self.paths)
             out[fw] = os.path.isfile(kconfiglib_path(fw_dir)) and os.path.isfile(
                 os.path.join(fw_dir, "src", "Kconfig")
             )
@@ -2480,8 +2495,9 @@ class Api:
         """
         name = self._require_str(args, "name")
         fw = self._require_str(args, "fw")
-        if fw not in FW_TARGETS:
-            raise RpcError(f"'fw' must be one of {', '.join(FW_TARGETS)}", ERR_INVALID_PARAMS)
+        known = self._fw_names()
+        if fw not in known:
+            raise RpcError(f"'fw' must be one of {', '.join(known)}", ERR_INVALID_PARAMS)
 
         # The type has to exist: the answers are saved per type, and inventing a
         # directory for a typo is not a helpful thing to do.

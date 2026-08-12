@@ -14,7 +14,6 @@ from . import cli
 from .config import Registry
 from .devices import find_untracked
 from .errors import UpdaterError
-from .paths import FW_TARGETS
 
 
 def _registry() -> Registry:
@@ -99,10 +98,14 @@ def pick_mcu_type(reg: Registry, allow_new: bool = True) -> Optional[str]:
 
 
 def pick_fw_target() -> Optional[str]:
-    idx = prompt_choice("Select firmware target", list(FW_TARGETS))
+    from . import firmware
+    from .cli import ctx
+
+    targets = firmware.names(ctx().paths)
+    idx = prompt_choice("Select firmware target", list(targets))
     if idx is None:
         return None
-    return FW_TARGETS[idx]
+    return targets[idx]
 
 
 def pick_serial_for_type(mcu_type: str, reg: Registry) -> Optional[str]:

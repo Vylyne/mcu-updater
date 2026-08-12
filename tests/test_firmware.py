@@ -25,7 +25,12 @@ from mcu_updater.firmware import FirmwareFamily
 
 
 def _write_firmware(paths, name, **keys):
-    """Add a `[firmware <name>]` section without disturbing the rest of the file."""
+    """Add a `[firmware <name>]` section without disturbing the rest of the file.
+
+    With no keys the section still gets written - declaring a family that takes
+    every default is the ordinary case, and a helper that quietly wrote nothing
+    would make those tests pass for the wrong reason.
+    """
     from mcu_updater.cfgdoc import CfgDocument
 
     text = ""
@@ -33,7 +38,7 @@ def _write_firmware(paths, name, **keys):
         with open(paths.main_config, encoding="utf-8") as fh:
             text = fh.read()
     doc = CfgDocument(text)
-    for key, value in keys.items():
+    for key, value in (keys or {"source": ""}).items():
         doc.set(f"firmware {name}", key, value)
     os.makedirs(paths.config_dir, exist_ok=True)
     with open(paths.main_config, "w", encoding="utf-8", newline="\n") as fh:
@@ -189,6 +194,81 @@ def test_menuconfig_sessions_open_the_configured_tree(paths, fake_root):
 
     assert str(fake_root / "elsewhere") in str(exc.value)
     assert str(fake_root / "klipper") not in str(exc.value)
+
+
+# --------------------------------------------------------------------------
+# declaring a family that did not exist before
+# --------------------------------------------------------------------------
+
+
+def test_the_builtin_families_are_always_there(paths):
+    """klipper is what a board runs and katapult is what puts it there. Enough
+    of this tool is about that pair that neither may be removed by editing a
+    config file."""
+    assert firmware.names(paths) == ("klipper", "katapult")
+
+    _write_firmware(paths, "cartographer", artifact="klipper")
+    assert firmware.names(paths)[:2] == ("klipper", "katapult")
+
+
+def test_a_declared_family_joins_the_known_set(paths):
+    _write_firmware(paths, "cartographer", artifact="klipper")
+    assert firmware.names(paths) == ("klipper", "katapult", "cartographer")
+
+
+def test_declared_families_are_ordered_independently_of_the_file(paths):
+    """Otherwise the artifacts payload and the CLI listing reorder themselves
+    depending on where somebody happened to add a section."""
+    _write_firmware(paths, "zzz")
+    _write_firmware(paths, "aaa")
+    assert firmware.names(paths) == ("klipper", "katapult", "aaa", "zzz")
+
+
+def test_a_declared_family_gets_its_own_per_type_keys(paths):
+    """`<fw>_extra_args` is derived from the family name, so a new family has
+    to be known before the registry can read or write its keys at all."""
+    _write_firmware(paths, "cartographer", artifact="klipper")
+
+    reg = Registry.load(paths)
+    reg.add_type("carto_v4", "stm32g431xx")
+    reg.get("carto_v4").fw("cartographer").extra_args = "-DSCANNER"
+    reg.save(paths)
+
+    reloaded = Registry.load(paths)
+    assert reloaded.get("carto_v4").fw("cartographer").extra_args == "-DSCANNER"
+    assert "cartographer_extra_args" in open(paths.main_config, encoding="utf-8").read()
+
+
+def test_a_declared_family_appears_in_a_types_own_ordering(paths):
+    _write_firmware(paths, "cartographer")
+    reg = Registry.load(paths)
+    reg.add_type("carto_v4", "stm32g431xx")
+    reg.save(paths)
+
+    order = Registry.load(paths).get("carto_v4").fw_order()
+    assert order[:2] == ["klipper", "katapult"]
+    assert "cartographer" in order
+
+
+def test_a_declared_family_builds_from_its_own_tree(paths, settings, fake_root):
+    """The end of the chain: declare it, and build reaches the fork rather than
+    ~/cartographer, which does not exist and never will."""
+    _write_firmware(
+        paths,
+        "cartographer",
+        source=str(fake_root / "MCU-Firmware---Based-on-Klipper"),
+        artifact="klipper",
+    )
+    reg = Registry.load(paths)
+    reg.add_type("carto_v4", "stm32g431xx")
+    reg.save(paths)
+    _write_saved_config(paths, "carto_v4", "cartographer")
+
+    with pytest.raises(SourceTreeMissingError) as exc:
+        build(paths, reg, settings, "carto_v4", "cartographer")
+
+    assert "MCU-Firmware---Based-on-Klipper" in str(exc.value)
+    assert str(fake_root / "cartographer") not in str(exc.value)
 
 
 def test_a_relocated_tree_is_what_staleness_compares_against(paths, fake_root, monkeypatch):

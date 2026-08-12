@@ -36,9 +36,15 @@ import os
 from typing import Optional
 
 from .cfgdoc import CfgDocument
-from .paths import Paths
+from .paths import FW_TARGETS, Paths
 
 SECTION_PREFIX = "firmware"
+
+#: Always present, in this order. klipper is what a board runs and katapult is
+#: what puts it there; enough of this tool is about that specific pair -
+#: `katapult_installed`, the bootloader request, the version join - that neither
+#: can be removed by editing a config file. Declaring a family adds to these.
+BUILTIN = FW_TARGETS
 
 
 @dataclasses.dataclass(frozen=True)
@@ -76,18 +82,12 @@ class FirmwareFamily:
         }
 
 
-def load(paths: Paths) -> dict[str, FirmwareFamily]:
-    """Read `[firmware <name>]` sections from the shared config file.
+def load_from_doc(doc: CfgDocument) -> dict[str, FirmwareFamily]:
+    """The `[firmware <name>]` sections of an already-parsed document.
 
-    An unreadable or absent file is not an error: it means no overrides, which
-    is the same thing every install has today.
+    Split out because the registry parses the same file for its own sections
+    and should not open it twice to answer which families exist.
     """
-    try:
-        with open(paths.main_config, encoding="utf-8") as fh:
-            doc = CfgDocument(fh.read())
-    except OSError:
-        return {}
-
     out: dict[str, FirmwareFamily] = {}
     for section in doc.section_names(SECTION_PREFIX):
         name = section[len(SECTION_PREFIX) :].strip()
@@ -99,6 +99,38 @@ def load(paths: Paths) -> dict[str, FirmwareFamily]:
             artifact=(doc.get(section, "artifact") or "").strip(),
         )
     return out
+
+
+def load(paths: Paths) -> dict[str, FirmwareFamily]:
+    """Read `[firmware <name>]` sections from the shared config file.
+
+    An unreadable or absent file is not an error: it means no overrides, which
+    is the same thing every install has today.
+    """
+    try:
+        with open(paths.main_config, encoding="utf-8") as fh:
+            doc = CfgDocument(fh.read())
+    except OSError:
+        return {}
+    return load_from_doc(doc)
+
+
+def names(paths: Paths, families: Optional[dict[str, FirmwareFamily]] = None) -> tuple[str, ...]:
+    """Every firmware family this install knows about.
+
+    Built-ins first and in their own order - `klipper` before `katapult`, which
+    is the order the CLI has always listed and the artifacts payload has always
+    carried - then anything declared in config, sorted so the answer does not
+    depend on where in the file somebody added a section.
+    """
+    if families is None:
+        families = load(paths)
+    return names_of(families)
+
+
+def names_of(families: dict[str, FirmwareFamily]) -> tuple[str, ...]:
+    """`names()` for a caller that already has the parsed sections."""
+    return BUILTIN + tuple(sorted(n for n in families if n not in BUILTIN))
 
 
 def resolve(

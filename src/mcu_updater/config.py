@@ -40,6 +40,7 @@ import re
 from collections.abc import Iterable, Iterator
 from typing import Any, Optional
 
+from . import firmware
 from .cfgdoc import CfgDocument, parse_bool
 from .errors import (
     AmbiguousSerialError,
@@ -112,9 +113,19 @@ class McuType:
         val = self.fw("katapult").installed
         return True if val is None else val
 
+    def fw_order(self) -> list[str]:
+        """The families this type carries, built-ins first.
+
+        Self-contained rather than asking the config: an McuType is handed
+        around without a Paths, and the order only has to be *stable* - it is
+        what the artifacts payload and the CLI listing are keyed by.
+        """
+        first = [fw for fw in FW_TARGETS if fw in self.fws]
+        return first + sorted(fw for fw in self.fws if fw not in FW_TARGETS)
+
     def to_json(self) -> dict[str, Any]:
         out: dict[str, Any] = {"chipset": self.chipset}
-        for fw in FW_TARGETS:
+        for fw in self.fw_order():
             cfg = self.fws.get(fw)
             if cfg is not None:
                 out[fw] = cfg.to_json()
@@ -206,6 +217,11 @@ class Registry:
                 value=doc.duplicate_sections,
             )
 
+        # Which families exist is itself config, and it is in this same
+        # document - so read it from the doc already parsed rather than
+        # reopening the file once per registry load.
+        fw_names = firmware.names_of(firmware.load_from_doc(doc))
+
         types: dict[str, McuType] = {}
         for section in doc.section_names(SECTION_PREFIX):
             name = section[len(SECTION_PREFIX) :].strip()
@@ -213,7 +229,7 @@ class Registry:
                 continue
             mcu = McuType(name=name, chipset=(doc.get(section, "chipset") or "").strip())
             mcu.serials = doc.get_list(section, "serials")
-            for fw in FW_TARGETS:
+            for fw in fw_names:
                 cfg = mcu.fw(fw)
                 cfg.extra_args = (doc.get(section, f"{fw}_extra_args") or "").strip()
                 for raw in doc.get_list(section, f"{fw}_makefile_patches"):
@@ -286,6 +302,7 @@ class Registry:
     def save(self, paths: Paths) -> None:
         """Atomic write, preserving everything the document already had."""
         doc = self._doc
+        fw_names = firmware.names_of(firmware.load_from_doc(doc))
 
         for section in doc.section_names(SECTION_PREFIX):
             name = section[len(SECTION_PREFIX) :].strip()
@@ -304,7 +321,7 @@ class Registry:
             else:
                 doc.remove_option(section, "katapult_installed")
 
-            for fw in FW_TARGETS:
+            for fw in fw_names:
                 cfg = mcu.fws.get(fw)
                 args_key = f"{fw}_extra_args"
                 patch_key = f"{fw}_makefile_patches"

@@ -16,9 +16,10 @@ import dataclasses
 import json
 import os
 import sys
+from collections.abc import Sequence
 from typing import Optional
 
-from . import __version__
+from . import __version__, firmware
 from .build import build, menuconfig_tty, staleness
 from .config import Registry
 from .devices import (
@@ -168,7 +169,7 @@ def status_cmd(args: argparse.Namespace) -> None:
         mcu = reg.get(name)
         print(f"\n{name}  (chipset={mcu.chipset or '?'})")
 
-        for fw in FW_TARGETS:
+        for fw in firmware.names(c.paths):
             if fw == "katapult" and not mcu.katapult_installed:
                 continue
             stale, reason = staleness(c.paths, name, fw)
@@ -421,7 +422,15 @@ def add_mcu(args: argparse.Namespace) -> None:
 # --------------------------------------------------------------------------
 
 
-def build_parser() -> argparse.ArgumentParser:
+def build_parser(fw_choices: Optional[Sequence[str]] = None) -> argparse.ArgumentParser:
+    """The CLI. `fw_choices` is what `--fw` will accept.
+
+    Passed in rather than read here because a declared `[firmware x]` family is
+    a legitimate target, and argparse needs the list at construction time. It
+    defaults to the built-ins so a caller without a Paths - every test that
+    builds a parser to check wiring - still gets a working one.
+    """
+    choices = list(fw_choices) if fw_choices else list(FW_TARGETS)
     parser = argparse.ArgumentParser(
         description="Klipper/Katapult Firmware Management Utility"
     )
@@ -464,13 +473,13 @@ def build_parser() -> argparse.ArgumentParser:
 
     p = subparsers.add_parser("menuconfig", help="Launch make menuconfig for a specific target")
     p.add_argument("-t", "--type", required=True, help="MCU Type Name")
-    p.add_argument("-f", "--fw", required=True, choices=list(FW_TARGETS), help="Firmware target")
+    p.add_argument("-f", "--fw", required=True, choices=choices, help="Firmware target")
     p.add_argument("--no-pause", action="store_true", help="Skip the 'press Enter' prompt")
     p.set_defaults(func=make_menuconfig_cmd)
 
     p = subparsers.add_parser("build", help="Compile the firmware for a specific target")
     p.add_argument("-t", "--type", required=True, help="MCU Type Name")
-    p.add_argument("-f", "--fw", required=True, choices=list(FW_TARGETS), help="Firmware target")
+    p.add_argument("-f", "--fw", required=True, choices=choices, help="Firmware target")
     p.add_argument("-j", "--jobs", type=int, default=None, help="Parallel make jobs (0 disables -j)")
     p.set_defaults(func=build_fw_cmd)
 
@@ -522,7 +531,7 @@ def main(argv: Optional[list[str]] = None) -> None:
             file=sys.stderr,
         )
 
-    parser = build_parser()
+    parser = build_parser(firmware.names(paths))
 
     # Bare invocation drops into the interactive menu, as it always has.
     if not argv:

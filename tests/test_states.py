@@ -313,16 +313,81 @@ def _bin(display, content=b"\x00firmware"):
     return path
 
 
-def test_a_rebuild_behind_our_back_is_now_distinguishable(paths, display):
-    """We have a record and the file no longer matches it. Positive evidence
-    that someone else ran `pio run` - which is different news from never having
-    built here, and used to be the same word."""
+def test_an_image_that_is_not_the_one_we_recorded_cannot_be_vouched_for(paths, display):
+    """Knowing *that* an image changed says nothing about *what it now
+    contains*, and only the second question matters before writing it to six
+    screens. Attestation by another tool is what would earn a better answer."""
     _bin(display)
     displays.record_build(paths, display, TREE)
     _bin(display, b"\x00different and longer")
 
-    assert displays.artifact_status(paths, display, TREE).reason == states.FOREIGN_BUILD
+    assert displays.artifact_status(paths, display, TREE).reason == states.NO_PROVENANCE
     assert displays.artifact_state(paths, display, TREE) == ART_FOREIGN
+
+
+def test_a_rebuild_producing_the_same_bytes_is_still_our_build(paths, display):
+    """The false positive the content hash removes. Judging by mtime called a
+    byte-identical rebuild somebody else's work - and the bytes are the only
+    thing that reaches the screen."""
+    _bin(display)
+    displays.record_build(paths, display, TREE)
+
+    path = displays.firmware_bin(display)
+    os.utime(path, (os.stat(path).st_atime + 120, os.stat(path).st_mtime + 120))
+
+    assert displays.artifact_status(paths, display, TREE).is_current
+
+
+def test_an_untouched_image_is_judged_without_hashing_it(paths, display, monkeypatch):
+    """The fast path, and it is the answer almost every time. Measured on the
+    printer, hashing the 770 KiB knomi image costs 5.0 ms against 57 us for the
+    stat that already answers it - and the stat happens regardless, so this
+    costs nothing to keep."""
+    _bin(display)
+    displays.record_build(paths, display, TREE)
+
+    def boom(_path):
+        raise AssertionError("hashed an image that had not changed")
+
+    monkeypatch.setattr(displays, "sha256_file", boom)
+    assert displays.artifact_status(paths, display, TREE).is_current
+
+
+def test_a_record_from_before_hashing_still_judges_by_size_and_mtime(paths, display):
+    """An existing install keeps its verdict until its next build, instead of
+    being told once that everything it has is suddenly unverifiable."""
+    _bin(display)
+    displays.record_build(paths, display, TREE)
+
+    sidecar = paths.display_sidecar(display.env)
+    with open(sidecar, encoding="utf-8") as fh:
+        record = json.load(fh)
+    del record["bin_sha256"]
+    with open(sidecar, "w", encoding="utf-8") as fh:
+        json.dump(record, fh)
+
+    assert displays.artifact_status(paths, display, TREE).is_current
+
+
+def test_foreign_build_is_reserved_and_nothing_claims_it_yet(paths, display):
+    """It means "another tool vouches for this image" - PlatformIO knows whether
+    .pio/build is current against its own dependency graph. That costs a
+    subprocess, and this runs on the fw.status poll path, so it belongs behind
+    an explicit request. Until then nothing may produce it."""
+    scenarios = []
+
+    _bin(display)
+    scenarios.append(displays.artifact_status(paths, display, TREE))
+
+    displays.record_build(paths, display, TREE)
+    scenarios.append(displays.artifact_status(paths, display, TREE))
+
+    _bin(display, b"\x00different")
+    scenarios.append(displays.artifact_status(paths, display, TREE))
+
+    scenarios.append(displays.artifact_status(paths, display, SourceState()))
+
+    assert states.FOREIGN_BUILD not in [s.reason for s in scenarios]
 
 
 def test_no_record_at_all_is_the_other_kind_of_unknown(paths, display):
@@ -409,7 +474,7 @@ def test_an_unprovable_mcu_artifact_reports_stale_rather_than_current(paths):
 
 def test_a_matching_mcu_artifact_is_current(paths, monkeypatch):
     monkeypatch.setattr(build, "git_head", lambda _: "abc1234")
-    monkeypatch.setattr(build, "_sha256_file", lambda _: "cfghash")
+    monkeypatch.setattr(build, "sha256_file", lambda _: "cfghash")
     _mcu_artifact(paths, sidecar={"fw_sha": "abc1234", "config_sha256": "cfghash"})
 
     assert build.artifact_status(paths, "bttebb36", "klipper").is_current
@@ -425,7 +490,7 @@ def test_a_matching_mcu_artifact_is_current(paths, monkeypatch):
 )
 def test_the_mcu_reasons_survive_verbatim(paths, monkeypatch, sidecar, expected):
     monkeypatch.setattr(build, "git_head", lambda _: "abc1234")
-    monkeypatch.setattr(build, "_sha256_file", lambda _: "cfghash")
+    monkeypatch.setattr(build, "sha256_file", lambda _: "cfghash")
     _mcu_artifact(paths, sidecar=sidecar)
 
     assert build.artifact_status(paths, "bttebb36", "klipper").reason == expected

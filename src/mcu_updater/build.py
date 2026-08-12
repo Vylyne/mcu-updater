@@ -355,7 +355,7 @@ def _git_head_uncached(directory: str) -> Optional[str]:
     return res.stdout.strip() or None
 
 
-def _sha256_file(path: str) -> Optional[str]:
+def sha256_file(path: str) -> Optional[str]:
     try:
         h = hashlib.sha256()
         with open(path, "rb") as fh:
@@ -420,7 +420,7 @@ def artifact_status(paths: Paths, mcu_type: str, fw: str) -> ArtifactStatus:
         # still reports the legacy "never_built" for both; see below.
         return ArtifactStatus(NO_PROVENANCE)
 
-    cfg_hash = _sha256_file(paths.config_file(mcu_type, fw))
+    cfg_hash = sha256_file(paths.config_file(mcu_type, fw))
     if cfg_hash and side.get("config_sha256") and cfg_hash != side["config_sha256"]:
         return ArtifactStatus(CONFIG_CHANGED)
 
@@ -543,7 +543,7 @@ def build(
         make_flags = [f"-j{jobs}"] if jobs > 0 else []
 
     kconfig_arg = f"KCONFIG_CONFIG={config_file}"
-    config_before = _sha256_file(config_file)
+    config_before = sha256_file(config_file)
     started = time.monotonic()
 
     reporter("info", f"Building {fw} for {mcu_type}...")
@@ -575,7 +575,7 @@ def build(
             returncode=rc,
         )
 
-    config_after = _sha256_file(config_file)
+    config_after = sha256_file(config_file)
     rewritten = bool(config_before and config_after and config_before != config_after)
     if rewritten:
         # Klipper's Makefile reruns olddefconfig when src/Kconfig is newer than
@@ -625,7 +625,7 @@ def build(
         duration=duration,
         fw_sha=git_head(fw_dir),
         config_sha256=config_after,
-        bin_sha256=_sha256_file(bin_out),
+        bin_sha256=sha256_file(bin_out),
         config_rewritten=rewritten,
     )
     try:

@@ -28,7 +28,7 @@ import threading
 import time
 from typing import Optional
 
-from .build import Reporter, null_reporter, run_streamed
+from .build import Reporter, null_reporter, run_streamed, sha256_file
 from .cfgdoc import CfgDocument
 from .errors import BuildError, ConfigError, FlashError, SourceTreeMissingError, ToolMissingError
 from .paths import Paths
@@ -315,12 +315,16 @@ ART_FOREIGN = "unknown"
 def record_build(paths: Paths, display: DisplayType, state: SourceState) -> None:
     """Note which commit produced the image now sitting in .pio/build.
 
-    Also records the file's size and mtime - not to judge staleness by them,
-    which is exactly the lie `staleness()` was written to avoid, but to notice
-    that *someone else* rebuilt afterwards. A hand-run `pio run` would otherwise
-    leave our provenance describing an image that no longer exists, and claiming
-    "up to date" about a binary we know nothing about is worse than admitting we
-    cannot tell.
+    Records a hash of the binary itself, which is what makes "is this still our
+    build?" answerable. Size and mtime are kept too, but only to read records
+    written before the hash existed - judging by them alone was too weak in both
+    directions. A rebuild producing a byte-identical image moves the mtime and
+    would have read as somebody else's work; and two different images can share
+    a size.
+
+    Without this, claiming "up to date" about a binary we know nothing about is
+    the failure - it flashes every screen of a type with firmware from before
+    the fix you just made.
     """
     path = firmware_bin(display)
     try:
@@ -333,6 +337,7 @@ def record_build(paths: Paths, display: DisplayType, state: SourceState) -> None
         "version": state.version,
         "dirty": state.dirty,
         "at": time.time(),
+        "bin_sha256": sha256_file(path),
         "bin_size": stat.st_size,
         "bin_mtime": stat.st_mtime,
     }
@@ -344,6 +349,41 @@ def record_build(paths: Paths, display: DisplayType, state: SourceState) -> None
     os.replace(tmp, sidecar)
 
 
+def _is_our_image(record: dict, path: str, stat: os.stat_result) -> bool:
+    """Are the bytes on disk the bytes we recorded?
+
+    Two tiers, because this runs on the `fw.status` poll path:
+
+    **Size and mtime are the fast path.** Untouched since we wrote it means
+    ours, for the cost of a stat. This is the answer almost every time.
+
+    **The content hash is the fallback**, and only runs when something looks
+    changed - which is rare, and is exactly when the question is worth paying
+    for. It exists because mtime alone was wrong in both directions: a rebuild
+    producing a byte-identical image moves the mtime and would have been called
+    somebody else's work, and two genuinely different images can share a size.
+    The bytes are the only thing that reaches the screen, so the bytes decide.
+
+    Measured on a BTT Pi 2 running from eMMC: a 770 KiB knomi image hashes in
+    5.0 ms at 159 MB/s, against 57 us for the stat. So the gate saves about
+    5 ms per poll, which is not much - and on slower storage or a larger image
+    it is more. It is kept mainly because the stat happens regardless (we need
+    it to know the file exists at all), which makes the fast path free rather
+    than merely cheap.
+
+    A record written before the hash existed has only the fast path, so a
+    changed file reads as not-ours - the old behaviour exactly. It self-heals
+    on the next build.
+    """
+    if record.get("bin_size") == stat.st_size and record.get("bin_mtime") == stat.st_mtime:
+        return True
+
+    recorded = record.get("bin_sha256")
+    if not recorded:
+        return False
+    return sha256_file(path) == recorded
+
+
 def artifact_status(paths: Paths, display: DisplayType, state: SourceState) -> ArtifactStatus:
     """Does the built image match the source tree?
 
@@ -352,12 +392,17 @@ def artifact_status(paths: Paths, display: DisplayType, state: SourceState) -> A
     wrong "current" here is flashing six screens with firmware from before the
     fix you just made.
 
-    Two kinds of untrustworthy are distinguished, because they want different
-    words in front of a user. `foreign_build` is *positive evidence* that
-    something else rebuilt this image - we have a record and the file no longer
-    matches it. `no_provenance` is the absence of evidence: we never recorded
-    anything, or the record is unreadable. "Someone rebuilt behind your back"
-    and "this tool has never built this env" are not the same news.
+    The bar for `current` is that the bytes on disk are the bytes we recorded.
+    Anything else is `no_provenance` - not because nothing happened, but because
+    knowing *that* an image changed says nothing about *what it now contains*,
+    and only the second question matters before flashing six screens with it.
+
+    `foreign_build` is reserved for an image some *other* tool can vouch for -
+    PlatformIO knows whether .pio/build is current against its own dependency
+    graph, and `make -q` answers the same for klipper. Nothing here produces it
+    yet: that check costs a subprocess, and this function is on the `fw.status`
+    poll path, so attestation belongs behind an explicit request rather than
+    being paid for every few seconds.
     """
     path = firmware_bin(display)
     try:
@@ -373,10 +418,8 @@ def artifact_status(paths: Paths, display: DisplayType, state: SourceState) -> A
     if not isinstance(record, dict):
         return ArtifactStatus(NO_PROVENANCE)
 
-    # Built by someone else since we last looked: we have a record, and the file
-    # on disk has moved out from under it.
-    if record.get("bin_size") != stat.st_size or record.get("bin_mtime") != stat.st_mtime:
-        return ArtifactStatus(FOREIGN_BUILD)
+    if not _is_our_image(record, path, stat):
+        return ArtifactStatus(NO_PROVENANCE)
 
     if record.get("dirty"):
         # Same reasoning as a dirty firmware: the tree it came from is gone.

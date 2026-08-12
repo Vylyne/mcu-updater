@@ -1229,10 +1229,18 @@ class Api:
         """The displays Klipper is configured for, and whether they are there.
 
         **The device list comes from Klipper, not from our registry.** A
-        `[knomi_serial T0_knomi]` section already names the port it uses, so
-        keeping a second copy here would only create something to disagree with.
-        This reads the same `configfile.settings` payload `mcu_info` already
-        fetches for the version join.
+        `[knomi_serial T0_knomi]` section names its own path one of two ways:
+        `serial:` writes it in printer.cfg directly, and `device_id:` names the
+        display by the id burned into its chip and leaves discovery to find the
+        path - which the module then reports back in its own `get_status()`.
+        Either way, keeping a second copy of the path here would only create
+        something to disagree with. This reads the same `configfile.settings`
+        payload `mcu_info` already fetches for the version join.
+
+        A `device_id:` section belongs in the list even before discovery finds
+        it - `present: false`, every live field `None` - because a display that
+        needs flashing is precisely the one this must not be blind to. See
+        knomi_serial's docs/protocol.md, "The device map".
 
         No identity beyond the port, deliberately: every display runs the same
         image, so which physical unit sits on which port does not change what
@@ -1282,18 +1290,15 @@ class Api:
             # Klipper lowercases section names in `settings`, so match lowered.
             if not any(section.startswith(p + " ") for p in prefixes):
                 continue
-            configured = (values or {}).get("serial")
-            if not isinstance(configured, str) or not configured:
-                continue
 
-            # A symlink is the point - resolve it, because the whole scheme is
-            # "a stable name udev keeps pointed at the right tty".
-            resolved = None
-            try:
-                if os.path.exists(configured):
-                    resolved = os.path.realpath(configured)
-            except OSError:
-                resolved = None
+            # The module accepts exactly one of these, so whichever key loaded
+            # says how this section is addressed. Neither present means the
+            # section never loaded far enough to read either - nothing to show.
+            configured_serial = (values or {}).get("serial")
+            configured_device_id = (values or {}).get("device_id")
+            if not configured_serial and not configured_device_id:
+                continue
+            addressed_by = "serial" if configured_serial else "device_id"
 
             # Prefer the object's capitalisation - it is what printer.cfg says,
             # and what the user typed. Falls back to the lowered settings name
@@ -1301,10 +1306,31 @@ class Api:
             true_section = truecase_by_section.get(section, section)
             live = live_by_section.get(section) or {}
 
+            # A serial: section names its path right here. A device_id: section
+            # has no path in its config at all - the path it is on today was
+            # discovered, not configured, and the only place it exists is the
+            # module's own get_status(). Until discovery finds it, that is None,
+            # and this section still belongs in the list rather than vanishing.
+            configured = configured_serial or live.get("port")
+
+            # A symlink is the point - resolve it, because the whole scheme is
+            # "a stable name udev keeps pointed at the right tty". A discovered
+            # device_id: path is already a real tty, not a symlink, so this is a
+            # no-op for it and existence is the only thing being checked.
+            resolved = None
+            if configured:
+                try:
+                    if os.path.exists(configured):
+                        resolved = os.path.realpath(configured)
+                except OSError:
+                    resolved = None
+
             displays.append(
                 {
                     "name": true_section.split(" ", 1)[1],
                     "section": true_section,
+                    "device_id": configured_device_id or live.get("device_id"),
+                    "addressed_by": addressed_by,
                     "configured_path": configured,
                     "resolved_path": resolved,
                     # The port exists. Necessary but nowhere near sufficient:

@@ -9,8 +9,8 @@ Read-only, and first, for the same reason `fw.dfu.scan` came before
 anything writes.
 
 The device list is Klipper's, not ours. `[knomi_serial T0_knomi]` already names
-the port it uses, so a second copy in our registry would only be something to
-disagree with.
+how to find its port - `serial:` directly, or `device_id:` plus discovery - so a
+second copy in our registry would only be something to disagree with.
 
 `present` is the field that earns this method. The klippy module catches a failed
 open and runs in no-op mode, so a missing symlink or a display that never
@@ -132,11 +132,71 @@ def test_several_displays_come_back_in_a_stable_order(api, fake_root):
     assert names == ["t0_knomi", "t1_knomi", "t2_knomi"]
 
 
-def test_a_section_with_no_serial_is_skipped(api):
-    """`serial:` is required by the module, but a half-edited config should not
-    produce an entry pointing at nothing."""
+def test_a_section_with_neither_serial_nor_device_id_is_skipped(api):
+    """The module requires exactly one of `serial:` or `device_id:`, but a
+    half-edited config should not produce an entry pointing at nothing."""
     api._call = _moonraker({"knomi_serial t0_knomi": {"heater_hotend": "extruder"}})
     assert api.dispatch("fw.display.list")["displays"] == []
+
+
+# --------------------------------------------------------------------------
+# device_id: addressing - the path is discovered, not configured
+# --------------------------------------------------------------------------
+
+
+def test_a_device_id_section_appears_before_discovery_finds_it(api):
+    """`device_id:` has no path in printer.cfg at all - discovery has to find
+    one first. A display that still needs flashing is precisely the one this
+    must not be blind to, so it belongs in the list from the start."""
+    api._call = _moonraker({"knomi_serial t0_knomi": {"device_id": "19AA44"}})
+    display = api.dispatch("fw.display.list")["displays"][0]
+
+    assert display["addressed_by"] == "device_id"
+    assert display["device_id"] == "19AA44"
+    assert display["present"] is False
+    assert display["configured_path"] is None
+    assert display["resolved_path"] is None
+
+
+def test_a_device_id_section_uses_the_port_discovery_found(api, fake_root):
+    """Once Klipper's own discovery has matched the id to a port, that port
+    comes back through get_status() - the only place it exists, since none of
+    it is in printer.cfg."""
+    port = str(fake_root / "ttyUSB3")
+    with open(port, "w", encoding="utf-8") as fh:
+        fh.write("")
+
+    api._call = _moonraker_live(
+        {"knomi_serial t0_knomi": {"device_id": "19AA44"}},
+        {"knomi_serial T0_knomi": {"port": port, "device_id": "19AA44"}},
+    )
+    display = api.dispatch("fw.display.list")["displays"][0]
+
+    assert display["addressed_by"] == "device_id"
+    assert display["present"] is True
+    assert display["configured_path"] == port
+    assert display["resolved_path"].endswith("ttyUSB3")
+
+
+def test_a_serial_section_ignores_a_stray_live_port(api, fake_root):
+    """serial: is authoritative for a serial-addressed section - the live
+    `port` field is only what stands in for it when there is no serial: at
+    all, not a value that should ever override it."""
+    configured = str(fake_root / "knomi_t0")
+    with open(configured, "w", encoding="utf-8") as fh:
+        fh.write("")
+    other = str(fake_root / "ttyUSB9")
+    with open(other, "w", encoding="utf-8") as fh:
+        fh.write("")
+
+    api._call = _moonraker_live(
+        {"knomi_serial t0_knomi": {"serial": configured}},
+        {"knomi_serial T0_knomi": {"port": other}},
+    )
+    display = api.dispatch("fw.display.list")["displays"][0]
+
+    assert display["addressed_by"] == "serial"
+    assert display["configured_path"] == configured
 
 
 def test_an_unreachable_klipper_says_so_rather_than_claiming_none(api):

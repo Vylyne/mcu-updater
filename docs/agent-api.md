@@ -562,17 +562,30 @@ display_source: ~/knomi_serial     # one repo, shared by every env
 
 Adding the second screen is one more section.
 
-**The device list is Klipper's, not ours.** `[knomi_serial T0_knomi]` already
-names the port it uses, so a second copy here would only be something to disagree
+**The device list is Klipper's, not ours.** `[knomi_serial T0_knomi]` names how
+to find its port one of two ways: `serial:` writes it in printer.cfg directly, or
+`device_id:` names the display by the id burned into its chip and leaves the path
+to Klipper's own discovery, which reports the result back through the section's
+`get_status()`. Either way a second copy here would only be something to disagree
 with. It arrives in the same `configfile.settings` payload `fw.status` already
-fetches for the MCU version join.
+fetches for the MCU version join, plus the live `get_status()` fields for the
+`device_id:` case.
+
+A `device_id:` section still appears here before discovery finds it —
+`"present": false`, `"configured_path": null` — because a display that needs
+flashing is precisely the one this must not be blind to.
 
 ### `fw.display.list`
 
 ```json
 {"displays": [{"name": "t0_knomi", "section": "knomi_serial t0_knomi",
+               "device_id": null, "addressed_by": "serial",
                "configured_path": "/dev/knomi_t0",
-               "resolved_path": "/dev/ttyUSB0", "present": true}],
+               "resolved_path": "/dev/ttyUSB0", "present": true},
+              {"name": "t1_knomi", "section": "knomi_serial t1_knomi",
+               "device_id": "19AA44", "addressed_by": "device_id",
+               "configured_path": "/dev/ttyUSB3",
+               "resolved_path": "/dev/ttyUSB3", "present": true}],
  "reachable": true}
 ```
 

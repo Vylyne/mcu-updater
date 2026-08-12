@@ -1,0 +1,432 @@
+"""The shared currency vocabulary, and the four dialects it replaced.
+
+Four vocabularies used to answer overlapping questions - ``stale_reason`` on the
+MCU side, ``ART_*`` and ``FW_*`` on the display side, and ``flash_state``'s own
+``reason``. They are collapsed into two questions here, one enum each.
+
+Two properties are what these tests exist to hold:
+
+**Nothing on the wire moved.** Every legacy string is still produced, from the
+same inputs, by the same public functions. The collapse is internal.
+
+**Information was gained, not lost.** ``ART_FOREIGN`` used to mean four
+different things spelled "unknown"; two of them are now distinguishable, and the
+MCU and display sides finally agree about what a missing sidecar means.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+
+import pytest
+
+from mcu_updater import build, displays, states
+from mcu_updater.displays import (
+    ART_CURRENT,
+    ART_DIRTY,
+    ART_FOREIGN,
+    ART_NEVER,
+    ART_STALE,
+    FW_BEHIND,
+    FW_CURRENT,
+    FW_DIRTY,
+    FW_UNKNOWN,
+    DisplayType,
+    SourceState,
+)
+from mcu_updater.states import ArtifactStatus, DeviceStatus
+
+TREE = SourceState(head="d34db33", version="0.4.0", dirty=False, on_tag=False)
+
+
+# --------------------------------------------------------------------------
+# the model itself
+# --------------------------------------------------------------------------
+
+
+def test_a_reason_determines_its_state_so_the_two_cannot_disagree():
+    """The old code carried (stale, reason) as two independent values, kept in
+    step only by every return statement remembering to."""
+    assert ArtifactStatus(states.SOURCE_CHANGED).state == states.ARTIFACT_STALE
+    assert ArtifactStatus(states.NEVER_BUILT).state == states.ARTIFACT_ABSENT
+    assert ArtifactStatus().state == states.ARTIFACT_CURRENT
+
+
+#: The whole vocabulary, spelled out. A loose assertion here - "the state is
+#: one of the three" - let a mutation swapping True for None survive, so these
+#: are pinned individually and exhaustively.
+ARTIFACT_VERDICTS = {
+    None: states.ARTIFACT_CURRENT,
+    states.NEVER_BUILT: states.ARTIFACT_ABSENT,
+    states.CONFIG_CHANGED: states.ARTIFACT_STALE,
+    states.SOURCE_CHANGED: states.ARTIFACT_STALE,
+    states.BUILT_DIRTY: states.ARTIFACT_UNPROVABLE,
+    states.FOREIGN_BUILD: states.ARTIFACT_UNPROVABLE,
+    states.NO_PROVENANCE: states.ARTIFACT_UNPROVABLE,
+}
+
+DEVICE_VERDICTS = {
+    None: False,
+    states.IN_BOOTLOADER: True,
+    states.SOURCE_CHANGED: True,
+    states.ARTIFACT_CHANGED: True,
+    states.PROTOCOL_MISMATCH: True,
+    states.DEVICE_DIRTY: None,
+    states.OFFLINE: None,
+    states.UNKNOWN_VERSION: None,
+}
+
+
+@pytest.mark.parametrize(("reason", "state"), sorted(ARTIFACT_VERDICTS.items(), key=str))
+def test_each_artifact_reason_has_exactly_this_state(reason, state):
+    assert ArtifactStatus(reason).state == state
+
+
+def test_no_artifact_reason_is_left_unpinned():
+    assert set(ARTIFACT_VERDICTS) == set(states.ARTIFACT_REASONS) | {None}
+
+
+@pytest.mark.parametrize(("reason", "verdict"), sorted(DEVICE_VERDICTS.items(), key=str))
+def test_each_device_reason_has_exactly_this_verdict(reason, verdict):
+    assert DeviceStatus(reason).needs_flash is verdict
+
+
+def test_no_device_reason_is_left_unpinned():
+    assert set(DEVICE_VERDICTS) == set(states.DEVICE_REASONS) | {None}
+
+
+def test_a_board_in_its_bootloader_definitely_wants_firmware():
+    """Not "cannot tell". A board sitting in Katapult reports no application
+    version at all, and degrading that to None would make every bulk flash -
+    which filters on `needs_flash is True` - skip the boards most obviously
+    waiting for firmware."""
+    assert DeviceStatus(states.IN_BOOTLOADER).needs_flash is True
+
+
+def test_only_a_reasonless_status_is_current():
+    """`current` is a positive claim. Anything with a reason attached failed to
+    prove itself, and must not read as up to date."""
+    for reason in states.ARTIFACT_REASONS:
+        assert not ArtifactStatus(reason).is_current
+
+
+def test_needs_flash_is_never_false_on_absent_evidence():
+    """The rule this whole area exists to enforce. An offline board or an
+    unreadable version is not evidence that a board is current."""
+    for reason in states.DEVICE_REASONS:
+        assert DeviceStatus(reason).needs_flash is not False
+    assert DeviceStatus().needs_flash is False
+
+
+def test_only_an_absent_artifact_has_nothing_to_flash():
+    assert not ArtifactStatus(states.NEVER_BUILT).can_flash
+    for reason in (states.SOURCE_CHANGED, states.BUILT_DIRTY, states.FOREIGN_BUILD, None):
+        assert ArtifactStatus(reason).can_flash
+
+
+def test_an_unknown_reason_is_refused_rather_than_silently_carried():
+    """A typo'd reason would otherwise produce a status that renders as neither
+    current nor stale, and no test would notice."""
+    with pytest.raises(ValueError, match="unknown artifact reason"):
+        ArtifactStatus("probably_fine")
+    with pytest.raises(ValueError, match="unknown device reason"):
+        DeviceStatus("probably_fine")
+
+
+def test_the_two_questions_share_the_one_reason_that_means_the_same_thing():
+    """`source_changed` is the only overlap, and it is deliberate: the tree
+    moved. The subject differs - an artifact behind it, or a device behind it."""
+    shared = set(states.ARTIFACT_REASONS) & set(states.DEVICE_REASONS)
+    assert shared == {states.SOURCE_CHANGED}
+
+
+# --------------------------------------------------------------------------
+# how a verdict reads
+# --------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("reason", (None,) + states.ARTIFACT_REASONS)
+def test_every_artifact_reason_has_words_for_a_human(reason):
+    """A reason with no label would KeyError in the panel. The precise codes
+    exist for switching on, not for reading."""
+    assert ArtifactStatus(reason).label
+
+
+@pytest.mark.parametrize("reason", (None,) + states.DEVICE_REASONS)
+def test_every_device_reason_has_words_for_a_human(reason):
+    assert DeviceStatus(reason).label
+
+
+@pytest.mark.parametrize("reason", states.ARTIFACT_REASONS + states.DEVICE_REASONS)
+def test_no_label_is_just_the_reason_code_wearing_a_hat(reason):
+    """`no_provenance` is precise and unreadable. Guards against someone
+    "adding a label" by handing back the code with the underscores swapped."""
+    labels = [
+        ArtifactStatus(r).label for r in (None,) + states.ARTIFACT_REASONS
+    ] + [DeviceStatus(r).label for r in (None,) + states.DEVICE_REASONS]
+    for label in labels:
+        assert "_" not in label
+        assert label != reason
+        assert label[0].isupper()
+
+
+def test_up_to_date_is_the_only_green():
+    assert ArtifactStatus().tone == states.TONE_OK
+    assert DeviceStatus().tone == states.TONE_OK
+    for reason in states.ARTIFACT_REASONS:
+        assert ArtifactStatus(reason).tone != states.TONE_OK
+    for reason in states.DEVICE_REASONS:
+        assert DeviceStatus(reason).tone != states.TONE_OK
+
+
+def test_nothing_we_cannot_vouch_for_is_painted_green():
+    """The whole point of the amber bucket. An unverifiable image reading as
+    up to date is how somebody ships a print on firmware from before the fix."""
+    for reason in (states.BUILT_DIRTY, states.FOREIGN_BUILD, states.NO_PROVENANCE):
+        assert ArtifactStatus(reason).tone == states.TONE_UNKNOWN
+    for reason in (states.DEVICE_DIRTY, states.OFFLINE, states.UNKNOWN_VERSION):
+        assert DeviceStatus(reason).tone == states.TONE_UNKNOWN
+
+
+def test_a_missing_image_and_a_stale_one_read_the_same_because_the_fix_is_the_same():
+    """They differ in cause and not at all in what the user does: press build."""
+    assert (
+        ArtifactStatus(states.NEVER_BUILT).tone
+        == ArtifactStatus(states.SOURCE_CHANGED).tone
+        == states.TONE_ATTENTION
+    )
+
+
+def test_a_device_tone_is_just_its_verdict_coloured():
+    for reason in (None,) + states.DEVICE_REASONS:
+        status = DeviceStatus(reason)
+        expected = {False: states.TONE_OK, True: states.TONE_ATTENTION, None: states.TONE_UNKNOWN}
+        assert status.tone == expected[status.needs_flash]
+
+
+# --------------------------------------------------------------------------
+# the legacy dialects still come out unchanged
+# --------------------------------------------------------------------------
+
+
+def test_the_display_artifact_adapter_covers_every_reason():
+    """A reason with no legacy word would KeyError in front of a user."""
+    covered = set(displays._LEGACY_ART_STATE)
+    assert covered == set(states.ARTIFACT_REASONS) | {None}
+
+
+def test_every_legacy_art_word_is_still_reachable():
+    assert set(displays._LEGACY_ART_STATE.values()) == {
+        ART_CURRENT,
+        ART_NEVER,
+        ART_STALE,
+        ART_DIRTY,
+        ART_FOREIGN,
+    }
+
+
+def test_every_legacy_fw_word_is_still_reachable():
+    assert set(displays._LEGACY_FW_STATE.values()) == {
+        FW_CURRENT,
+        FW_BEHIND,
+        FW_DIRTY,
+        FW_UNKNOWN,
+    }
+
+
+def test_the_fw_adapter_covers_what_a_screen_can_actually_be():
+    """Deliberately a subset, unlike the artifact adapter. A screen has no bus
+    state to be in a bootloader and no flash record to contradict, so FW_* has
+    no honest word for those - and inventing one would be worse than the
+    KeyError, which would at least be true."""
+    assert set(displays._LEGACY_FW_STATE) == {
+        None,
+        states.SOURCE_CHANGED,
+        states.DEVICE_DIRTY,
+        states.UNKNOWN_VERSION,
+    }
+    unreachable = {
+        states.IN_BOOTLOADER,
+        states.OFFLINE,
+        states.ARTIFACT_CHANGED,
+        states.PROTOCOL_MISMATCH,
+    }
+    assert not unreachable & set(displays._LEGACY_FW_STATE)
+
+
+def test_the_mcu_staleness_words_are_the_model_words_bar_one():
+    """`stale_reason` is documented API (docs/agent-api.md). Only the missing
+    sidecar case needed translating, because the model now distinguishes it."""
+    assert build._LEGACY_STALE_REASON == {states.NO_PROVENANCE: states.NEVER_BUILT}
+
+
+@pytest.mark.parametrize(
+    ("running", "expected"),
+    [
+        ("0.4.0+3.gd34db33", FW_CURRENT),
+        ("0.4.0+1.gbadc0de", FW_BEHIND),
+        ("0.4.0+3.gd34db33.dirty", FW_DIRTY),
+        ("", FW_UNKNOWN),
+    ],
+)
+def test_firmware_state_still_speaks_fw_words(running, expected):
+    assert displays.firmware_state(running, TREE) == expected
+
+
+@pytest.mark.parametrize(
+    ("running", "reason"),
+    [
+        ("0.4.0+3.gd34db33", None),
+        ("0.4.0+1.gbadc0de", states.SOURCE_CHANGED),
+        ("0.4.0+3.gd34db33.dirty", states.DEVICE_DIRTY),
+        ("", states.UNKNOWN_VERSION),
+    ],
+)
+def test_the_same_answers_in_the_shared_vocabulary(running, reason):
+    assert displays.device_status(running, TREE).reason == reason
+
+
+def test_a_dirty_screen_is_not_reported_as_wanting_a_flash():
+    """It cannot be shown current, but it is not evidence of being behind
+    either - which is what the old FW_DIRTY meant and must keep meaning."""
+    assert displays.device_status("0.4.0+3.gd34db33.dirty", TREE).needs_flash is None
+
+
+# --------------------------------------------------------------------------
+# the split: what "unknown" used to hide
+# --------------------------------------------------------------------------
+
+
+@pytest.fixture
+def display(tmp_path):
+    source = tmp_path / "knomi_serial"
+    (source / ".pio" / "build" / "knomi").mkdir(parents=True)
+    return DisplayType(name="knomi", env="knomi", source=str(source))
+
+
+def _bin(display, content=b"\x00firmware"):
+    path = displays.firmware_bin(display)
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "wb") as fh:
+        fh.write(content)
+    return path
+
+
+def test_a_rebuild_behind_our_back_is_now_distinguishable(paths, display):
+    """We have a record and the file no longer matches it. Positive evidence
+    that someone else ran `pio run` - which is different news from never having
+    built here, and used to be the same word."""
+    _bin(display)
+    displays.record_build(paths, display, TREE)
+    _bin(display, b"\x00different and longer")
+
+    assert displays.artifact_status(paths, display, TREE).reason == states.FOREIGN_BUILD
+    assert displays.artifact_state(paths, display, TREE) == ART_FOREIGN
+
+
+def test_no_record_at_all_is_the_other_kind_of_unknown(paths, display):
+    _bin(display)
+    assert displays.artifact_status(paths, display, TREE).reason == states.NO_PROVENANCE
+    assert displays.artifact_state(paths, display, TREE) == ART_FOREIGN
+
+
+def test_a_corrupt_record_is_absence_of_evidence_not_evidence_of_a_rebuild(paths, display):
+    _bin(display)
+    sidecar = paths.display_sidecar(display.env)
+    os.makedirs(os.path.dirname(sidecar), exist_ok=True)
+    with open(sidecar, "w", encoding="utf-8") as fh:
+        fh.write("{not json")
+    assert displays.artifact_status(paths, display, TREE).reason == states.NO_PROVENANCE
+
+
+def test_the_two_unknowns_are_different_statuses_wearing_one_word(paths, display):
+    """The whole point of the split. Both still render as ART_FOREIGN, so
+    nothing on the wire moved."""
+    assert states.FOREIGN_BUILD != states.NO_PROVENANCE
+    assert (
+        displays._LEGACY_ART_STATE[states.FOREIGN_BUILD]
+        == displays._LEGACY_ART_STATE[states.NO_PROVENANCE]
+        == ART_FOREIGN
+    )
+
+
+@pytest.mark.parametrize(
+    ("reason", "legacy"),
+    [
+        (states.NEVER_BUILT, ART_NEVER),
+        (states.SOURCE_CHANGED, ART_STALE),
+        (states.BUILT_DIRTY, ART_DIRTY),
+        (None, ART_CURRENT),
+    ],
+)
+def test_the_unambiguous_reasons_keep_their_own_words(reason, legacy):
+    assert displays._LEGACY_ART_STATE[reason] == legacy
+
+
+# --------------------------------------------------------------------------
+# the payoff: both sides now say the same thing about the same situation
+# --------------------------------------------------------------------------
+
+
+def _mcu_artifact(paths, mcu_type="bttebb36", fw="klipper", sidecar=None):
+    binary = paths.bin_file(mcu_type, fw)
+    os.makedirs(os.path.dirname(binary), exist_ok=True)
+    with open(binary, "wb") as fh:
+        fh.write(b"\x00firmware")
+    if sidecar is not None:
+        with open(paths.sidecar_file(mcu_type, fw), "w", encoding="utf-8") as fh:
+            json.dump(sidecar, fh)
+    return binary
+
+
+def test_a_binary_with_no_record_means_the_same_on_both_sides(paths, display):
+    """An MCU binary with no sidecar reported "never_built"; a display binary
+    with no sidecar reported "unknown". Same situation, opposite words. The
+    model now agrees, while both legacy surfaces keep their own spelling."""
+    _mcu_artifact(paths)
+    _bin(display)
+
+    assert build.artifact_status(paths, "bttebb36", "klipper").reason == states.NO_PROVENANCE
+    assert displays.artifact_status(paths, display, TREE).reason == states.NO_PROVENANCE
+
+    # ...and neither wire format noticed.
+    assert build.staleness(paths, "bttebb36", "klipper") == (True, "never_built")
+    assert displays.artifact_state(paths, display, TREE) == ART_FOREIGN
+
+
+def test_a_genuinely_absent_mcu_artifact_is_still_never_built(paths):
+    assert build.artifact_status(paths, "bttebb36", "klipper").reason == states.NEVER_BUILT
+    assert build.staleness(paths, "bttebb36", "klipper") == (True, "never_built")
+
+
+def test_an_unprovable_mcu_artifact_reports_stale_rather_than_current(paths):
+    """The only safe collapse of a four-state answer into a boolean."""
+    _mcu_artifact(paths)
+    stale, _ = build.staleness(paths, "bttebb36", "klipper")
+    assert stale is True
+
+
+def test_a_matching_mcu_artifact_is_current(paths, monkeypatch):
+    monkeypatch.setattr(build, "git_head", lambda _: "abc1234")
+    monkeypatch.setattr(build, "_sha256_file", lambda _: "cfghash")
+    _mcu_artifact(paths, sidecar={"fw_sha": "abc1234", "config_sha256": "cfghash"})
+
+    assert build.artifact_status(paths, "bttebb36", "klipper").is_current
+    assert build.staleness(paths, "bttebb36", "klipper") == (False, None)
+
+
+@pytest.mark.parametrize(
+    ("sidecar", "expected"),
+    [
+        ({"fw_sha": "abc1234", "config_sha256": "moved"}, states.CONFIG_CHANGED),
+        ({"fw_sha": "moved", "config_sha256": "cfghash"}, states.SOURCE_CHANGED),
+    ],
+)
+def test_the_mcu_reasons_survive_verbatim(paths, monkeypatch, sidecar, expected):
+    monkeypatch.setattr(build, "git_head", lambda _: "abc1234")
+    monkeypatch.setattr(build, "_sha256_file", lambda _: "cfghash")
+    _mcu_artifact(paths, sidecar=sidecar)
+
+    assert build.artifact_status(paths, "bttebb36", "klipper").reason == expected
+    assert build.staleness(paths, "bttebb36", "klipper") == (True, expected)

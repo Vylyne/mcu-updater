@@ -40,6 +40,14 @@ from ..errors import (
 from ..pairings import PAIRING_TTL as _PAIRING_TTL
 from ..paths import FW_TARGETS, REENUMERATE_TIMEOUT, Paths
 from ..settings import Settings, load_settings, save_settings
+from ..states import (
+    ARTIFACT_CHANGED,
+    IN_BOOTLOADER,
+    OFFLINE,
+    SOURCE_CHANGED,
+    UNKNOWN_VERSION,
+    DeviceStatus,
+)
 from .rpc import ERR_INVALID_PARAMS, ERR_METHOD_NOT_FOUND, MethodNotFound, RpcError
 
 #: How long a Moonraker query may block before we give up and report unknown.
@@ -2375,32 +2383,47 @@ class Api:
         version = entry.get("version")
         mcu = entry.get("mcu")
         running = _running_sha(version or "")
-        out: dict[str, Any] = {
+        status = self._device_status(
+            serial,
+            version,
+            running,
+            fw_head,
+            state=state,
+            artifact_sha=artifact_sha,
+            flashlog=flashlog,
+        )
+        return {
             "mcu": mcu,
             "running_version": version,
             "running_sha": running,
-            "needs_flash": None,
-            "reason": None,
+            "needs_flash": status.needs_flash,
+            "reason": status.reason,
         }
 
+    @staticmethod
+    def _device_status(
+        serial: str,
+        version: Optional[str],
+        running: Optional[str],
+        fw_head: Optional[str],
+        *,
+        state: Optional[str],
+        artifact_sha: Optional[str],
+        flashlog: Optional[Any],
+    ) -> DeviceStatus:
+        """The verdict behind `flash_state`, in the shared vocabulary."""
         if state == STATE_OFFLINE:
-            out["reason"] = "offline"
-            return out
+            return DeviceStatus(OFFLINE)
         if state == STATE_KATAPULT:
-            out["needs_flash"] = True
-            out["reason"] = "in_bootloader"
-            return out
+            return DeviceStatus(IN_BOOTLOADER)
         if version is None or running is None or not fw_head:
-            out["reason"] = "unknown_version"
-            return out
+            return DeviceStatus(UNKNOWN_VERSION)
 
         # `-dirty` is normal and must not read as a mismatch: a type with makefile
         # patches is dirty by construction, because the patch is in place while
         # klipper stamps its version.
         if not fw_head.startswith(running):
-            out["needs_flash"] = True
-            out["reason"] = "source_changed"
-            return out
+            return DeviceStatus(SOURCE_CHANGED)
 
         # The commit matches, so only our own record can distinguish two builds of
         # it. Used to *add* confidence and never to remove it: with no record, the
@@ -2409,12 +2432,9 @@ class Api:
             record = flashlog.entry_for(serial, running)
             flashed = (record or {}).get("bin_sha256")
             if record is not None and flashed and flashed != artifact_sha:
-                out["needs_flash"] = True
-                out["reason"] = "artifact_changed"
-                return out
+                return DeviceStatus(ARTIFACT_CHANGED)
 
-        out["needs_flash"] = False
-        return out
+        return DeviceStatus()
 
     # -- kconfig -----------------------------------------------------------
 

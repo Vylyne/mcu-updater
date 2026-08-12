@@ -35,6 +35,13 @@ from .errors import (
 )
 from .paths import Paths
 from .settings import Settings
+from .states import (
+    CONFIG_CHANGED,
+    NEVER_BUILT,
+    NO_PROVENANCE,
+    SOURCE_CHANGED,
+    ArtifactStatus,
+)
 
 #: (stream, line). stream is one of:
 #:   "cmd"    a command about to run
@@ -395,28 +402,54 @@ def read_sidecar(paths: Paths, mcu_type: str, fw: str) -> Optional[dict[str, Any
     return data if isinstance(data, dict) else None
 
 
-def staleness(paths: Paths, mcu_type: str, fw: str) -> tuple[bool, Optional[str]]:
-    """(stale, reason) for a type's built artifact.
+def artifact_status(paths: Paths, mcu_type: str, fw: str) -> ArtifactStatus:
+    """Does this type's built image still match the inputs that produced it?
 
-    reason is one of None, "never_built", "config_changed", "source_changed".
     Compares recorded provenance rather than mtimes, so a `touch` doesn't lie
     and a git pull of klipper is correctly reported as making every board stale.
     """
     if not os.path.exists(paths.bin_file(mcu_type, fw)):
-        return True, "never_built"
+        return ArtifactStatus(NEVER_BUILT)
+
     side = read_sidecar(paths, mcu_type, fw)
     if side is None:
-        return True, "never_built"
+        # A binary with no sidecar. Not the same thing as never having built -
+        # something is there, we just cannot say what produced it - which is
+        # exactly the distinction the display side already drew. `staleness()`
+        # still reports the legacy "never_built" for both; see below.
+        return ArtifactStatus(NO_PROVENANCE)
 
     cfg_hash = _sha256_file(paths.config_file(mcu_type, fw))
     if cfg_hash and side.get("config_sha256") and cfg_hash != side["config_sha256"]:
-        return True, "config_changed"
+        return ArtifactStatus(CONFIG_CHANGED)
 
     head = git_head(paths.fw_dir(fw))
     if head and side.get("fw_sha") and head != side["fw_sha"]:
-        return True, "source_changed"
+        return ArtifactStatus(SOURCE_CHANGED)
 
-    return False, None
+    return ArtifactStatus()
+
+
+#: The one place the model says more than the legacy wire format can carry.
+#: `fw.artifacts.stale_reason` is a documented API string (docs/agent-api.md),
+#: so a missing sidecar keeps reporting "never_built" to callers even though
+#: `artifact_status` now distinguishes it.
+_LEGACY_STALE_REASON: dict[Optional[str], Optional[str]] = {NO_PROVENANCE: NEVER_BUILT}
+
+
+def staleness(paths: Paths, mcu_type: str, fw: str) -> tuple[bool, Optional[str]]:
+    """(stale, reason) for a type's built artifact - the legacy shape.
+
+    reason is one of None, "never_built", "config_changed", "source_changed".
+    Prefer `artifact_status()`; this exists because those four strings are on
+    the wire and in the panel.
+
+    Anything not provably current reports stale=True. That is the only safe
+    collapse of a four-state answer into a boolean: claiming False for an image
+    we cannot vouch for would be the lie this module exists to prevent.
+    """
+    status = artifact_status(paths, mcu_type, fw)
+    return (not status.is_current), _LEGACY_STALE_REASON.get(status.reason, status.reason)
 
 
 # --------------------------------------------------------------------------

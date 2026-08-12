@@ -6,8 +6,10 @@ table and the build flags, so the env *is* the type. Adding the second display
 is another `[display <env>]` section and nothing structural.
 
 The device list is not here either: `[knomi_serial T0_knomi]` in Klipper's config
-already names the port it uses, so a second copy would only be something to
-disagree with.
+already names how to find its port - directly with `serial:`, or by chip identity
+with `device_id:`, in which case Klipper's own discovery resolves it and reports
+the result back through `get_status()`. Either way, a second copy here would only
+be something to disagree with.
 
 **Nothing here ever lets PlatformIO choose a port.** Its auto-detect picks one
 device arbitrarily when several match, and every display on this printer is an
@@ -31,6 +33,18 @@ from .cfgdoc import CfgDocument
 from .errors import BuildError, ConfigError, FlashError, SourceTreeMissingError, ToolMissingError
 from .paths import Paths
 from .settings import Settings
+from .states import (
+    BUILT_DIRTY,
+    CONFIG_CHANGED,
+    DEVICE_DIRTY,
+    FOREIGN_BUILD,
+    NEVER_BUILT,
+    NO_PROVENANCE,
+    SOURCE_CHANGED,
+    UNKNOWN_VERSION,
+    ArtifactStatus,
+    DeviceStatus,
+)
 
 SECTION_PREFIX = "display"
 
@@ -222,42 +236,63 @@ def source_state(source: str) -> SourceState:
     return SourceState(head=head, version=version, dirty=dirty, on_tag=on_tag)
 
 
-def firmware_state(running: Optional[str], state: SourceState) -> str:
+def device_status(running: Optional[str], state: SourceState) -> DeviceStatus:
     """Compare what a screen reports running against what the tree would build.
 
-    Stronger than the staleness check on the MCU side, which compares a built
-    artifact against its source. This compares what is *actually on the device*,
-    so a screen flashed by hand months ago cannot report itself up to date.
+    Stronger than the artifact check, which compares a built artifact against
+    its source. This compares what is *actually on the device*, so a screen
+    flashed by hand months ago cannot report itself up to date.
 
-    `unknown` is returned generously. Every input here is optional - no git
+    Verdicts are withheld generously. Every input here is optional - no git
     checkout, no VERSION file, a module too old to report a version - and a
-    wrong `behind` sends someone to reflash a healthy display during a print.
+    wrong "behind" sends someone to reflash a healthy display during a print.
     """
     if not running or state.head is None:
-        return FW_UNKNOWN
+        return DeviceStatus(UNKNOWN_VERSION)
 
     if _FW_DIRTY_RE.search(running):
         # Built from uncommitted changes. The sha may well match HEAD, but the
         # working tree it was built from is not recoverable, so "current" is
-        # unprovable rather than merely unknown.
-        return FW_DIRTY
+        # unprovable rather than merely unknown - and it is not evidence of
+        # being behind either, hence a None verdict rather than True.
+        return DeviceStatus(DEVICE_DIRTY)
 
     match = _FW_SHA_RE.search(running)
     if match:
         # Short shas can differ in length between builds; compare on the shorter.
         built, head = match.group(1).lower(), state.head.lower()
         size = min(len(built), len(head))
-        return FW_CURRENT if built[:size] == head[:size] else FW_BEHIND
+        return DeviceStatus() if built[:size] == head[:size] else DeviceStatus(SOURCE_CHANGED)
 
     # No sha at all means a clean build sitting exactly on the version tag. It
     # is current only if the tree is still there - same version, still on the
     # tag, still clean.
     if state.version and running.strip() == state.version and state.on_tag and not state.dirty:
-        return FW_CURRENT
+        return DeviceStatus()
     if state.version and state.on_tag and not state.dirty:
         # A release build of a different version than the tree holds.
-        return FW_BEHIND
-    return FW_BEHIND if state.version else FW_UNKNOWN
+        return DeviceStatus(SOURCE_CHANGED)
+    return DeviceStatus(SOURCE_CHANGED if state.version else UNKNOWN_VERSION)
+
+
+#: DeviceStatus reason -> the FW_* word this module has always reported.
+#:
+#: Deliberately *not* total, unlike the artifact adapter. FW_* has four words
+#: and no honest one for `in_bootloader`, `offline` or `artifact_changed` - a
+#: screen has no bus state to be in a bootloader, and no flash record to
+#: contradict. Inventing a word for a state this module cannot reach would be
+#: worse than the KeyError, which would at least be true.
+_LEGACY_FW_STATE = {
+    None: FW_CURRENT,
+    SOURCE_CHANGED: FW_BEHIND,
+    DEVICE_DIRTY: FW_DIRTY,
+    UNKNOWN_VERSION: FW_UNKNOWN,
+}
+
+
+def firmware_state(running: Optional[str], state: SourceState) -> str:
+    """`device_status()` in the FW_* words. See that function for the reasoning."""
+    return _LEGACY_FW_STATE[device_status(running, state).reason]
 
 
 # --------------------------------------------------------------------------
@@ -309,41 +344,75 @@ def record_build(paths: Paths, display: DisplayType, state: SourceState) -> None
     os.replace(tmp, sidecar)
 
 
-def artifact_state(paths: Paths, display: DisplayType, state: SourceState) -> str:
+def artifact_status(paths: Paths, display: DisplayType, state: SourceState) -> ArtifactStatus:
     """Does the built image match the source tree?
 
-    `unknown` rather than a guess whenever the provenance cannot be trusted -
-    no sidecar, a binary someone else rebuilt, or no git checkout to compare
-    against. The cost of a wrong `current` here is flashing six screens with
-    firmware from before the fix you just made.
+    Never a guess when the provenance cannot be trusted - no sidecar, a binary
+    someone else rebuilt, or no git checkout to compare against. The cost of a
+    wrong "current" here is flashing six screens with firmware from before the
+    fix you just made.
+
+    Two kinds of untrustworthy are distinguished, because they want different
+    words in front of a user. `foreign_build` is *positive evidence* that
+    something else rebuilt this image - we have a record and the file no longer
+    matches it. `no_provenance` is the absence of evidence: we never recorded
+    anything, or the record is unreadable. "Someone rebuilt behind your back"
+    and "this tool has never built this env" are not the same news.
     """
     path = firmware_bin(display)
     try:
         stat = os.stat(path)
     except OSError:
-        return ART_NEVER
+        return ArtifactStatus(NEVER_BUILT)
 
     try:
         with open(paths.display_sidecar(display.env), encoding="utf-8") as fh:
             record = json.load(fh)
     except (OSError, ValueError):
-        return ART_FOREIGN
+        return ArtifactStatus(NO_PROVENANCE)
     if not isinstance(record, dict):
-        return ART_FOREIGN
+        return ArtifactStatus(NO_PROVENANCE)
 
-    # Built by someone else since we last looked.
+    # Built by someone else since we last looked: we have a record, and the file
+    # on disk has moved out from under it.
     if record.get("bin_size") != stat.st_size or record.get("bin_mtime") != stat.st_mtime:
-        return ART_FOREIGN
+        return ArtifactStatus(FOREIGN_BUILD)
 
     if record.get("dirty"):
         # Same reasoning as a dirty firmware: the tree it came from is gone.
-        return ART_DIRTY
+        return ArtifactStatus(BUILT_DIRTY)
 
     built, head = record.get("sha"), state.head
     if not built or not head:
-        return ART_FOREIGN
+        return ArtifactStatus(NO_PROVENANCE)
     size = min(len(built), len(head))
-    return ART_CURRENT if built[:size].lower() == head[:size].lower() else ART_STALE
+    if built[:size].lower() == head[:size].lower():
+        return ArtifactStatus()
+    return ArtifactStatus(SOURCE_CHANGED)
+
+
+#: ArtifactStatus reason -> the ART_* word this module has always reported.
+#: Both untrustworthy reasons collapse back to a single "unknown" here; the
+#: distinction is available from `artifact_status()` for anything that wants it.
+#:
+#: Total over every artifact reason, including `config_changed`, which a
+#: PlatformIO env cannot currently produce - it has no saved .config to compare.
+#: Kept anyway: the cost is one line, and the alternative is a KeyError in front
+#: of a user the day that stops being true.
+_LEGACY_ART_STATE = {
+    None: ART_CURRENT,
+    NEVER_BUILT: ART_NEVER,
+    CONFIG_CHANGED: ART_STALE,
+    SOURCE_CHANGED: ART_STALE,
+    BUILT_DIRTY: ART_DIRTY,
+    FOREIGN_BUILD: ART_FOREIGN,
+    NO_PROVENANCE: ART_FOREIGN,
+}
+
+
+def artifact_state(paths: Paths, display: DisplayType, state: SourceState) -> str:
+    """`artifact_status()` in the ART_* words. See that function for the reasoning."""
+    return _LEGACY_ART_STATE[artifact_status(paths, display, state).reason]
 
 
 def resolve_port(port: str) -> str:

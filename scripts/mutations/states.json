@@ -1,0 +1,65 @@
+{
+  "_comment": "The shared currency vocabulary. The rule these protect is that a verdict is never favourable on absent evidence - an offline board or an unreadable record must not read as up to date, because the cost is a screen or a toolhead left running old firmware while the panel says it is current.",
+  "file": "src/mcu_updater/states.py",
+  "command": [
+    "python",
+    "-m",
+    "pytest",
+    "tests/test_states.py",
+    "tests/test_displays.py",
+    "tests/test_build.py",
+    "-q"
+  ],
+  "mutations": [
+    {
+      "name": "an offline device is never reported as up to date",
+      "find": "    OFFLINE: None,",
+      "replace": "    OFFLINE: False,"
+    },
+    {
+      "name": "a device we cannot read a version from is not up to date",
+      "find": "    UNKNOWN_VERSION: None,",
+      "replace": "    UNKNOWN_VERSION: False,"
+    },
+    {
+      "name": "a dirty build is unprovable, not proven current",
+      "find": "    DEVICE_DIRTY: None,",
+      "replace": "    DEVICE_DIRTY: False,"
+    },
+    {
+      "name": "a board sitting in its bootloader wants firmware",
+      "find": "    IN_BOOTLOADER: True,",
+      "replace": "    IN_BOOTLOADER: None,"
+    },
+    {
+      "name": "an artifact with no provenance cannot claim to be current",
+      "find": "    NO_PROVENANCE: ARTIFACT_UNPROVABLE,",
+      "replace": "    NO_PROVENANCE: ARTIFACT_CURRENT,"
+    },
+    {
+      "name": "an image built from a dirty tree cannot claim to be current",
+      "find": "    BUILT_DIRTY: ARTIFACT_UNPROVABLE,",
+      "replace": "    BUILT_DIRTY: ARTIFACT_CURRENT,"
+    },
+    {
+      "name": "a reason nobody defined is refused rather than carried",
+      "find": "        if self.reason not in _ARTIFACT_STATE:\n            raise ValueError(",
+      "replace": "        if False:\n            raise ValueError("
+    },
+    {
+      "name": "an image we cannot vouch for is never painted green",
+      "find": "    ARTIFACT_UNPROVABLE: TONE_UNKNOWN,",
+      "replace": "    ARTIFACT_UNPROVABLE: TONE_OK,"
+    },
+    {
+      "name": "a device we cannot judge is never painted green",
+      "find": "    None: TONE_UNKNOWN,",
+      "replace": "    None: TONE_OK,"
+    },
+    {
+      "name": "a stale image asks for attention rather than shrugging",
+      "find": "    ARTIFACT_STALE: TONE_ATTENTION,",
+      "replace": "    ARTIFACT_STALE: TONE_UNKNOWN,"
+    }
+  ]
+}

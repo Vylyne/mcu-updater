@@ -686,6 +686,28 @@ empty port and always passes `--upload-port`.
 after the stop would find nothing and flash nothing. Every other flow in this API
 can query mid-job; this one cannot.
 
+**And it is verified after.** That list says where the screens *were* — a
+remembered path, which is the thing the whole hardware-id scheme exists to
+avoid. Once Klipper and the watcher have let go, the ports are free for the
+first time, and each display can be asked directly: they broadcast their id
+every couple of seconds unprompted, so listening for a few seconds resolves
+id → port as a fact rather than a memory. That is the order the display project
+documents — ask Klipper, fall back to the watcher's file, then verify before
+writing.
+
+A screen that answers on a different port than Klipper reported has moved, and
+is written where it actually is, with a warning. A screen that does **not**
+answer is recorded in `failures` and skipped: the ports were free and everything
+else spoke, so writing to its old path would be writing to whatever is on that
+path now. The batch carries on, as it does for any other per-screen failure.
+
+Two deliberate softenings, both to avoid taking away something that works today.
+A screen with no hardware id at all — a `serial:` section whose klippy module is
+too old to report one — falls back to its configured port rather than failing.
+And if discovery cannot run at all (no pyserial, no source tree) every screen
+falls back, because that is exactly what every flash did before this existed.
+Discovery is skipped entirely on a dry run, since it opens real serial ports.
+
 Klipper is stopped once for the batch, because the klippy module holds the port
 open and esptool cannot have it while it does. The idle gate applies — a display
 is not special enough to interrupt a QGL for.

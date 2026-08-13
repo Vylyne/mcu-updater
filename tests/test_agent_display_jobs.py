@@ -434,3 +434,187 @@ def test_a_display_family_can_declare_it_has_no_watcher(api, paths, no_pio, monk
     assert api.runner.get(res["job_id"]).state == "succeeded"
 
     assert order == ["stop klipper", "start klipper"]
+
+
+# --------------------------------------------------------------------------
+# resolving identity at flash time
+#
+# The screen list is read from Klipper *before* the stop, so its paths say
+# where displays were. Once the ports are free the screens can be asked
+# directly, which is the only moment identity is a fact rather than a memory.
+# --------------------------------------------------------------------------
+
+
+def _moonraker_objects(sections: dict, objects: dict, print_state="standby", idle_state="Ready"):
+    """`_moonraker`, plus the per-section printer objects.
+
+    The plain one answers no `printer.objects.list`, so every section resolves
+    with no live fields - which is why nothing before this needed it.
+    """
+
+    def call(method, params, timeout):
+        if method == "printer.objects.list":
+            return {"objects": list(objects)}
+        if method == "printer.objects.query":
+            requested = (params or {}).get("objects") or {}
+            status: dict = {}
+            if "configfile" in requested:
+                status["configfile"] = {"settings": sections}
+            if "print_stats" in requested:
+                status["print_stats"] = {"state": print_state}
+            if "idle_timeout" in requested:
+                status["idle_timeout"] = {"state": idle_state}
+            for name, values in objects.items():
+                if name in requested:
+                    status[name] = values
+            return {"status": status}
+        if method == "printer.info":
+            return {"state": "ready", "state_message": "klippy is ready"}
+        if method == "machine.system_info":
+            return {"system_info": {"service_state": {"klipper": {"active_state": "active"}}}}
+        return {}
+
+    return call
+
+
+def screens_port(screens: dict, which: str) -> str:
+    for section, values in screens.items():
+        if which in section:
+            return values["serial"]
+    raise KeyError(which)
+
+
+def _found(**by_id):
+    from mcu_updater.displays import WatcherDevice
+
+    return {
+        i: WatcherDevice(device_id=i, port=p, present=True) for i, p in by_id.items()
+    }
+
+
+def _with_ids(screens, **ids):
+    """The live get_status half, giving each section a reported id."""
+    return {f"knomi_serial {name}": {"reported_id": i} for name, i in ids.items()}
+
+
+def test_a_screen_is_written_where_it_answered_not_where_it_was(
+    api, paths, no_pio, screens, monkeypatch, fake_root
+):
+    """The move nothing else would notice: a display swapped sockets since
+    Klipper last looked, so its remembered path now names a different screen."""
+    moved_to = str(fake_root / "ttyUSB9")
+    write_settings(paths, dry_run="false", enable_flashing="true", service_backend="null")
+    monkeypatch.setattr(
+        "mcu_updater.displays.discover", lambda *a, **k: _found(aaa111=moved_to)
+    )
+    api._call = _moonraker_objects(screens, _with_ids(screens, t0_knomi="aaa111"))
+
+    ports: list[str] = []
+    monkeypatch.setattr(
+        "mcu_updater.displays.upload",
+        lambda p, s, d, port, **k: ports.append(port) or {"port": port, "mac": None},
+    )
+
+    res = api.dispatch("fw.display.flash", {"name": ENV, "port": screens_port(screens, "t0")})
+    assert api.runner.wait(timeout=30)
+    job = api.runner.get(res["job_id"])
+    assert job.state == "succeeded", job.error
+
+    assert ports == [moved_to], "wrote to where it is, not where it was"
+
+
+def test_a_screen_that_does_not_answer_is_not_flashed_at_its_old_port(
+    api, paths, no_pio, screens, monkeypatch, fake_root
+):
+    """The ports were free and something else answered, so this one is not
+    there - and its old path now names whatever is on that path."""
+    write_settings(paths, dry_run="false", enable_flashing="true", service_backend="null")
+    monkeypatch.setattr(
+        "mcu_updater.displays.discover",
+        lambda *a, **k: _found(somebodyelse=str(fake_root / "ttyUSB9")),
+    )
+    api._call = _moonraker_objects(screens, _with_ids(screens, t0_knomi="aaa111"))
+
+    ports: list[str] = []
+    monkeypatch.setattr(
+        "mcu_updater.displays.upload",
+        lambda p, s, d, port, **k: ports.append(port) or {"port": port, "mac": None},
+    )
+
+    res = api.dispatch("fw.display.flash", {"name": ENV, "port": screens_port(screens, "t0")})
+    assert api.runner.wait(timeout=30)
+    job = api.runner.get(res["job_id"])
+
+    assert job.state == "succeeded", job.error
+    assert ports == [], "nothing was written"
+    assert len(job.result["failures"]) == 1
+    assert "did not answer" in job.result["failures"][0]["error"]
+
+
+def test_discovery_failing_falls_back_to_the_configured_ports(
+    api, paths, no_pio, screens, monkeypatch
+):
+    """No pyserial, no source tree. Every flash worked this way before
+    discovery existed, so degrading to it is what it used to do - refusing
+    would be a new way to fail."""
+    from mcu_updater.errors import ToolMissingError
+
+    def boom(*a, **k):
+        raise ToolMissingError("pyserial is not installed", tool="discover")
+
+    write_settings(paths, dry_run="false", enable_flashing="true", service_backend="null")
+    monkeypatch.setattr("mcu_updater.displays.discover", boom)
+    api._call = _moonraker_objects(screens, _with_ids(screens, t0_knomi="aaa111"))
+
+    ports: list[str] = []
+    monkeypatch.setattr(
+        "mcu_updater.displays.upload",
+        lambda p, s, d, port, **k: ports.append(port) or {"port": port, "mac": None},
+    )
+
+    want = screens_port(screens, "t0")
+    res = api.dispatch("fw.display.flash", {"name": ENV, "port": want})
+    assert api.runner.wait(timeout=30)
+    assert api.runner.get(res["job_id"]).state == "succeeded"
+    assert ports == [want]
+
+
+def test_a_screen_with_no_hardware_id_is_still_flashed(
+    api, paths, no_pio, screens, monkeypatch, fake_root
+):
+    """A `serial:` section names a socket, and its identity only arrives from
+    the module's own report. A module too old to send one must not lose the
+    ability to flash."""
+    write_settings(paths, dry_run="false", enable_flashing="true", service_backend="null")
+    monkeypatch.setattr(
+        "mcu_updater.displays.discover",
+        lambda *a, **k: _found(somebodyelse=str(fake_root / "ttyUSB9")),
+    )
+    api._call = _moonraker_objects(screens, {})  # no live fields at all
+
+    ports: list[str] = []
+    monkeypatch.setattr(
+        "mcu_updater.displays.upload",
+        lambda p, s, d, port, **k: ports.append(port) or {"port": port, "mac": None},
+    )
+
+    want = screens_port(screens, "t0")
+    res = api.dispatch("fw.display.flash", {"name": ENV, "port": want})
+    assert api.runner.wait(timeout=30)
+    assert api.runner.get(res["job_id"]).state == "succeeded"
+    assert ports == [want]
+
+
+def test_a_dry_run_never_opens_a_serial_port(api, paths, no_pio, screens, monkeypatch):
+    """Discovery opens real ports. A rehearsal that touches hardware is not a
+    rehearsal."""
+    def boom(*a, **k):
+        raise AssertionError("opened serial ports during a dry run")
+
+    monkeypatch.setattr("mcu_updater.displays.discover", boom)
+    write_settings(paths, dry_run="true", enable_flashing="true", service_backend="null")
+    api._call = _moonraker_objects(screens, _with_ids(screens, t0_knomi="aaa111"))
+
+    res = api.dispatch("fw.display.flash", {"name": ENV})
+    assert api.runner.wait(timeout=30)
+    assert api.runner.get(res["job_id"]).state == "succeeded"

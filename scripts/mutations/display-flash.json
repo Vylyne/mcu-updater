@@ -34,6 +34,26 @@
       "name": "the port watcher is stopped for the upload",
       "find": "            ), paused(watcher, reporter=ctx.reporter):",
       "replace": "            ):"
+    },
+    {
+      "name": "identity is verified once the ports are free",
+      "find": "                discovered = self._discover_displays(display, settings_now, ctx)",
+      "replace": "                discovered = {}"
+    },
+    {
+      "name": "a screen is written where it answered, not where it was",
+      "find": "        if found.port != configured:",
+      "replace": "        return configured, None\n        if found.port != configured:"
+    },
+    {
+      "name": "a screen that did not answer is not flashed at its old port",
+      "find": "                    if problem is not None:\n                        failures.append(problem)\n                        continue",
+      "replace": "                    if False:\n                        failures.append(problem)\n                        continue"
+    },
+    {
+      "name": "a dry run never opens a serial port",
+      "find": "        if settings.dry_run:\n            ctx.reporter(\"info\", \"[dry-run] would ask the displays which they are\")\n            return {}",
+      "replace": "        if False:\n            ctx.reporter(\"info\", \"[dry-run] would ask the displays which they are\")\n            return {}"
     }
   ]
 }

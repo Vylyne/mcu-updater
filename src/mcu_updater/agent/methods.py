@@ -1433,6 +1433,95 @@ class Api:
         # answering.
         return {"displays": displays, "reachable": True, "watcher": None}
 
+    def _discover_displays(self, display: Any, settings: Settings, ctx: Any) -> dict[str, Any]:
+        """Ask the screens which they are, now that the ports are free.
+
+        Never fatal. Discovery needs pyserial and the display source tree, and
+        a host missing either was flashing by configured path perfectly well
+        before this existed - degrading to that is strictly what it used to do,
+        whereas refusing to flash would be a new way to fail.
+
+        Skipped entirely on a dry run: it opens real serial ports, and a
+        rehearsal that touches hardware is not a rehearsal.
+        """
+        from .. import displays as displays_mod
+
+        if settings.dry_run:
+            ctx.reporter("info", "[dry-run] would ask the displays which they are")
+            return {}
+        try:
+            return displays_mod.discover(
+                self.paths, settings, display, reporter=ctx.reporter
+            )
+        except UpdaterError as exc:
+            ctx.reporter(
+                "warn",
+                f"could not ask the displays which they are ({exc}) - falling back to "
+                f"the ports Klipper reported before it stopped.",
+            )
+            return {}
+
+    @staticmethod
+    def _port_for(
+        target: dict, discovered: dict[str, Any], ctx: Any
+    ) -> tuple[str, Optional[dict]]:
+        """Where to write this screen, and why not if there is no answer.
+
+        Three cases, and the middle one is the point:
+
+        * **Nothing was discovered at all** - no pyserial, no source tree, or a
+          dry run. Fall back to the configured path, which is what every flash
+          did before this. No worse than it was.
+        * **This screen answered** - write to the port it answered on, not the
+          one it used to be on. If those differ it moved, and saying so is the
+          only warning anybody would ever get.
+        * **Others answered and this one did not** - it is not there. The ports
+          were free and every other screen spoke, so a silent write to its old
+          path would be a write to whatever is on that path now. Recorded as a
+          failure rather than guessed at; the batch carries on, as it does for
+          any other per-screen failure.
+
+        A screen with no id at all is the fourth case and falls back rather than
+        failing. A `serial:` section names a socket, and its identity only
+        arrives from the module's own report - so a module too old to send one,
+        or a screen that was silent when the list was read, has nothing to match
+        on. Failing those would take flashing away from installs that have it
+        today, to punish them for what their klippy module does not say.
+        """
+        configured = target["configured_path"]
+        if not discovered:
+            return configured, None
+
+        ident = (target.get("device_id") or target.get("reported_id") or "").lower()
+        if not ident:
+            ctx.reporter(
+                "warn",
+                f"{target['name']} reports no hardware id, so the screen on "
+                f"{configured} cannot be confirmed as the one meant. Writing to the "
+                f"configured port.",
+            )
+            return configured, None
+
+        found = discovered.get(ident)
+        if found is None:
+            return configured, {
+                "name": target["name"],
+                "port": configured,
+                "error": (
+                    "did not answer when asked which displays are present, so its "
+                    "port cannot be confirmed. Writing to the port it used to be on "
+                    "could write to a different screen."
+                ),
+            }
+
+        if found.port != configured:
+            ctx.reporter(
+                "warn",
+                f"{target['name']} ({ident}) answered on {found.port}, not "
+                f"{configured} - it has moved. Writing to where it actually is.",
+            )
+        return found.port, None
+
     def _watcher_map(self) -> dict[str, Any]:
         """Each display family's watcher: is it running, and what has it found?
 
@@ -1597,10 +1686,21 @@ class Api:
             with klipper_stopped(
                 self.paths, svc, f"flash {total} display(s)", reporter=ctx.reporter
             ), paused(watcher, reporter=ctx.reporter):
+                # The ports are free for the first time here, which is the only
+                # moment identity can be resolved rather than remembered. The
+                # list above came from Klipper *before* the stop, so its paths
+                # describe where these screens were, and a remembered path is
+                # what the whole device-id scheme exists to avoid.
+                discovered = self._discover_displays(display, settings_now, ctx)
+
                 for index, target in enumerate(targets):
                     ctx.check_cancelled()
                     ctx.step(f"Flashing {target['name']}", index, total)
-                    port = target["configured_path"]
+
+                    port, problem = self._port_for(target, discovered, ctx)
+                    if problem is not None:
+                        failures.append(problem)
+                        continue
                     try:
                         result = displays_mod.upload(
                             self.paths,

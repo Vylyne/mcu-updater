@@ -26,7 +26,7 @@ import re
 import shutil
 import threading
 import time
-from typing import Optional
+from typing import Any, Optional
 
 from .build import Reporter, null_reporter, run_streamed, sha256_file
 from .cfgdoc import CfgDocument
@@ -111,6 +111,7 @@ class DisplayType:
             "source": self.source,
             "klipper_section": self.klipper_section,
             "service": self.service,
+            "device_map": self.device_map,
         }
 
 
@@ -167,13 +168,19 @@ class WatcherDevice:
     port: str
     firmware_version: Optional[str] = None
     build_variant: Optional[str] = None
+    #: Does the port still exist? A gone node proves the entry is stale without
+    #: asking systemd anything. The converse does not hold - a port that exists
+    #: may since have become a *different* display, which is the whole reason
+    #: these are keyed by an id burned into the chip rather than by path.
+    present: bool = False
 
-    def to_json(self) -> dict[str, Optional[str]]:
+    def to_json(self) -> dict[str, Any]:
         return {
             "device_id": self.device_id,
             "port": self.port,
             "firmware_version": self.firmware_version,
             "build_variant": self.build_variant,
+            "present": self.present,
         }
 
 
@@ -236,6 +243,7 @@ def read_device_map(paths: Paths, display: DisplayType) -> dict[str, WatcherDevi
             port=str(port),
             firmware_version=entry.get("fw"),
             build_variant=entry.get("var"),
+            present=os.path.exists(str(port)),
         )
     return out
 

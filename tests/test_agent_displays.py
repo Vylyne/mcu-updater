@@ -660,6 +660,19 @@ import json as _json  # noqa: E402
 from mcu_updater import displays as displays_mod  # noqa: E402
 
 
+def _declare_display(paths, env="knomi_toolchanger"):
+    """A [display ...] section. The sample registry has none, and without one
+    the watcher map has no family to belong to."""
+    from mcu_updater.cfgdoc import CfgDocument
+
+    with open(paths.main_config, encoding="utf-8") as fh:
+        doc = CfgDocument(fh.read())
+    doc.set(f"display {env}", "source", "/nowhere")
+    with open(paths.main_config, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(doc.render())
+    return env
+
+
 def _write_map(paths, payload):
     path = os.path.join(paths.printer_data, "knomi", "devices.json")
     os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -679,12 +692,13 @@ def _display(env="knomi"):
 
 
 def test_the_map_is_read_when_klipper_cannot_answer(api, paths):
+    env = _declare_display(paths)
     _write_map(paths, GOOD_MAP)
     api._call = _moonraker({}, reachable=False)
 
     res = api.display_list({})
     assert res["reachable"] is False
-    assert res["watcher"] is not None
+    assert [d["device_id"] for d in res["watcher"][env]["devices"]] == ["19aa44"]
 
 
 def test_the_map_is_not_consulted_while_klipper_is_answering(api, paths, monkeypatch):
@@ -766,3 +780,34 @@ def test_an_absolute_map_path_is_used_as_given(paths, tmp_path):
         name="x", env="x", source="/nowhere", device_map=str(elsewhere)
     )
     assert displays_mod.read_device_map(paths, display)["19aa44"].port == "/dev/ttyUSB0"
+
+
+def test_a_port_that_is_gone_proves_the_entry_is_stale(paths, fake_root):
+    """No systemd needed: if the node the map names has disappeared, the entry
+    is definitively out of date. The converse does not hold - a port that still
+    exists may since have become a different display."""
+    live = str(fake_root / "ttyUSB0")
+    open(live, "w").close()
+    _write_map(
+        paths,
+        {
+            "version": 1,
+            "devices": {
+                "19aa44": {"port": live},
+                "19aa45": {"port": str(fake_root / "gone")},
+            },
+        },
+    )
+    devices = displays_mod.read_device_map(paths, _display())
+
+    assert devices["19aa44"].present is True
+    assert devices["19aa45"].present is False, "a vanished port is not present"
+    assert "19aa45" in devices, "still listed - a display we cannot find is the news"
+
+
+def test_the_map_file_mtime_is_reported(api, paths):
+    env = _declare_display(paths)
+    _write_map(paths, GOOD_MAP)
+    api._call = _moonraker({}, reachable=False)
+
+    assert api.display_list({})["watcher"][env]["updated"] is not None

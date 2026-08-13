@@ -1460,6 +1460,13 @@ class Api:
             out[name] = {
                 "service": display.service or None,
                 "active": svc.is_active() if svc is not None else None,
+                # When the watcher last wrote. Weak evidence, and only in one
+                # direction: an old file is suspicious, but a fresh one does not
+                # mean the watcher is still running - it could have stopped a
+                # second after writing - and an old one does not mean the map is
+                # wrong, because nothing changing means nothing to write. Shown
+                # so a human can judge; never branched on.
+                "updated": _mtime(displays_mod.device_map_path(self.paths, display)),
                 "devices": [d.to_json() for d in devices.values()],
             }
         return out

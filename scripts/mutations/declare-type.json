@@ -1,0 +1,34 @@
+{
+  "_comment": "Declaring a board model before its hardware exists. A type describes a model, not a board on the bus - and naming the wrong firmware family for one is silent, because an undeclared family resolves to the conventional ~/<name> and simply builds nothing.",
+  "file": "src/mcu_updater/agent/methods.py",
+  "command": [
+    "python",
+    "-m",
+    "pytest",
+    "tests/test_agent_targets.py",
+    "tests/test_agent_methods.py",
+    "-q"
+  ],
+  "mutations": [
+    {
+      "name": "an undeclared family is refused when a type is created",
+      "find": "        known = self._fw_names()\n        if value not in known:\n            raise RpcError(",
+      "replace": "        known = self._fw_names()\n        if False:\n            raise RpcError("
+    },
+    {
+      "name": "a type is created with the family it asked for",
+      "find": "                application=application,",
+      "replace": "                application=\"klipper\","
+    },
+    {
+      "name": "swapping the source tree warns that provenance cannot see it",
+      "find": "                    if self.artifact(name, mcu.firmware).get(\"has_bin\"):\n                        warnings.append(",
+      "replace": "                    if False:\n                        warnings.append("
+    },
+    {
+      "name": "an edited firmware family is actually stored",
+      "find": "                    mcu.firmware = application",
+      "replace": "                    pass"
+    }
+  ]
+}

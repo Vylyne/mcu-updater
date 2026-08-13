@@ -1143,8 +1143,40 @@ class Api:
         self._changed()
         return {"name": name, "serial": serial, "added": added, "chipset": chipset}
 
+    def _require_family(self, args: dict, key: str = "firmware") -> str:
+        """The firmware family named in `args`, checked against what exists.
+
+        Refused rather than accepted-and-broken: an undeclared family resolves
+        to the conventional `~/<name>`, so a typo would silently produce a type
+        that builds nothing and reports "never built" for good. `Registry.load`
+        already refuses the same thing when the file is read by hand; this is
+        the same rule applied to the same value arriving from a browser.
+        """
+        value = str(args.get(key) or "").strip()
+        if not value:
+            return firmware.DEFAULT_APPLICATION
+        known = self._fw_names()
+        if value not in known:
+            raise RpcError(
+                f"'{value}' is not a known firmware family. Known: "
+                f"{', '.join(known)}. Declare it with a [firmware {value}] "
+                f"section in {self.paths.main_config} first.",
+                data={
+                    "code": "unknown_firmware",
+                    "message": "no such firmware family",
+                    "data": {"firmware": value, "known": list(known)},
+                },
+            )
+        return value
+
     def type_add(self, args: dict) -> dict[str, Any]:
         """Register a board model.
+
+        **No hardware has to be present.** A type describes a model, not a
+        board on the bus, and declaring one first is how you reach menuconfig
+        for a probe that is still in the post - which is the order the work
+        actually happens in. The panel offered this only from a device it could
+        already see, which made a board you did not have yet unreachable.
 
         The name is validated by the model, not here - it becomes both a config
         section and a directory, and the CLI must apply the same rule.
@@ -1152,6 +1184,7 @@ class Api:
         name = self._require_str(args, "name")
         chipset = self._require_str(args, "chipset")
         installed = args.get("katapult_installed")
+        application = self._require_family(args)
 
         with Registry.mutate(self.paths, f"add type {name}") as reg:
             reg.add_type(
@@ -1160,10 +1193,11 @@ class Api:
                 klipper_args=str(args.get("klipper_extra_args") or "").strip(),
                 katapult_args=str(args.get("katapult_extra_args") or "").strip(),
                 katapult_installed=True if installed is None else bool(installed),
+                application=application,
             )
 
         self._changed()
-        return {"name": name, "chipset": chipset}
+        return {"name": name, "chipset": chipset, "firmware": application}
 
     def type_update(self, args: dict) -> dict[str, Any]:
         """Edit a type in place. Only the keys supplied are touched.
@@ -1201,6 +1235,21 @@ class Api:
                         )
                     mcu.chipset = chipset
 
+            if "firmware" in args:
+                application = self._require_family(args)
+                if application != mcu.firmware:
+                    # Same reasoning as a chipset change, and stronger: the
+                    # artifact was built from a different source tree entirely,
+                    # and nothing in the provenance record would notice.
+                    if self.artifact(name, mcu.firmware).get("has_bin"):
+                        warnings.append(
+                            f"the built firmware for '{name}' came from "
+                            f"{mcu.firmware}. Rebuild before flashing - "
+                            f"staleness compares a tree against itself and "
+                            f"cannot detect the tree being swapped."
+                        )
+                    mcu.firmware = application
+
             for fw in mcu.fw_order():
                 key = f"{fw}_extra_args"
                 if key in args:
@@ -1212,7 +1261,11 @@ class Api:
                 # free of restated defaults.
                 mcu.fw("katapult").installed = None if installed else False
 
-            result: dict[str, Any] = {"name": name, "chipset": mcu.chipset}
+            result: dict[str, Any] = {
+                "name": name,
+                "chipset": mcu.chipset,
+                "firmware": mcu.firmware,
+            }
 
         self._changed()
         result["warnings"] = warnings

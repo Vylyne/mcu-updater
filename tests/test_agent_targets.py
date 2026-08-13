@@ -604,3 +604,102 @@ def _action(target, action_id):
 
 def _ids(target):
     return {a["id"] for a in target["actions"]}
+
+
+# --------------------------------------------------------------------------
+# declaring a type before its hardware exists
+# --------------------------------------------------------------------------
+
+
+def test_a_type_can_be_declared_with_nothing_plugged_in(paths, live_registry_text):
+    """A type describes a *model*, not a board on the bus.
+
+    The agent has always allowed this; the panel offered it only from a device
+    it could already see, which made a probe still in the post unreachable. This
+    is the order the work actually happens in: declare the type, run menuconfig,
+    build, then plug the board in and adopt it.
+    """
+    with open(paths.registry_file, "w", encoding="utf-8") as fh:
+        fh.write(live_registry_text)
+    api = Api(paths)
+
+    res = api.dispatch("fw.type.add", {"name": "newprobe", "chipset": "stm32g431xx"})
+
+    assert res["name"] == "newprobe"
+    assert api.registry().get("newprobe").serials == []
+    # And it is a target immediately, so the panel can offer menuconfig for it.
+    assert "newprobe" in _targets(api)
+
+
+def test_a_type_can_name_the_firmware_it_runs_when_it_is_created(paths, live_registry_text):
+    """The gap that made cartographer a hand-edit: `fw.type.add` had no way to
+    say the board runs anything but klipper, so the section had to be written
+    into the cfg by hand before menuconfig could be reached at all."""
+    with open(paths.registry_file, "w", encoding="utf-8") as fh:
+        fh.write(live_registry_text)
+    with open(paths.main_config, "a", encoding="utf-8") as fh:
+        fh.write("\n[firmware cartographer]\nsource: ~/carto\nartifact: klipper\n")
+    api = Api(paths)
+
+    res = api.dispatch(
+        "fw.type.add",
+        {"name": "carto_v4", "chipset": "stm32g431xx", "firmware": "cartographer"},
+    )
+
+    assert res["firmware"] == "cartographer"
+    assert api.registry().get("carto_v4").firmware == "cartographer"
+    assert _targets(api)["carto_v4"]["firmware"] == "cartographer"
+
+
+def test_an_undeclared_family_is_refused_rather_than_quietly_accepted(paths, live_registry_text):
+    """An unknown family resolves to the conventional ~/<name>, so a typo would
+    produce a type that builds nothing and reports "never built" for good."""
+    with open(paths.registry_file, "w", encoding="utf-8") as fh:
+        fh.write(live_registry_text)
+    api = Api(paths)
+
+    with pytest.raises(Exception) as exc:
+        api.dispatch(
+            "fw.type.add",
+            {"name": "typo", "chipset": "stm32g431xx", "firmware": "cartographe"},
+        )
+
+    assert "cartographe" in str(exc.value)
+    # The known families are named, so the panel can offer them rather than
+    # making the user guess what it wanted.
+    assert "klipper" in str(exc.value)
+    assert "typo" not in api.registry().types
+
+
+def test_changing_the_firmware_warns_that_provenance_cannot_see_it(paths, live_registry_text):
+    """Staleness compares a tree against itself. Swapping the tree leaves the
+    old binary looking perfectly current, which is a flash of the wrong
+    firmware with nothing to say so."""
+    with open(paths.registry_file, "w", encoding="utf-8") as fh:
+        fh.write(live_registry_text)
+    with open(paths.main_config, "a", encoding="utf-8") as fh:
+        fh.write("\n[firmware cartographer]\nsource: ~/carto\nartifact: klipper\n")
+    binary = paths.bin_file("bttebb36", "klipper")
+    os.makedirs(os.path.dirname(binary), exist_ok=True)
+    with open(binary, "wb") as fh:
+        fh.write(b"\x00")
+    api = Api(paths)
+
+    res = api.dispatch("fw.type.update", {"name": "bttebb36", "firmware": "cartographer"})
+
+    assert res["firmware"] == "cartographer"
+    assert res["warnings"] and "Rebuild before flashing" in res["warnings"][0]
+
+
+def test_changing_nothing_warns_about_nothing(paths, live_registry_text):
+    """Re-sending the family a type already has is not a change."""
+    with open(paths.registry_file, "w", encoding="utf-8") as fh:
+        fh.write(live_registry_text)
+    binary = paths.bin_file("bttebb36", "klipper")
+    os.makedirs(os.path.dirname(binary), exist_ok=True)
+    with open(binary, "wb") as fh:
+        fh.write(b"\x00")
+    api = Api(paths)
+
+    res = api.dispatch("fw.type.update", {"name": "bttebb36", "firmware": "klipper"})
+    assert res["warnings"] == []

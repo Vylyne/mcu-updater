@@ -497,7 +497,7 @@ def test_type_add_registers_a_model(paths, live_registry_text, fake_root):
     api = Api(paths, on_change=lambda: changes.append(1))
 
     res = api.dispatch("fw.type.add", {"name": "hexa", "chipset": "stm32f072xb"})
-    assert res == {"name": "hexa", "chipset": "stm32f072xb"}
+    assert res == {"name": "hexa", "chipset": "stm32f072xb", "firmware": "klipper"}
     assert api.registry().get("hexa").chipset == "stm32f072xb"
     assert len(changes) == 1
 

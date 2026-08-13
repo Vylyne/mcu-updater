@@ -8,6 +8,7 @@
     "tests/test_firmware.py",
     "tests/test_config.py",
     "tests/test_agent_methods.py",
+    "tests/test_agent_targets.py",
     "-q"
   ],
   "mutations": [

@@ -468,14 +468,29 @@ class Registry:
         klipper_args: str = "",
         katapult_args: str = "",
         katapult_installed: bool = True,
+        application: str = firmware.DEFAULT_APPLICATION,
         overwrite: bool = False,
     ) -> McuType:
+        """Register a board model. **No hardware needs to exist.**
+
+        Deliberately: a type is a description of a model, not of a board on the
+        bus. Declaring one first is how you reach menuconfig for a board you
+        have not wired up yet - which is the order the work actually happens in
+        when a new probe arrives.
+
+        `application` is not validated here. The registry is a data structure
+        and does not know which `[firmware ...]` sections the config file
+        declares; `save()` and `load()` both check against that document, and
+        the agent checks before it calls this so the refusal names the families
+        that do exist.
+        """
         validate_type_name(name)
         if name in self.types and not overwrite:
             raise DuplicateTypeError(f"MCU type '{name}' already exists.", type=name)
         mcu = McuType(
             name=name,
             chipset=chipset,
+            firmware=application,
             serials=[],
             fws={
                 "katapult": FwConfig(

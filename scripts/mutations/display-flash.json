@@ -29,6 +29,11 @@
       "name": "displays ride along in fw.status",
       "find": "            \"displays\": self.display_status(),\n",
       "replace": "            \"displays\": [],\n"
+    },
+    {
+      "name": "the port watcher is stopped for the upload",
+      "find": "            ), paused(watcher, reporter=ctx.reporter):",
+      "replace": "            ):"
     }
   ]
 }

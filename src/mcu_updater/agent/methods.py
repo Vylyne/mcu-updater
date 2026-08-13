@@ -1497,10 +1497,21 @@ class Api:
 
         def run(ctx) -> dict[str, Any]:
             from .. import displays as displays_mod
-            from ..service import klipper_stopped, make_controller
+            from ..service import klipper_stopped, make_controller, paused
 
             settings_now = self.settings()
             svc = make_controller(settings_now, call=self._call_for_service)
+            # The port watcher, if this display family has one. Stopped inside
+            # the klipper stop and started before it, which is the order the
+            # knomi_serial docs give: klipper holds the port, the watcher only
+            # contends for it.
+            watcher = (
+                make_controller(
+                    settings_now, call=self._call_for_service, name=display.service
+                )
+                if display.service
+                else None
+            )
             flashed: list[dict] = []
             failures: list[dict] = []
             moved: list[dict] = []
@@ -1508,7 +1519,7 @@ class Api:
 
             with klipper_stopped(
                 self.paths, svc, f"flash {total} display(s)", reporter=ctx.reporter
-            ):
+            ), paused(watcher, reporter=ctx.reporter):
                 for index, target in enumerate(targets):
                     ctx.check_cancelled()
                     ctx.step(f"Flashing {target['name']}", index, total)

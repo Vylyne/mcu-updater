@@ -558,9 +558,22 @@ display_source: ~/knomi_serial     # one repo, shared by every env
 # env: knomi_toolchanger           defaults to the section name
 # source: ~/knomi_serial           defaults to display_source
 # klipper_section: knomi_serial    which [<prefix> X] sections are this type's
+# service: knomi_serial            port watcher to pause while flashing
 ```
 
 Adding the second screen is one more section.
+
+`service` is a systemd unit that watches these displays' ports and has to let go
+before esptool can have one. It is stopped **inside** the Klipper stop and
+started before it — Klipper holds the port outright, the watcher only contends
+for it. Absent takes the default; `service:` with nothing after it says this
+family has no watcher.
+
+Unlike the Klipper stop this one is never verified and never fatal: if the
+watcher will not stop, the worst case is the flake it exists to remove — the
+upload fails cleanly and a retry works — and refusing to flash at all would be
+worse. A unit systemd has never heard of is simply never active, so an install
+without one pays nothing.
 
 **The device list is Klipper's, not ours.** `[knomi_serial T0_knomi]` names how
 to find its port one of two ways: `serial:` writes it in printer.cfg directly, or

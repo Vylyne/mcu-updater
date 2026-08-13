@@ -169,13 +169,23 @@ def make_controller(
     settings: Settings,
     *,
     call: Optional[Callable[[str, dict], Any]] = None,
+    name: Optional[str] = None,
 ) -> ServiceController:
-    """Pick a backend. `call` is only available inside the agent."""
+    """Pick a backend. `call` is only available inside the agent.
+
+    `name` overrides which unit is controlled, for services other than klipper -
+    a display watcher, say. The *backend* choice is deliberately shared: a
+    dry run must stay a dry run for every unit, or a rehearsal would stop a real
+    service. A unit Moonraker refuses to touch because it is not in
+    moonraker.asvc simply fails to stop, which is why the only caller of this
+    with a `name` uses `paused()` and does not treat that as fatal.
+    """
+    unit = name or settings.service
     if settings.dry_run or settings.service_backend == "null":
-        return NullService(settings.service)
+        return NullService(unit)
     if settings.service_backend == "moonraker" and call is not None:
-        return MoonrakerService(call, settings.service)
-    return SystemdService(settings.service)
+        return MoonrakerService(call, unit)
+    return SystemdService(unit)
 
 
 # --------------------------------------------------------------------------
@@ -247,6 +257,46 @@ def reconcile(
 
 #: How long to wait for a stop to actually take effect before giving up.
 STOP_VERIFY_TIMEOUT = 20.0
+
+
+@contextlib.contextmanager
+def paused(
+    svc: Optional[ServiceController], *, reporter: Reporter = null_reporter
+) -> Iterator[None]:
+    """Stop a *secondary* service for the duration of the block. Best effort.
+
+    For things that merely contend for a port rather than making the operation
+    unsafe - the knomi_serial watcher opens any port that appears and has not
+    been identified yet, and pyserial's exclusive open is an advisory flock, so
+    if a port turns up at the moment esptool wants it one of them loses.
+
+    Three deliberate differences from `klipper_stopped`, all of them because
+    this service is not the dangerous one:
+
+    **It never journals.** The journal holds exactly one pending stop and
+    `record_stop` overwrites, so recording this would erase klipper's entry -
+    and a crash would then bring the watcher back while leaving klipper down.
+    Klipper's record is the one that must survive.
+
+    **It never verifies, and never raises.** If the watcher will not stop, the
+    worst case is the flake this avoids: the upload fails cleanly and a retry
+    works. Refusing to flash at all would be a worse outcome than the problem.
+
+    **A unit that is not there is not an error.** `is_active` is false for a
+    unit systemd has never heard of, so a host without the watcher installed
+    takes this path and says nothing. `None` means the caller has nothing to
+    pause at all, which is the same nothing rather than a special case it has
+    to write around.
+    """
+    if svc is None or not svc.is_active():
+        yield
+        return
+
+    svc.stop(reporter)
+    try:
+        yield
+    finally:
+        svc.start(reporter)
 
 
 @contextlib.contextmanager

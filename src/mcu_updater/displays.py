@@ -88,6 +88,12 @@ class DisplayType:
     #: `[knomi_serial T0_knomi]` -> `knomi_serial`. A second display with its own
     #: klippy module would set this differently; one sharing the module leaves it.
     klipper_section: str = "knomi_serial"
+    #: A systemd unit that watches these displays' ports and must let go before
+    #: esptool can have one. Same defaulting as `klipper_section`: a display
+    #: family with its own watcher names it, one sharing this leaves it. Blank
+    #: means there is nothing to pause, and a unit systemd has never heard of is
+    #: simply never active, so an install without it pays nothing.
+    service: str = "knomi_serial"
 
     def __post_init__(self) -> None:
         # The env is the type, so the section name is the env unless overridden.
@@ -100,6 +106,7 @@ class DisplayType:
             "env": self.env,
             "source": self.source,
             "klipper_section": self.klipper_section,
+            "service": self.service,
         }
 
 
@@ -116,11 +123,16 @@ def load(paths: Paths, default_source: str = "") -> dict[str, DisplayType]:
         name = section[len(SECTION_PREFIX) :].strip()
         if not name:
             continue
+        # Absent and blank differ here, unlike every other key: an absent
+        # `service:` takes the default watcher, while `service:` with nothing
+        # after it is how you say this family has no watcher to pause.
+        watcher = doc.get(section, "service")
         out[name] = DisplayType(
             name=name,
             env=(doc.get(section, "env") or "").strip(),
             source=(doc.get(section, "source") or default_source).strip(),
             klipper_section=(doc.get(section, "klipper_section") or "knomi_serial").strip(),
+            service=("knomi_serial" if watcher is None else watcher).strip(),
         )
     return out
 

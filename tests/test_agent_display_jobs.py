@@ -308,3 +308,129 @@ def test_a_build_touches_no_display_and_needs_no_flash_permission(
     assert job.state == "succeeded", job.error
     assert job.result["env"] == ENV
     assert not any("upload" in cmd for cmd in no_pio)
+
+
+# --------------------------------------------------------------------------
+# the port watcher
+#
+# knomi_serial opens any port that appears and has not been identified yet, and
+# pyserial's exclusive open is an advisory flock - so if a port turns up at the
+# moment esptool wants it, one of them loses and the upload fails. Stopping the
+# watcher removes the race. It is *not* klipper: the failure it prevents is a
+# clean retryable one, not an unsafe write.
+# --------------------------------------------------------------------------
+
+
+def _services(order: list[str]) -> tuple[dict, object]:
+    """A make_controller that hands out one service per unit name."""
+    made: dict[str, NullService] = {}
+
+    def factory(settings, *, call=None, name=None):
+        unit = name or "klipper"
+        svc = made.get(unit)
+        if svc is None:
+            svc = made[unit] = NullService(unit)
+            for action in ("stop", "start"):
+                def watched(*a, _s=svc, _a=action, **k):
+                    order.append(f"{_a} {_s.name}")
+                    return getattr(NullService, _a)(_s, *a, **k)
+
+                setattr(svc, action, watched)
+        return svc
+
+    return made, factory
+
+
+def test_the_watcher_stops_inside_the_klipper_stop(api, no_pio, monkeypatch):
+    """The order knomi_serial's own docs give: klipper down, watcher down,
+    upload, watcher up, klipper up. Klipper holds the port outright; the
+    watcher only contends for it, so it is the inner pair."""
+    order: list[str] = []
+    _made, factory = _services(order)
+    monkeypatch.setattr("mcu_updater.service.make_controller", factory)
+
+    res = api.dispatch("fw.display.flash", {"name": ENV})
+    assert api.runner.wait(timeout=30)
+    assert api.runner.get(res["job_id"]).state == "succeeded"
+
+    assert order == [
+        "stop klipper",
+        "stop knomi_serial",
+        "start knomi_serial",
+        "start klipper",
+    ]
+
+
+def test_the_watcher_never_touches_the_crash_journal(api, no_pio, monkeypatch):
+    """The journal holds exactly one pending stop and record_stop overwrites.
+    Recording the watcher would erase klipper's entry, so a crash would bring
+    the watcher back and leave klipper down - the exact failure the journal
+    exists to prevent."""
+    recorded: list[str] = []
+    monkeypatch.setattr(
+        "mcu_updater.service.Journal.record_stop",
+        lambda self, service, label: recorded.append(service),
+    )
+    _made, factory = _services([])
+    monkeypatch.setattr("mcu_updater.service.make_controller", factory)
+
+    res = api.dispatch("fw.display.flash", {"name": ENV})
+    assert api.runner.wait(timeout=30)
+    assert api.runner.get(res["job_id"]).state == "succeeded"
+
+    assert recorded == ["klipper"]
+
+
+def test_a_watcher_that_is_not_running_is_left_alone(api, no_pio, monkeypatch):
+    """A host without the unit installed, or one where it is already stopped.
+    systemctl is-active is false for a unit it has never heard of, so this is
+    also the no-op for every install that does not use the watcher."""
+    order: list[str] = []
+    made, factory = _services(order)
+    monkeypatch.setattr("mcu_updater.service.make_controller", factory)
+    # Build it up front and mark it down, so the flash finds it inactive.
+    factory(None, name="knomi_serial")._active = False
+
+    res = api.dispatch("fw.display.flash", {"name": ENV})
+    assert api.runner.wait(timeout=30)
+    assert api.runner.get(res["job_id"]).state == "succeeded"
+
+    assert order == ["stop klipper", "start klipper"]
+
+
+def test_a_watcher_that_will_not_stop_does_not_abort_the_flash(api, no_pio, monkeypatch):
+    """Unlike klipper, this one is never verified. The worst case is the flake
+    it was meant to remove - a clean failure that retrying fixes - and refusing
+    to flash at all would be worse than that."""
+    made, factory = _services([])
+    monkeypatch.setattr("mcu_updater.service.make_controller", factory)
+    watcher = factory(None, name="knomi_serial")
+    monkeypatch.setattr(watcher, "stop", lambda *a, **k: None)  # stays "active"
+
+    res = api.dispatch("fw.display.flash", {"name": ENV})
+    assert api.runner.wait(timeout=30)
+    job = api.runner.get(res["job_id"])
+    assert job.state == "succeeded", job.error
+    assert len(job.result["flashed"]) == 2
+
+
+def test_a_display_family_can_declare_it_has_no_watcher(api, paths, no_pio, monkeypatch):
+    """`service:` with nothing after it. Absent means the default watcher;
+    blank is how a family says there is nothing to pause."""
+    from mcu_updater.cfgdoc import CfgDocument
+
+    with open(paths.main_config, encoding="utf-8") as fh:
+        doc = CfgDocument(fh.read())
+    doc.set(f"display {ENV}", "service", "")
+    with open(paths.main_config, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(doc.render())
+
+    order: list[str] = []
+    _made, factory = _services(order)
+    monkeypatch.setattr("mcu_updater.service.make_controller", factory)
+
+    res = api.dispatch("fw.display.flash", {"name": ENV})
+    assert api.runner.wait(timeout=30)
+    assert api.runner.get(res["job_id"]).state == "succeeded"
+
+    assert order == ["stop klipper", "start klipper"]

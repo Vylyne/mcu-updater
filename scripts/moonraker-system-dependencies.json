@@ -1,5 +1,5 @@
 {
-    "_comment": "Must stay in sync with the PKGLIST line in install.sh, which is the deprecated mechanism Moonraker falls back to. tests/test_packaging.py fails if they drift.",
+    "_comment": "System packages Moonraker's update manager installs for us, named by moonraker-update-manager.conf. python3-serial is not for the agent - that is stdlib-only - it is for the display discovery helper, which runs the *system* python3 as a subprocess to ask the screens which they are. tests/test_repo_hygiene.py checks the conf still points here and that this still declares it.",
     "debian": [
         "python3-serial"
     ]

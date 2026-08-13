@@ -122,3 +122,49 @@ def test_no_mutation_is_left_live_in_the_source():
                 live.append(f"{spec['file']}: anchor no longer matches - {name}")
 
     assert not live, "mutation specs out of sync with the source:\n  " + "\n  ".join(live)
+
+
+# --------------------------------------------------------------------------
+# the packaging files reference each other by path
+# --------------------------------------------------------------------------
+
+
+def test_the_declared_system_dependencies_file_is_where_the_conf_says():
+    """moonraker-update-manager.conf names the dependency list by path, and
+    Moonraker resolves it relative to the repo. Move or rename the file and
+    nothing fails loudly - the update manager simply installs nothing, and the
+    first symptom is display discovery failing on a fresh host for want of
+    pyserial.
+    """
+    conf = (REPO_ROOT / "scripts" / "moonraker-update-manager.conf").read_text(
+        encoding="utf-8"
+    )
+    declared = [
+        line.split(":", 1)[1].strip()
+        for line in conf.splitlines()
+        if line.startswith("system_dependencies:")
+    ]
+    assert len(declared) == 1, "exactly one system_dependencies key"
+    assert (REPO_ROOT / declared[0]).is_file(), f"{declared[0]} does not exist"
+
+
+def test_pyserial_is_declared_because_discovery_shells_out_for_it():
+    """The agent is stdlib-only, so this is the one system package it asks for -
+    and it is asked for on behalf of a subprocess, which makes it easy to think
+    nothing needs it. `displays.discover` runs the system python3 to ask the
+    screens which they are, and that import is the whole reason this file exists.
+    """
+    import json
+
+    conf = (REPO_ROOT / "scripts" / "moonraker-update-manager.conf").read_text(
+        encoding="utf-8"
+    )
+    declared = next(
+        line.split(":", 1)[1].strip()
+        for line in conf.splitlines()
+        if line.startswith("system_dependencies:")
+    )
+    with open(REPO_ROOT / declared, encoding="utf-8") as fh:
+        deps = json.load(fh)
+
+    assert "python3-serial" in deps.get("debian", [])

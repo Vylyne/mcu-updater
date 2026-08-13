@@ -547,9 +547,19 @@ _LEGACY_FW_STATE = {
 }
 
 
+def legacy_firmware_state(status: DeviceStatus) -> str:
+    """A verdict already in hand, in the FW_* words.
+
+    Split from `firmware_state` so a caller that needs both the verdict and the
+    legacy string - the agent, which now puts both on the wire - pays for the
+    comparison once.
+    """
+    return _LEGACY_FW_STATE[status.reason]
+
+
 def firmware_state(running: Optional[str], state: SourceState) -> str:
     """`device_status()` in the FW_* words. See that function for the reasoning."""
-    return _LEGACY_FW_STATE[device_status(running, state).reason]
+    return legacy_firmware_state(device_status(running, state))
 
 
 # --------------------------------------------------------------------------
@@ -710,9 +720,20 @@ _LEGACY_ART_STATE = {
 }
 
 
+def legacy_artifact_state(status: ArtifactStatus) -> str:
+    """A verdict already in hand, in the ART_* words.
+
+    Split from `artifact_state` for the same reason as its device counterpart:
+    this mapping is *not* invertible - two reasons collapse onto `ART_FOREIGN`
+    and two more onto `ART_STALE` - so a caller wanting both must compute the
+    verdict once and adapt it, never adapt and try to reverse it.
+    """
+    return _LEGACY_ART_STATE[status.reason]
+
+
 def artifact_state(paths: Paths, display: DisplayType, state: SourceState) -> str:
     """`artifact_status()` in the ART_* words. See that function for the reasoning."""
-    return _LEGACY_ART_STATE[artifact_status(paths, display, state).reason]
+    return legacy_artifact_state(artifact_status(paths, display, state))
 
 
 def resolve_port(port: str) -> str:

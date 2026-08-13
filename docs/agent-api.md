@@ -118,7 +118,8 @@ a Phase-3 panel coexist without either lying to the user.
 ### `fw.status`
 
 ```json
-{"types": [TypeStatus], "bus": [BusDevice],
+{"types": [TypeStatus], "displays": [DisplayStatus], "targets": [Target],
+ "firmware_families": [Family], "bus": [BusDevice],
  "job": null, "recent": [],
  "locked_by": null,
  "klipper_service": "active",
@@ -126,6 +127,10 @@ a Phase-3 panel coexist without either lying to the user.
  "settings": {...},
  "read_only": true}
 ```
+
+`targets` is `types` and `displays` said in one shape — see below. The two
+originals stay exactly as they are; nothing about them changes because it
+exists.
 
 `job` and `recent` are always `null`/`[]` in Phase 1; the keys exist now so the
 shape doesn't change when jobs arrive. `klipper_service` and `printing` are
@@ -140,6 +145,7 @@ be reached. Never treat them as load-bearing.
 ```json
 {"name": "bttebb36",
  "chipset": "stm32g0b1xx",
+ "firmware": "klipper",
  "katapult_installed": true,
  "klipper":  {"extra_args": "", "makefile_patches": []},
  "katapult": {"extra_args": "", "makefile_patches": [], "installed": true},
@@ -161,13 +167,21 @@ on-disk path, never a reconstructed one.
  "has_bin": true, "bin_mtime": 1785410000.0, "bin_size": 43120,
  "has_uf2": false,
  "built_fw_sha": "a1b2c3d", "current_fw_sha": "e4f5a6b",
- "stale": true, "stale_reason": "source_changed",
+ "stale": true, "stale_reason": "source_changed", "reason": "source_changed",
  "last_build_seconds": 74.2, "last_build_at": 1785410000.0,
  "config_rewritten": false}
 ```
 
 `stale_reason` ∈ `null` | `"never_built"` | `"config_changed"` |
 `"source_changed"`.
+
+`reason` is the same verdict without the collapse, and is what `Target.artifact`
+carries. It adds `"built_dirty"`, `"foreign_build"` and `"no_provenance"`.
+The last is why both exist: a binary sitting on disk with no build record is
+**not** the same as never having built one, and `stale_reason` reports
+`"never_built"` for both because that string is a documented API value. "You
+have never built this" and "somebody rebuilt this behind you" want different
+words, and only `reason` can tell you which you have.
 
 **This is the field the whole panel exists for**: it answers "do I need to
 reflash after that Klipper update?" at a glance. It compares recorded provenance
@@ -189,6 +203,80 @@ Worth surfacing; users otherwise get "why did my CAN setting move?".
 
 `tracked_by` is `null` for a device on the bus that no MCU type claims — that's
 the "new board, want to track it?" case.
+
+### `Target`
+
+An MCU type and an ESP32 display are different kinds of thing, but they are the
+same kind of *row*: something that gets built, and some devices it gets written
+to. `targets` is `types` and `displays` projected onto that shape, so one
+component renders both — and renders whatever comes next without being taught to.
+
+```json
+{"kind": "mcu", "name": "carto_v4", "descriptor": "stm32g431xx",
+ "firmware": "cartographer",
+ "artifact": {"state": "stale", "tone": "attention",
+              "label": "Source updated - rebuild", "reason": "source_changed"},
+ "needs_flash": true,
+ "devices": [
+   {"id": "290055001850304158373620-if00", "name": "mcu scanner",
+    "present": true, "state": "klipper", "path": "/dev/serial/by-id/usb-...",
+    "version": "v0.12.0-381-g...", "needs_flash": true, "tone": "attention",
+    "label": "Update available", "reason": "source_changed"}],
+ "actions": [
+   {"id": "build", "label": "Build", "method": "fw.build",
+    "params": {"name": "carto_v4", "fw": "cartographer"}, "blocked": null},
+   {"id": "flash", "label": "Flash", "method": "fw.flash_all",
+    "params": {"name": "carto_v4", "scope": "stale"},
+    "blocked": {"code": "no_artifact", "message": "...", "data": {...}}}]}
+```
+
+**It is a projection, not a second source of truth.** Everything here is derived
+from the same payloads `types` and `displays` are built from, in the same call.
+A fact that appears here and cannot be found there is a bug in the projection.
+
+Four things are deliberate:
+
+- **`tone` and `label` ride along.** `tone` is `ok` | `unknown` | `attention` —
+  a traffic light, named semantically because colour is one presentation of it
+  and must not be the only way it is understood. `reason` is still there and is
+  still what you switch on; `label` exists so the CLI, the panel and whatever
+  renders a probe next word the same verdict identically instead of growing
+  three sets of copy that drift.
+- **A capability is the presence of an action.** If the agent cannot flash, the
+  `flash` action is simply absent — not disabled. Gating is `fw.ping`'s
+  `capabilities` one level down.
+- **A requirement is only visible as `blocked`.** Same `{code, message, data}`
+  shape a failed call carries, so a greyed button and a refusal are one object
+  with one renderer. `null` means go. Transient global state — a job already
+  running — is deliberately *not* here; that is what `job` and `locked_by` are.
+- **`method` and `params` ride on each action** so the panel does not hold its
+  own RPC map. Without this you ship a uniform shape and the reader still
+  branches on `kind`, which is the whole thing this is for.
+
+`needs_flash` is tri-state at both levels, and the target's is `true` if any
+device is, `false` only if every device provably is not, and `null` otherwise.
+`any()` would read "cannot tell" as "nothing to do" and report a fleet nobody
+can see as up to date.
+
+A display carries one extra key, `extra`, holding the facts only a screen has
+(`module_version`, `source_version`, `source_dirty`, `klipper_section`,
+`reachable`, `moved`). A reader that never opens it renders both kinds.
+`firmware` is `null` for a display: PlatformIO builds from its own tree rather
+than from a `[firmware ...]` family, and naming one would be a guess.
+
+### `Family`
+
+```json
+{"name": "cartographer", "source": "/home/biqu/MCU-Firmware---Based-on-Klipper",
+ "artifact": "klipper", "present": true, "configurable": true, "builtin": false}
+```
+
+Every firmware family this install knows about, for a picker to offer. `present`
+and `configurable` are separate answers: a declared family whose tree has not
+been cloned yet is a real state — it is what every install looks like between
+adding the section and running `git clone` — and it wants "check out the source",
+not "unknown family". `builtin` marks `klipper` and `katapult`, which cannot be
+removed by editing a config file.
 
 ## Jobs
 

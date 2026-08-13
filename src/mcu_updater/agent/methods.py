@@ -20,7 +20,7 @@ import time
 from typing import Any, Callable, Optional
 
 from .. import API_VERSION, __version__, firmware
-from ..build import read_sidecar, staleness
+from ..build import read_sidecar
 from ..config import Registry
 from ..devices import (
     STATE_KATAPULT,
@@ -44,8 +44,10 @@ from ..states import (
     ARTIFACT_CHANGED,
     IN_BOOTLOADER,
     OFFLINE,
+    PROTOCOL_MISMATCH,
     SOURCE_CHANGED,
     UNKNOWN_VERSION,
+    ArtifactStatus,
     DeviceStatus,
 )
 from .rpc import ERR_INVALID_PARAMS, ERR_METHOD_NOT_FOUND, MethodNotFound, RpcError
@@ -167,6 +169,40 @@ class Api:
         """
         return firmware.names(self.paths)
 
+    def firmware_families(self) -> list[dict[str, Any]]:
+        """Every firmware family, with enough to populate a picker.
+
+        The panel had no way to ask this. It has been using the *keys* of
+        `kconfig_available` as a family list, which happens to work and is a
+        coincidence rather than a contract: those values mean "has a parseable
+        Kconfig", so a family built by anything other than kconfig+make would
+        read as absent rather than as present-and-not-configurable.
+
+        `present` and `configurable` are separate answers on purpose. A declared
+        family whose tree has not been cloned yet is a real state - it is what
+        every install looks like between adding the section and running git
+        clone - and it wants "check out the source", not "unknown family".
+        """
+        families = firmware.load(self.paths)
+        configurable = self.kconfig_available(families)
+        out = []
+        for name in firmware.names_of(families):
+            family = firmware.resolve(self.paths, name, families)
+            source = family.source_dir(self.paths)
+            out.append(
+                {
+                    "name": name,
+                    "source": source,
+                    "artifact": family.artifact_name(),
+                    "present": os.path.isdir(source),
+                    "configurable": configurable.get(name, False),
+                    # Neither can be removed by editing a config file, and the
+                    # picker should not offer to.
+                    "builtin": name in firmware.BUILTIN,
+                }
+            )
+        return out
+
     def _probe(self, method: str, params: Any = None) -> Any:
         """Ask Moonraker something, tolerating any failure."""
         if self._call is None:
@@ -196,9 +232,11 @@ class Api:
         binary = self.paths.bin_file(mcu_type, fw)
         uf2 = self.paths.uf2_file(mcu_type, fw)
         side = read_sidecar(self.paths, mcu_type, fw) or {}
-        stale, reason = staleness(self.paths, mcu_type, fw)
 
-        from ..build import git_head
+        from ..build import artifact_status, git_head, legacy_staleness
+
+        status = artifact_status(self.paths, mcu_type, fw)
+        stale, reason = legacy_staleness(status)
 
         return {
             "has_config": os.path.exists(cfg),
@@ -211,6 +249,11 @@ class Api:
             "current_fw_sha": git_head(self.paths.fw_dir(fw)),
             "stale": stale,
             "stale_reason": reason,
+            # The same verdict, un-collapsed. `stale_reason` reports
+            # "never_built" for a binary with no sidecar as well as for no
+            # binary at all, which is a documented API string and stays that
+            # way - so the distinction has to travel beside it, not instead.
+            "reason": status.reason,
             "last_build_seconds": side.get("duration"),
             "last_build_at": side.get("timestamp"),
             # True when make ran olddefconfig over our saved answers, which
@@ -269,6 +312,12 @@ class Api:
         out: dict[str, Any] = {
             "name": name,
             "chipset": mcu.chipset,
+            # Which family this type's *application* firmware comes from. Absent
+            # until now, which left every consumer assuming klipper - the same
+            # bug that was fixed on this side and is still live in the panel,
+            # where a cartographer type reads "never built" forever because the
+            # only artifact anyone looks at is artifacts.klipper.
+            "firmware": mcu.firmware,
             "serials": serials,
             "artifacts": {fw: self.artifact(name, fw) for fw in mcu.fw_order()},
             "katapult_installed": mcu.katapult_installed,
@@ -324,8 +373,13 @@ class Api:
         activity = self._printer_activity()
 
         versions = self.mcu_info()
+        # Built once and projected, rather than computed twice. `targets` says
+        # the same things as these two in one shape; if it ever needs a fact
+        # they do not carry, that is a missing key here, not there.
+        types = [self.type_status(reg, n, versions) for n in reg.names()]
+        displays = self.display_status()
         return {
-            "types": [self.type_status(reg, n, versions) for n in reg.names()],
+            "types": types,
             "bus": self.bus(reg),
             "job": current.to_dict() if current else None,
             "recent": [j.to_dict() for j in self.runner.recent(10)] if self.runner else [],
@@ -333,6 +387,9 @@ class Api:
             # Per firmware tree, so the panel can hide the configure button
             # rather than offer one that fails on a host missing the source.
             "kconfig_available": self.kconfig_available(),
+            # Every family that exists, for a picker to offer. Distinct from
+            # kconfig_available, whose keys have been standing in for this.
+            "firmware_families": self.firmware_families(),
             "klipper_service": self.klipper_service_state(),
             "printing": self.is_printing(activity),
             # idle_timeout.state. The panel needs this as well as `printing`:
@@ -345,7 +402,10 @@ class Api:
             "read_only": self.runner is None,
             # ESP32 displays. Absent config means the key is simply an empty
             # list, so a printer with no screens pays nothing for the feature.
-            "displays": self.display_status(),
+            "displays": displays,
+            # The two above in one shape, so a panel can render an MCU, a
+            # display and whatever comes next with a single component.
+            "targets": self.targets(reg, types, displays),
         }
 
     def display_status(self) -> list[dict[str, Any]]:
@@ -370,12 +430,14 @@ class Api:
             # Once per type, not once per screen: they share a source tree, and
             # it costs three git calls.
             tree = displays_mod.source_state(display.source)
+            art = displays_mod.artifact_status(self.paths, display, tree)
             screens = []
             for entry in listed["displays"]:
                 if not entry["section"].startswith(prefix + " "):
                     continue
                 port = entry["configured_path"]
                 known = macs.get(port) or {}
+                device = displays_mod.device_status(entry.get("firmware_version"), tree)
                 screens.append(
                     {
                         **entry,
@@ -393,9 +455,12 @@ class Api:
                         # baked into what the screen reports running against the
                         # source tree's HEAD - so unlike the MCU artifact check,
                         # this is about the device rather than a built file.
-                        "firmware_state": displays_mod.firmware_state(
-                            entry.get("firmware_version"), tree
-                        ),
+                        "firmware_state": displays_mod.legacy_firmware_state(device),
+                        # The same verdict in the shared vocabulary, named as the
+                        # MCU rows name theirs. Both are on the wire because the
+                        # FW_* word is what the panel reads today and the reason
+                        # is what it will read once it renders one kind of row.
+                        "reason": device.reason,
                     }
                 )
             out.append(
@@ -411,7 +476,11 @@ class Api:
                     # uploads whatever is in .pio/build without building, so a
                     # tree that moved since the last build writes old firmware
                     # to every screen with nothing to say so.
-                    "artifact_state": displays_mod.artifact_state(self.paths, display, tree),
+                    "artifact_state": displays_mod.legacy_artifact_state(art),
+                    # The same verdict, un-collapsed. The ART_* word above folds
+                    # foreign_build and no_provenance together, which is why this
+                    # cannot be recovered from it by the reader.
+                    "artifact_reason": art.reason,
                     "reachable": listed["reachable"],
                     # One klippy module serves every screen of a type, so this is
                     # a property of the type. First screen that reports one -
@@ -435,6 +504,346 @@ class Api:
                     # beside what the screens report.
                     "source_version": tree.head,
                     "source_dirty": tree.dirty,
+                }
+            )
+        return out
+
+    # -- the uniform projection --------------------------------------------
+    #
+    # `types[]` and `displays[]` say the same things in different words, and the
+    # panel needs a component per shape to read them. `targets[]` is those two
+    # projected onto one shape so that one component renders both - and renders
+    # a cartographer probe, or whatever comes next, without being taught to.
+    #
+    # It is a *projection*, not a second source of truth: everything here is
+    # derived from the payloads the other two keys are built from, in the same
+    # status() call. If a fact appears here that cannot be found there, that is a
+    # bug in this function rather than a reason to add a key.
+
+    #: Why a control is offered but cannot be used. Same `{code, message, data}`
+    #: shape as `UpdaterError.to_dict()` - so a greyed button and a failed call
+    #: are one object with one renderer, and the error codes stay one vocabulary.
+    #:
+    #: Deliberately absent: "something else is running". That is global and
+    #: transient, the panel already has it from `job` and `locked_by`, and
+    #: folding it in would make every target's meaning change the moment a build
+    #: started somewhere else.
+    BLOCKED_NO_ARTIFACT = "no_artifact"
+    BLOCKED_NO_CONFIG = "no_config"
+    BLOCKED_NO_DEVICE = "no_device"
+
+    @staticmethod
+    def _blocked(code: str, message: str, **data: Any) -> dict[str, Any]:
+        return {"code": code, "message": message, "data": data}
+
+    @staticmethod
+    def _artifact_json(status: ArtifactStatus) -> dict[str, Any]:
+        """Q1's verdict, as the wire carries it.
+
+        `tone` and `label` ride along rather than being left to the reader.
+        Four separate colour maps and four sets of wording grew up in the panel
+        answering this from the raw reasons; the point of having one vocabulary
+        is that one wording serves every front end.
+        """
+        return {
+            "state": status.state,
+            "tone": status.tone,
+            "label": status.label,
+            "reason": status.reason,
+        }
+
+    @staticmethod
+    def _device_json(status: DeviceStatus) -> dict[str, Any]:
+        """Q2's verdict. `needs_flash` stays tri-state, and never False on
+        absent evidence."""
+        return {
+            "needs_flash": status.needs_flash,
+            "tone": status.tone,
+            "label": status.label,
+            "reason": status.reason,
+        }
+
+    @staticmethod
+    def _aggregate(devices: list[dict[str, Any]]) -> Optional[bool]:
+        """True if any device wants firmware, False if all provably don't, else None.
+
+        The tri-state matters: `any()` reads None as falsey, so a type whose
+        boards are all offline would report "nothing to do" about a fleet nobody
+        can see. That is the same class of quiet lie as a stale artifact
+        reporting itself current.
+        """
+        verdicts = [d["needs_flash"] for d in devices]
+        if True in verdicts:
+            return True
+        if verdicts and all(v is False for v in verdicts):
+            return False
+        return None
+
+    def targets(
+        self,
+        reg: Registry,
+        types: list[dict[str, Any]],
+        displays: list[dict[str, Any]],
+    ) -> list[dict[str, Any]]:
+        """`types[]` and `displays[]` in one shape."""
+        allowed = set(self.available_methods())
+        configurable = self.kconfig_available()
+        return [
+            self._mcu_target(reg, payload, allowed, configurable) for payload in types
+        ] + [self._display_target(payload, allowed) for payload in displays]
+
+    def _mcu_target(
+        self,
+        reg: Registry,
+        payload: dict[str, Any],
+        allowed: set[str],
+        configurable: dict[str, bool],
+    ) -> dict[str, Any]:
+        name = payload["name"]
+        fw = payload["firmware"]
+        artifact = payload["artifacts"].get(fw) or {}
+        status = ArtifactStatus(artifact.get("reason"))
+
+        devices = [
+            {
+                "id": serial["serial"],
+                # The klipper [mcu] section, which is what makes a 24-hex serial
+                # a board you recognise. Named as System Loads names it.
+                "name": serial.get("mcu"),
+                "present": serial["state"] != STATE_OFFLINE,
+                "state": serial["state"],
+                "path": serial.get("path"),
+                "version": serial.get("running_version"),
+                **self._device_json(DeviceStatus(serial.get("reason"))),
+            }
+            for serial in payload["serials"]
+        ]
+
+        actions: list[dict[str, Any]] = []
+        if "fw.build" in allowed:
+            actions.append(
+                {
+                    "id": "build",
+                    "label": "Build",
+                    "method": "fw.build",
+                    # The family this type actually runs. Hardcoding klipper here
+                    # is what makes a cartographer type build the wrong tree.
+                    "params": {"name": name, "fw": fw},
+                    "blocked": (
+                        None
+                        if artifact.get("has_config")
+                        else self._blocked(
+                            self.BLOCKED_NO_CONFIG,
+                            f"'{name}' has no saved {fw} configuration yet. "
+                            "Run menuconfig for it first.",
+                            name=name,
+                            fw=fw,
+                        )
+                    ),
+                }
+            )
+        for family in reg.get(name).families():
+            if "fw.kconfig.open" in allowed and configurable.get(family):
+                actions.append(
+                    {
+                        "id": f"configure:{family}",
+                        "label": f"Configure {family}",
+                        "method": "fw.kconfig.open",
+                        "params": {"name": name, "fw": family},
+                        "blocked": None,
+                    }
+                )
+        actions.extend(
+            self._flash_actions(
+                name=name,
+                allowed=allowed,
+                has_artifact=bool(artifact.get("has_bin")),
+                flashable=[d for d in devices if d["present"]],
+                what=f"{fw} firmware",
+            )
+        )
+
+        return {
+            "kind": "mcu",
+            "name": name,
+            "descriptor": payload["chipset"],
+            "firmware": fw,
+            "artifact": self._artifact_json(status),
+            "needs_flash": self._aggregate(devices),
+            "devices": devices,
+            "actions": actions,
+        }
+
+    def _display_target(
+        self, payload: dict[str, Any], allowed: set[str]
+    ) -> dict[str, Any]:
+        name = payload["name"]
+        status = ArtifactStatus(payload["artifact_reason"])
+
+        devices = []
+        for screen in payload["screens"]:
+            # A screen has two ways to want firmware and they are independent: a
+            # protocol mismatch is the device saying it cannot talk to this
+            # module, and `behind` is it running an older commit. The version
+            # comparison has no word for the first, so it is applied on top.
+            device = DeviceStatus(screen.get("reason"))
+            if screen.get("protocol_match") is False:
+                device = DeviceStatus(PROTOCOL_MISMATCH)
+            elif not screen["present"]:
+                device = DeviceStatus(OFFLINE)
+            devices.append(
+                {
+                    "id": screen["configured_path"],
+                    # "knomi_serial t0_knomi" - the same slot the MCU rows use
+                    # for their [mcu] section, and the same kind of fact.
+                    "name": screen["section"],
+                    "present": screen["present"],
+                    "state": self._screen_state(screen),
+                    "path": screen.get("resolved_path"),
+                    "version": screen.get("firmware_version"),
+                    **self._device_json(device),
+                }
+            )
+
+        actions: list[dict[str, Any]] = []
+        if "fw.display.build" in allowed:
+            actions.append(
+                {
+                    "id": "build",
+                    "label": "Build",
+                    "method": "fw.display.build",
+                    "params": {"name": name},
+                    # PlatformIO carries its own configuration in platformio.ini,
+                    # so there is no menuconfig step to be missing.
+                    "blocked": None,
+                }
+            )
+        actions.extend(
+            self._flash_actions(
+                name=name,
+                allowed=allowed,
+                has_artifact=bool(payload["has_firmware"]),
+                flashable=[d for d in devices if d["present"]],
+                what="display firmware",
+                flash_method="fw.display.flash",
+                update_method=None,
+            )
+        )
+
+        return {
+            "kind": "display",
+            "name": name,
+            "descriptor": payload["env"],
+            # Displays are built by PlatformIO from their own tree rather than
+            # from a `[firmware ...]` family, so there is no family to name. The
+            # build action carries what a caller actually needs.
+            "firmware": None,
+            "artifact": self._artifact_json(status),
+            "needs_flash": self._aggregate(devices),
+            "devices": devices,
+            "actions": actions,
+            # Facts only a screen has. Kept apart from the shared shape rather
+            # than diluting it - this is the one place branching is honest,
+            # because these are extra things to say, not another way of saying
+            # the same thing.
+            "extra": {
+                "module_version": payload["module_version"],
+                "source_version": payload["source_version"],
+                "source_dirty": payload["source_dirty"],
+                "klipper_section": payload["klipper_section"],
+                "reachable": payload["reachable"],
+                "moved": [
+                    s["configured_path"] for s in payload["screens"] if s.get("moved_from")
+                ],
+            },
+        }
+
+    @staticmethod
+    def _screen_state(screen: dict[str, Any]) -> str:
+        """The slot an MCU row fills with klipper/katapult/offline.
+
+        Three states again, but the middle one is the point: a port that opens
+        is not a screen that answers. `present` stays true with the far end
+        unplugged, which is exactly the failure the klippy module swallows.
+        """
+        if not screen["present"]:
+            return "missing"
+        online = screen.get("device_online")
+        if online is True:
+            return "online"
+        if online is False:
+            return "silent"
+        # A module too old for get_status reports null, which is "unknown" and
+        # must not read as "silent" - that would invent a fault on a display
+        # working perfectly.
+        return "reachable"
+
+    def _flash_actions(
+        self,
+        *,
+        name: str,
+        allowed: set[str],
+        has_artifact: bool,
+        flashable: list[dict[str, Any]],
+        what: str,
+        flash_method: str = "fw.flash_all",
+        update_method: Optional[str] = "fw.update_all",
+    ) -> list[dict[str, Any]]:
+        """Flash, and build-then-flash, with the same reason for refusing both.
+
+        One function because the two share every precondition. They differed
+        only in which of two nearly identical tooltips the panel wrote.
+        """
+        if not has_artifact:
+            blocked = self._blocked(
+                self.BLOCKED_NO_ARTIFACT,
+                f"no {what} has been built for '{name}' yet.",
+                name=name,
+            )
+        elif not flashable:
+            blocked = self._blocked(
+                self.BLOCKED_NO_DEVICE,
+                f"nothing is connected to flash for '{name}'.",
+                name=name,
+            )
+        else:
+            blocked = None
+
+        out = []
+        if flash_method in allowed:
+            params: dict[str, Any] = {"name": name}
+            if flash_method == "fw.flash_all":
+                # Judgement, not physics: `stale` skips boards already running
+                # this build. Offline boards are excluded under every scope.
+                params["scope"] = "stale"
+            out.append(
+                {
+                    "id": "flash",
+                    "label": "Flash",
+                    "method": flash_method,
+                    "params": params,
+                    "blocked": blocked,
+                }
+            )
+        if update_method and update_method in allowed:
+            out.append(
+                {
+                    "id": "update",
+                    "label": "Build and flash",
+                    "method": update_method,
+                    "params": {"name": name, "scope": "stale"},
+                    # A rebuild is part of the operation, so a missing artifact
+                    # is not a reason to refuse it - only having nowhere to
+                    # write is.
+                    "blocked": (
+                        None
+                        if flashable
+                        else self._blocked(
+                            self.BLOCKED_NO_DEVICE,
+                            f"nothing is connected to flash for '{name}'.",
+                            name=name,
+                        )
+                    ),
                 }
             )
         return out
@@ -1611,9 +2020,9 @@ class Api:
         """Write a display env to its configured screens.
 
         **The device list is read before Klipper is stopped, not after.** It comes
-        from `configfile.settings`, which only a *running* Klipper can answer - so
-        stopping first would leave nothing to flash. Every other flow in this file
-        can query mid-job; this one cannot.
+        from the klippy module's own printer objects, which only a *running*
+        Klipper can answer - so stopping first would leave nothing to flash. Every
+        other flow in this file can query mid-job; this one cannot.
 
         Klipper is stopped for the batch because the klippy module holds the port
         open, and esptool cannot have it while it does.
@@ -2670,18 +3079,27 @@ class Api:
             self._kconfig_sessions = SessionStore(self.paths)
         return self._kconfig_sessions
 
-    def kconfig_available(self) -> dict[str, bool]:
+    def kconfig_available(
+        self, families: Optional[dict[str, firmware.FirmwareFamily]] = None
+    ) -> dict[str, bool]:
         """Which firmware trees can be configured from here.
 
         A stat per tree, so it is cheap enough for fw.status. Lets the panel hide
         the button rather than offer one that fails on a host where the source tree
         is missing.
+
+        `families` is accepted so a caller already holding the parsed sections -
+        `firmware_families`, on the same status call - does not re-read the
+        config file to learn what it already knows.
         """
         from ..kconfig import kconfiglib_path
 
+        if families is None:
+            families = firmware.load(self.paths)
+
         out = {}
-        for fw in self._fw_names():
-            fw_dir = firmware.resolve(self.paths, fw).source_dir(self.paths)
+        for fw in firmware.names_of(families):
+            fw_dir = firmware.resolve(self.paths, fw, families).source_dir(self.paths)
             out[fw] = os.path.isfile(kconfiglib_path(fw_dir)) and os.path.isfile(
                 os.path.join(fw_dir, "src", "Kconfig")
             )

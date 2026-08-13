@@ -438,6 +438,18 @@ def artifact_status(paths: Paths, mcu_type: str, fw: str) -> ArtifactStatus:
 _LEGACY_STALE_REASON: dict[Optional[str], Optional[str]] = {NO_PROVENANCE: NEVER_BUILT}
 
 
+def legacy_staleness(status: ArtifactStatus) -> tuple[bool, Optional[str]]:
+    """A verdict already in hand, in the legacy (stale, reason) shape.
+
+    Split from `staleness` so a caller needing both - the agent, which now puts
+    the exact reason on the wire beside the legacy one - compares once. It also
+    keeps this collapse in a single place: it is not invertible (`no_provenance`
+    and `never_built` both report "never_built"), so anything wanting the
+    distinction must carry the verdict rather than try to undo this.
+    """
+    return (not status.is_current), _LEGACY_STALE_REASON.get(status.reason, status.reason)
+
+
 def staleness(paths: Paths, mcu_type: str, fw: str) -> tuple[bool, Optional[str]]:
     """(stale, reason) for a type's built artifact - the legacy shape.
 
@@ -449,8 +461,7 @@ def staleness(paths: Paths, mcu_type: str, fw: str) -> tuple[bool, Optional[str]
     collapse of a four-state answer into a boolean: claiming False for an image
     we cannot vouch for would be the lie this module exists to prevent.
     """
-    status = artifact_status(paths, mcu_type, fw)
-    return (not status.is_current), _LEGACY_STALE_REASON.get(status.reason, status.reason)
+    return legacy_staleness(artifact_status(paths, mcu_type, fw))
 
 
 # --------------------------------------------------------------------------

@@ -7,6 +7,7 @@
     "pytest",
     "tests/test_agent_display_jobs.py",
     "tests/test_agent_displays.py",
+    "tests/test_agent_targets.py",
     "-q"
   ],
   "mutations": [
@@ -27,8 +28,13 @@
     },
     {
       "name": "displays ride along in fw.status",
-      "find": "            \"displays\": self.display_status(),\n",
+      "find": "            \"displays\": displays,\n",
       "replace": "            \"displays\": [],\n"
+    },
+    {
+      "name": "displays are projected into targets too",
+      "find": "        return [\n            self._mcu_target(reg, payload, allowed, configurable) for payload in types\n        ] + [self._display_target(payload, allowed) for payload in displays]",
+      "replace": "        return [\n            self._mcu_target(reg, payload, allowed, configurable) for payload in types\n        ]"
     },
     {
       "name": "the port watcher is stopped for the upload",

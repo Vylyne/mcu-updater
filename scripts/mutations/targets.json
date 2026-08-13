@@ -1,0 +1,79 @@
+{
+  "_comment": "fw.status.targets - the one shape both MCU types and displays project onto. These guards are about the projection telling the truth: a lost tri-state, a hardcoded family, or a missing precondition all render as a confident button that does the wrong thing.",
+  "file": "src/mcu_updater/agent/methods.py",
+  "command": [
+    "python",
+    "-m",
+    "pytest",
+    "tests/test_agent_targets.py",
+    "tests/test_agent_methods.py",
+    "-q"
+  ],
+  "mutations": [
+    {
+      "name": "the aggregate keeps its tri-state",
+      "find": "        verdicts = [d[\"needs_flash\"] for d in devices]\n        if True in verdicts:\n            return True\n        if verdicts and all(v is False for v in verdicts):\n            return False\n        return None",
+      "replace": "        return any(d[\"needs_flash\"] for d in devices)"
+    },
+    {
+      "name": "build names the family the type actually runs",
+      "find": "                    \"params\": {\"name\": name, \"fw\": fw},",
+      "replace": "                    \"params\": {\"name\": name, \"fw\": \"klipper\"},"
+    },
+    {
+      "name": "the artifact judged is the one this type would flash",
+      "find": "        artifact = payload[\"artifacts\"].get(fw) or {}",
+      "replace": "        artifact = payload[\"artifacts\"].get(\"klipper\") or {}"
+    },
+    {
+      "name": "flash is refused with nothing built",
+      "find": "        if not has_artifact:\n            blocked = self._blocked(",
+      "replace": "        if False:\n            blocked = self._blocked("
+    },
+    {
+      "name": "flash is refused with nothing connected",
+      "find": "        elif not flashable:\n            blocked = self._blocked(\n                self.BLOCKED_NO_DEVICE,",
+      "replace": "        elif False:\n            blocked = self._blocked(\n                self.BLOCKED_NO_DEVICE,"
+    },
+    {
+      "name": "build is refused without saved menuconfig answers",
+      "find": "                        if artifact.get(\"has_config\")\n                        else self._blocked(",
+      "replace": "                        if True\n                        else self._blocked("
+    },
+    {
+      "name": "configure is offered only for the families this type uses",
+      "find": "        for family in reg.get(name).families():",
+      "replace": "        for family in reg.get(name).fw_order():"
+    },
+    {
+      "name": "configure is offered only where the tree is checked out",
+      "find": "            if \"fw.kconfig.open\" in allowed and configurable.get(family):",
+      "replace": "            if \"fw.kconfig.open\" in allowed:"
+    },
+    {
+      "name": "a protocol mismatch outranks the version comparison",
+      "find": "            if screen.get(\"protocol_match\") is False:\n                device = DeviceStatus(PROTOCOL_MISMATCH)",
+      "replace": "            if False:\n                device = DeviceStatus(PROTOCOL_MISMATCH)"
+    },
+    {
+      "name": "an unreachable screen is never reported current",
+      "find": "            elif not screen[\"present\"]:\n                device = DeviceStatus(OFFLINE)",
+      "replace": "            elif False:\n                device = DeviceStatus(OFFLINE)"
+    },
+    {
+      "name": "the exact artifact reason survives the legacy collapse",
+      "find": "            \"reason\": status.reason,\n            \"last_build_seconds\": side.get(\"duration\"),",
+      "replace": "            \"reason\": reason,\n            \"last_build_seconds\": side.get(\"duration\"),"
+    },
+    {
+      "name": "a type reports which firmware family it runs",
+      "find": "            \"firmware\": mcu.firmware,",
+      "replace": "            \"firmware\": \"klipper\","
+    },
+    {
+      "name": "a declared family with no source tree is not reported present",
+      "find": "                    \"present\": os.path.isdir(source),",
+      "replace": "                    \"present\": True,"
+    }
+  ]
+}

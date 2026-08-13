@@ -1352,7 +1352,21 @@ class Api:
                 {
                     "name": true_section.split(" ", 1)[1],
                     "section": true_section,
+                    # What printer.cfg names. None for a `serial:` section,
+                    # which addresses a socket rather than a display.
                     "device_id": configured_device_id or live.get("device_id"),
+                    # What the screen itself says it is: six hex characters from
+                    # the low three bytes of its eFuse MAC. Burned in, so it
+                    # survives a reflash, an erase_flash and a move to another
+                    # socket - the only stable name a display has, because the
+                    # CH340K in front of it reports no USB serial at all.
+                    #
+                    # Present for *every* reachable screen, including the
+                    # `serial:` ones whose config carries no identity, which is
+                    # the gap this fills. Compared case-insensitively wherever
+                    # it is used: it is emitted lowercase at both ends, but the
+                    # vendor's own docs say not to depend on that.
+                    "reported_id": (live.get("reported_id") or "").lower() or None,
                     "addressed_by": addressed_by,
                     "configured_path": configured,
                     "resolved_path": resolved,
@@ -1374,6 +1388,22 @@ class Api:
                     # reflashing" a display can produce, because the device
                     # itself declares it.
                     "protocol_match": live.get("protocol_match"),
+                    # The two halves behind that verdict, so a mismatch can say
+                    # which way round it is rather than only that it exists.
+                    "protocol_version": live.get("protocol_version"),
+                    "device_protocol_version": live.get("device_protocol_version"),
+                    # Whether the config we pushed is the config it is running.
+                    # Separates "I sent it" from "it took" - a screen can be
+                    # perfectly current on firmware and still be showing the
+                    # pages from before your last edit.
+                    "config_applied": live.get("config_applied"),
+                    "config_crc": live.get("config_crc"),
+                    "device_config_crc": live.get("device_config_crc"),
+                    # How many pages the screen actually built, which is the
+                    # configured list minus any that would have been empty.
+                    # Without it a `pages:` edit can only be checked by picking
+                    # the display up.
+                    "page_count": live.get("page_count"),
                     # What the host believes about the tool this screen belongs
                     # to. Not device state - the module fills these from the
                     # cluster, so they answer even while the screen is silent.

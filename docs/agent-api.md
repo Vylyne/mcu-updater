@@ -592,7 +592,8 @@ flashing is precisely the one this must not be blind to.
 
 ```json
 {"displays": [{"name": "t0_knomi", "section": "knomi_serial t0_knomi",
-               "device_id": null, "addressed_by": "serial",
+               "device_id": null, "reported_id": "19aa44",
+               "addressed_by": "serial",
                "configured_path": "/dev/knomi_t0",
                "resolved_path": "/dev/ttyUSB0", "present": true},
               {"name": "t1_knomi", "section": "knomi_serial t1_knomi",
@@ -609,6 +610,29 @@ starts happily with a blank display. Nothing else in the system notices.
 
 `reachable` is distinct from an empty list: "no displays configured" and "we
 could not ask Klipper" must not look the same.
+
+**`device_id` and `reported_id` are different questions.** `device_id` is what
+printer.cfg names, so it is `null` for a `serial:` section — that addresses a
+socket, not a display. `reported_id` is what the screen itself says: six hex
+characters from the low three bytes of its eFuse MAC, burned in, surviving a
+reflash, an `erase_flash` and a move to another socket. It is the only stable
+name a display has, because the CH340K in front of it reports no USB serial
+number at all. Emitted lowercase, but compare case-insensitively — the vendor's
+own docs say not to depend on it.
+
+`config_applied` separates "I pushed it" from "it took": a screen can be current
+on firmware and still be showing the pages from before your last edit.
+`config_crc` is what we sent, `device_config_crc` is what it holds, and
+`page_count` is how many pages it actually built — the configured list minus any
+that would have been empty, which otherwise can only be checked by picking the
+display up.
+
+`protocol_version` and `device_protocol_version` are the two halves behind
+`protocol_match`, so a mismatch can say which way round it is.
+
+Every one of these is `null` against a module too old to report it. **Absence
+means unknown, never false** — a screen answering nothing must not read as one
+with a mismatched config.
 
 ### `fw.display.flash`
 

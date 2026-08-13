@@ -527,3 +527,121 @@ def test_a_module_without_the_tool_fields_reports_them_as_unknown(api, fake_root
 
     for field in ("tool", "used", "filament_color", "filament_type"):
         assert screen[field] is None, field
+
+
+# --------------------------------------------------------------------------
+# the identity a display actually has
+#
+# A CH340K reports no USB serial number, so every path names a socket rather
+# than a device. The screen's own id - six hex characters from the low three
+# bytes of its eFuse MAC - is burned in and survives a reflash, an erase_flash
+# and a move to another socket. It is the only stable name a display has.
+# --------------------------------------------------------------------------
+
+
+def test_a_serial_addressed_screen_still_reports_its_own_identity(api, fake_root):
+    """The gap this closes. `device_id` is what printer.cfg names, and a
+    `serial:` section names a path - so it was null for exactly the displays
+    whose identity nothing else could supply."""
+    port = str(fake_root / "knomi_t0")
+    open(port, "w").close()
+
+    api._call = _moonraker_live(
+        _configured(port),
+        {"knomi_serial T0_knomi": {"reported_id": "19aa44", "device_id": None}},
+    )
+    display = api.display_list({})["displays"][0]
+
+    assert display["addressed_by"] == "serial"
+    assert display["device_id"] is None, "printer.cfg names a socket, not a display"
+    assert display["reported_id"] == "19aa44"
+
+
+def test_a_reported_id_is_lowered_because_the_docs_say_not_to_trust_the_case(
+    api, fake_root
+):
+    port = str(fake_root / "knomi_t0")
+    open(port, "w").close()
+
+    api._call = _moonraker_live(
+        _configured(port), {"knomi_serial T0_knomi": {"reported_id": "19AA44"}}
+    )
+    assert api.display_list({})["displays"][0]["reported_id"] == "19aa44"
+
+
+def test_a_screen_that_has_never_answered_reports_no_identity(api, fake_root):
+    """Not the empty string. A display that cannot be reached is precisely the
+    one that may need reflashing, and "" would compare equal to nothing."""
+    port = str(fake_root / "knomi_t0")
+    open(port, "w").close()
+
+    api._call = _moonraker_live(_configured(port), {"knomi_serial T0_knomi": {}})
+    assert api.display_list({})["displays"][0]["reported_id"] is None
+
+
+def test_a_pushed_config_is_separable_from_an_applied_one(api, fake_root):
+    """A screen can be current on firmware and still showing the pages from
+    before your last edit. `config_applied` is the only thing that says so."""
+    port = str(fake_root / "knomi_t0")
+    open(port, "w").close()
+
+    api._call = _moonraker_live(
+        _configured(port),
+        {
+            "knomi_serial T0_knomi": {
+                "config_crc": "DEADBEEF",
+                "device_config_crc": "0BADCAFE",
+                "config_applied": False,
+                "page_count": 3,
+            }
+        },
+    )
+    display = api.display_list({})["displays"][0]
+
+    assert display["config_applied"] is False
+    assert display["config_crc"] == "DEADBEEF"
+    assert display["device_config_crc"] == "0BADCAFE"
+    assert display["page_count"] == 3
+
+
+def test_a_protocol_mismatch_can_say_which_way_round_it_is(api, fake_root):
+    port = str(fake_root / "knomi_t0")
+    open(port, "w").close()
+
+    api._call = _moonraker_live(
+        _configured(port),
+        {
+            "knomi_serial T0_knomi": {
+                "protocol_match": False,
+                "protocol_version": 5,
+                "device_protocol_version": 4,
+            }
+        },
+    )
+    display = api.display_list({})["displays"][0]
+
+    assert display["protocol_match"] is False
+    assert display["protocol_version"] == 5
+    assert display["device_protocol_version"] == 4
+
+
+def test_every_new_field_is_none_against_a_module_too_old_to_report_it(api, fake_root):
+    """The existing contract: absence means unknown, never false. A module
+    predating these fields answers nothing for them and must not read as a
+    screen with a mismatched config or a failed protocol check."""
+    port = str(fake_root / "knomi_t0")
+    open(port, "w").close()
+
+    api._call = _moonraker_live(_configured(port), {"knomi_serial T0_knomi": {}})
+    display = api.display_list({})["displays"][0]
+
+    for field in (
+        "reported_id",
+        "config_applied",
+        "config_crc",
+        "device_config_crc",
+        "page_count",
+        "protocol_version",
+        "device_protocol_version",
+    ):
+        assert display[field] is None, field

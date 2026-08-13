@@ -7,6 +7,7 @@
     "pytest",
     "tests/test_displays.py",
     "tests/test_agent_display_jobs.py",
+    "tests/test_agent_displays.py",
     "-q"
   ],
   "mutations": [
@@ -44,6 +45,21 @@
       "name": "waiting-for-a-new-port is explained, not left as exit 2",
       "find": "        if _WAITING_FOR_PORT_RE.search(text):",
       "replace": "        if False:"
+    },
+    {
+      "name": "a map version we do not understand is ignored",
+      "find": "    if not isinstance(data, dict) or data.get(\"version\") != DEVICE_MAP_VERSION:",
+      "replace": "    if not isinstance(data, dict):"
+    },
+    {
+      "name": "an entry with no port is not offered as a target",
+      "find": "        if not raw_id or not port:",
+      "replace": "        if False:"
+    },
+    {
+      "name": "map ids are lowered so they compare",
+      "find": "        device_id = str(raw_id).lower()",
+      "replace": "        device_id = str(raw_id)"
     }
   ]
 }

@@ -94,7 +94,7 @@ application error (see `data.code`), `-32603` internal.
 | `fw.build_all` | `fw?`, `scope?` | `{job_id, job, types}` — builds only, touches no board |
 | `fw.flash_all` | `scope?`, `name?`, `force?` | `{job_id, job, boards}` — **off by default** |
 | `fw.update_all` | `scope?`, `name?`, `force?` | `{job_id, job, types}` — **off by default** |
-| `fw.display.list` | — | `{displays, reachable}` — read-only |
+| `fw.display.list` | — | `{displays, reachable, watcher}` — read-only |
 | `fw.display.build` | `name` | `{job_id, job}` — PlatformIO, touches no screen |
 | `fw.display.flash` | `name`, `port?`, `force?` | `{job_id, job, displays}` — **off by default** |
 | `fw.job.get` | `job_id?`, `log_from?` | `{job, log, log_from, log_next, log_dropped}` |
@@ -610,6 +610,44 @@ starts happily with a blank display. Nothing else in the system notices.
 
 `reachable` is distinct from an empty list: "no displays configured" and "we
 could not ask Klipper" must not look the same.
+
+### The watcher's map — the source that answers with Klipper down
+
+`watcher` is `null` whenever `reachable` is true, and populated when it is not:
+
+```json
+{"displays": [], "reachable": false,
+ "watcher": {"knomi_toolchanger": {
+     "service": "knomi_serial", "active": true,
+     "devices": [{"device_id": "19aa44", "port": "/dev/ttyUSB0",
+                  "firmware_version": "0.5.0+54.g5509d4f",
+                  "build_variant": "knomi"}]}}}
+```
+
+**This is the case flashing actually needs.** esptool wants the port to itself,
+so Klipper has to be stopped — and stopping Klipper is precisely what removes
+the `configfile.settings` source everything else here depends on.
+
+**`active` is not decoration.** The map carries no timestamps by design: an
+entry means "identified during the watcher's current run, and its port has not
+disappeared since", which is only true while the watcher is *running*. A stopped
+watcher leaves a file that still parses and may name ports that have since
+moved, and nothing in the file says so. Treat `active: false` as "these are
+last-known, not current".
+
+It is keyed by display type because the watcher belongs to the family, not the
+host — a second display family brings its own.
+
+Not consulted while Klipper is answering, deliberately: deciding staleness means
+asking systemd whether the unit is up, which is a fork per call on a method that
+rides along in every `fw.status` poll. There is a test asserting it never asks
+while the authoritative source is available.
+
+A file with an unrecognised `version`, no `devices`, or an entry with no port
+yields an empty map rather than an error — every one of those means "we cannot
+tell you where these displays are", and the answer to that is the same in each
+case. The format is the display project's to change, and a half-understood port
+is a write to the wrong screen.
 
 **`device_id` and `reported_id` are different questions.** `device_id` is what
 printer.cfg names, so it is `null` for a `serial:` section — that addresses a

@@ -1300,7 +1300,11 @@ class Api:
         res = self._probe("printer.objects.query", {"objects": query})
         status = (res or {}).get("status")
         if not isinstance(status, dict):
-            return {"displays": [], "reachable": False}
+            # Klipper cannot answer, which is exactly when the watcher's map is
+            # the source - and exactly when flashing needs one, because esptool
+            # wants the port to itself and stopping Klipper is what removed the
+            # first source.
+            return {"displays": [], "reachable": False, "watcher": self._watcher_map()}
 
         settings = (status.get("configfile") or {}).get("settings") or {}
         # Both keyed on the lowered name, because that is the only form the two
@@ -1422,7 +1426,43 @@ class Api:
                 }
             )
 
-        return {"displays": displays, "reachable": True}
+        # Not consulted while Klipper is up. Deciding whether the map is stale
+        # means asking systemd whether the watcher is running, and that is a
+        # fork per call on a method that rides along in every fw.status poll -
+        # paid for an answer nobody needs while the authoritative source is
+        # answering.
+        return {"displays": displays, "reachable": True, "watcher": None}
+
+    def _watcher_map(self) -> dict[str, Any]:
+        """Each display family's watcher: is it running, and what has it found?
+
+        Keyed by display type, because the watcher is a property of the family
+        rather than of the host - a second display family brings its own.
+
+        `active` is not decoration. The map carries no timestamps by design, so
+        an entry means "identified during the watcher's current run, port still
+        there" - a statement that is only true while it is running. A stopped
+        watcher leaves a file that still parses and may name ports that have
+        since moved, and nothing in it says so.
+        """
+        from .. import displays as displays_mod
+        from ..service import make_controller
+
+        settings = self.settings()
+        out: dict[str, Any] = {}
+        for name, display in self.display_types().items():
+            svc = (
+                make_controller(settings, call=self._call_for_service, name=display.service)
+                if display.service
+                else None
+            )
+            devices = displays_mod.read_device_map(self.paths, display)
+            out[name] = {
+                "service": display.service or None,
+                "active": svc.is_active() if svc is not None else None,
+                "devices": [d.to_json() for d in devices.values()],
+            }
+        return out
 
     def display_types(self) -> dict:
         """Configured `[display <env>]` sections, with the shared source default."""

@@ -94,6 +94,10 @@ class DisplayType:
     #: means there is nothing to pause, and a unit systemd has never heard of is
     #: simply never active, so an install without it pays nothing.
     service: str = "knomi_serial"
+    #: The map that watcher writes: device id -> port. Relative paths hang off
+    #: `printer_data`, which is where it lives. Blank means this family has no
+    #: watcher map, and is what a family with no `service` would set too.
+    device_map: str = "knomi/devices.json"
 
     def __post_init__(self) -> None:
         # The env is the type, so the section name is the env unless overridden.
@@ -127,12 +131,111 @@ def load(paths: Paths, default_source: str = "") -> dict[str, DisplayType]:
         # `service:` takes the default watcher, while `service:` with nothing
         # after it is how you say this family has no watcher to pause.
         watcher = doc.get(section, "service")
+        device_map = doc.get(section, "device_map")
         out[name] = DisplayType(
             name=name,
             env=(doc.get(section, "env") or "").strip(),
             source=(doc.get(section, "source") or default_source).strip(),
             klipper_section=(doc.get(section, "klipper_section") or "knomi_serial").strip(),
             service=("knomi_serial" if watcher is None else watcher).strip(),
+            device_map=(
+                "knomi/devices.json" if device_map is None else device_map
+            ).strip(),
+        )
+    return out
+
+
+# --------------------------------------------------------------------------
+# the watcher's device map
+#
+# The one source that answers while Klipper is *down*, which is precisely when
+# flashing needs it: esptool wants the port to itself, so Klipper has to be
+# stopped, and stopping Klipper is what removes the only other source.
+# --------------------------------------------------------------------------
+
+#: The only schema this understands. A file announcing anything else is ignored
+#: rather than guessed at - the format is somebody else's to change, and a
+#: half-understood port is a write to the wrong display.
+DEVICE_MAP_VERSION = 1
+
+
+@dataclasses.dataclass(frozen=True)
+class WatcherDevice:
+    """One display the watcher has identified during its current run."""
+
+    device_id: str
+    port: str
+    firmware_version: Optional[str] = None
+    build_variant: Optional[str] = None
+
+    def to_json(self) -> dict[str, Optional[str]]:
+        return {
+            "device_id": self.device_id,
+            "port": self.port,
+            "firmware_version": self.firmware_version,
+            "build_variant": self.build_variant,
+        }
+
+
+def device_map_path(paths: Paths, display: DisplayType) -> str:
+    """Where this family's watcher writes its map. Empty if it has none."""
+    configured = display.device_map.strip()
+    if not configured:
+        return ""
+    expanded = os.path.expanduser(configured)
+    if os.path.isabs(expanded):
+        return expanded
+    return os.path.join(paths.printer_data, expanded)
+
+
+def read_device_map(paths: Paths, display: DisplayType) -> dict[str, WatcherDevice]:
+    """Parse the watcher's id -> port map.
+
+    **This says nothing about whether the file is current.** There are
+    deliberately no timestamps in it: an entry existing means the display was
+    identified during the watcher's current run and its port has not
+    disappeared since - which is only true while the watcher is *running*.
+    Callers must check the service first; nothing here can.
+
+    Unreadable, unparseable, wrong version, or wrong shape all mean an empty
+    map rather than an error. Every one of them is "we cannot tell you where
+    these displays are", and the caller's answer to that is the same in each
+    case.
+    """
+    path = device_map_path(paths, display)
+    if not path:
+        return {}
+
+    try:
+        with open(path, encoding="utf-8") as fh:
+            data = json.load(fh)
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(data, dict) or data.get("version") != DEVICE_MAP_VERSION:
+        return {}
+
+    devices = data.get("devices")
+    if not isinstance(devices, dict):
+        return {}
+
+    out: dict[str, WatcherDevice] = {}
+    for raw_id, entry in devices.items():
+        if not isinstance(entry, dict):
+            continue
+        port = entry.get("port")
+        if not raw_id or not port:
+            # An id with no port names a display we cannot reach, which is the
+            # same as not knowing about it - and a WatcherDevice whose whole
+            # purpose is its port would be a lie.
+            continue
+        # Lowered because ids are compared case-insensitively; the vendor emits
+        # lowercase but their docs say not to depend on it.
+        device_id = str(raw_id).lower()
+        out[device_id] = WatcherDevice(
+            device_id=device_id,
+            port=str(port),
+            firmware_version=entry.get("fw"),
+            build_variant=entry.get("var"),
         )
     return out
 

@@ -580,9 +580,16 @@ to find its port one of two ways: `serial:` writes it in printer.cfg directly, o
 `device_id:` names the display by the id burned into its chip and leaves the path
 to Klipper's own discovery, which reports the result back through the section's
 `get_status()`. Either way a second copy here would only be something to disagree
-with. It arrives in the same `configfile.settings` payload `fw.status` already
-fetches for the MCU version join, plus the live `get_status()` fields for the
-`device_id:` case.
+with.
+
+It comes from the **printer objects**, not from `configfile.settings`. A klippy
+extra whose section is in printer.cfg always has an object — Klipper refuses to
+start when loading one raises — so there is no state where `settings` knows about
+a display the objects do not. Reading it as a fallback fetched the whole parsed
+printer.cfg a second time on every poll, on top of the copy the MCU version join
+already takes. The object reports both halves itself: `device_id` is what
+printer.cfg named, and `port` is the configured `serial:` where there is one and
+the discovered path otherwise.
 
 A `device_id:` section still appears here before discovery finds it —
 `"present": false`, `"configured_path": null` — because a display that needs

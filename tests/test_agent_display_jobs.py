@@ -22,30 +22,15 @@ from mcu_updater.agent.rpc import RpcError
 from mcu_updater.jobs import JobRunner
 from mcu_updater.service import NullService
 
-from .conftest import write_settings
+from .conftest import display_objects, serve_klipper, write_settings
 
 ENV = "knomi_toolchanger"
 
 
 def _moonraker(sections: dict, print_state="standby", idle_state="Ready"):
-    def call(method, params, timeout):
-        if method == "printer.objects.query":
-            requested = (params or {}).get("objects") or {}
-            status: dict = {}
-            if "configfile" in requested:
-                status["configfile"] = {"settings": sections}
-            if "print_stats" in requested:
-                status["print_stats"] = {"state": print_state}
-            if "idle_timeout" in requested:
-                status["idle_timeout"] = {"state": idle_state}
-            return {"status": status}
-        if method == "printer.info":
-            return {"state": "ready", "state_message": "klippy is ready"}
-        if method == "machine.system_info":
-            return {"system_info": {"service_state": {"klipper": {"active_state": "active"}}}}
-        return {}
-
-    return call
+    return serve_klipper(
+        display_objects(sections), print_state=print_state, idle_state=idle_state
+    )
 
 
 @pytest.fixture
@@ -445,38 +430,6 @@ def test_a_display_family_can_declare_it_has_no_watcher(api, paths, no_pio, monk
 # --------------------------------------------------------------------------
 
 
-def _moonraker_objects(sections: dict, objects: dict, print_state="standby", idle_state="Ready"):
-    """`_moonraker`, plus the per-section printer objects.
-
-    The plain one answers no `printer.objects.list`, so every section resolves
-    with no live fields - which is why nothing before this needed it.
-    """
-
-    def call(method, params, timeout):
-        if method == "printer.objects.list":
-            return {"objects": list(objects)}
-        if method == "printer.objects.query":
-            requested = (params or {}).get("objects") or {}
-            status: dict = {}
-            if "configfile" in requested:
-                status["configfile"] = {"settings": sections}
-            if "print_stats" in requested:
-                status["print_stats"] = {"state": print_state}
-            if "idle_timeout" in requested:
-                status["idle_timeout"] = {"state": idle_state}
-            for name, values in objects.items():
-                if name in requested:
-                    status[name] = values
-            return {"status": status}
-        if method == "printer.info":
-            return {"state": "ready", "state_message": "klippy is ready"}
-        if method == "machine.system_info":
-            return {"system_info": {"service_state": {"klipper": {"active_state": "active"}}}}
-        return {}
-
-    return call
-
-
 def screens_port(screens: dict, which: str) -> str:
     for section, values in screens.items():
         if which in section:
@@ -507,7 +460,7 @@ def test_a_screen_is_written_where_it_answered_not_where_it_was(
     monkeypatch.setattr(
         "mcu_updater.displays.discover", lambda *a, **k: _found(aaa111=moved_to)
     )
-    api._call = _moonraker_objects(screens, _with_ids(screens, t0_knomi="aaa111"))
+    api._call = serve_klipper(display_objects(screens, _with_ids(screens, t0_knomi="aaa111")))
 
     ports: list[str] = []
     monkeypatch.setattr(
@@ -533,7 +486,7 @@ def test_a_screen_that_does_not_answer_is_not_flashed_at_its_old_port(
         "mcu_updater.displays.discover",
         lambda *a, **k: _found(somebodyelse=str(fake_root / "ttyUSB9")),
     )
-    api._call = _moonraker_objects(screens, _with_ids(screens, t0_knomi="aaa111"))
+    api._call = serve_klipper(display_objects(screens, _with_ids(screens, t0_knomi="aaa111")))
 
     ports: list[str] = []
     monkeypatch.setattr(
@@ -564,7 +517,7 @@ def test_discovery_failing_falls_back_to_the_configured_ports(
 
     write_settings(paths, dry_run="false", enable_flashing="true", service_backend="null")
     monkeypatch.setattr("mcu_updater.displays.discover", boom)
-    api._call = _moonraker_objects(screens, _with_ids(screens, t0_knomi="aaa111"))
+    api._call = serve_klipper(display_objects(screens, _with_ids(screens, t0_knomi="aaa111")))
 
     ports: list[str] = []
     monkeypatch.setattr(
@@ -590,7 +543,7 @@ def test_a_screen_with_no_hardware_id_is_still_flashed(
         "mcu_updater.displays.discover",
         lambda *a, **k: _found(somebodyelse=str(fake_root / "ttyUSB9")),
     )
-    api._call = _moonraker_objects(screens, {})  # no live fields at all
+    api._call = serve_klipper(display_objects(screens))  # no live fields at all
 
     ports: list[str] = []
     monkeypatch.setattr(
@@ -613,7 +566,7 @@ def test_a_dry_run_never_opens_a_serial_port(api, paths, no_pio, screens, monkey
 
     monkeypatch.setattr("mcu_updater.displays.discover", boom)
     write_settings(paths, dry_run="true", enable_flashing="true", service_backend="null")
-    api._call = _moonraker_objects(screens, _with_ids(screens, t0_knomi="aaa111"))
+    api._call = serve_klipper(display_objects(screens, _with_ids(screens, t0_knomi="aaa111")))
 
     res = api.dispatch("fw.display.flash", {"name": ENV})
     assert api.runner.wait(timeout=30)

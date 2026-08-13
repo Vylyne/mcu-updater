@@ -1283,14 +1283,28 @@ class Api:
         if not prefixes:
             prefixes = {"knomi_serial"}
 
-        # The printer objects, in their real capitalisation. Queried alongside
-        # configfile.settings rather than after it, so the whole answer is still
-        # one round trip.
+        # The printer objects, in their real capitalisation. These *are* the
+        # section list: a klippy extra whose section is in printer.cfg has an
+        # object, because Klipper refuses to start when loading one raises. So
+        # there is no state where configfile.settings knows about a display that
+        # these do not - and asking for it fetched the whole parsed printer.cfg
+        # a second time per poll, on top of the copy the MCU version join takes.
         objects: list[str] = []
         for prefix in sorted(prefixes):
             objects.extend(self._object_names_for(prefix))
 
-        query: dict[str, Any] = {"configfile": ["settings"]}
+        if not objects:
+            # No sections. Still have to say whether we could *ask*: "no displays
+            # configured" and "we could not reach Klipper" must not look alike,
+            # and with nothing to query there is no answer to infer it from.
+            reachable = bool(self._probe("printer.info"))
+            return {
+                "displays": [],
+                "reachable": reachable,
+                "watcher": None if reachable else self._watcher_map(),
+            }
+
+        query: dict[str, Any] = {}
         for name in objects:
             # None means every field. The module decides what it can report, and
             # a version of it older than get_status simply answers nothing -
@@ -1306,39 +1320,33 @@ class Api:
             # first source.
             return {"displays": [], "reachable": False, "watcher": self._watcher_map()}
 
-        settings = (status.get("configfile") or {}).get("settings") or {}
-        # Both keyed on the lowered name, because that is the only form the two
-        # sources agree on. See _object_names_for.
+        # Keyed on the lowered name so a section can be found however it was
+        # capitalised. See _object_names_for.
         live_by_section = {name.lower(): (status.get(name) or {}) for name in objects}
         truecase_by_section = {name.lower(): name for name in objects}
 
         displays = []
-        for section, values in sorted(settings.items()):
-            # Klipper lowercases section names in `settings`, so match lowered.
-            if not any(section.startswith(p + " ") for p in prefixes):
-                continue
+        for section in sorted(live_by_section):
+            values = live_by_section[section]
 
-            # The module accepts exactly one of these, so whichever key loaded
-            # says how this section is addressed. Neither present means the
-            # section never loaded far enough to read either - nothing to show.
-            configured_serial = (values or {}).get("serial")
+            # The module refuses both keys and requires one, so which of them
+            # loaded says how this section is addressed - and the object reports
+            # the configured id, not a discovered one.
             configured_device_id = (values or {}).get("device_id")
-            if not configured_serial and not configured_device_id:
-                continue
-            addressed_by = "serial" if configured_serial else "device_id"
+            addressed_by = "device_id" if configured_device_id else "serial"
 
-            # Prefer the object's capitalisation - it is what printer.cfg says,
-            # and what the user typed. Falls back to the lowered settings name
-            # when no object exists, which means the module failed to load.
-            true_section = truecase_by_section.get(section, section)
-            live = live_by_section.get(section) or {}
+            # The object's own capitalisation, which is what printer.cfg says
+            # and what the user typed.
+            true_section = truecase_by_section[section]
+            live = values or {}
 
-            # A serial: section names its path right here. A device_id: section
-            # has no path in its config at all - the path it is on today was
-            # discovered, not configured, and the only place it exists is the
-            # module's own get_status(). Until discovery finds it, that is None,
-            # and this section still belongs in the list rather than vanishing.
-            configured = configured_serial or live.get("port")
+            # One field for both cases, because the module already merged them:
+            # `port` is the configured `serial:` where there is one, and the
+            # path discovery found otherwise. A device_id: section has no path
+            # in its config at all, so until discovery finds it this is None -
+            # and that section still belongs in the list rather than vanishing,
+            # because a display that cannot be found is the one to say so about.
+            configured = live.get("port")
 
             # A symlink is the point - resolve it, because the whole scheme is
             # "a stable name udev keeps pointed at the right tty". A discovered

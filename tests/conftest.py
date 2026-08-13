@@ -115,3 +115,65 @@ def make_device(bus_dir: pathlib.Path, fw: str, chipset: str, serial: str) -> pa
     p = bus_dir / f"usb-{fw}_{chipset}_{serial}"
     p.write_text("", encoding="utf-8")
     return p
+
+
+def display_objects(sections: dict, objects: dict = None) -> dict:
+    """Fold printer.cfg terms into what the klippy module actually reports.
+
+    There is one source for displays now: the printer objects. `port` is the
+    module's merged value - the configured ``serial:`` where there is one, the
+    discovered path otherwise - and ``device_id`` is whatever printer.cfg
+    named. Tests still describe a display in config terms because that is how a
+    person thinks about one.
+
+    Merged case-insensitively: `configfile.settings` lowercases section names
+    while the printer object keeps the case printer.cfg used.
+    """
+    merged = {name: dict(values) for name, values in (objects or {}).items()}
+    lowered = {name.lower(): name for name in merged}
+    for section, values in sections.items():
+        true = lowered.get(section.lower())
+        if true is None:
+            true = section
+            merged[true] = {}
+            lowered[section.lower()] = true
+        obj = merged[true]
+        if values.get("serial") and obj.get("port") is None:
+            obj["port"] = values["serial"]
+        if values.get("device_id") and obj.get("device_id") is None:
+            obj["device_id"] = values["device_id"]
+    return merged
+
+
+def serve_klipper(
+    objects: dict,
+    *,
+    reachable: bool = True,
+    print_state: str = "standby",
+    idle_state: str = "Ready",
+):
+    """A call channel for a Klipper with the display module loaded."""
+    queries: list = []
+
+    def call(method, params, timeout):
+        if not reachable:
+            return {}
+        if method == "printer.objects.list":
+            return {"objects": ["configfile", "toolhead", *objects]}
+        if method == "printer.info":
+            return {"state": "ready", "state_message": "klippy is ready"}
+        if method == "machine.system_info":
+            return {"system_info": {"service_state": {"klipper": {"active_state": "active"}}}}
+        if method == "printer.objects.query":
+            queries.append(params)
+            requested = (params or {}).get("objects") or {}
+            status: dict = {n: v for n, v in objects.items() if n in requested}
+            if "print_stats" in requested:
+                status["print_stats"] = {"state": print_state}
+            if "idle_timeout" in requested:
+                status["idle_timeout"] = {"state": idle_state}
+            return {"status": status}
+        return {}
+
+    call.queries = queries  # type: ignore[attr-defined]
+    return call

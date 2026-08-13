@@ -22,8 +22,8 @@
     },
     {
       "name": "screens are matched by their type's own section prefix",
-      "find": "            if not any(section.startswith(p + \" \") for p in prefixes):",
-      "replace": "            if not section.startswith(\"knomi_serial \"):"
+      "find": "            objects.extend(self._object_names_for(prefix))",
+      "replace": "            objects.extend(self._all_object_names())"
     },
     {
       "name": "displays ride along in fw.status",

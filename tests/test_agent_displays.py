@@ -26,22 +26,11 @@ import pytest
 
 from mcu_updater.agent.methods import Api
 
+from .conftest import display_objects, serve_klipper
+
 
 def _moonraker(sections: dict, reachable: bool = True):
-    """A call channel serving a `configfile.settings` payload.
-
-    Section names are lowercased, as Klipper does in `settings` - matching them
-    case-sensitively is what once made the mcu version join find nothing.
-    """
-
-    def call(method, params, timeout):
-        if method == "printer.objects.query":
-            if not reachable:
-                return {}
-            return {"status": {"configfile": {"settings": sections}}}
-        return {}
-
-    return call
+    return serve_klipper(display_objects(sections), reachable=reachable)
 
 
 @pytest.fixture
@@ -132,11 +121,23 @@ def test_several_displays_come_back_in_a_stable_order(api, fake_root):
     assert names == ["t0_knomi", "t1_knomi", "t2_knomi"]
 
 
-def test_a_section_with_neither_serial_nor_device_id_is_skipped(api):
-    """The module requires exactly one of `serial:` or `device_id:`, but a
-    half-edited config should not produce an entry pointing at nothing."""
+def test_a_section_that_reports_neither_is_shown_rather_than_hidden(api):
+    """It used to be skipped, on the grounds that a half-edited config should
+    not produce an entry pointing at nothing. That distinction is no longer
+    available: the section list comes from the printer objects, and a section
+    reporting neither key is indistinguishable from a module too old to report
+    them - which must still be listed.
+
+    Klipper also refuses to start when a section names neither, so the config
+    this guarded against cannot reach a running printer. Showing it with
+    everything unknown is the honest answer, and the visible one.
+    """
     api._call = _moonraker({"knomi_serial t0_knomi": {"heater_hotend": "extruder"}})
-    assert api.dispatch("fw.display.list")["displays"] == []
+    display = api.dispatch("fw.display.list")["displays"][0]
+
+    assert display["name"] == "t0_knomi"
+    assert display["configured_path"] is None
+    assert display["present"] is False
 
 
 # --------------------------------------------------------------------------
@@ -178,24 +179,25 @@ def test_a_device_id_section_uses_the_port_discovery_found(api, fake_root):
     assert display["resolved_path"].endswith("ttyUSB3")
 
 
-def test_a_serial_section_ignores_a_stray_live_port(api, fake_root):
-    """serial: is authoritative for a serial-addressed section - the live
-    `port` field is only what stands in for it when there is no serial: at
-    all, not a value that should ever override it."""
+def test_a_serial_section_reports_the_path_its_config_named(api, fake_root):
+    """One field answers for both kinds of section, because the module already
+    merged them: `port` is the configured `serial:` where there is one and the
+    discovered path otherwise. There is no second value left to disagree with -
+    this used to assert that `serial:` beat a differing live `port`, and the
+    module cannot produce that pair.
+    """
     configured = str(fake_root / "knomi_t0")
     with open(configured, "w", encoding="utf-8") as fh:
-        fh.write("")
-    other = str(fake_root / "ttyUSB9")
-    with open(other, "w", encoding="utf-8") as fh:
         fh.write("")
 
     api._call = _moonraker_live(
         {"knomi_serial t0_knomi": {"serial": configured}},
-        {"knomi_serial T0_knomi": {"port": other}},
+        {"knomi_serial T0_knomi": {}},
     )
     display = api.dispatch("fw.display.list")["displays"][0]
 
     assert display["addressed_by"] == "serial"
+    assert display["device_id"] is None, "a serial: section names a socket"
     assert display["configured_path"] == configured
 
 
@@ -314,23 +316,7 @@ def test_screens_are_matched_to_their_type_by_klipper_section(api, paths, fake_r
 
 
 def _moonraker_live(sections: dict, objects: dict):
-    """Serves objects.list and objects.query, like a Klipper with the module."""
-    queries = []
-
-    def call(method, params, timeout):
-        if method == "printer.objects.list":
-            return {"objects": ["configfile", "toolhead", *objects]}
-        if method == "printer.objects.query":
-            queries.append(params)
-            status = {"configfile": {"settings": sections}}
-            for name, values in objects.items():
-                if name in (params or {}).get("objects", {}):
-                    status[name] = values
-            return {"status": status}
-        return {}
-
-    call.queries = queries  # type: ignore[attr-defined]
-    return call
+    return serve_klipper(display_objects(sections, objects))
 
 
 def _configured(port: str) -> dict:

@@ -33,6 +33,21 @@
       "name": "an unknown scope is refused",
       "find": "if scope not in self.SCOPES:",
       "replace": "if False:"
+    },
+    {
+      "name": "a fleet build covers every family each type runs",
+      "find": "            for family in reg.get(name).families():",
+      "replace": "            for family in [\"klipper\"]:"
+    },
+    {
+      "name": "fw filters a fleet build rather than forcing a family",
+      "find": "                if fw is not None and family != fw:\n                    continue",
+      "replace": "                if False:\n                    continue"
+    },
+    {
+      "name": "update_all rebuilds every family, not just klipper",
+      "find": "        pairs = self._types_to_build(reg, scope, only)",
+      "replace": "        pairs = self._types_to_build(reg, scope, only, fw=\"klipper\")"
     }
   ]
 }

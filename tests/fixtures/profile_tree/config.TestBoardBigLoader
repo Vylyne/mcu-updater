@@ -1,0 +1,19 @@
+# A board whose application sits behind a 32KiB bootloader. Nothing about it is
+# wrong - it just does not match the bootloader tree's default 8KiB offset, so
+# deriving a bootloader config from it must refuse rather than produce a pair
+# that builds, flashes, and jumps into the wrong place.
+CONFIG_LOW_LEVEL_OPTIONS=y
+# CONFIG_MACH_RP2040 is not set
+CONFIG_MACH_STM32=y
+# CONFIG_MACH_STM32F072 is not set
+CONFIG_MACH_STM32G431=y
+# CONFIG_STM32_CLOCK_REF_8M is not set
+CONFIG_STM32_CLOCK_REF_24M=y
+# CONFIG_STM32_FLASH_START_0000 is not set
+# CONFIG_STM32_FLASH_START_2000 is not set
+CONFIG_STM32_FLASH_START_8000=y
+CONFIG_FLASH_APPLICATION_ADDRESS=0x8008000
+CONFIG_STM32_USB_PA11_PA12=y
+CONFIG_USBSERIAL=y
+CONFIG_CLOCK_FREQ=170000000
+CONFIG_VERSION="TESTFW 6.2.0"

@@ -19,7 +19,7 @@ import re
 import time
 from typing import Any, Callable, Optional
 
-from .. import API_VERSION, __version__, firmware
+from .. import API_VERSION, __version__, firmware, profiles
 from ..build import read_sidecar
 from ..config import Registry
 from ..devices import (
@@ -259,6 +259,11 @@ class Api:
             # True when make ran olddefconfig over our saved answers, which
             # silently changes settings after a klipper git pull.
             "config_rewritten": bool(side.get("config_rewritten")),
+            # Whether the saved answers still say what their profile said.
+            # A third question, deliberately beside the other two rather than
+            # folded into `reason`: a customised config is not a stale artifact
+            # and does not want a rebuild, it wants somebody to know about it.
+            "profile": profiles.status(self.paths, mcu_type, fw).to_json(),
         }
 
     def type_status(
@@ -1735,6 +1740,9 @@ class Api:
         "fw.kconfig.reset": "kconfig_reset",
         "fw.kconfig.save": "kconfig_save",
         "fw.kconfig.close": "kconfig_close",
+        "fw.profile.list": "profile_list",
+        "fw.profile.apply": "profile_apply",
+        "fw.profile.forget": "profile_forget",
     }
 
     #: Registered with Moonraker only when a runner is present, so a read-only
@@ -2679,31 +2687,49 @@ class Api:
         return scope
 
     def _types_to_build(
-        self, reg: Registry, fw: str, scope: str, only: Optional[str] = None
-    ) -> list[str]:
-        """Which types a build_all should touch, and in a stable order.
+        self,
+        reg: Registry,
+        scope: str,
+        only: Optional[str] = None,
+        fw: Optional[str] = None,
+    ) -> list[tuple[str, str]]:
+        """Which (type, firmware) pairs a build_all should touch, in a stable order.
 
-        A type with no saved config is skipped rather than failed: menuconfig is
-        ncurses and cannot run here, so there is nothing this could do about it, and
-        failing the whole batch over one unconfigured type would be worse.
+        **Pairs, not names.** A type builds every family it uses - its
+        application and, when it has one, katapult - and those are not the same
+        family for every type. Building one global `fw` across the fleet meant a
+        `firmware: cartographer` type had no klipper `.config`, was skipped by
+        the check below, and the batch reported success having never built it.
+
+        A type with no saved config for a family is still skipped rather than
+        failed: menuconfig is ncurses and cannot run here, so there is nothing
+        this could do about it, and failing the whole batch over one
+        unconfigured type would be worse. What changed is only *which* config it
+        looks for.
 
         `only` narrows it to a single type, which is what makes "update this one
         board type" the same operation with a filter rather than another loop.
+        `fw` narrows it to a single family - "rebuild katapult everywhere" - and
+        is a filter over what each type already uses, never an instruction to
+        build a family a type does not run.
         """
         from ..build import staleness
 
-        out = []
+        out: list[tuple[str, str]] = []
         for name in reg.names():
             if only is not None and name != only:
                 continue
-            if not os.path.exists(self.paths.config_file(name, fw)):
-                continue
-            if scope == "all":
-                out.append(name)
-                continue
-            stale, _ = staleness(self.paths, name, fw)
-            if stale:
-                out.append(name)
+            for family in reg.get(name).families():
+                if fw is not None and family != fw:
+                    continue
+                if not os.path.exists(self.paths.config_file(name, family)):
+                    continue
+                if scope == "all":
+                    out.append((name, family))
+                    continue
+                stale, _ = staleness(self.paths, name, family)
+                if stale:
+                    out.append((name, family))
         return out
 
     def _boards_to_flash(self, reg: Registry, scope: str, only: Optional[str] = None) -> list[dict]:
@@ -2758,19 +2784,26 @@ class Api:
                     )
         return out
 
-    def _do_build_all(self, ctx: Any, fw: str, names: list[str]) -> dict[str, Any]:
-        """Build each type in turn, reporting failures rather than stopping.
+    def _do_build_all(
+        self, ctx: Any, pairs: list[tuple[str, str]]
+    ) -> dict[str, Any]:
+        """Build each (type, firmware) pair in turn, reporting failures rather
+        than stopping.
 
         Matches what the CLI's update-all has always done. One type failing to
         compile is usually about that type, and abandoning the rest would turn a
         one-board problem into a whole-fleet one.
+
+        Each pair carries its own family, so a fleet build compiles cartographer
+        for the probe and klipper for the boards in one pass, rather than one
+        family for everything and silence about whatever did not fit.
         """
         from ..build import build as do_build
 
-        built: list[str] = []
+        built: list[dict[str, str]] = []
         failures: list[dict[str, str]] = []
-        total = len(names)
-        for index, name in enumerate(names):
+        total = len(pairs)
+        for index, (name, fw) in enumerate(pairs):
             ctx.check_cancelled()
             ctx.step(f"Building {fw} for {name}", index, total)
             try:
@@ -2783,14 +2816,17 @@ class Api:
                     reporter=ctx.reporter,
                     cancel=ctx.cancel,
                 )
-                built.append(name)
+                built.append({"type": name, "fw": fw})
             except OperationCancelled:
                 raise
             except UpdaterError as exc:
-                ctx.reporter("warn", f"{name}: {exc}")
-                failures.append({"type": name, "error": str(exc)})
+                # Named with its family: "carto_v4 failed" is ambiguous once a
+                # type can build more than one, and the two failures want
+                # different fixes.
+                ctx.reporter("warn", f"{name} ({fw}): {exc}")
+                failures.append({"type": name, "fw": fw, "error": str(exc)})
         ctx.step(f"Built {len(built)} of {total}", total, total)
-        return {"fw": fw, "built": built, "failures": failures}
+        return {"built": built, "failures": failures}
 
     def _do_flash_all(self, ctx: Any, boards: list[dict]) -> dict[str, Any]:
         """Write every selected board, with Klipper stopped once for the batch.
@@ -2864,18 +2900,27 @@ class Api:
         return {"flashed": flashed, "failures": failures}
 
     def build_all(self, args: dict) -> dict[str, Any]:
-        """Build every type that needs it. Touches no board and stops nothing."""
+        """Build every family every type needs. Touches no board and stops nothing.
+
+        `fw` is an optional *filter* - "rebuild katapult everywhere" - not the
+        family to build for everything. It used to be the latter, defaulting to
+        klipper, which meant a type running any other application was skipped
+        for want of a klipper config and the batch reported success regardless.
+        """
         runner = self._require_runner()
         scope = self._scope(args)
-        fw = str(args.get("fw") or "klipper")
-        known = self._fw_names()
-        if fw not in known:
-            raise RpcError(f"'fw' must be one of {list(known)}", ERR_INVALID_PARAMS)
+        fw = args.get("fw")
+        if fw is not None:
+            fw = str(fw)
+            known = self._fw_names()
+            if fw not in known:
+                raise RpcError(f"'fw' must be one of {list(known)}", ERR_INVALID_PARAMS)
 
-        names = self._types_to_build(self.registry(), fw, scope)
-        if not names:
+        pairs = self._types_to_build(self.registry(), scope, fw=fw)
+        if not pairs:
+            what = f"saved {fw} config" if fw else "saved config"
             raise RpcError(
-                f"nothing to build: no type has a saved {fw} config that is out of date. "
+                f"nothing to build: no type has a {what} that is out of date. "
                 f"Use scope 'all' to rebuild regardless.",
                 data={
                     "code": "nothing_to_do",
@@ -2885,10 +2930,23 @@ class Api:
             )
 
         def run(ctx) -> dict[str, Any]:
-            return self._do_build_all(ctx, fw, names)
+            return self._do_build_all(ctx, pairs)
 
-        job = runner.submit("build_all", {"fw": fw, "scope": scope, "types": names}, run)
-        return {"job_id": job.id, "job": job.to_dict(), "types": names}
+        # `types` stays a list of names for the panel, which shows what is being
+        # worked on rather than how many compiles that is. `builds` carries the
+        # pairs for anything that wants the detail.
+        names = sorted({name for name, _ in pairs})
+        job = runner.submit(
+            "build_all",
+            {"fw": fw, "scope": scope, "types": names, "count": len(pairs)},
+            run,
+        )
+        return {
+            "job_id": job.id,
+            "job": job.to_dict(),
+            "types": names,
+            "builds": [{"type": n, "fw": f} for n, f in pairs],
+        }
 
     def flash_all(self, args: dict) -> dict[str, Any]:
         """Flash every board that needs it, or every board of one type.
@@ -2980,7 +3038,10 @@ class Api:
         if only is not None:
             reg.get(str(only))  # fail fast on a typo, before a job exists
             only = str(only)
-        names = self._types_to_build(reg, "klipper", scope, only)
+        # Every family each type uses, not klipper for all of them. A fleet
+        # update that rebuilds klipper and leaves the probe on last month's
+        # cartographer is the failure this exists to prevent, and it was silent.
+        pairs = self._types_to_build(reg, scope, only)
 
         from ..service import assert_printer_idle
 
@@ -2992,11 +3053,11 @@ class Api:
         )
 
         def run(ctx) -> dict[str, Any]:
-            build_result = self._do_build_all(ctx, "klipper", names) if names else {
-                "fw": "klipper",
-                "built": [],
-                "failures": [],
-            }
+            build_result = (
+                self._do_build_all(ctx, pairs)
+                if pairs
+                else {"built": [], "failures": []}
+            )
             # Selected *after* building, because a build is what makes boards stale:
             # choosing the boards up front would use provenance that the build has
             # just invalidated.
@@ -3016,6 +3077,7 @@ class Api:
             )
             return {"build": build_result, "flash": self._do_flash_all(ctx, boards)}
 
+        names = sorted({name for name, _ in pairs})
         job = runner.submit("update_all", {"scope": scope, "name": only, "types": names}, run)
         return {"job_id": job.id, "job": job.to_dict(), "types": names, "name": only}
 
@@ -3366,6 +3428,109 @@ class Api:
     def kconfig_close(self, args: dict) -> dict[str, Any]:
         session_id = self._require_str(args, "session")
         return {"session": session_id, "closed": self._sessions().close(session_id)}
+
+    # -- profiles ----------------------------------------------------------
+
+    def profile_list(self, args: dict) -> dict[str, Any]:
+        """What a type could be seeded from, and what it currently is.
+
+        Keyed on the type rather than on a firmware family, because "which
+        profiles apply to this board" is the question a panel is actually
+        asking - and the answer depends on which family the type declares it
+        runs, not on which trees happen to be installed.
+        """
+        name = self._require_str(args, "name")
+        reg = self.registry()
+        mcu = reg.get(name)
+        families = firmware.load(self.paths)
+
+        return {
+            "type": name,
+            "firmware": mcu.firmware,
+            "profile": mcu.profile,
+            "available": [
+                seed.to_json()
+                for seed in profiles.available(self.paths, mcu.firmware, families)
+            ],
+            "state": {
+                fw: profiles.status(self.paths, name, fw, families).to_json()
+                for fw in mcu.families()
+            },
+        }
+
+    def profile_apply(self, args: dict) -> dict[str, Any]:
+        """Seed a type's answers from its firmware tree, bootloader included.
+
+        The bootloader is derived by default rather than on request. Seeding
+        only the application leaves a type whose two configs describe different
+        boards, and the pair only has to disagree about one address for the
+        result to be a board that does not come back - so the safe combination
+        is the one that takes no extra argument.
+
+        `derive` is still separable, because a type with no bootloader
+        (`katapult_installed: false`) has nothing to derive and asking for it
+        would be an error rather than a no-op.
+        """
+        name = self._require_str(args, "name")
+        profile = self._require_str(args, "profile")
+        force = bool(args.get("force"))
+
+        reg = self.registry()
+        mcu = reg.get(name)
+        families = firmware.load(self.paths)
+        fw = str(args.get("fw") or mcu.firmware).strip()
+        if fw not in families and fw not in firmware.BUILTIN:
+            raise RpcError(
+                f"'fw' must be one of {', '.join(self._fw_names())}", ERR_INVALID_PARAMS
+            )
+
+        derive = args.get("derive")
+        derive = mcu.katapult_installed if derive is None else bool(derive)
+
+        applied = profiles.apply_seed(
+            self.paths, name, fw, profile, families=families, force=force
+        )
+        out: dict[str, Any] = {"applied": applied.to_json(), "derived": None}
+
+        if derive:
+            # Not wrapped in a try: a bootloader that cannot be derived is a
+            # board that should not be flashed, and reporting the application
+            # seeding as a success with a warning attached is how that gets
+            # missed. The application's config stays - it is valid on its own.
+            out["derived"] = profiles.derive_bootloader(
+                self.paths, name, fw, families=families, force=force
+            ).to_json()
+
+        # The intent goes in the hand-edited config; the verdict stays in the
+        # data tree. Only for the application - katapult's is always derived,
+        # so recording a second key would be restating that.
+        if fw == mcu.firmware:
+            with Registry.mutate(self.paths, f"profile for {name}") as writable:
+                writable.get(name).profile = applied.profile
+
+        self._changed()
+        return out
+
+    def profile_forget(self, args: dict) -> dict[str, Any]:
+        """Detach a type from its profile, leaving every answer exactly as is.
+
+        The escape hatch that makes the drift reporting tolerable: someone who
+        has deliberately customised a config can say so once, instead of
+        reading "Customised" as a warning for the life of the install.
+        """
+        name = self._require_str(args, "name")
+        reg = self.registry()
+        mcu = reg.get(name)
+        fw = str(args.get("fw") or "").strip()
+        targets = [fw] if fw else list(mcu.families())
+
+        forgotten = [f for f in targets if profiles.forget(self.paths, name, f)]
+        if not fw or mcu.firmware in targets:
+            with Registry.mutate(self.paths, f"forget profile for {name}") as writable:
+                writable.get(name).profile = ""
+
+        self._changed()
+        return {"type": name, "forgotten": forgotten}
 
     # -- dispatch ----------------------------------------------------------
 

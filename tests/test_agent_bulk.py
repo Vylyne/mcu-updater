@@ -92,6 +92,19 @@ def _save_config(paths, mcu_type, fw="klipper") -> None:
         fh.write("CONFIG_MACH_STM32=y\n")
 
 
+def _declare_cartographer(paths) -> None:
+    """A type that runs something other than klipper, and the family it names.
+
+    The registry refuses an undeclared family, so both halves are required -
+    which is also what makes this the realistic shape rather than a fixture
+    convenience.
+    """
+    with open(paths.registry_file, "a", encoding="utf-8") as fh:
+        fh.write("\n[mcu carto_v4]\nchipset: stm32g431xx\nfirmware: cartographer\n")
+    with open(paths.main_config, "a", encoding="utf-8") as fh:
+        fh.write("\n[firmware cartographer]\nsource: ~/carto\nartifact: klipper\n")
+
+
 @pytest.fixture
 def bulk(paths, live_registry_text, fake_root):
     """Flashing enabled, a fake bus, and a flashtool to call."""
@@ -176,8 +189,45 @@ def test_a_type_with_no_saved_config_is_skipped_not_failed(bulk, paths):
     do about it. Failing the whole batch over one unconfigured type would turn a
     one-type problem into a fleet-wide one."""
     _save_config(paths, EBB)
-    names = bulk._types_to_build(Registry.load(paths), "klipper", "all")
-    assert names == [EBB]
+    pairs = bulk._types_to_build(Registry.load(paths), "all")
+    assert pairs == [(EBB, "klipper")]
+
+
+def test_a_fleet_build_covers_every_family_each_type_runs(bulk, paths):
+    """The bug this shape exists to kill.
+
+    `build_all` took one `fw`, defaulting to klipper, and `_types_to_build`
+    skipped any type with no `.config` for it. A `firmware: cartographer` type
+    has no klipper config, so it was silently skipped and the batch reported
+    success having never built it - the worst possible outcome, because nothing
+    said so and the probe kept running last month's firmware.
+    """
+    _declare_cartographer(paths)
+    _save_config(paths, EBB)
+    _save_config(paths, "carto_v4", fw="cartographer")
+
+    pairs = bulk._types_to_build(Registry.load(paths), "all")
+
+    assert (EBB, "klipper") in pairs
+    assert ("carto_v4", "cartographer") in pairs
+    # And never klipper for the probe: it carries klipper config keys it does
+    # not use, and building them would compile the wrong tree.
+    assert ("carto_v4", "klipper") not in pairs
+
+
+def test_a_named_family_filters_rather_than_forces(bulk, paths):
+    """`fw` narrows a fleet build to one family - "rebuild katapult everywhere" -
+    over what each type already uses. It is not an instruction to build a family
+    a type does not run."""
+    _declare_cartographer(paths)
+    _save_config(paths, EBB)
+    _save_config(paths, "carto_v4", fw="cartographer")
+    _save_config(paths, "carto_v4", fw="klipper")  # present, and still unused
+
+    pairs = bulk._types_to_build(Registry.load(paths), "all", fw="klipper")
+
+    assert (EBB, "klipper") in pairs
+    assert not [p for p in pairs if p[0] == "carto_v4"]
 
 
 def test_stale_skips_a_type_that_is_already_built(bulk, paths, settings):
@@ -189,9 +239,14 @@ def test_stale_skips_a_type_that_is_already_built(bulk, paths, settings):
     build(paths, Registry.load(paths), settings, EBB, "klipper")
 
     reg = Registry.load(paths)
-    assert bulk._types_to_build(reg, "klipper", "stale") == [MMB]
+    assert bulk._types_to_build(reg, "stale") == [(MMB, "klipper")]
     # ...and `all` is what overrides that judgement.
-    assert sorted(bulk._types_to_build(reg, "klipper", "all")) == sorted([EBB, MMB])
+    assert sorted(bulk._types_to_build(reg, "all")) == sorted(
+        [(EBB, "klipper"), (MMB, "klipper")]
+    )
+    # `fw` is a filter over what each type already uses, not an instruction
+    # to build a family it does not run.
+    assert bulk._types_to_build(reg, "all", fw="katapult") == []
 
 
 def test_nothing_to_build_is_a_refusal_with_a_code_not_an_empty_job(bulk, paths, settings):
@@ -439,8 +494,12 @@ def test_a_build_failure_does_not_abandon_the_rest_of_the_fleet(bulk, paths, mon
     job = bulk.runner.get(res["job_id"])
 
     assert job.state == "succeeded", job.error
-    assert job.result["built"] == [MMB]
-    assert job.result["failures"] == [{"type": EBB, "error": "make exploded"}]
+    # Pairs, not names: a type builds every family it uses, and "carto_v4
+    # failed" is ambiguous once that can be more than one.
+    assert job.result["built"] == [{"type": MMB, "fw": "klipper"}]
+    assert job.result["failures"] == [
+        {"type": EBB, "fw": "klipper", "error": "make exploded"}
+    ]
 
 
 def test_update_all_builds_before_it_chooses_what_to_flash(bulk, paths, fake_root):
@@ -459,7 +518,7 @@ def test_update_all_builds_before_it_chooses_what_to_flash(bulk, paths, fake_roo
     job = bulk.runner.get(res["job_id"])
 
     assert job.state == "succeeded", job.error
-    assert job.result["build"]["built"] == [EBB]
+    assert job.result["build"]["built"] == [{"type": EBB, "fw": "klipper"}]
     assert [f["serial"] for f in job.result["flash"]["flashed"]] == [EBB_A]
 
 
@@ -572,6 +631,20 @@ def monkey_head(api, paths):
 # --------------------------------------------------------------------------
 
 
+def test_update_all_rebuilds_every_family_not_just_klipper(bulk, paths):
+    """A fleet update that rebuilds klipper and leaves the probe on last month's
+    cartographer is the failure this exists to prevent - and it was silent,
+    because the probe was never selected in the first place."""
+    _declare_cartographer(paths)
+    _save_config(paths, EBB)
+    _save_config(paths, "carto_v4", fw="cartographer")
+
+    res = bulk.dispatch("fw.update_all", {"scope": "all"})
+
+    assert "carto_v4" in res["types"], "the probe is part of a fleet update"
+    assert EBB in res["types"]
+
+
 def test_update_all_can_be_narrowed_to_one_type(bulk, paths, fake_root):
     _save_config(paths, EBB)
     _save_config(paths, MMB)
@@ -586,7 +659,7 @@ def test_update_all_can_be_narrowed_to_one_type(bulk, paths, fake_root):
     job = bulk.runner.get(res["job_id"])
 
     assert job.state == "succeeded", job.error
-    assert job.result["build"]["built"] == [MMB]
+    assert job.result["build"]["built"] == [{"type": MMB, "fw": "klipper"}]
     # ...and only its boards are written to.
     assert [f["serial"] for f in job.result["flash"]["flashed"]] == [MMB_SERIAL]
 

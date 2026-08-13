@@ -19,6 +19,10 @@ Per-type keys, and that is all:
     One tracked board per line.
 ``katapult_installed``
     Only written when false; a board with no bootloader is the exception.
+``profile``
+    The vendor answer file this type's application config is seeded from, e.g.
+    ``config.CartoV4USB``. Names a file in that firmware's own source tree, not
+    one shipped here - see :mod:`mcu_updater.profiles`.
 ``<fw>_extra_args``
     Appended to the make command line.
 ``<fw>_makefile_patches``
@@ -110,6 +114,15 @@ class McuType:
     #:
     #: Defaults to klipper, which is what every type meant before this existed.
     firmware: str = firmware.DEFAULT_APPLICATION
+    #: Vendor answer file this type's application config is seeded from, in
+    #: that firmware's own tree. Empty means the answers are the user's own,
+    #: which is what every type predating profiles is.
+    #:
+    #: Only a *record of intent*: whether the saved config still matches it is
+    #: a question about files on disk, answered by `profiles.status()`. Keeping
+    #: the intent in the hand-edited config and the verdict in the data tree is
+    #: what lets a user declare a profile for a board they have not wired up.
+    profile: str = ""
 
     def fw(self, fw: str) -> FwConfig:
         return self.fws.setdefault(fw, FwConfig())
@@ -144,7 +157,11 @@ class McuType:
         return first + sorted(fw for fw in self.fws if fw not in FW_TARGETS)
 
     def to_json(self) -> dict[str, Any]:
-        out: dict[str, Any] = {"chipset": self.chipset, "firmware": self.firmware}
+        out: dict[str, Any] = {
+            "chipset": self.chipset,
+            "firmware": self.firmware,
+            "profile": self.profile,
+        }
         for fw in self.fw_order():
             cfg = self.fws.get(fw)
             if cfg is not None:
@@ -266,6 +283,7 @@ class Registry:
                     value=application,
                 )
             mcu.firmware = application
+            mcu.profile = (doc.get(section, "profile") or "").strip()
             for fw in fw_names:
                 cfg = mcu.fw(fw)
                 cfg.extra_args = (doc.get(section, f"{fw}_extra_args") or "").strip()
@@ -355,6 +373,11 @@ class Registry:
                 doc.set(section, "firmware", mcu.firmware)
             else:
                 doc.remove_option(section, "firmware")
+
+            if mcu.profile.strip():
+                doc.set(section, "profile", mcu.profile.strip())
+            else:
+                doc.remove_option(section, "profile")
 
             # Only written when it differs from the default, to keep the file
             # readable rather than full of restated defaults.
@@ -469,6 +492,7 @@ class Registry:
         katapult_args: str = "",
         katapult_installed: bool = True,
         application: str = firmware.DEFAULT_APPLICATION,
+        profile: str = "",
         overwrite: bool = False,
     ) -> McuType:
         """Register a board model. **No hardware needs to exist.**
@@ -491,6 +515,7 @@ class Registry:
             name=name,
             chipset=chipset,
             firmware=application,
+            profile=profile.strip(),
             serials=[],
             fws={
                 "katapult": FwConfig(

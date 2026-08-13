@@ -623,7 +623,7 @@ def test_klipper_and_katapult_are_separate_targets(store):
 
 
 # --------------------------------------------------------------------------
-# _same_value - the read-back comparison
+# same_value - the read-back comparison
 # --------------------------------------------------------------------------
 
 
@@ -649,9 +649,9 @@ def test_klipper_and_katapult_are_separate_targets(store):
     ],
 )
 def test_same_value_normalises_only_where_it_should(kind, requested, actual, same):
-    from mcu_updater.kconfig import _same_value
+    from mcu_updater.kconfig import same_value
 
-    assert _same_value(kind, requested, actual) is same
+    assert same_value(kind, requested, actual) is same
 
 
 # --------------------------------------------------------------------------

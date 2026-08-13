@@ -1,0 +1,104 @@
+# A stand-in for Katapult. Shares the symbols that describe the *board* with
+# app.Kconfig, and has none of the ones that describe the *application*.
+#
+# The overlap is not a coincidence in the real trees either: Katapult and
+# Klipper both name the architecture MACH_STM32 and the crystal
+# STM32_CLOCK_REF_24M because they are answering the same question about the
+# same silicon. That is what makes deriving one config from the other sound,
+# and what makes "is this symbol defined here?" the right carry test.
+
+mainmenu "Test Bootloader Configuration"
+
+config LOW_LEVEL_OPTIONS
+    bool "Enable extra low-level configuration options"
+
+choice
+    prompt "Micro-controller Architecture"
+
+config MACH_RP2040
+    bool "Raspberry Pi RP2040"
+
+config MACH_STM32
+    bool "STMicroelectronics STM32"
+
+endchoice
+
+if MACH_STM32
+
+choice
+    prompt "Processor model"
+    default MACH_STM32F072
+
+config MACH_STM32F072
+    bool "STM32F072"
+
+config MACH_STM32G431
+    bool "STM32G431"
+
+endchoice
+
+choice
+    prompt "Clock Reference" if LOW_LEVEL_OPTIONS
+    default STM32_CLOCK_REF_8M
+
+config STM32_CLOCK_REF_8M
+    bool "8 MHz crystal"
+
+config STM32_CLOCK_REF_24M
+    bool "24 MHz crystal"
+
+endchoice
+
+# The bootloader's side of the one invariant. Its default agrees with the
+# application's default bootloader offset, which is why the common case needs
+# no answer here at all - and why a board that wants something else is exactly
+# the case worth refusing rather than guessing at.
+choice
+    prompt "Application start offset"
+    default STM32_APP_START_2000
+
+config STM32_APP_START_2000
+    bool "8KiB offset"
+
+config STM32_APP_START_8000
+    bool "32KiB offset"
+
+endchoice
+
+config LAUNCH_APP_ADDRESS
+    hex
+    default 0x8002000 if STM32_APP_START_2000
+    default 0x8008000 if STM32_APP_START_8000
+    default 0x8000000
+
+choice
+    prompt "Communication interface"
+    default STM32_USB_PA11_PA12
+
+config STM32_USB_PA11_PA12
+    bool "USB (on PA11/PA12)"
+
+config STM32_CANBUS_PA11_PA12
+    bool "CAN bus (on PA11/PA12)"
+
+endchoice
+
+# A narrower range than the application's, which is the ordinary way two trees
+# defining the same symbol still disagree about what it may hold. kconfiglib
+# accepts an out-of-range assignment and silently keeps the default, so this is
+# what makes "we wrote it into the file" and "it took" observably different.
+config CANBUS_FREQUENCY
+    int "CAN bus speed" if STM32_CANBUS_PA11_PA12
+    default 1000000
+    range 500000 1000000
+
+# Mentions SCANNER without defining it, which real trees do all the time in
+# conditions that refer to a symbol another tree owns. kconfiglib records such
+# a symbol in `syms` with no defining node - so "is it in syms?" and "does this
+# tree define it?" are different questions, and only the second one means the
+# answer can be carried across.
+config CANBUS_FILTER
+    bool
+    default y if !SCANNER
+
+endif

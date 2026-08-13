@@ -34,6 +34,8 @@ standard library only — no pip dependencies, no virtualenv.
 | `add-type -t NAME -c CHIPSET` | Register a board model |
 | `add-serial -t NAME -s SERIAL` | Track a physical board under a type |
 | `remove-type` / `remove-serial` | The inverse |
+| `profiles -t NAME` | List the vendor answer files this type's firmware tree ships |
+| `apply-profile -t NAME -p config.CartoV4USB` | Seed a type's menuconfig answers from one, deriving Katapult's to match |
 | `menuconfig -t NAME -f klipper\|katapult` | Configure a type, saved per type so it survives rebuilds |
 | `build -t NAME -f klipper\|katapult` | Compile and stage the artifact |
 | `flash -t NAME [-s SERIAL]` | Flash one board, or every board of a type |
@@ -76,6 +78,9 @@ Per-type keys:
 - **`serials`** — one tracked board per line.
 - **`katapult_installed`** — only written when `false`; a board with no
   bootloader is the exception.
+- **`profile`** — the vendor answer file this type's config is seeded from, e.g.
+  `config.CartoV4USB`. Names a file in that firmware's *own source tree*, not
+  one shipped here. See [Profiles](#profiles).
 - **`<fw>_extra_args`** — appended to the `make` command line.
 - **`<fw>_makefile_patches`** — `<file> -> <line>`, appended to that Makefile
   *for one build only*, then reverted. This exists because Klipper's build system
@@ -93,6 +98,62 @@ later copy silently do nothing.
 > the version from git while the patch is applied, so the tree is briefly dirty.
 > `v0.13.0-712-g6d43f8b3-dirty-...` is expected for a patched type and does not
 > mean you have local Klipper modifications.
+
+### Profiles
+
+A Cartographer V4's `.config` is 138 lines. **Seven** of them are answers:
+
+```ini
+CONFIG_LOW_LEVEL_OPTIONS=y            # Enable extra low-level configuration options
+CONFIG_MACH_STM32=y                   # Micro-controller Architecture → STM32
+CONFIG_MACH_STM32G431=y               # Processor model → STM32G431
+CONFIG_STM32_CLOCK_REF_24M=y          # Clock Reference → 24 MHz crystal
+CONFIG_SCANNER=y                      # SCANNER
+CONFIG_CARTOGRAPHER_G431_ENABLE=y     # SCANNER model → CARTOGRAPHER V4
+CONFIG_VERSION="CARTOGRAPHER 6.2.0"   # Firmware version string
+```
+
+The other 131 — `USBSERIAL`, `CANSERIAL`, `FLASH_APPLICATION_ADDRESS`,
+`CLOCK_FREQ`, every `WANT_*` — are computed from those seven. The CAN build adds
+exactly one answer (`STM32_CANBUS_PA11_PA12`); the "lite" build adds exactly one
+more (`FOR_K1`, which means Creality K1, not "feature-reduced").
+
+```bash
+updatefw.py profiles -t carto_v4
+updatefw.py apply-profile -t carto_v4 -p config.CartoV4USB
+```
+
+**The answers come from the firmware tree, not from this repo.** Cartographer
+ships `config.CartoV4USB` and seven siblings in their fork's root. Copying those
+lines here would make us the owner of somebody else's hardware definition, and it
+would go stale visibly: `CONFIG_VERSION` is maintained by hand in those files, so
+the tree's own Kconfig default still says `6.0.0` while every shipped config says
+`6.2.0`. The seed is loaded and re-emitted rather than copied — what `make
+olddefconfig` does, minus the terminal — so a `git pull` of the fork picks up
+both the next bump and any symbol added since.
+
+**Katapult is derived from the application, not seeded.** There is no vendor
+config for it, and a second table describing the same board is how two configs
+drift apart. Every answer Katapult's tree *also defines* is carried across;
+`SCANNER`, `CARTOGRAPHER_G431_ENABLE` and `VERSION` are dropped by that same
+test. Then the one thing that matters is checked: Katapult's `LAUNCH_APP_ADDRESS`
+must equal the application's `FLASH_APPLICATION_ADDRESS`. Those agreeing is the
+whole of "the board boots", and they are separate answers in separate trees that
+each build and flash perfectly happily when wrong — so a disagreement is refused
+with both addresses named, rather than discovered afterwards.
+
+**Nothing is locked.** A seeded `.config` is an ordinary one that `menuconfig`
+still edits; what this adds is that `status` then says `Customised` instead of
+saying nothing. A lock users cannot override just gets worked around by editing
+the file on disk, and then nobody knows. `apply-profile` refuses to overwrite a
+config it did not write — `--force` replaces it and keeps a `.bak`.
+
+> Three answers are worth knowing you can break, out of that whole menu: the
+> **clock reference** (wrong and the board never enumerates), the
+> **communication interface** (mismatched to how it is wired and the board
+> vanishes — and a CAN build has no software route to ROM DFU, because Klipper
+> sets `STM32_DFU_ROM_ADDRESS` to 0 without USB), and the **bootloader offset**.
+> The rest is genuinely inert for a board like this.
 
 ### ESP32 displays
 
@@ -160,6 +221,7 @@ reasoning.
 ~/printer_data/mcu-updater/          generated, not backed up
     <type>/<fw>.bin                      built firmware
     <type>/<fw>.build.json               build provenance, for staleness checks
+    <type>/<fw>.profile.json             what was seeded, for drift detection
 ```
 
 Config lives under `config/` so it's backed up and reachable by Mainsail's own

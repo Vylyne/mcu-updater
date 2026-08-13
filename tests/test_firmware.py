@@ -93,6 +93,23 @@ def test_a_source_path_is_expanded(paths):
     assert resolved.endswith("somewhere")
 
 
+def test_tilde_expands_against_the_paths_home_not_the_process_environment(paths, fake_root):
+    """The one path in the project that escaped the Paths seam.
+
+    ``os.path.expanduser`` reads the environment, so a configured
+    ``source: ~/klipper-fork`` resolved against the *real* home even when
+    MCU_UPDATER_HOME said otherwise. On a printer the two agree, which is
+    exactly why it went unnoticed - and why anything relocating the home (a
+    test, a second instance) got the wrong tree with no error anywhere.
+    """
+    _write_firmware(paths, "klipper", source="~/klipper-fork")
+    resolved = firmware.resolve(paths, "klipper").source_dir(paths)
+
+    assert resolved == os.path.join(str(fake_root), "klipper-fork")
+    assert resolved.startswith(paths.home)
+    assert resolved != os.path.expanduser("~/klipper-fork")
+
+
 def test_a_fork_keeps_its_parents_output_name(paths, fake_root):
     """Cartographer's firmware *is* klipper, so its Makefile emits klipper.bin
     no matter what we call the family. A family whose name matches neither its

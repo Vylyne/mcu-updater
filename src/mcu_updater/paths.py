@@ -252,6 +252,20 @@ class Paths:
         """Build provenance: {fw_sha, config_sha256, duration, timestamp}."""
         return os.path.join(self.artifact_dir(mcu_type), f"{fw}.build.json")
 
+    def profile_file(self, mcu_type: str, fw: str) -> str:
+        """What was seeded into this type's .config, and from where.
+
+        In the data tree, beside the build sidecar, rather than next to the
+        ``.config`` it describes. The ``.config`` is hand-editable and backed
+        up; this is a record of something that happened, and putting it in
+        ``config_dir`` would offer it up for editing in Mainsail's file browser
+        next to the file whose integrity it exists to vouch for.
+
+        Losing it is survivable: the type reads as unmanaged, which is what an
+        install predating profiles reads as anyway.
+        """
+        return os.path.join(self.artifact_dir(mcu_type), f"{fw}.profile.json")
+
     # --- construction ---
 
     @classmethod

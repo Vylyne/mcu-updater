@@ -40,6 +40,7 @@ import contextlib
 import hashlib
 import importlib.util
 import os
+import tempfile
 import threading
 import time
 from collections.abc import Iterator
@@ -122,6 +123,75 @@ def _srctree(fw_dir: str) -> Iterator[None]:
                 os.environ.pop("srctree", None)
             else:
                 os.environ["srctree"] = previous
+
+
+def parse_tree(fw_dir: str, config: Optional[str] = None) -> tuple[ModuleType, Any]:
+    """Parse a tree's ``src/Kconfig``, optionally loading answers into it.
+
+    The whole of "open a firmware tree", in one call: find its kconfiglib, set
+    ``srctree`` for the duration of the construction, parse, and load a config
+    if one was named. Callers get back both the module and the ``Kconfig``,
+    because anything that inspects nodes needs the module too - the classes are
+    per-copy and cross-comparing them silently classifies everything as unknown.
+
+    `config` is loaded with kconfiglib's ``load_config``, which records a *user
+    value* per assignment rather than an effective one. That is what makes the
+    order of lines in a config file irrelevant: ``MACH_STM32G431`` is accepted
+    while it is still invisible, and becomes effective once ``MACH_STM32``
+    above it is applied. Anything that wants to apply a set of answers should
+    therefore go through a file and this function, not a sequence of
+    ``set_value`` calls, which would drop every answer whose turn came too early.
+    """
+    module = load_kconfiglib(fw_dir)
+    rel = os.path.join("src", "Kconfig")
+    if not os.path.isfile(os.path.join(fw_dir, rel)):
+        raise KconfigError(
+            f"no {rel} in {fw_dir}. Is that a firmware source tree?", path=fw_dir
+        )
+    with _srctree(fw_dir):
+        try:
+            kconf = module.Kconfig(rel, warn_to_stderr=False)
+        except Exception as exc:  # noqa: BLE001 - a parse failure is fatal here
+            raise KconfigError(
+                f"could not parse {rel} in {fw_dir}: {exc}", path=fw_dir
+            ) from exc
+
+    if config is not None:
+        try:
+            kconf.load_config(config)
+        except Exception as exc:  # noqa: BLE001
+            raise KconfigError(f"could not read {config}: {exc}", path=config) from exc
+    return module, kconf
+
+
+def write_min_config(kconf: Any, fw_dir: str, path: str) -> None:
+    """Write the answers that differ from their defaults, and nothing else.
+
+    ``srctree`` is set around the write because kconfiglib re-reads it while
+    resolving ``source`` statements for the header it emits.
+    """
+    with _srctree(fw_dir):
+        kconf.write_min_config(path)
+
+
+def minimal_answers(kconf: Any, fw_dir: str) -> list[str]:
+    """The minimal config as a list of ``CONFIG_X=y`` lines, comments dropped.
+
+    This is the answer set a person actually gave. Klipper's full ``.config``
+    for a Cartographer V4 is 138 lines, of which 7 are answers and 131 are
+    computed from them - so this is what a UI should show when it says "these
+    are your settings", and showing the full file instead invites editing the
+    130 lines that are not anyone's to set.
+    """
+    with tempfile.TemporaryDirectory(prefix="mcu-updater-min-") as tmp:
+        out = os.path.join(tmp, "min.config")
+        write_min_config(kconf, fw_dir, out)
+        with open(out, encoding="utf-8") as fh:
+            return [
+                line.strip()
+                for line in fh
+                if line.strip() and not line.lstrip().startswith("#")
+            ]
 
 
 class Serializer:
@@ -436,11 +506,45 @@ def help_for(node: Any) -> str:
 # editing
 # --------------------------------------------------------------------------
 
+def save_config(kconf: Any, fw_dir: str, path: str) -> Optional[str]:
+    """Write a parsed configuration out, never leaving a truncated file behind.
+
+    kconfiglib's own ``write_config`` writes in place and non-atomically, so a
+    crash part-way through leaves answers that cannot be recovered - and the
+    saved answers are the one thing in this tool that genuinely cannot be
+    regenerated. So: write to a temp file, keep one generation of backup, then
+    rename into place.
+
+    Returns the backup path, or None if there was nothing to back up.
+    """
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    tmp = path + ".tmp"
+    try:
+        with _srctree(fw_dir):
+            kconf.write_config(tmp)
+    except Exception as exc:  # noqa: BLE001
+        with contextlib.suppress(OSError):
+            os.unlink(tmp)
+        raise KconfigError(f"could not write {path}: {exc}", path=path) from exc
+
+    backup = None
+    if os.path.isfile(path):
+        backup = path + ".bak"
+        try:
+            # replace, not copy: one generation, and no window where neither
+            # the old nor the new file is complete.
+            os.replace(path, backup)
+        except OSError:
+            backup = None
+    os.replace(tmp, path)
+    return backup
+
+
 #: kconfiglib's own return value is not enough to tell whether an assignment took.
 #: `set_value("99")` on an `int` with `range 4 32` returns **True** and silently
 #: leaves the symbol at its default. So every write is verified by reading the
 #: value back, which also catches anything else the library declines quietly.
-def _same_value(kind: str, requested: str, actual: str) -> bool:
+def same_value(kind: str, requested: str, actual: str) -> bool:
     if kind == "hex":
         try:
             return int(requested, 16) == int(actual, 16)
@@ -492,30 +596,11 @@ class KconfigSession:
     # -- lifecycle ---------------------------------------------------------
 
     def _parse(self) -> Any:
-        rel = os.path.join("src", "Kconfig")
-        if not os.path.isfile(os.path.join(self.fw_dir, rel)):
-            raise KconfigError(
-                f"no {rel} in {self.fw_dir}. Is that a firmware source tree?",
-                path=self.fw_dir,
-            )
-        with _srctree(self.fw_dir):
-            try:
-                kconf = self._module.Kconfig(rel, warn_to_stderr=False)
-            except Exception as exc:  # noqa: BLE001 - a parse failure is fatal here
-                raise KconfigError(
-                    f"could not parse {rel} in {self.fw_dir}: {exc}", path=self.fw_dir
-                ) from exc
-
         # A missing config file is normal, not an error: it means this type has
         # never been configured and the Kconfig defaults are the right place to
         # start from.
-        if os.path.isfile(self.config_path):
-            try:
-                kconf.load_config(self.config_path)
-            except Exception as exc:  # noqa: BLE001
-                raise KconfigError(
-                    f"could not read {self.config_path}: {exc}", path=self.config_path
-                ) from exc
+        saved = self.config_path if os.path.isfile(self.config_path) else None
+        _module, kconf = parse_tree(self.fw_dir, saved)
         return kconf
 
     def touch(self) -> None:
@@ -674,7 +759,7 @@ class KconfigSession:
         # every test passing. It stays because it is the only guard that does not
         # need to anticipate *why* a value was rejected, and kconfiglib has already
         # been shown to reject one silently.
-        if accepted is False or not _same_value(kind, wanted, actual):
+        if accepted is False or not same_value(kind, wanted, actual):
             detail = f" (it is still {actual!r})" if accepted is not False else ""
             suffix = f" Allowed range: {rng['min']}..{rng['max']}." if rng else ""
             raise KconfigError(
@@ -755,35 +840,12 @@ class KconfigSession:
     def save(self) -> dict[str, Any]:
         """Write the answers out, without ever leaving a truncated file behind.
 
-        kconfiglib's own ``write_config`` writes in place and non-atomically, so a
-        crash part-way through leaves answers that cannot be recovered - and the
-        saved answers are the one thing in this tool that genuinely cannot be
-        regenerated. So: write to a temp file, keep one generation of backup, then
-        rename into place.
+        The atomicity lives in :func:`save_config`, which profile seeding uses
+        too - both write the same file for the same type, and a second
+        implementation of "replace this safely" is a second chance to get it
+        wrong.
         """
-        os.makedirs(os.path.dirname(self.config_path), exist_ok=True)
-        tmp = self.config_path + ".tmp"
-        try:
-            with _srctree(self.fw_dir):
-                self._kconf.write_config(tmp)
-        except Exception as exc:  # noqa: BLE001
-            with contextlib.suppress(OSError):
-                os.unlink(tmp)
-            raise KconfigError(
-                f"could not write {self.config_path}: {exc}", path=self.config_path
-            ) from exc
-
-        backup = None
-        if os.path.isfile(self.config_path):
-            backup = self.config_path + ".bak"
-            try:
-                # replace, not copy: one generation, and no window where neither
-                # the old nor the new file is complete.
-                os.replace(self.config_path, backup)
-            except OSError:
-                backup = None
-        os.replace(tmp, self.config_path)
-
+        backup = save_config(self._kconf, self.fw_dir, self.config_path)
         self.dirty = False
         self.touch()
         return {"path": self.config_path, "backup": backup, "dirty": False}

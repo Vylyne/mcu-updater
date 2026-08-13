@@ -14,13 +14,18 @@
   "mutations": [
     {
       "name": "a configured source tree is honoured, not ignored",
-      "find": "        if self.source:\n            return os.path.expanduser(self.source)",
-      "replace": "        if False:\n            return os.path.expanduser(self.source)"
+      "find": "        if self.source:\n            return expand_home(self.source, paths.home)",
+      "replace": "        if False:\n            return expand_home(self.source, paths.home)"
     },
     {
       "name": "a source path gets ~ expanded",
-      "find": "            return os.path.expanduser(self.source)",
+      "find": "            return expand_home(self.source, paths.home)",
       "replace": "            return self.source"
+    },
+    {
+      "name": "~ expands against the Paths home, not the process environment",
+      "find": "    if text.startswith(\"~/\") or text.startswith(\"~\\\\\"):\n        return os.path.join(home, text[2:])",
+      "replace": "    if text.startswith(\"~/\") or text.startswith(\"~\\\\\"):\n        return os.path.expanduser(text)"
     },
     {
       "name": "a fork's own artifact name is used, not the family name",

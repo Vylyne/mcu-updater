@@ -57,6 +57,21 @@ DEFAULT_APPLICATION = "klipper"
 BOOTLOADER = "katapult"
 
 
+def expand_home(path: str, home: str) -> str:
+    """Expand a leading ``~`` against `home`, leaving everything else alone.
+
+    Only the bare ``~`` form, which is the one that means "this printer's home
+    directory". ``~someone`` is left to ``expanduser``, because that names a
+    specific account and is not ours to reinterpret.
+    """
+    text = path.strip()
+    if text == "~":
+        return home
+    if text.startswith("~/") or text.startswith("~\\"):
+        return os.path.join(home, text[2:])
+    return os.path.expanduser(text)
+
+
 @dataclasses.dataclass(frozen=True)
 class FirmwareFamily:
     """One firmware target, and where its tree and output live."""
@@ -69,9 +84,18 @@ class FirmwareFamily:
     artifact: str = ""
 
     def source_dir(self, paths: Paths) -> str:
-        """The tree to run `make` in."""
+        """The tree to run `make` in.
+
+        ``~`` is expanded against ``paths.home`` rather than by
+        ``os.path.expanduser``. They agree on a normal install and disagree
+        everywhere it matters: ``expanduser`` reads the process environment, so
+        a configured ``source: ~/klipper-fork`` silently escaped the one seam
+        the whole project is testable through - ``MCU_UPDATER_HOME`` - and
+        resolved against the real home instead. Every other path here already
+        went through Paths; this was the one that did not.
+        """
         if self.source:
-            return os.path.expanduser(self.source)
+            return expand_home(self.source, paths.home)
         return paths.fw_dir(self.name)
 
     def artifact_name(self) -> str:

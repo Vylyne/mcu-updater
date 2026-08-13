@@ -190,6 +190,48 @@ class OperationCancelled(UpdaterError):
     code = "cancelled"
 
 
+# --- profiles ---
+
+
+class ProfileError(UpdaterError):
+    code = "profile"
+
+
+class ProfileNotFoundError(ProfileError):
+    """The named seed file isn't in the firmware tree.
+
+    Almost always a tree that hasn't been pulled rather than a typo - the
+    vendor ships these files, so `data.available` carries what is actually
+    there so a UI can offer the real list instead of echoing the bad name.
+    """
+
+    code = "profile_not_found"
+
+
+class ProfileCustomisedError(ProfileError):
+    """Reseeding would discard answers this tool did not put there.
+
+    Refused rather than backed up and overwritten. The saved answers are the
+    one thing here that cannot be regenerated, and a user who edited them did
+    so on purpose - so the override is explicit and theirs to give.
+    """
+
+    code = "profile_customised"
+
+
+class OffsetMismatchError(ProfileError):
+    """The bootloader and the application disagree about where the app starts.
+
+    Katapult's ``LAUNCH_APP_ADDRESS`` is the address it jumps to; the
+    application's ``FLASH_APPLICATION_ADDRESS`` is where it was linked to run.
+    A pair that disagrees produces two binaries that each build cleanly, flash
+    cleanly, and leave a board that does not come back - so this is refused at
+    the point the second config is written rather than discovered afterwards.
+    """
+
+    code = "offset_mismatch"
+
+
 # --- kconfig ---
 
 

@@ -19,7 +19,7 @@ import sys
 from collections.abc import Sequence
 from typing import Optional
 
-from . import __version__, firmware
+from . import __version__, firmware, profiles
 from .build import build, menuconfig_tty, staleness
 from .config import Registry
 from .devices import (
@@ -117,6 +117,74 @@ def add_mcu_type(args: argparse.Namespace) -> None:
         raise
     reg.save(c.paths)
     print(f"Successfully added/updated MCU Type: {args.type}")
+
+
+def list_profiles(args: argparse.Namespace) -> None:
+    c = ctx()
+    mcu = c.registry().get(args.type)
+    families = firmware.load(c.paths)
+    seeds = profiles.available(c.paths, mcu.firmware, families)
+
+    print(f"{args.type} runs {mcu.firmware}.")
+    if not seeds:
+        print(
+            f"  Its tree ({firmware.resolve(c.paths, mcu.firmware, families).source_dir(c.paths)}) "
+            f"ships no profiles.\n"
+            f"  Upstream Klipper ships none by design - there is no single config for a "
+            f"tree that builds\n  for two hundred boards. Vendor forks ship one per variant."
+        )
+    else:
+        print("  Available:")
+        for seed in seeds:
+            mark = "*" if seed.name == mcu.profile else " "
+            print(f"   {mark} {seed.name}")
+
+    for fw in mcu.families():
+        state = profiles.status(c.paths, args.type, fw, families)
+        detail = f" (from {state.profile})" if state.profile else ""
+        print(f"  {fw}: {state.label}{detail}")
+
+
+def apply_profile(args: argparse.Namespace) -> None:
+    c = ctx()
+    reg = c.registry()
+    mcu = reg.get(args.type)
+    families = firmware.load(c.paths)
+    fw = args.fw or mcu.firmware
+
+    applied = profiles.apply_seed(
+        c.paths, args.type, fw, args.profile, families=families, force=args.force
+    )
+    print(f"Seeded {args.type} ({fw}) from {applied.profile}:")
+    for line in applied.answers:
+        print(f"    {line}")
+    if applied.backup:
+        print(f"  Previous config kept at {applied.backup}")
+
+    if args.no_derive or not mcu.katapult_installed:
+        print(f"  {firmware.BOOTLOADER} not derived.")
+    else:
+        derived = profiles.derive_bootloader(
+            c.paths, args.type, fw, families=families, force=args.force
+        )
+        print(f"\nDerived {firmware.BOOTLOADER} from it:")
+        for line in derived.carried:
+            print(f"    {line}")
+        if derived.dropped:
+            print("  Not carried (not settings that tree has):")
+            for line in derived.dropped:
+                print(f"    {line}")
+        if derived.app_address is not None:
+            print(
+                f"  Verified: {firmware.BOOTLOADER} jumps to "
+                f"{derived.app_address:#x}, where {fw} is linked to run."
+            )
+
+    if fw == mcu.firmware:
+        with Registry.mutate(c.paths, f"profile for {args.type}") as writable:
+            writable.get(args.type).profile = applied.profile
+
+    print(f"\nRun 'build -t {args.type} -f {fw}' next.")
 
 
 def add_serial(args: argparse.Namespace) -> None:
@@ -480,6 +548,38 @@ def build_parser(fw_choices: Optional[Sequence[str]] = None) -> argparse.Argumen
 
     p = subparsers.add_parser("status", help="Show tracked types, staleness, and bus state")
     p.set_defaults(func=status_cmd)
+
+    p = subparsers.add_parser(
+        "profiles", help="List the vendor answer files this type's firmware tree ships"
+    )
+    p.add_argument("-t", "--type", required=True, help="MCU Type Name")
+    p.set_defaults(func=list_profiles)
+
+    p = subparsers.add_parser(
+        "apply-profile",
+        help="Seed a type's menuconfig answers from its firmware tree, "
+        "deriving katapult's to match",
+    )
+    p.add_argument("-t", "--type", required=True, help="MCU Type Name")
+    p.add_argument(
+        "-p", "--profile", required=True, help="Seed file name, e.g. config.CartoV4USB"
+    )
+    p.add_argument(
+        "-f", "--fw", default=None,
+        help="Firmware target (default: whichever family the type declares it runs)",
+    )
+    p.add_argument(
+        "--no-derive",
+        action="store_true",
+        help="Seed the application only, leaving katapult's config alone",
+    )
+    p.add_argument(
+        "--force",
+        action="store_true",
+        help="Replace an existing config that was not written from a profile "
+        "(the previous one is kept as .bak)",
+    )
+    p.set_defaults(func=apply_profile)
 
     p = subparsers.add_parser("menuconfig", help="Launch make menuconfig for a specific target")
     p.add_argument("-t", "--type", required=True, help="MCU Type Name")

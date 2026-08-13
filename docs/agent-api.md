@@ -169,7 +169,9 @@ on-disk path, never a reconstructed one.
  "built_fw_sha": "a1b2c3d", "current_fw_sha": "e4f5a6b",
  "stale": true, "stale_reason": "source_changed", "reason": "source_changed",
  "last_build_seconds": 74.2, "last_build_at": 1785410000.0,
- "config_rewritten": false}
+ "config_rewritten": false,
+ "profile": {"managed": true, "profile": "config.CartoV4USB",
+             "reason": null, "tone": "ok", "label": "Matches profile"}}
 ```
 
 `stale_reason` ∈ `null` | `"never_built"` | `"config_changed"` |
@@ -192,6 +194,15 @@ every board stale.
 `config_rewritten` is true when `make` ran `olddefconfig` over the saved config,
 which silently changes menuconfig answers after Klipper's `src/Kconfig` changes.
 Worth surfacing; users otherwise get "why did my CAN setting move?".
+
+`profile` is a **third** verdict, deliberately beside the other two rather than
+folded into `reason`. `reason` answers "is the binary current with its inputs?";
+this answers "do the inputs still say what the profile said?". A customised
+config is not a stale artifact and does not want a rebuild — it wants somebody
+to know about it. `reason` ∈ `null` | `"unmanaged"` | `"customised"` |
+`"seed_moved"`, and `unmanaged` carries an **ok** tone: it is the state of every
+type predating profiles, and painting those amber would be noise about a thing
+that is not wrong. See `fw.profile.*`.
 
 ### `BusDevice`
 
@@ -904,6 +915,112 @@ printer is idle.
 `connected` and `disconnected` are **reserved** — Moonraker emits those itself,
 carrying the agent's identify payload, and rejects any attempt by an agent to
 send them. That is deliberately what the panel uses for availability detection.
+
+## Profiles — seeding a config instead of typing one
+
+A Cartographer V4's `.config` is 138 lines, of which **seven** are answers and
+131 are computed from them by Kconfig. The USB and CAN builds differ by exactly
+one answer; the "lite" build by one more (`FOR_K1`, which means Creality K1, not
+"feature-reduced"). `fw.profile.*` writes those seven from the vendor's own
+`config.CartoV4USB`, which ships in their fork's root.
+
+**The answers are read out of the firmware tree, never stored in this repo.**
+Copying seven lines here would make us the owner of somebody else's hardware
+definition, and it would go stale visibly: `CONFIG_VERSION` is maintained by
+hand in those files, so the tree's Kconfig default still says `6.0.0` while
+every shipped config says `6.2.0`. Reading them means a `git pull` of the fork
+picks up the next bump.
+
+The seed is **loaded and re-emitted**, not copied — the same thing `make
+olddefconfig` does, minus needing a terminal. A seed written against last year's
+Kconfig therefore picks up symbols added since, instead of leaving them to be
+silently filled in by the next build.
+
+### `fw.profile.list`
+
+```json
+{"name": "carto_v4"}
+```
+
+```json
+{"type": "carto_v4", "firmware": "cartographer", "profile": "config.CartoV4USB",
+ "available": [{"name": "config.CartoV4USB", "fw": "cartographer",
+                "path": "/home/pi/MCU-Firmware---Based-on-Klipper/config.CartoV4USB"}],
+ "state": {"cartographer": {"managed": true, "reason": null, "...": "..."},
+           "katapult":     {"managed": true, "reason": null, "...": "..."}}}
+```
+
+Keyed on the **type**, not on a firmware family: "which profiles apply to this
+board" depends on the family the type declares it runs, not on which trees
+happen to be installed. Upstream Klipper ships none, which is the right answer
+for a tree that builds for two hundred boards.
+
+### `fw.profile.apply`
+
+```json
+{"name": "carto_v4", "profile": "config.CartoV4USB",
+ "derive": true, "force": false}
+```
+
+Returns `{"applied": SeedResult, "derived": SeedResult|null}`, where a
+`SeedResult` carries the minimal `answers`, the `carried` / `dropped` split for
+a derivation, and the sha256 of both the seed and the config written.
+
+**Katapult is derived, not seeded, and by default rather than on request.**
+There is no vendor config for it, and a second table describing the same board
+is how two configs drift into disagreement. Every answer the bootloader tree
+also *defines* is carried across; `SCANNER`, `CARTOGRAPHER_G431_ENABLE` and
+`VERSION` are dropped by that same test rather than by a hand-maintained skip
+list. Seeding only the application would leave a type whose two configs describe
+different boards, so the safe combination is the one that takes no extra
+argument. `derive: false` exists for a type with `katapult_installed: false`,
+which has nothing to derive.
+
+**One invariant is checked rather than assumed.** Katapult's
+`LAUNCH_APP_ADDRESS` is where it jumps; the application's
+`FLASH_APPLICATION_ADDRESS` is where the application was linked to run. Those
+agreeing is the whole of "the board boots", and they are separate answers in
+separate trees that each build and flash perfectly happily when wrong. A
+disagreement raises `offset_mismatch` carrying both addresses, and nothing is
+written — including on the application side if it had already succeeded, whose
+config stays because it is valid on its own. A missing symbol on either side
+raises the same error rather than skipping the check: a check that quietly stops
+checking still reads as verified.
+
+Errors: `profile_not_found` (carries `available`), `profile` (a name that is not
+a plain `config.*` file in the tree root — it arrives from a browser and is
+about to be joined onto a source path), `profile_customised`, `offset_mismatch`.
+
+### `fw.profile.forget`
+
+```json
+{"name": "carto_v4", "fw": "cartographer"}
+```
+
+Detaches, leaving every answer exactly as it is. Omit `fw` to detach every
+family the type uses.
+
+### Nothing here locks anything
+
+A profile-managed config is an ordinary `.config` that `make menuconfig` and
+`fw.kconfig.*` can both still change. What profiles add is that the change
+becomes **visible** — `Artifact.profile.reason` reports `customised` — instead
+of silent. A lock users cannot override gets worked around by editing the file
+on disk, which is strictly worse, because then nobody knows.
+
+For the same reason, `fw.profile.apply` refuses rather than overwrites. A config
+that still matches its record is ours to rewrite, which is what makes reseeding
+after a vendor bump safe and repeatable; anything else — a hand-built config
+from before profiles existed, or one edited since — is the user's. `force: true`
+replaces it and keeps one generation as `.bak`.
+
+Three answers are worth warning about specifically rather than blanketing the
+whole menu, because they are the ones that cost you a board: the **clock
+reference** (wrong and it never enumerates), the **communication interface**
+(mismatched to how the board is wired and it vanishes from the bus — and a CAN
+build has no software route to ROM DFU, because Klipper's
+`STM32_DFU_ROM_ADDRESS` is `default 0 if !USB`), and the **bootloader offset**.
+The rest of that menu is genuinely inert for a board like this.
 
 ## Availability detection
 

@@ -1,0 +1,65 @@
+{
+  "_comment": "Profile seeding. Three of these guards stand between a config file and an unbootable board: the offset agreement check, its refusal to become a no-op, and the refusal to overwrite answers the user wrote by hand. The fourth - the seed name whitelist - stands between a browser and reading an arbitrary file off the printer.",
+  "file": "src/mcu_updater/profiles.py",
+  "command": [
+    "python",
+    "-m",
+    "pytest",
+    "tests/test_profiles.py",
+    "tests/test_agent_profiles.py",
+    "-q"
+  ],
+  "mutations": [
+    {
+      "name": "the app/bootloader offsets must agree",
+      "find": "    if app_address != launch:",
+      "replace": "    if False:"
+    },
+    {
+      "name": "a check that cannot run is refused, not skipped",
+      "find": "    if app_address is None or launch is None:",
+      "replace": "    if False:"
+    },
+    {
+      "name": "hand-written answers are not overwritten",
+      "find": "    if force or not os.path.exists(target):\n        return",
+      "replace": "    if True:\n        return"
+    },
+    {
+      "name": "a local edit outranks a vendor bump",
+      "find": "    if current != record.get(\"config_sha256\"):\n        return ProfileStatus(CUSTOMISED, profile=name)",
+      "replace": "    if False:\n        return ProfileStatus(CUSTOMISED, profile=name)"
+    },
+    {
+      "name": "a seed name is a basename, not a path",
+      "find": "    if stripped != os.path.basename(stripped) or os.path.isabs(stripped):",
+      "replace": "    if False:"
+    },
+    {
+      "name": "a seed name must look like a vendor config file",
+      "find": "    if not stripped.startswith(SEED_PREFIX):",
+      "replace": "    if False:"
+    },
+    {
+      "_comment": "The authoritative half of the carry filter. Its cheap partner in _partition is deliberately absent from this list: deleting that one alone changes nothing observable, which is documented at the function rather than papered over with a mutation that would read as SURVIVED forever.",
+      "name": "an answer the target tree would not take is not reported as carried",
+      "find": "    if refused:\n        carried = [line for line in carried if line not in refused]\n        dropped.extend(refused)",
+      "replace": ""
+    },
+    {
+      "name": "a bool set to n is read as an answer, not a comment",
+      "find": "    if text.startswith(\"# CONFIG_\") and text.endswith(\" is not set\"):\n        return text[len(\"# CONFIG_\") : -len(\" is not set\")].strip(), \"n\"",
+      "replace": ""
+    },
+    {
+      "name": "addresses are compared numerically",
+      "find": "        return int(raw, 16)",
+      "replace": "        return raw"
+    },
+    {
+      "name": "a derived config tracks the application config it came from",
+      "find": "    if name.startswith(\"derived:\"):\n        return _sha256(paths.config_file(mcu_type, name[len(\"derived:\") :]))",
+      "replace": "    if name.startswith(\"derived:\"):\n        return None"
+    }
+  ]
+}

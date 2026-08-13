@@ -1,0 +1,138 @@
+# A stand-in for Klipper (and its Cartographer fork), shaped like the real one.
+#
+# Everything here exists to reproduce one property of the real trees:
+#
+#   * a handful of answers, and a lot of symbols computed from them - so
+#     reducing a full config to its minimal answers has something to reduce;
+#   * symbols the bootloader tree does not have (SCANNER, VERSION) - so the
+#     "does the target tree define this?" filter has something to drop;
+#   * FLASH_APPLICATION_ADDRESS derived from a bootloader-offset choice, which
+#     is the value the bootloader's LAUNCH_APP_ADDRESS has to agree with.
+
+mainmenu "Test Application Configuration"
+
+config LOW_LEVEL_OPTIONS
+    bool "Enable extra low-level configuration options"
+
+# No explicit default, so the first option wins - which is how Klipper's own
+# architecture choice behaves, and why MACH_STM32 is genuinely one of the
+# answers rather than something the tree would have picked anyway.
+choice
+    prompt "Micro-controller Architecture"
+
+config MACH_RP2040
+    bool "Raspberry Pi RP2040"
+
+config MACH_STM32
+    bool "STMicroelectronics STM32"
+
+endchoice
+
+if MACH_STM32
+
+choice
+    prompt "Processor model"
+    default MACH_STM32F072
+
+config MACH_STM32F072
+    bool "STM32F072"
+
+config MACH_STM32G431
+    bool "STM32G431"
+
+endchoice
+
+# Gated on LOW_LEVEL_OPTIONS exactly as Klipper's is, which is why enabling
+# that is itself one of the seven answers rather than noise.
+choice
+    prompt "Clock Reference" if LOW_LEVEL_OPTIONS
+    default STM32_CLOCK_REF_8M
+
+config STM32_CLOCK_REF_8M
+    bool "8 MHz crystal"
+
+config STM32_CLOCK_REF_24M
+    bool "24 MHz crystal"
+
+endchoice
+
+choice
+    prompt "Bootloader offset"
+    default STM32_FLASH_START_2000
+
+config STM32_FLASH_START_0000
+    bool "No bootloader"
+
+config STM32_FLASH_START_2000
+    bool "8KiB bootloader"
+
+config STM32_FLASH_START_8000
+    bool "32KiB bootloader"
+
+endchoice
+
+config FLASH_APPLICATION_ADDRESS
+    hex
+    default 0x8002000 if STM32_FLASH_START_2000
+    default 0x8008000 if STM32_FLASH_START_8000
+    default 0x8000000
+
+choice
+    prompt "Communication interface"
+    default STM32_USB_PA11_PA12
+
+config STM32_USB_PA11_PA12
+    bool "USB (on PA11/PA12)"
+
+config STM32_CANBUS_PA11_PA12
+    bool "CAN bus (on PA11/PA12)"
+
+endchoice
+
+# Computed, not answered. The USB and CAN configs differ by one answer and by
+# four of these, which is the thing that makes a full .config so misleading to
+# read as "the settings".
+config USBSERIAL
+    bool
+    default y if STM32_USB_PA11_PA12
+
+config CANSERIAL
+    bool
+    default y if STM32_CANBUS_PA11_PA12
+
+config CANBUS_FREQUENCY
+    int "CAN bus speed" if STM32_CANBUS_PA11_PA12
+    default 1000000
+
+config CLOCK_FREQ
+    int
+    default 170000000 if MACH_STM32G431
+    default 48000000
+
+# The probe-specific block. No bootloader tree has any of this, so it is what
+# proves the carry filter drops by tree membership rather than by a skip list.
+config SCANNER
+    bool "SCANNER"
+    default n
+
+choice
+    prompt "SCANNER model" if SCANNER
+
+config CARTOGRAPHER_ENABLE
+    bool "CARTOGRAPHER"
+
+config CARTOGRAPHER_G431_ENABLE
+    bool "CARTOGRAPHER V4"
+
+endchoice
+
+config FOR_K1
+    bool "Compiled for K1"
+    default n
+    depends on CARTOGRAPHER_ENABLE || CARTOGRAPHER_G431_ENABLE
+
+config VERSION
+    string "Firmware version string"
+    default "TESTFW 1.0.0"
+
+endif

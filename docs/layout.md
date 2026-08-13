@@ -11,6 +11,7 @@ Files are split by *what they are*, following the `printer_data` conventions.
 ~/printer_data/mcu-updater/            # generated. not backed up.
     bttebb36/klipper.bin                   #   built firmware
     bttebb36/klipper.build.json            #   build provenance, for staleness
+    bttebb36/klipper.profile.json          #   what was seeded, for drift detection
     flylllplusbuffer/klipper.uf2
     .updater.lock                          #   runtime state
     .updater.state
@@ -38,6 +39,14 @@ means a binary churn commit after every single build. They're also regenerable
 from source plus the saved config, and Mainsail's editor would list files it
 can't open. The same reasoning puts the lock and journal in the data tree —
 they're runtime state, not configuration.
+
+**`<fw>.profile.json` sits with the binaries rather than beside the `.config` it
+describes.** It records which vendor answer file a config was seeded from and
+the hash it had when written, which is how a later hand-edit becomes visible
+instead of silent. Putting it in `config/` would offer it up for editing in
+Mainsail's file browser, next to the very file whose integrity it exists to
+vouch for. Losing it is survivable: the type reads as unmanaged, which is what
+every install predating profiles reads as anyway.
 
 `~/printer_data/mcu-updater/` follows the pattern other add-ons use, e.g.
 `moonraker-timelapse` writing to `~/printer_data/timelapse/`.

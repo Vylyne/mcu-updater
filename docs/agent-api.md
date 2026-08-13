@@ -221,7 +221,10 @@ component renders both — and renders whatever comes next without being taught 
    {"id": "290055001850304158373620-if00", "name": "mcu scanner",
     "present": true, "state": "klipper", "path": "/dev/serial/by-id/usb-...",
     "version": "v0.12.0-381-g...", "needs_flash": true, "tone": "attention",
-    "label": "Update available", "reason": "source_changed"}],
+    "label": "Update available", "reason": "source_changed",
+    "actions": [{"id": "flash", "label": "Flash", "method": "fw.flash",
+                 "params": {"name": "carto_v4", "serial": "2900...-if00"},
+                 "blocked": null}]}],
  "actions": [
    {"id": "build", "label": "Build", "method": "fw.build",
     "params": {"name": "carto_v4", "fw": "cartographer"}, "blocked": null},
@@ -252,6 +255,11 @@ Four things are deliberate:
 - **`method` and `params` ride on each action** so the panel does not hold its
   own RPC map. Without this you ship a uniform shape and the reader still
   branches on `kind`, which is the whole thing this is for.
+
+Devices carry `actions` too, because the reasons differ per device: one board of
+a type can be offline while its neighbour waits in Katapult. It is also the only
+place the difference between flashing a board (`fw.flash`) and flashing a screen
+(`fw.display.flash`) has to exist — the reader never sees it.
 
 `needs_flash` is tri-state at both levels, and the target's is `true` if any
 device is, `false` only if every device provably is not, and `null` otherwise.

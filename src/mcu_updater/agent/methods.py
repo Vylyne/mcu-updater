@@ -604,20 +604,46 @@ class Api:
         artifact = payload["artifacts"].get(fw) or {}
         status = ArtifactStatus(artifact.get("reason"))
 
-        devices = [
-            {
-                "id": serial["serial"],
-                # The klipper [mcu] section, which is what makes a 24-hex serial
-                # a board you recognise. Named as System Loads names it.
-                "name": serial.get("mcu"),
-                "present": serial["state"] != STATE_OFFLINE,
-                "state": serial["state"],
-                "path": serial.get("path"),
-                "version": serial.get("running_version"),
-                **self._device_json(DeviceStatus(serial.get("reason"))),
-            }
-            for serial in payload["serials"]
-        ]
+        devices = []
+        for serial in payload["serials"]:
+            present = serial["state"] != STATE_OFFLINE
+            devices.append(
+                {
+                    "id": serial["serial"],
+                    # The klipper [mcu] section, which is what makes a 24-hex
+                    # serial a board you recognise. Named as System Loads does.
+                    "name": serial.get("mcu"),
+                    "present": present,
+                    "state": serial["state"],
+                    "path": serial.get("path"),
+                    "version": serial.get("running_version"),
+                    **self._device_json(DeviceStatus(serial.get("reason"))),
+                    "actions": self._device_actions(
+                        allowed,
+                        flash=(
+                            "fw.flash",
+                            {"name": name, "serial": serial["serial"]},
+                        ),
+                        present=present,
+                        has_artifact=bool(artifact.get("has_bin")),
+                        what=f"{fw} firmware",
+                        label=serial["serial"],
+                        extra=(
+                            [
+                                {
+                                    "id": "untrack",
+                                    "label": "Stop tracking",
+                                    "method": "fw.serial.remove",
+                                    "params": {"name": name, "serial": serial["serial"]},
+                                    "blocked": None,
+                                }
+                            ]
+                            if "fw.serial.remove" in allowed
+                            else []
+                        ),
+                    ),
+                }
+            )
 
         actions: list[dict[str, Any]] = []
         if "fw.build" in allowed:
@@ -702,6 +728,17 @@ class Api:
                     "path": screen.get("resolved_path"),
                     "version": screen.get("firmware_version"),
                     **self._device_json(device),
+                    "actions": self._device_actions(
+                        allowed,
+                        flash=(
+                            "fw.display.flash",
+                            {"name": name, "port": screen["configured_path"]},
+                        ),
+                        present=screen["present"],
+                        has_artifact=bool(payload["has_firmware"]),
+                        what="display firmware",
+                        label=screen["name"],
+                    ),
                 }
             )
 
@@ -777,6 +814,53 @@ class Api:
         # must not read as "silent" - that would invent a fault on a display
         # working perfectly.
         return "reachable"
+
+    def _device_actions(
+        self,
+        allowed: set[str],
+        *,
+        flash: tuple[str, dict[str, Any]],
+        present: bool,
+        has_artifact: bool,
+        what: str,
+        label: str,
+        extra: Optional[list[dict[str, Any]]] = None,
+    ) -> list[dict[str, Any]]:
+        """What can be done to one device.
+
+        Per device rather than only per target, because the reasons differ per
+        device: one board of a type can be offline while its neighbour is
+        waiting in Katapult. Carrying it here is also what lets a reader render
+        a board row and a screen row with the same code - the flash of a board
+        and the flash of a screen are different RPCs, and this is the only place
+        that difference needs to exist.
+        """
+        method, params = flash
+        out: list[dict[str, Any]] = []
+        if method in allowed:
+            if not has_artifact:
+                blocked = self._blocked(
+                    self.BLOCKED_NO_ARTIFACT,
+                    f"no {what} has been built yet.",
+                )
+            elif not present:
+                blocked = self._blocked(
+                    self.BLOCKED_NO_DEVICE,
+                    f"'{label}' is not connected.",
+                )
+            else:
+                blocked = None
+            out.append(
+                {
+                    "id": "flash",
+                    "label": "Flash",
+                    "method": method,
+                    "params": params,
+                    "blocked": blocked,
+                }
+            )
+        out.extend(extra or [])
+        return out
 
     def _flash_actions(
         self,

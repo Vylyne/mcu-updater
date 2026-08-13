@@ -89,6 +89,7 @@ def test_an_mcu_type_projects_onto_the_shared_shape(api):
         "tone",
         "label",
         "reason",
+        "actions",
     }
 
 
@@ -257,6 +258,60 @@ def test_build_names_the_family_the_type_actually_runs(paths, live_registry_text
     assert build["params"] == {"name": "carto_v4", "fw": "cartographer"}
 
 
+def test_a_device_carries_its_own_flash_call(paths, live_registry_text):
+    """Flashing one board and flashing one screen are different RPCs. Putting
+    each on its device is what lets a reader render both rows with one piece of
+    code instead of switching on `kind` at the last moment."""
+    with open(paths.registry_file, "w", encoding="utf-8") as fh:
+        fh.write(live_registry_text)
+    write_settings(paths, enable_flashing="true")
+    api = Api(paths, runner=_runner())
+
+    device = _targets(api)["bttmmbv1"]["devices"][0]
+    flash = _action(device, "flash")
+
+    assert flash["method"] == "fw.flash"
+    assert flash["params"] == {"name": "bttmmbv1", "serial": device["id"]}
+    # Offline, and nothing built either - the artifact is the first thing to
+    # fix, so that is what it says.
+    assert flash["blocked"]["code"] == Api.BLOCKED_NO_ARTIFACT
+
+
+def test_a_screen_carries_the_display_flash_call_pinned_to_its_port(
+    api, paths, fake_root
+):
+    """A port is never inferred: every screen of a type is an identical CH340,
+    and PlatformIO's auto-detect was seen picking between two of them."""
+    write_settings(paths, enable_flashing="true")
+    port = _add_display(paths, fake_root, api)
+    api = Api(paths, runner=_runner(), call=api._call)
+
+    device = _targets(api, "display")[ENV]["devices"][0]
+    flash = _action(device, "flash")
+
+    assert flash["method"] == "fw.display.flash"
+    assert flash["params"] == {"name": ENV, "port": port}
+
+
+def test_untrack_is_offered_per_board_and_never_for_a_screen(
+    paths, live_registry_text, fake_root
+):
+    """A screen is not in our registry at all - it is Klipper's, named by
+    `[knomi_serial ...]` - so there is nothing to stop tracking."""
+    with open(paths.registry_file, "w", encoding="utf-8") as fh:
+        fh.write(live_registry_text)
+    api = Api(paths, runner=_runner())
+    _add_display(paths, fake_root, api)
+
+    board = _targets(api)["bttmmbv1"]["devices"][0]
+    untrack = _action(board, "untrack")
+    assert untrack["method"] == "fw.serial.remove"
+    assert untrack["params"] == {"name": "bttmmbv1", "serial": board["id"]}
+
+    screen = _targets(api, "display")[ENV]["devices"][0]
+    assert _action(screen, "untrack") is None
+
+
 def test_the_artifact_shown_is_the_one_this_type_would_flash(paths, live_registry_text):
     """A cartographer type carries klipper config keys it will never use, so
     `artifacts` has a `klipper` entry that stays "never built" forever. Reading
@@ -337,6 +392,11 @@ def test_flash_is_blocked_with_something_built_but_nothing_connected(
     assert _action(target, "flash")["blocked"]["code"] == Api.BLOCKED_NO_DEVICE
     # Build-and-flash has nowhere to write either, and says the same thing.
     assert _action(target, "update")["blocked"]["code"] == Api.BLOCKED_NO_DEVICE
+    # And per device, which is where the reason can differ between two boards
+    # of one type: naming the board is what makes it actionable.
+    per_device = _action(target["devices"][0], "flash")["blocked"]
+    assert per_device["code"] == Api.BLOCKED_NO_DEVICE
+    assert target["devices"][0]["id"] in per_device["message"]
 
 
 def test_build_is_blocked_without_saved_menuconfig_answers(paths, live_registry_text):

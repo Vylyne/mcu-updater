@@ -71,6 +71,21 @@
       "replace": "            \"firmware\": \"klipper\","
     },
     {
+      "name": "a screen's flash is pinned to its own port",
+      "find": "                            {\"name\": name, \"port\": screen[\"configured_path\"]},",
+      "replace": "                            {\"name\": name},"
+    },
+    {
+      "name": "a board's flash names the board",
+      "find": "                            {\"name\": name, \"serial\": serial[\"serial\"]},",
+      "replace": "                            {\"name\": name},"
+    },
+    {
+      "name": "a device that is not connected cannot be flashed",
+      "find": "            elif not present:\n                blocked = self._blocked(\n                    self.BLOCKED_NO_DEVICE,",
+      "replace": "            elif False:\n                blocked = self._blocked(\n                    self.BLOCKED_NO_DEVICE,"
+    },
+    {
       "name": "a declared family with no source tree is not reported present",
       "find": "                    \"present\": os.path.isdir(source),",
       "replace": "                    \"present\": True,"

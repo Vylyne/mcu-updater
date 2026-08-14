@@ -265,6 +265,26 @@ hash afterwards, and keeps a backup outside the tree. That is not
 belt-and-braces: an earlier ad-hoc version of this crashed *between* mutating and
 restoring and left a sabotaged guard on disk.
 
+### Line endings
+
+LF everywhere, in the repo *and* the working tree — `.gitattributes` pins
+`* text=auto eol=lf`, because this ships to a Linux printer host where a `\r` in
+a shebang becomes `bad interpreter: python3^M`.
+
+Git handles checkout and commit; what it cannot see is a file rewritten in place
+afterwards, which on Windows is one careless `Path.write_text` away. The suite
+checks for it, and the fix is one command:
+
+```bash
+python scripts/check_line_endings.py          # report
+python scripts/check_line_endings.py --fix    # rewrite as LF
+```
+
+Worth having because the symptom points somewhere else entirely: anchors are
+matched as bytes, so a CRLF file misses *every* multi-line one at once and the
+mutation harness reports a wall of `STALE` — which reads as "the code moved",
+not "the file has carriage returns".
+
 The whole test suite runs on any OS with no printer attached, because every
 filesystem location comes from a `Paths` object that honours these overrides:
 

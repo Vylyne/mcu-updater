@@ -86,6 +86,17 @@ def mutated(path: str, find: str, replace: str) -> Iterator[None]:
 
     needle = find.encode("utf-8")
     if needle not in original:
+        # Name the real cause rather than reporting a stale guard. Anchors are
+        # written with `\n` and matched against bytes, so a file rewritten with
+        # CRLF - trivially done on Windows, where `Path.write_text` translates
+        # newlines - fails every multi-line anchor at once. That reads as "all
+        # your guards moved", which sends you looking in exactly the wrong
+        # place. Cheap to distinguish, and it has already cost an hour once.
+        if b"\r\n" in original and needle in original.replace(b"\r\n", b"\n"):
+            raise LookupError(
+                f"{path} has CRLF line endings, so no multi-line anchor can match. "
+                f"The guard is fine. Run: python scripts/check_line_endings.py --fix"
+            )
         raise LookupError(f"anchor not found in {path}: {find!r}")
 
     # A backup outside the tree, so even a crash between the write and the

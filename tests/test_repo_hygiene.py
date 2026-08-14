@@ -80,6 +80,50 @@ def test_the_check_can_actually_see_the_repo():
     assert any(path.endswith(".py") for path in modes)
 
 
+def test_no_working_tree_file_has_crlf_endings():
+    """CRLF in the working tree is invisible to everything except the tools that
+    matter, so the suite has to be the thing that sees it.
+
+    `.gitattributes` pins `* text=auto eol=lf`, which protects the *repository*:
+    Git writes LF on checkout and normalises on commit. It does nothing about a
+    file rewritten in place afterwards - and on Windows that is easy to do by
+    accident, because `Path.write_text` and `open(..., "w")` translate `\\n` to
+    `\\r\\n` unless you pass `newline=""`.
+
+    It happened: a scripted edit rewrote all of `agent/methods.py` that way. The
+    commit would still have been LF, so nothing downstream broke - but
+    `mutation_test.py` reads files as bytes on purpose, so every multi-line
+    anchor reported STALE, which reads as "your guard moved" rather than "your
+    file has CRLF". And *this* file could not see it either: the test below
+    reads with `read_text()`, which applies universal newlines and makes CRLF
+    invisible. Green suite, broken harness.
+
+    The scan lives in `scripts/check_line_endings.py` so the fix is one command
+    rather than a manual sweep, and so both callers ask the same question.
+    Deliberately not auto-fixed from here: a test run that rewrites source files
+    is the same class of surprise as the ad-hoc mutation script that once
+    stranded a sabotaged guard on disk. Detecting is the suite's job; changing
+    files is something you ask for.
+    """
+    import importlib.util
+
+    script = REPO_ROOT / "scripts" / "check_line_endings.py"
+    spec = importlib.util.spec_from_file_location("check_line_endings", script)
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+
+    if shutil.which("git") is None:
+        pytest.skip("git unavailable")
+
+    bad = module.offenders(REPO_ROOT)
+    assert bad == [], (
+        "these have non-LF line endings in the working tree:\n  "
+        + "\n  ".join(f"{state:5} {path}" for path, state in bad)
+        + "\nFix with: python scripts/check_line_endings.py --fix"
+    )
+
+
 def test_no_mutation_is_left_live_in_the_source():
     """The suite must fail if a sabotaged guard is sitting on disk.
 

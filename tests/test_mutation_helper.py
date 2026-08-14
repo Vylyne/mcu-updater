@@ -44,8 +44,10 @@ def write(path: pathlib.Path, text: str) -> None:
     """Byte-exact, because `Path.write_text` translates \\n to \\r\\n on Windows.
 
     Which would make every LF anchor in this file miss - and is worth knowing
-    about for real specs too: the harness matches bytes, so a CRLF checkout needs
-    CRLF anchors.
+    about for real specs too. The answer there is not "write CRLF anchors": the
+    repo pins `eol=lf` in `.gitattributes` and `scripts/check_line_endings.py`
+    enforces it in the working tree, so a CRLF file is the bug rather than a
+    variant to support.
     """
     path.write_bytes(text.encode("utf-8"))
 
@@ -96,6 +98,40 @@ def test_a_stale_anchor_is_refused_without_touching_the_file(target):
             pytest.fail("the block must not run")
 
     assert read(target) == ORIGINAL
+
+
+def test_a_crlf_file_is_named_as_such_rather_than_reported_stale(target):
+    """The failure that reads as "every guard moved at once".
+
+    Anchors are written with LF and matched against bytes, so a file rewritten
+    with CRLF misses every multi-line anchor simultaneously. That looks exactly
+    like a refactor having moved the code, which sends you to read the diff
+    instead of the file's line endings - and it cost an hour once, after a
+    scripted edit rewrote a whole module through `Path.write_text` on Windows.
+
+    Distinguishing the two is one `replace`, so the harness says which it is.
+    """
+    crlf = ORIGINAL.replace("\n", "\r\n")
+    write(target, crlf)
+
+    with pytest.raises(LookupError, match="CRLF"):
+        with mutation_test.mutated(str(target), ORIGINAL, ""):
+            pytest.fail("the block must not run")
+
+    # ...and still untouched, exactly like any other refused anchor. A
+    # diagnostic that repaired the file on its way out would be the harness
+    # editing source behind your back, which is the one thing it must never do.
+    assert read(target) == crlf
+
+
+def test_a_genuinely_missing_anchor_is_not_blamed_on_line_endings(target):
+    """The other half: a CRLF file whose anchor really is gone must still say
+    so, or the diagnostic becomes a way to miss a stale guard."""
+    write(target, ORIGINAL.replace("\n", "\r\n"))
+
+    with pytest.raises(LookupError, match="anchor not found"):
+        with mutation_test.mutated(str(target), "text that is not there", ""):
+            pytest.fail("the block must not run")
 
 
 def test_only_the_first_occurrence_is_replaced(target):

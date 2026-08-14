@@ -218,26 +218,18 @@ def test_one_screen_can_be_singled_out(api, no_pio, screens):
     assert len(api.runner.get(res["job_id"]).result["flashed"]) == 1
 
 
-def test_a_display_that_moved_is_reported_but_not_fatal(api, no_pio, paths, screens):
-    """A different MAC answering on a port means something was re-cabled. The
-    write still succeeded, so it warns rather than failing - but nothing else in
-    the system would ever notice."""
+def test_a_flash_result_says_nothing_about_which_board_it_wrote(api, no_pio, screens):
+    """We are an updater, not an asset tracker. Identity is knomi_serial's, and
+    it is resolved at flash time by discovery - so the result reports what was
+    written and where, and keeps no history of which board lives on which port."""
     port = screens["knomi_serial t0_knomi"]["serial"]
-    displays_mod.record_mac(paths, port, "aa:bb:cc:dd:ee:ff", ENV)
-
     res = api.dispatch("fw.display.flash", {"name": ENV, "port": port})
     assert api.runner.wait(timeout=30)
     job = api.runner.get(res["job_id"])
 
     assert job.state == "succeeded", job.error
-    assert len(job.result["moved"]) == 1
-    assert job.result["moved"][0]["was"] == "aa:bb:cc:dd:ee:ff"
-
-
-def test_a_first_flash_reports_no_movement(api, no_pio):
-    res = api.dispatch("fw.display.flash", {"name": ENV})
-    assert api.runner.wait(timeout=30)
-    assert api.runner.get(res["job_id"]).result["moved"] == []
+    assert "moved" not in job.result
+    assert all("mac" not in f for f in job.result["flashed"])
 
 
 def test_one_failing_screen_does_not_abandon_the_others(api, no_pio, monkeypatch, screens):
@@ -467,7 +459,7 @@ def test_a_screen_is_written_where_it_answered_not_where_it_was(
     ports: list[str] = []
     monkeypatch.setattr(
         "mcu_updater.displays.upload",
-        lambda p, s, d, port, **k: ports.append(port) or {"port": port, "mac": None},
+        lambda p, s, d, port, **k: ports.append(port) or {"port": port, "chip": None},
     )
 
     res = api.dispatch("fw.display.flash", {"name": ENV, "port": screens_port(screens, "t0")})
@@ -493,7 +485,7 @@ def test_a_screen_that_does_not_answer_is_not_flashed_at_its_old_port(
     ports: list[str] = []
     monkeypatch.setattr(
         "mcu_updater.displays.upload",
-        lambda p, s, d, port, **k: ports.append(port) or {"port": port, "mac": None},
+        lambda p, s, d, port, **k: ports.append(port) or {"port": port, "chip": None},
     )
 
     res = api.dispatch("fw.display.flash", {"name": ENV, "port": screens_port(screens, "t0")})
@@ -524,7 +516,7 @@ def test_discovery_failing_falls_back_to_the_configured_ports(
     ports: list[str] = []
     monkeypatch.setattr(
         "mcu_updater.displays.upload",
-        lambda p, s, d, port, **k: ports.append(port) or {"port": port, "mac": None},
+        lambda p, s, d, port, **k: ports.append(port) or {"port": port, "chip": None},
     )
 
     want = screens_port(screens, "t0")
@@ -550,7 +542,7 @@ def test_a_screen_with_no_hardware_id_is_still_flashed(
     ports: list[str] = []
     monkeypatch.setattr(
         "mcu_updater.displays.upload",
-        lambda p, s, d, port, **k: ports.append(port) or {"port": port, "mac": None},
+        lambda p, s, d, port, **k: ports.append(port) or {"port": port, "chip": None},
     )
 
     want = screens_port(screens, "t0")

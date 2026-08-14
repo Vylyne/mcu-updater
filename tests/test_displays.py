@@ -151,9 +151,10 @@ def test_the_upload_command_always_pins_the_port(paths, settings, display, monke
 # --------------------------------------------------------------------------
 
 
-def test_the_mac_is_captured_from_a_real_transcript(paths, settings, display, monkeypatch):
-    """The only durable identity a display has: it is in efuse, so it survives
-    reflashing, and the CH340 in front of it offers no serial of its own."""
+def test_the_chip_is_captured_from_a_real_transcript(paths, settings, display, monkeypatch):
+    """What was written, and where. Deliberately not which board answered: the
+    eFuse MAC esptool also prints used to be recorded against the port, back when
+    a remembered path was the only handle these boards had."""
 
     def fake(cmd, **kwargs):
         reporter = kwargs["reporter"]
@@ -166,12 +167,12 @@ def test_the_mac_is_captured_from_a_real_transcript(paths, settings, display, mo
 
     result = displays.upload(paths, settings, display, "/dev/knomi_t0")
 
-    assert result["mac"] == "cc:ba:97:19:aa:38"
     assert result["chip"] == "ESP32-S3 (QFN56) (revision v0.2)"
     assert result["port"] == "/dev/knomi_t0"
+    assert "mac" not in result
 
 
-def test_a_transcript_with_no_mac_reports_none_rather_than_guessing(
+def test_a_transcript_with_no_chip_reports_none_rather_than_guessing(
     paths, settings, display, monkeypatch
 ):
     def fake(cmd, **kwargs):
@@ -181,10 +182,10 @@ def test_a_transcript_with_no_mac_reports_none_rather_than_guessing(
     monkeypatch.setattr(displays, "run_streamed", fake)
     monkeypatch.setattr(displays, "find_pio", lambda s: "/usr/bin/pio")
 
-    assert displays.upload(paths, settings, display, "/dev/x")["mac"] is None
+    assert displays.upload(paths, settings, display, "/dev/x")["chip"] is None
 
 
-def test_a_failed_upload_raises_rather_than_returning_a_mac(
+def test_a_failed_upload_raises_rather_than_returning_a_result(
     paths, settings, display, monkeypatch
 ):
     """esptool refuses to write to anything that is not an ESP32, so a non-zero
@@ -246,52 +247,6 @@ def test_pio_not_installed_names_the_fix(settings, monkeypatch):
     with pytest.raises(ToolMissingError) as exc:
         displays.find_pio(settings)
     assert "penv/bin/pio" in str(exc.value)
-
-
-# --------------------------------------------------------------------------
-# remembering which display sat on which port
-# --------------------------------------------------------------------------
-
-
-def test_a_new_port_records_without_claiming_movement(paths):
-    assert displays.record_mac(paths, "/dev/knomi_t0", "cc:ba:97:19:aa:38", "knomi") is None
-    assert displays.read_macs(paths)["/dev/knomi_t0"]["mac"] == "cc:ba:97:19:aa:38"
-
-
-def test_the_same_display_returning_is_not_movement(paths):
-    displays.record_mac(paths, "/dev/knomi_t0", "cc:ba:97:19:aa:38", "knomi")
-    assert displays.record_mac(paths, "/dev/knomi_t0", "cc:ba:97:19:aa:38", "knomi") is None
-
-
-def test_a_different_display_on_a_known_port_reports_the_old_one(paths):
-    """The swap signal. Two tophat boards in each other's sockets moves every
-    display on them at once, and nothing else in the system would say so."""
-    displays.record_mac(paths, "/dev/knomi_t0", "aa:aa:aa:aa:aa:aa", "knomi")
-    previous = displays.record_mac(paths, "/dev/knomi_t0", "bb:bb:bb:bb:bb:bb", "knomi")
-
-    assert previous == "aa:aa:aa:aa:aa:aa"
-    assert displays.read_macs(paths)["/dev/knomi_t0"]["mac"] == "bb:bb:bb:bb:bb:bb"
-
-
-def test_a_missing_mac_leaves_the_record_alone(paths):
-    """esptool did not report one - a dry run, or output that changed shape.
-    Writing a blank over a good record would destroy the very history this
-    exists for, and it would do it silently."""
-    displays.record_mac(paths, "/dev/knomi_t0", "cc:ba:97:19:aa:38", "knomi")
-
-    assert displays.record_mac(paths, "/dev/knomi_t0", None, "knomi") is None
-    assert displays.read_macs(paths)["/dev/knomi_t0"]["mac"] == "cc:ba:97:19:aa:38"
-
-
-def test_an_unreadable_record_degrades_to_empty(paths):
-    """Losing it means "we have no history", which is the safe direction - it
-    can only ever fail to report a move, never invent one."""
-    os.makedirs(paths.data_dir, exist_ok=True)
-    with open(paths.display_macs_file, "w", encoding="utf-8") as fh:
-        fh.write("{ not json")
-
-    assert displays.read_macs(paths) == {}
-    assert displays.record_mac(paths, "/dev/knomi_t0", "cc:ba:97:19:aa:38", "knomi") is None
 
 
 # --------------------------------------------------------------------------

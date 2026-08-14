@@ -105,19 +105,7 @@ class Esptool:
             bench.paths, bench.settings, display, port, reporter=ctx.reporter
         )
 
-        previous = displays_mod.record_mac(
-            bench.paths, port, result.get("mac"), display.env
-        )
-        if previous:
-            # Not an error, and not fatal: the write succeeded. But a different
-            # display answering on this port means something was re-cabled, and
-            # nothing else would ever say so.
-            ctx.reporter(
-                "warn",
-                f"{screen['name']} on {port} is now MAC {result.get('mac')}, "
-                f"was {previous} - a display appears to have moved.",
-            )
-        return {"name": screen["name"], "port": port, **result, "moved_from": previous}
+        return {"name": screen["name"], "port": port, **result}
 
     def settled(self, bench: Bench, target: FlashTarget, ctx: Any) -> None:
         """Nothing to wait for. A screen is not on the Klipper bus, so there is

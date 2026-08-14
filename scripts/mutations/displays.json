@@ -27,19 +27,14 @@
       "replace": "    if False:\n        if _WAITING_FOR_PORT_RE.search(text):"
     },
     {
-      "name": "a blank MAC never overwrites a good record",
-      "find": "    if not mac:\n        return None",
-      "replace": "    if False:\n        return None"
-    },
-    {
       "name": "a udev symlink is resolved to the device pio can see",
       "find": "    target = resolve_port(port)",
       "replace": "    target = port"
     },
     {
       "name": "the stable name stays the reported identity, not the resolved one",
-      "find": "        \"port\": port,\n        \"mac\":",
-      "replace": "        \"port\": target,\n        \"mac\":"
+      "find": "        \"port\": port,\n        \"chip\":",
+      "replace": "        \"port\": target,\n        \"chip\":"
     },
     {
       "name": "waiting-for-a-new-port is explained, not left as exit 2",

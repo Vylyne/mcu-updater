@@ -256,25 +256,22 @@ def test_configured_displays_appear_in_status(api, paths, fake_root, live_regist
     assert entry["env"] == "knomi_toolchanger"
     assert [s["name"] for s in entry["screens"]] == ["t0_knomi"]
     assert entry["screens"][0]["present"] is True
-    # Never flashed by us, so no MAC is known yet - and it says so rather than
-    # inventing one.
-    assert entry["screens"][0]["mac"] is None
 
 
-def test_a_known_mac_travels_with_its_screen(api, paths, fake_root):
-    from mcu_updater import displays as displays_mod
-
+def test_a_screen_carries_no_identity_history(api, paths, fake_root):
+    """Which board sat on which port is knomi_serial's business, not ours. It
+    reports `device_id` - the eFuse id the screen itself announces - and we keep
+    no record of our own to disagree with it."""
     port = fake_root / "knomi_t0"
     port.write_text("", encoding="utf-8")
     with open(paths.main_config, "a", encoding="utf-8") as fh:
         fh.write(f"\n[display knomi_toolchanger]\nsource: {fake_root}\n")
-    displays_mod.record_mac(paths, str(port), "cc:ba:97:19:aa:38", "knomi_toolchanger")
 
     api._call = _moonraker({"knomi_serial t0_knomi": {"serial": str(port)}})
     screen = api.dispatch("fw.status")["displays"][0]["screens"][0]
 
-    assert screen["mac"] == "cc:ba:97:19:aa:38"
-    assert screen["flashed_at"] is not None
+    assert not {"mac", "flashed_at", "moved_from", "moved_at"} & set(screen)
+    assert "device_id" in screen
 
 
 def test_screens_are_matched_to_their_type_by_klipper_section(api, paths, fake_root):

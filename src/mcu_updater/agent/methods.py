@@ -461,7 +461,6 @@ class Api:
             return []
 
         listed = self.display_list({})
-        macs = displays_mod.read_macs(self.paths)
 
         out = []
         for _name, display in sorted(types.items()):
@@ -474,22 +473,10 @@ class Api:
             for entry in listed["displays"]:
                 if not entry["section"].startswith(prefix + " "):
                     continue
-                port = entry["configured_path"]
-                known = macs.get(port) or {}
                 device = displays_mod.device_status(entry.get("firmware_version"), tree)
                 screens.append(
                     {
                         **entry,
-                        # Last seen at this port, from the flash that put it
-                        # there. None until it has been flashed by us once.
-                        "mac": known.get("mac"),
-                        "flashed_at": known.get("at"),
-                        # A different screen answered here than last time. The
-                        # MAC's whole purpose - it is the only identity that
-                        # survives reflashing, so it is the only way to notice
-                        # two displays swapping sockets.
-                        "moved_from": known.get("moved_from"),
-                        "moved_at": known.get("moved_at"),
                         # current | behind | dirty | unknown. Compares the sha
                         # baked into what the screen reports running against the
                         # source tree's HEAD - so unlike the MCU artifact check,
@@ -960,9 +947,6 @@ class Api:
                 "source_dirty": payload["source_dirty"],
                 "klipper_section": payload["klipper_section"],
                 "reachable": payload["reachable"],
-                "moved": [
-                    s["configured_path"] for s in payload["screens"] if s.get("moved_from")
-                ],
             },
         }
 
@@ -2361,16 +2345,6 @@ class Api:
                         "error": f["error"],
                     }
                     for f in result["failures"]
-                ],
-                "moved": [
-                    {
-                        "name": f["name"],
-                        "port": f["port"],
-                        "was": f["moved_from"],
-                        "now": f.get("mac"),
-                    }
-                    for f in result["flashed"]
-                    if f.get("moved_from")
                 ],
             }
 

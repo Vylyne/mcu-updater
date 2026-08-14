@@ -942,27 +942,28 @@ could be skipped.
 {"env": "knomi_toolchanger",
  "flashed": [{"type": "knomi_toolchanger", "id": "/dev/knomi_t0", "flasher": "esptool",
               "name": "t0_knomi", "port": "/dev/knomi_t0",
-              "mac": "cc:ba:97:19:aa:38", "chip": "ESP32-S3 (QFN56) (revision v0.2)"}],
- "failures": [],
- "moved": [{"name": "t0_knomi", "port": "/dev/knomi_t0",
-            "was": "aa:bb:...", "now": "cc:ba:..."}]}
+              "chip": "ESP32-S3 (QFN56) (revision v0.2)"}],
+ "failures": []}
 ```
 
 This runs the same batch machinery `fw.flash_all` does — one flasher, one stop,
 the watcher paused and the screens rediscovered inside it — and projects the
 result back onto the shape above. `flashed` gained the uniform `type`/`id`/
-`flasher` slots; `failures` and `moved` are unchanged.
+`flasher` slots; `failures` is unchanged.
 
-`moved` is the swap signal. A display's MAC is in efuse, so it survives
-reflashing — and the CH340 in front of it has no serial of its own, making this
-the only durable identity a screen has. Every upload records `MAC → port`, so a
-different display answering on a known port is reported. Two tophat boards
-plugged into each other's sockets moves every screen on them at once, and nothing
-else would say so.
+**Which screen is on which port is not tracked**, deliberately. It used to be:
+every upload recorded the eFuse MAC esptool prints against the port it wrote to,
+and a different MAC answering on a known port raised a swap warning. That existed
+because these boards had no durable identity — the CH340 in front of them reports
+no USB serial — and a remembered path was the only handle there was.
 
-It is a **warning, not a failure**: the write succeeded either way, and all
-displays of a type run the same image, so a swap is a config problem rather than
-a firmware one.
+They have one now. `device_id` is the low three bytes of the same eFuse MAC,
+reported by the screen itself, and knomi_serial resolves it at every layer: the
+klippy module's device map, the watcher's `devices.json`, and our own discovery
+at flash time. A `device_id:` section follows its hardware into any socket, and a
+`serial:` section addresses a socket because that is what its author chose to
+address. Neither case is a fault, so neither gets a warning. An updater flashes
+what is in front of it; where a given board lives is the operator's business.
 
 ### The log, and its sequence numbers
 

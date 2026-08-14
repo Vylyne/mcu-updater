@@ -57,11 +57,6 @@ PIO_CANDIDATES = (
     "/usr/local/bin/pio",
 )
 
-#: From esptool's own banner, e.g. `MAC: cc:ba:97:19:aa:38`. The one piece of
-#: durable identity a display has: it is in efuse, so it survives reflashing, and
-#: the CH340 in front of it has no serial of its own to offer.
-_MAC_RE = re.compile(r"^MAC:\s*((?:[0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2})\s*$", re.MULTILINE)
-
 #: `Chip is ESP32-S3 (QFN56) (revision v0.2)`
 _CHIP_RE = re.compile(r"^Chip is (.+?)\s*$", re.MULTILINE)
 
@@ -844,7 +839,7 @@ def upload(
     reporter("info", f"Uploading {display.env} to {port}...")
     if target != port:
         # Say which real device is about to be written. The stable name is what
-        # the config and the MAC record use; this is the only place the two are
+        # the config uses; this is the only place it and the tty behind it are
         # visibly tied together.
         reporter("info", f"{port} -> {target}")
 
@@ -872,7 +867,6 @@ def upload(
     )
 
     text = "\n".join(transcript)
-    mac = _MAC_RE.search(text)
     chip = _CHIP_RE.search(text)
 
     if rc != 0:
@@ -900,57 +894,5 @@ def upload(
         )
     return {
         "port": port,
-        "mac": mac.group(1).lower() if mac else None,
         "chip": chip.group(1) if chip else None,
     }
-
-
-# --------------------------------------------------------------------------
-# remembering which display sat on which port
-# --------------------------------------------------------------------------
-
-
-def read_macs(paths: Paths) -> dict[str, dict]:
-    """port -> {mac, env, at}. Empty when the file is missing or unreadable."""
-    try:
-        with open(paths.display_macs_file, encoding="utf-8") as fh:
-            data = json.load(fh)
-    except (OSError, ValueError):
-        return {}
-    return data if isinstance(data, dict) else {}
-
-
-def record_mac(paths: Paths, port: str, mac: Optional[str], env: str) -> Optional[str]:
-    """Note the display seen on `port`, and report a MAC that has changed.
-
-    Returns the *previous* MAC when it differs - which is the swap signal. A
-    tophat board plugged into the other socket moves every display on it at once,
-    and this is the only thing that would notice.
-
-    Absent MAC writes nothing: esptool did not report one, and overwriting a good
-    record with a blank would destroy the very history this exists for.
-    """
-    if not mac:
-        return None
-    data = read_macs(paths)
-    previous = (data.get(port) or {}).get("mac")
-    now = time.time()
-    entry: dict = {"mac": mac, "env": env, "at": now}
-    if previous and previous != mac:
-        # Kept in the record, not just returned, so the panel can still say so
-        # tomorrow. The swap is only ever detectable during a flash - esptool
-        # needs the port, which needs Klipper stopped - so if it were not
-        # persisted here the one moment it is knowable would be the only moment
-        # it could be shown. Absent on the next flash that finds the same MAC,
-        # which is what clears the warning.
-        entry["moved_from"] = previous
-        entry["moved_at"] = now
-    data[port] = entry
-
-    os.makedirs(os.path.dirname(paths.display_macs_file), exist_ok=True)
-    tmp = paths.display_macs_file + ".tmp"
-    with open(tmp, "w", encoding="utf-8") as fh:
-        json.dump(data, fh, indent=2, sort_keys=True)
-    os.replace(tmp, paths.display_macs_file)
-
-    return previous if previous and previous != mac else None

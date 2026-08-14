@@ -18,9 +18,21 @@ The spec is JSON so that needles can span lines without shell quoting:
           "name": "offline exclusion",
           "find": "                if state == STATE_OFFLINE:\\n                    continue\\n",
           "replace": ""
+        },
+        {
+          "name": "a blocked target is skipped",
+          "file": "src/mcu_updater/providers/registry.py",
+          "find": "            if reason is not None:",
+          "replace": "            if False:"
         }
       ]
     }
+
+A spec is one *behaviour area*, not one file - which is why a mutation may name
+its own `file` and the top-level one is only the default. Bulk operations are
+implemented across the agent and the provider package, and splitting their guards
+into a spec per file would mean the set that has to stay load-bearing together is
+no longer read together.
 
 WHY THIS IS A SCRIPT AND NOT SIX LINES INLINE
 ---------------------------------------------
@@ -140,7 +152,7 @@ def main(argv: list[str] | None = None) -> int:
     with open(args.spec, encoding="utf-8") as fh:
         spec: dict[str, Any] = json.load(fh)
 
-    path = spec["file"]
+    default_file = spec.get("file")
     command = spec["command"]
     mutations = spec["mutations"]
     if args.only:
@@ -158,6 +170,11 @@ def main(argv: list[str] | None = None) -> int:
     survivors = []
     for mutation in mutations:
         name = mutation["name"]
+        path = mutation.get("file", default_file)
+        if path is None:
+            print(f"STALE    | {name:38} | no 'file' on the mutation or the spec")
+            survivors.append(name)
+            continue
         try:
             with mutated(path, mutation["find"], mutation["replace"]):
                 code, output = run_once(command, args.cwd)

@@ -105,6 +105,20 @@ def _declare_cartographer(paths) -> None:
         fh.write("\n[firmware cartographer]\nsource: ~/carto\nartifact: klipper\n")
 
 
+def _declare_display(paths, tmp_path, name="knomi_toolchanger") -> str:
+    """A PlatformIO display with a source tree and nothing built yet.
+
+    The tree has to exist: a display with no source is *skipped* exactly as an
+    MCU type with no saved config is, so a fixture without one would test the
+    skip rather than the build.
+    """
+    tree = tmp_path / "knomi_serial"
+    (tree / ".pio" / "build" / name).mkdir(parents=True, exist_ok=True)
+    with open(paths.main_config, "a", encoding="utf-8") as fh:
+        fh.write(f"\n[display {name}]\nsource: {tree}\n")
+    return str(tree)
+
+
 @pytest.fixture
 def bulk(paths, live_registry_text, fake_root):
     """Flashing enabled, a fake bus, and a flashtool to call."""
@@ -184,13 +198,22 @@ def test_scope_defaults_to_stale(bulk):
 # --------------------------------------------------------------------------
 
 
+def _pairs(api, scope, only=None, fw=None):
+    """The (type, firmware) pairs a build_all would compile.
+
+    Selection now returns provider-tagged targets, but what these tests are about
+    is *which things get built* - so they read the same pairs they always did,
+    and the provider identity is asserted where it is the point.
+    """
+    return [(t.name, t.fw) for t in api._build_targets(api._install(), scope, only, fw).build]
+
+
 def test_a_type_with_no_saved_config_is_skipped_not_failed(bulk, paths):
     """menuconfig is ncurses and cannot run here, so there is nothing this could
     do about it. Failing the whole batch over one unconfigured type would turn a
     one-type problem into a fleet-wide one."""
     _save_config(paths, EBB)
-    pairs = bulk._types_to_build(Registry.load(paths), "all")
-    assert pairs == [(EBB, "klipper")]
+    assert _pairs(bulk, "all") == [(EBB, "klipper")]
 
 
 def test_a_fleet_build_covers_every_family_each_type_runs(bulk, paths):
@@ -206,7 +229,7 @@ def test_a_fleet_build_covers_every_family_each_type_runs(bulk, paths):
     _save_config(paths, EBB)
     _save_config(paths, "carto_v4", fw="cartographer")
 
-    pairs = bulk._types_to_build(Registry.load(paths), "all")
+    pairs = _pairs(bulk, "all")
 
     assert (EBB, "klipper") in pairs
     assert ("carto_v4", "cartographer") in pairs
@@ -224,10 +247,78 @@ def test_a_named_family_filters_rather_than_forces(bulk, paths):
     _save_config(paths, "carto_v4", fw="cartographer")
     _save_config(paths, "carto_v4", fw="klipper")  # present, and still unused
 
-    pairs = bulk._types_to_build(Registry.load(paths), "all", fw="klipper")
+    pairs = _pairs(bulk, "all", fw="klipper")
 
     assert (EBB, "klipper") in pairs
     assert not [p for p in pairs if p[0] == "carto_v4"]
+
+
+def test_a_fleet_build_reaches_the_screens_too(bulk, paths, tmp_path):
+    """"Build All" meant "build all the MCUs".
+
+    Not by decision - the `[mcu ...]` registry was the only list the selection
+    had to walk, so a display could not be chosen even in principle. Every screen
+    sat on whatever it happened to be running and nothing said otherwise, which
+    is the same silence as the cartographer skip and has the same cause.
+    """
+    _save_config(paths, EBB)
+    _declare_display(paths, tmp_path)
+
+    targets = bulk._build_targets(bulk._install(), "all").build
+
+    assert ("knomi_toolchanger", None) in [(t.name, t.fw) for t in targets]
+    # And it is the PlatformIO provider that owns it, not kconfig with a blank
+    # family - which is what a single loop growing a special case would produce.
+    assert [t.provider for t in targets if t.name == "knomi_toolchanger"] == ["platformio"]
+    # MCUs keep their place at the front: a batch that reordered itself would be
+    # a behaviour change hiding inside a refactor.
+    assert targets[0].name == EBB
+
+
+def test_a_named_family_leaves_the_screens_alone(bulk, paths, tmp_path):
+    """"Rebuild katapult everywhere" must not touch a PlatformIO env.
+
+    Correct rather than incidental: a display has no family to be one of, so it
+    cannot match a named `fw`. The alternative - treating a missing family as a
+    wildcard - would build every screen on the way to a bootloader rebuild.
+    """
+    _save_config(paths, EBB, fw="katapult")
+    _declare_display(paths, tmp_path)
+
+    assert _pairs(bulk, "all", fw="katapult") == [(EBB, "katapult")]
+
+
+def test_a_fleet_build_leaves_the_bootloader_alone(bulk, paths):
+    """Katapult is already on the hardware doing the one job it has.
+
+    A sweep that rebuilt it would spend a compile per board on a binary a fleet
+    flash never writes - and the update it would eventually enable is the one
+    with no way back, since a CAN board is reachable only *through* the
+    bootloader being replaced. So it is built when a device is adopted, or when
+    somebody names it, and never incidentally.
+    """
+    _save_config(paths, EBB)
+    _save_config(paths, EBB, fw="katapult")
+
+    assert _pairs(bulk, "all") == [(EBB, "klipper")]
+    # ...and naming it is how you rebuild it, which is what keeps this a
+    # default rather than a refusal.
+    assert _pairs(bulk, "all", fw="katapult") == [(EBB, "katapult")]
+
+
+def test_a_display_with_no_source_tree_is_skipped_but_never_silently(bulk, paths):
+    """The same rule as a type that has never been through menuconfig - and the
+    same reason it has to be visible: a batch that drops a target and reports
+    success is how a screen stays a month behind with nobody the wiser."""
+    _save_config(paths, EBB)
+    with open(paths.main_config, "a", encoding="utf-8") as fh:
+        fh.write("\n[display knomi_toolchanger]\nsource: /nope/not/here\n")
+
+    selection = bulk._build_targets(bulk._install(), "all")
+
+    assert [t.name for t in selection.build] == [EBB]
+    reasons = {s.target.name: s.reason for s in selection.skipped}
+    assert "not found" in reasons["knomi_toolchanger"]
 
 
 def test_stale_skips_a_type_that_is_already_built(bulk, paths, settings):
@@ -238,15 +329,12 @@ def test_stale_skips_a_type_that_is_already_built(bulk, paths, settings):
     _save_config(paths, MMB)
     build(paths, Registry.load(paths), settings, EBB, "klipper")
 
-    reg = Registry.load(paths)
-    assert bulk._types_to_build(reg, "stale") == [(MMB, "klipper")]
+    assert _pairs(bulk, "stale") == [(MMB, "klipper")]
     # ...and `all` is what overrides that judgement.
-    assert sorted(bulk._types_to_build(reg, "all")) == sorted(
-        [(EBB, "klipper"), (MMB, "klipper")]
-    )
+    assert sorted(_pairs(bulk, "all")) == sorted([(EBB, "klipper"), (MMB, "klipper")])
     # `fw` is a filter over what each type already uses, not an instruction
     # to build a family it does not run.
-    assert bulk._types_to_build(reg, "all", fw="katapult") == []
+    assert _pairs(bulk, "all", fw="katapult") == []
 
 
 def test_nothing_to_build_is_a_refusal_with_a_code_not_an_empty_job(bulk, paths, settings):
@@ -494,11 +582,19 @@ def test_a_build_failure_does_not_abandon_the_rest_of_the_fleet(bulk, paths, mon
     job = bulk.runner.get(res["job_id"])
 
     assert job.state == "succeeded", job.error
-    # Pairs, not names: a type builds every family it uses, and "carto_v4
-    # failed" is ambiguous once that can be more than one.
-    assert job.result["built"] == [{"type": MMB, "fw": "klipper"}]
+    # Named by target, not by type: a type builds every family it uses and a
+    # host builds with more than one build system, so "carto_v4 failed" and
+    # "knomi failed" are both ambiguous without the rest of the identity.
+    assert job.result["built"] == [
+        {"type": MMB, "fw": "klipper", "provider": "kconfig_make"}
+    ]
     assert job.result["failures"] == [
-        {"type": EBB, "fw": "klipper", "error": "make exploded"}
+        {
+            "type": EBB,
+            "fw": "klipper",
+            "provider": "kconfig_make",
+            "error": "make exploded",
+        }
     ]
 
 
@@ -518,7 +614,9 @@ def test_update_all_builds_before_it_chooses_what_to_flash(bulk, paths, fake_roo
     job = bulk.runner.get(res["job_id"])
 
     assert job.state == "succeeded", job.error
-    assert job.result["build"]["built"] == [{"type": EBB, "fw": "klipper"}]
+    assert job.result["build"]["built"] == [
+        {"type": EBB, "fw": "klipper", "provider": "kconfig_make"}
+    ]
     assert [f["serial"] for f in job.result["flash"]["flashed"]] == [EBB_A]
 
 
@@ -659,7 +757,9 @@ def test_update_all_can_be_narrowed_to_one_type(bulk, paths, fake_root):
     job = bulk.runner.get(res["job_id"])
 
     assert job.state == "succeeded", job.error
-    assert job.result["build"]["built"] == [{"type": MMB, "fw": "klipper"}]
+    assert job.result["build"]["built"] == [
+        {"type": MMB, "fw": "klipper", "provider": "kconfig_make"}
+    ]
     # ...and only its boards are written to.
     assert [f["serial"] for f in job.result["flash"]["flashed"]] == [MMB_SERIAL]
 

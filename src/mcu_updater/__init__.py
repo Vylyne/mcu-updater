@@ -5,6 +5,7 @@ long-running Moonraker agent:
 
   errors/paths/settings/config/devices  - pure, no side effects beyond the FS
   lock/build/flash/service              - do real work, report via a callback
+  providers                             - the build systems, behind one protocol
   cli/tui                               - the ONLY place input()/sys.exit()/
                                           print() are allowed to appear
 

@@ -108,6 +108,43 @@ def test_a_display_projects_onto_the_same_shape(api, paths, fake_root):
     assert display["descriptor"] == ENV
 
 
+def test_a_display_build_is_blocked_by_a_missing_source_tree(api, paths, fake_root):
+    """The preview and the batch have to agree about what will happen.
+
+    A fleet build skips a display with no tree to build in, exactly as it skips
+    an MCU type that has never been through menuconfig. The button offering that
+    build has to say so - a panel naming work the agent will pass over is how a
+    screen sits a month behind while the UI reports a clean run.
+
+    Both come from the same function in the PlatformIO provider, so they cannot
+    drift into disagreeing.
+    """
+    port = fake_root / "knomi_t0"
+    port.write_text("", encoding="utf-8")
+    with open(paths.main_config, "a", encoding="utf-8") as fh:
+        fh.write(f"\n[display {ENV}]\nsource: /nope/not/here\n")
+    api = Api(
+        paths,
+        runner=_runner(),
+        call=serve_klipper(
+            display_objects({"knomi_serial t0_knomi": {"serial": str(port)}}),
+            reachable=True,
+        ),
+    )
+
+    build = _action(_targets(api, "display")[ENV], "build")
+
+    assert build["blocked"]["code"] == Api.BLOCKED_NO_SOURCE
+    assert "not found" in build["blocked"]["message"]
+
+
+def test_a_display_with_its_tree_can_be_built(api, paths, fake_root):
+    """The other half: a block that never clears is a disabled button."""
+    _add_display(paths, fake_root, api)
+    api = Api(paths, runner=_runner(), call=api._call)
+    assert _action(_targets(api, "display")[ENV], "build")["blocked"] is None
+
+
 def test_a_display_has_no_firmware_family_and_says_so(api, paths, fake_root):
     """PlatformIO builds from its own tree, not from a `[firmware ...]` family.
 

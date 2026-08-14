@@ -19,7 +19,7 @@ import re
 import time
 from typing import Any, Callable, Optional
 
-from .. import API_VERSION, __version__, firmware, profiles
+from .. import API_VERSION, __version__, firmware, profiles, providers
 from ..build import read_sidecar
 from ..config import Registry
 from ..devices import (
@@ -486,6 +486,12 @@ class Api:
                     # foreign_build and no_provenance together, which is why this
                     # cannot be recovered from it by the reader.
                     "artifact_reason": art.reason,
+                    # Why a build would be skipped, or None. The same answer the
+                    # provider gives a fleet build, from the same function - so
+                    # the panel's preview cannot name work the batch will pass
+                    # over, which is the whole reason screens were kept out of
+                    # bulk builds until now.
+                    "build_blocked": providers.platformio.source_problem(display),
                     "reachable": listed["reachable"],
                     # One klippy module serves every screen of a type, so this is
                     # a property of the type. First screen that reports one -
@@ -536,6 +542,10 @@ class Api:
     BLOCKED_NO_ARTIFACT = "no_artifact"
     BLOCKED_NO_CONFIG = "no_config"
     BLOCKED_NO_DEVICE = "no_device"
+    #: No source tree to build in. Distinct from `no_config`, which is a saved
+    #: answer file that a build would read: this is the tree itself missing, and
+    #: the fix is a `source:` key or a `git clone` rather than a menuconfig run.
+    BLOCKED_NO_SOURCE = "no_source"
 
     @staticmethod
     def _blocked(code: str, message: str, **data: Any) -> dict[str, Any]:
@@ -749,15 +759,25 @@ class Api:
 
         actions: list[dict[str, Any]] = []
         if "fw.display.build" in allowed:
+            # PlatformIO carries its own configuration in platformio.ini, so
+            # there is no menuconfig step to be missing - but there is still a
+            # tree to have cloned, and that is the same kind of once-per-target
+            # setup. A fleet build skips a display without one, so the button
+            # has to say so rather than offering work that gets passed over.
+            problem = payload.get("build_blocked")
             actions.append(
                 {
                     "id": "build",
                     "label": "Build",
                     "method": "fw.display.build",
                     "params": {"name": name},
-                    # PlatformIO carries its own configuration in platformio.ini,
-                    # so there is no menuconfig step to be missing.
-                    "blocked": None,
+                    "blocked": (
+                        None
+                        if not problem
+                        else self._blocked(
+                            self.BLOCKED_NO_SOURCE, problem, name=name
+                        )
+                    ),
                 }
             )
         actions.extend(
@@ -2686,51 +2706,40 @@ class Api:
             )
         return scope
 
-    def _types_to_build(
+    def _install(self) -> providers.Install:
+        """This host's config, parsed once for a whole selection or batch."""
+        return providers.Install.load(self.paths, self.settings())
+
+    def _build_targets(
         self,
-        reg: Registry,
+        install: providers.Install,
         scope: str,
         only: Optional[str] = None,
         fw: Optional[str] = None,
-    ) -> list[tuple[str, str]]:
-        """Which (type, firmware) pairs a build_all should touch, in a stable order.
+    ) -> providers.Selection:
+        """What a build_all should touch, across every build system.
 
-        **Pairs, not names.** A type builds every family it uses - its
-        application and, when it has one, katapult - and those are not the same
-        family for every type. Building one global `fw` across the fleet meant a
-        `firmware: cartographer` type had no klipper `.config`, was skipped by
-        the check below, and the batch reported success having never built it.
+        The loop itself lives in :mod:`~mcu_updater.providers`, because it is not
+        about the agent: enumerate, filter, judge, is the same work whoever asks.
+        What is left here is the one translation that *is* the agent's - `scope`
+        is this API's word, validated by `_scope`, and the providers take the
+        decision rather than a second copy of the vocabulary.
 
-        A type with no saved config for a family is still skipped rather than
-        failed: menuconfig is ncurses and cannot run here, so there is nothing
-        this could do about it, and failing the whole batch over one
-        unconfigured type would be worse. What changed is only *which* config it
-        looks for.
+        Walking providers rather than the `[mcu ...]` registry is what puts
+        screens in a fleet build. The registry was the only list this had, so
+        "build everything" meant "build every MCU" and every display was left on
+        whatever it was running - silently, because nothing enumerated them to
+        notice they were missing.
 
-        `only` narrows it to a single type, which is what makes "update this one
-        board type" the same operation with a filter rather than another loop.
-        `fw` narrows it to a single family - "rebuild katapult everywhere" - and
-        is a filter over what each type already uses, never an instruction to
-        build a family a type does not run.
+        `only` narrows to one target, which is what makes "update this one board
+        type" the same operation with a filter rather than another loop. `fw`
+        narrows to one family - "rebuild katapult everywhere" - as a filter over
+        what each target already uses, never an instruction to build a family
+        something does not run.
         """
-        from ..build import staleness
-
-        out: list[tuple[str, str]] = []
-        for name in reg.names():
-            if only is not None and name != only:
-                continue
-            for family in reg.get(name).families():
-                if fw is not None and family != fw:
-                    continue
-                if not os.path.exists(self.paths.config_file(name, family)):
-                    continue
-                if scope == "all":
-                    out.append((name, family))
-                    continue
-                stale, _ = staleness(self.paths, name, family)
-                if stale:
-                    out.append((name, family))
-        return out
+        return providers.select(
+            install, stale_only=(scope == "stale"), only=only, fw=fw
+        )
 
     def _boards_to_flash(self, reg: Registry, scope: str, only: Optional[str] = None) -> list[dict]:
         """Which boards a flash_all should write, with the reason for each.
@@ -2785,46 +2794,45 @@ class Api:
         return out
 
     def _do_build_all(
-        self, ctx: Any, pairs: list[tuple[str, str]]
+        self, ctx: Any, targets: list[providers.BuildTarget]
     ) -> dict[str, Any]:
-        """Build each (type, firmware) pair in turn, reporting failures rather
-        than stopping.
+        """Build each target in turn, reporting failures rather than stopping.
 
         Matches what the CLI's update-all has always done. One type failing to
         compile is usually about that type, and abandoning the rest would turn a
         one-board problem into a whole-fleet one.
 
-        Each pair carries its own family, so a fleet build compiles cartographer
-        for the probe and klipper for the boards in one pass, rather than one
-        family for everything and silence about whatever did not fit.
-        """
-        from ..build import build as do_build
+        Each target names its own provider and family, so one pass compiles
+        cartographer for the probe, klipper for the boards and PlatformIO for the
+        screens - rather than one build system for everything and silence about
+        whatever did not fit.
 
-        built: list[dict[str, str]] = []
-        failures: list[dict[str, str]] = []
-        total = len(pairs)
-        for index, (name, fw) in enumerate(pairs):
+        The config is parsed once for the batch rather than once per target.
+        Still at job time, not submission time, so a setting changed while this
+        sat queued is honoured; what it no longer does is answer two questions
+        about two different configurations because somebody saved a file
+        mid-build.
+        """
+        install = self._install()
+
+        built: list[dict[str, Optional[str]]] = []
+        failures: list[dict[str, Optional[str]]] = []
+        total = len(targets)
+        for index, target in enumerate(targets):
+            provider = providers.by_name(target.provider)
             ctx.check_cancelled()
-            ctx.step(f"Building {fw} for {name}", index, total)
+            ctx.step(f"Building {provider.describe(target)}", index, total)
             try:
-                do_build(
-                    self.paths,
-                    self.registry(),
-                    self.settings(),
-                    name,
-                    fw,
-                    reporter=ctx.reporter,
-                    cancel=ctx.cancel,
-                )
-                built.append({"type": name, "fw": fw})
+                provider.build(install, target, reporter=ctx.reporter, cancel=ctx.cancel)
+                built.append(target.to_json())
             except OperationCancelled:
                 raise
             except UpdaterError as exc:
-                # Named with its family: "carto_v4 failed" is ambiguous once a
-                # type can build more than one, and the two failures want
-                # different fixes.
-                ctx.reporter("warn", f"{name} ({fw}): {exc}")
-                failures.append({"type": name, "fw": fw, "error": str(exc)})
+                # Named the way the provider names it: "carto_v4 failed" is
+                # ambiguous once a type can build more than one family, and the
+                # two failures want different fixes.
+                ctx.reporter("warn", f"{provider.describe(target)}: {exc}")
+                failures.append({**target.to_json(), "error": str(exc)})
         ctx.step(f"Built {len(built)} of {total}", total, total)
         return {"built": built, "failures": failures}
 
@@ -2900,12 +2908,19 @@ class Api:
         return {"flashed": flashed, "failures": failures}
 
     def build_all(self, args: dict) -> dict[str, Any]:
-        """Build every family every type needs. Touches no board and stops nothing.
+        """Build everything that needs it. Touches no board and stops nothing.
+
+        Everything, across every build system: an MCU's kconfig families and a
+        display's PlatformIO env are both things this host builds, and the only
+        reason screens were left out was that the registry was the only list
+        this had to walk.
 
         `fw` is an optional *filter* - "rebuild katapult everywhere" - not the
         family to build for everything. It used to be the latter, defaulting to
         klipper, which meant a type running any other application was skipped
         for want of a klipper config and the batch reported success regardless.
+        A named `fw` also excludes displays, which is correct rather than
+        incidental: a PlatformIO env has no family to be one of.
         """
         runner = self._require_runner()
         scope = self._scope(args)
@@ -2916,36 +2931,45 @@ class Api:
             if fw not in known:
                 raise RpcError(f"'fw' must be one of {list(known)}", ERR_INVALID_PARAMS)
 
-        pairs = self._types_to_build(self.registry(), scope, fw=fw)
-        if not pairs:
-            what = f"saved {fw} config" if fw else "saved config"
+        selection = self._build_targets(self._install(), scope, fw=fw)
+        if not selection.build:
+            detail = f" running {fw}" if fw else ""
+            hint = "" if scope == "all" else " Use scope 'all' to rebuild regardless."
             raise RpcError(
-                f"nothing to build: no type has a {what} that is out of date. "
-                f"Use scope 'all' to rebuild regardless.",
+                f"nothing to build: no target{detail} is both configured and in "
+                f"need of building.{hint}",
                 data={
                     "code": "nothing_to_do",
-                    "message": "no types need building",
-                    "data": {"fw": fw, "scope": scope},
+                    "message": "nothing needs building",
+                    # What was passed over, and why. A batch that quietly drops
+                    # an unconfigured target and reports success is the exact
+                    # failure this area exists to stop being possible.
+                    "data": {
+                        "fw": fw,
+                        "scope": scope,
+                        "skipped": [s.to_json() for s in selection.skipped],
+                    },
                 },
             )
 
         def run(ctx) -> dict[str, Any]:
-            return self._do_build_all(ctx, pairs)
+            return self._do_build_all(ctx, selection.build)
 
         # `types` stays a list of names for the panel, which shows what is being
         # worked on rather than how many compiles that is. `builds` carries the
-        # pairs for anything that wants the detail.
-        names = sorted({name for name, _ in pairs})
+        # targets for anything that wants the detail.
+        names = sorted({t.name for t in selection.build})
         job = runner.submit(
             "build_all",
-            {"fw": fw, "scope": scope, "types": names, "count": len(pairs)},
+            {"fw": fw, "scope": scope, "types": names, "count": len(selection.build)},
             run,
         )
         return {
             "job_id": job.id,
             "job": job.to_dict(),
             "types": names,
-            "builds": [{"type": n, "fw": f} for n, f in pairs],
+            "builds": [t.to_json() for t in selection.build],
+            "skipped": [s.to_json() for s in selection.skipped],
         }
 
     def flash_all(self, args: dict) -> dict[str, Any]:
@@ -3018,6 +3042,12 @@ class Api:
         `name` narrows both halves to one type - "rebuild this board type and flash
         its boards", which is the same operation with a filter rather than a third
         one to keep in step.
+
+        The build half now covers displays, because it is literally `build_all`.
+        The flash half does not yet, because it is literally `flash_all` - so a
+        stale screen is rebuilt here and still waits for its own flash. That is
+        the composition being honest rather than a special case: both halves gain
+        displays where they are defined, not where they are called from.
         """
         runner = self._require_runner()
         settings = self.settings()
@@ -3034,14 +3064,14 @@ class Api:
 
         scope = self._scope(args)
         only = args.get("name")
-        reg = self.registry()
+        install = self._install()
         if only is not None:
-            reg.get(str(only))  # fail fast on a typo, before a job exists
+            install.registry.get(str(only))  # fail fast on a typo, before a job exists
             only = str(only)
         # Every family each type uses, not klipper for all of them. A fleet
         # update that rebuilds klipper and leaves the probe on last month's
         # cartographer is the failure this exists to prevent, and it was silent.
-        pairs = self._types_to_build(reg, scope, only)
+        targets = self._build_targets(install, scope, only).build
 
         from ..service import assert_printer_idle
 
@@ -3054,8 +3084,8 @@ class Api:
 
         def run(ctx) -> dict[str, Any]:
             build_result = (
-                self._do_build_all(ctx, pairs)
-                if pairs
+                self._do_build_all(ctx, targets)
+                if targets
                 else {"built": [], "failures": []}
             )
             # Selected *after* building, because a build is what makes boards stale:
@@ -3077,7 +3107,7 @@ class Api:
             )
             return {"build": build_result, "flash": self._do_flash_all(ctx, boards)}
 
-        names = sorted({name for name, _ in pairs})
+        names = sorted({t.name for t in targets})
         job = runner.submit("update_all", {"scope": scope, "name": only, "types": names}, run)
         return {"job_id": job.id, "job": job.to_dict(), "types": names, "name": only}
 

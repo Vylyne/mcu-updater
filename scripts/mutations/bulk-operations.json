@@ -1,5 +1,5 @@
 {
-  "_comment": "Guards that must stay load-bearing. Run: ./scripts/mutation_test.py scripts/mutations/bulk-operations.json",
+  "_comment": "Guards that must stay load-bearing. Run: ./scripts/mutation_test.py scripts/mutations/bulk-operations.json  --  one behaviour area, three files: the agent submits and batches, the provider package selects.",
   "file": "src/mcu_updater/agent/methods.py",
   "command": [
     "python",
@@ -35,19 +35,39 @@
       "replace": "if False:"
     },
     {
+      "name": "update_all rebuilds every family, not just klipper",
+      "find": "        targets = self._build_targets(install, scope, only).build",
+      "replace": "        targets = self._build_targets(install, scope, only, fw=\"klipper\").build"
+    },
+    {
       "name": "a fleet build covers every family each type runs",
-      "find": "            for family in reg.get(name).families():",
+      "file": "src/mcu_updater/providers/kconfig_make.py",
+      "find": "            for family in install.registry.get(name).families():",
       "replace": "            for family in [\"klipper\"]:"
     },
     {
-      "name": "fw filters a fleet build rather than forcing a family",
-      "find": "                if fw is not None and family != fw:\n                    continue",
-      "replace": "                if False:\n                    continue"
+      "name": "a fleet build reaches every build system",
+      "file": "src/mcu_updater/providers/registry.py",
+      "find": "PROVIDERS: tuple[Provider, ...] = (KconfigMake(), PlatformIO())",
+      "replace": "PROVIDERS: tuple[Provider, ...] = (KconfigMake(),)"
     },
     {
-      "name": "update_all rebuilds every family, not just klipper",
-      "find": "        pairs = self._types_to_build(reg, scope, only)",
-      "replace": "        pairs = self._types_to_build(reg, scope, only, fw=\"klipper\")"
+      "name": "fw filters a fleet build rather than forcing a family",
+      "file": "src/mcu_updater/providers/registry.py",
+      "find": "            if fw is not None and target.fw != fw:\n                continue",
+      "replace": "            if False:\n                continue"
+    },
+    {
+      "name": "a sweep never rebuilds the bootloader",
+      "file": "src/mcu_updater/providers/registry.py",
+      "find": "            if fw is None and target.on_demand:\n                continue",
+      "replace": "            if False:\n                continue"
+    },
+    {
+      "name": "an unbuildable target is skipped, not attempted",
+      "file": "src/mcu_updater/providers/registry.py",
+      "find": "            if reason is not None:\n                out.skipped.append(Skipped(target, reason))\n                continue",
+      "replace": "            if False:\n                out.skipped.append(Skipped(target, reason))\n                continue"
     }
   ]
 }

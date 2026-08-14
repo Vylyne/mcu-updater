@@ -91,7 +91,7 @@ application error (see `data.code`), `-32603` internal.
 | `fw.settings.get` | — | `{settings: Settings}` |
 | `fw.build` | `name`, `fw`, `jobs?`, `clean?` | `{job_id, job}` — returns immediately |
 | `fw.flash` | `serial`, `name?`, `force?` | `{job_id, job}` — **off by default**, see below |
-| `fw.build_all` | `fw?`, `scope?` | `{job_id, job, types}` — builds only, touches no board |
+| `fw.build_all` | `fw?`, `scope?` | `{job_id, job, types, builds, skipped}` — builds only, touches no board |
 | `fw.flash_all` | `scope?`, `name?`, `force?` | `{job_id, job, boards}` — **off by default** |
 | `fw.update_all` | `scope?`, `name?`, `force?` | `{job_id, job, types}` — **off by default** |
 | `fw.display.list` | — | `{displays, reachable, watcher}` — read-only |
@@ -471,20 +471,61 @@ getting nothing.
 
 #### What gets selected
 
-Both selections walk the **registry**, so an adopted-but-untracked board can
-never be swept into a bulk flash — it has no type, and therefore no firmware.
+`flash_all` walks the **registry**, so an adopted-but-untracked board can never
+be swept into a bulk flash — it has no type, and therefore no firmware.
 
-`build_all` takes every type with a saved `.config` for that tree. A type that has
-never been through `menuconfig` is **skipped, not failed**: menuconfig is ncurses
-and cannot run in the agent, so there is nothing the batch could do about it, and
-failing over one unconfigured type would turn a one-type problem into a
-fleet-wide one.
+`build_all` walks the **providers** — the build systems this host has, one per
+module in `mcu_updater/providers/`. That is what puts displays in a fleet build:
+the registry used to be the only list it had, so "build everything" meant "build
+every MCU" and every screen stayed on whatever it was running, silently.
+
+Each provider enumerates its own targets:
+
+| Provider | A target is | `fw` |
+| --- | --- | --- |
+| `kconfig_make` | one `[mcu ...]` type × one firmware family | the family |
+| `platformio` | one `[display ...]` section | `null` — the env *is* the type |
+
+Three rules follow, and each of them was a bug first:
+
+* **A type builds the families it runs, not klipper.** Applying one family to
+  every type meant a `firmware: cartographer` board had no klipper `.config`, was
+  dropped, and the batch reported success having never built it.
+* **`fw` filters; it never forces.** "Rebuild katapult everywhere" narrows the
+  sweep to targets that already use that family. A display has no family, so it
+  is correctly left alone rather than matched by a missing value.
+* **A sweep leaves katapult alone.** The bootloader is built when a device is
+  adopted or when `fw` names it — never incidentally. It is already on the
+  hardware doing its one job, a fleet flash never writes it, and a CAN board is
+  reachable only *through* the bootloader that would be replaced.
+
+Anything that cannot be built at all — a type that has never been through
+`menuconfig`, a display with no source tree — is **skipped, not failed**: there
+is nothing the batch could do about it, and failing over one unconfigured target
+would turn a one-target problem into a fleet-wide one. Every such target is
+returned in `skipped` with a reason, on the job submission and inside the
+`nothing_to_do` refusal. A batch that drops something and reports success is the
+failure this whole area exists to make impossible.
+
+```json
+{"job_id": "job-7", "job": {...},
+ "types": ["carto_v4", "knomi_toolchanger"],
+ "builds": [{"type": "carto_v4", "fw": "cartographer", "provider": "kconfig_make"},
+            {"type": "knomi_toolchanger", "fw": null, "provider": "platformio"}],
+ "skipped": [{"type": "bttebb36", "fw": "klipper", "provider": "kconfig_make",
+              "reason": "'bttebb36' has no saved klipper configuration yet - run menuconfig for it once first."}]}
+```
 
 `flash_all` takes every tracked serial that is online, belongs to a type with a
 built artifact, and (under `stale`) has `needs_flash: true`. It is per-serial, not
 per-type: two boards of one model genuinely do run different firmware. Passing
 `name` narrows it to a single type — that is "flash this type", implemented as
 this same operation with a filter.
+
+`update_all` is `build_all` followed by `flash_all`, so it builds displays and
+does not yet flash them. That is the composition being honest rather than a
+special case: both halves gain screens where they are defined, not where they
+are called from — the flasher seam is the other half of this work.
 
 Both refuse with `nothing_to_do` when the selection comes out empty, rather than
 starting a job that does nothing and reads as a bug.

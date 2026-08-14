@@ -106,20 +106,24 @@ def test_no_mutation_is_left_live_in_the_source():
     for spec_path in sorted(glob.glob(str(root / "scripts" / "mutations" / "*.json"))):
         with open(spec_path, encoding="utf-8") as fh:
             spec = json.load(fh)
-        target = root / spec["file"]
-        if not target.exists():
-            continue
-        source = target.read_text(encoding="utf-8")
         for mutation in spec["mutations"]:
+            # Per-mutation, falling back to the spec's default: one spec covers a
+            # behaviour area, and a behaviour area spans files.
+            relative = mutation.get("file", spec.get("file"))
+            assert relative, f"{spec_path}: {mutation['name']} names no file"
+            target = root / relative
+            if not target.exists():
+                continue
+            source = target.read_text(encoding="utf-8")
             if mutation["find"] in source:
                 continue
             name = mutation["name"]
             if mutation["replace"] and mutation["replace"] in source:
-                live.append(f"{spec['file']}: MUTATION STILL APPLIED - {name}")
+                live.append(f"{relative}: MUTATION STILL APPLIED - {name}")
             else:
                 # Not sabotage, but the spec no longer describes the code and
                 # would report STALE rather than guarding anything.
-                live.append(f"{spec['file']}: anchor no longer matches - {name}")
+                live.append(f"{relative}: anchor no longer matches - {name}")
 
     assert not live, "mutation specs out of sync with the source:\n  " + "\n  ".join(live)
 

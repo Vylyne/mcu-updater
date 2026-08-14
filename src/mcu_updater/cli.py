@@ -421,7 +421,14 @@ def update_all(args: argparse.Namespace) -> None:
                         reg,
                         c.settings,
                         name,
-                        "klipper",
+                        # What this board *runs*, not klipper for everything.
+                        # The flash below writes `result.bin_path` at
+                        # `fw=mcu.firmware`, so a hardcoded klipper build here
+                        # meant a cartographer probe with a stray klipper
+                        # .config got klipper written to it under its own
+                        # firmware's name. Without that config it merely failed,
+                        # which is why this stayed invisible.
+                        mcu.firmware,
                         reporter=stdout_reporter,
                         jobs=getattr(args, "jobs", None),
                     )

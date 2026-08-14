@@ -89,7 +89,7 @@ application error (see `data.code`), `-32603` internal.
 | `fw.add_mcu.start` | `name`, `dfu_serial?` | `{job_id, job, dfu_serial}` — **off by default** |
 | `fw.artifacts` | `name` (required) | `{klipper: Artifact, katapult: Artifact}` |
 | `fw.settings.get` | — | `{settings: Settings}` |
-| `fw.build` | `name`, `fw`, `jobs?`, `clean?` | `{job_id, job}` — returns immediately |
+| `fw.build` | `name`, `fw`, `jobs?`, `clean?`, `reseed?` | `{job_id, job}` — returns immediately |
 | `fw.flash` | `serial`, `name?`, `force?` | `{job_id, job}` — **off by default**, see below |
 | `fw.build_all` | `fw?`, `scope?` | `{job_id, job, types, builds, skipped}` — builds only, touches no board |
 | `fw.flash_all` | `scope?`, `name?`, `force?` | `{job_id, job, boards, displays}` — **off by default** |
@@ -170,8 +170,9 @@ on-disk path, never a reconstructed one.
  "stale": true, "stale_reason": "source_changed", "reason": "source_changed",
  "last_build_seconds": 74.2, "last_build_at": 1785410000.0,
  "config_rewritten": false,
- "profile": {"managed": true, "profile": "config.CartoV4USB",
-             "reason": null, "tone": "ok", "label": "Matches profile"}}
+ "profile": {"managed": true, "profile": "config.CartoV4USB", "custom": false,
+             "parent": null, "reason": null, "tone": "ok",
+             "label": "Matches profile"}}
 ```
 
 `stale_reason` ∈ `null` | `"never_built"` | `"config_changed"` |
@@ -204,6 +205,15 @@ to know about it. `reason` ∈ `null` | `"unmanaged"` | `"customised"` |
 type predating profiles, and painting those amber would be noise about a thing
 that is not wrong. See `fw.profile.*`.
 
+`customised` carries an **ok** tone too, which is a **change**: it was
+`"unknown"` while there was nowhere to put a user's own answers. Now that a save
+captures them as a profile of their own, being on your own answers is a
+destination rather than drift, and its label reads *"Your own answers"* rather
+than *"Customised"*. `custom` is true when the profile being tracked is this
+type's own (`config.custom`), and `parent` then names what it was forked from —
+elsewhere `profile` already names that, because a customised config's record
+still names the seed it drifted from.
+
 ### `BusDevice`
 
 ```json
@@ -227,6 +237,9 @@ component renders both — and renders whatever comes next without being taught 
  "firmware": "cartographer",
  "artifact": {"state": "stale", "tone": "attention",
               "label": "Source updated - rebuild", "reason": "source_changed"},
+ "profile": {"managed": true, "profile": "config.CartoV4USB", "custom": false,
+             "parent": null, "reason": "seed_moved", "tone": "attention",
+             "label": "Profile updated - reseed available"},
  "needs_flash": true,
  "devices": [
    {"id": "290055001850304158373620-if00", "name": "mcu scanner",
@@ -239,6 +252,12 @@ component renders both — and renders whatever comes next without being taught 
  "actions": [
    {"id": "build", "label": "Build", "method": "fw.build",
     "params": {"name": "carto_v4", "fw": "cartographer"}, "blocked": null},
+   {"id": "profile", "label": "Change profile", "method": "fw.profile.apply",
+    "params": {"name": "carto_v4", "fw": "cartographer"}, "blocked": null,
+    "choices": {"method": "fw.profile.list",
+                "params": {"name": "carto_v4", "fw": "cartographer",
+                           "detail": true},
+                "param": "profile"}},
    {"id": "flash", "label": "Flash", "method": "fw.flash_all",
     "params": {"name": "carto_v4", "scope": "stale"},
     "blocked": {"code": "no_artifact", "message": "...", "data": {...}}}]}
@@ -266,6 +285,24 @@ Four things are deliberate:
 - **`method` and `params` ride on each action** so the panel does not hold its
   own RPC map. Without this you ship a uniform shape and the reader still
   branches on `kind`, which is the whole thing this is for.
+- **An action may carry `choices`**, meaning "this one takes an option, fetch
+  them when you open it". `{method, params, param}`: call `method` with `params`,
+  and put what the user picks into the `param` key of the action's own `params`.
+  Deliberately generic — the renderer draws a radio group and never learns what a
+  profile is — and deliberately *fetched*, because naming the options costs a
+  Kconfig parse that `fw.status` cannot afford and a click can.
+
+`profile` is the third verdict from `Artifact.profile`, which this projection
+used to drop. When the type is on its own answers it also carries `changes`: the
+answers that differ from the profile it was forked from, as
+`{symbol, was, now, line}`. Computed only in that state, and free there — both
+sides are answer lists, so no Kconfig tree is parsed to produce it.
+
+Two blocked codes mean "no saved config", and which one you get says where to
+send the user. `no_config` is the tree that ships no profiles — *"Run menuconfig
+for it first"*, unchanged, which is upstream Klipper and therefore most types.
+`no_profile` is a tree that ships them, where answering a menu of hundreds by
+hand is the wrong first step and the picker is the right one.
 
 Devices carry `actions` too, because the reasons differ per device: one board of
 a type can be offline while its neighbour waits in Katapult. It is also the only
@@ -1016,21 +1053,120 @@ silently filled in by the next build.
 ### `fw.profile.list`
 
 ```json
-{"name": "carto_v4"}
+{"name": "carto_v4", "fw": "cartographer", "detail": false}
 ```
 
 ```json
-{"type": "carto_v4", "firmware": "cartographer", "profile": "config.CartoV4USB",
- "available": [{"name": "config.CartoV4USB", "fw": "cartographer",
-                "path": "/home/pi/MCU-Firmware---Based-on-Klipper/config.CartoV4USB"}],
+{"type": "carto_v4", "firmware": "cartographer", "fw": "cartographer",
+ "profile": "config.CartoV4USB",
+ "available": [
+   {"name": "config.custom", "fw": "cartographer", "origin": "custom",
+    "parent": "config.CartoV4USB",
+    "path": "/home/pi/printer_data/mcu-updater/carto_v4/cartographer.custom.config",
+    "distinguishing": [{"symbol": "CANBUS_FREQUENCY", "value": "500000",
+                        "line": "CONFIG_CANBUS_FREQUENCY=500000",
+                        "label": "CAN bus speed"}]},
+   {"name": "config.CartoV4USB", "fw": "cartographer", "origin": "vendor",
+    "parent": null,
+    "path": "/home/pi/MCU-Firmware---Based-on-Klipper/config.CartoV4USB",
+    "distinguishing": [{"symbol": "STM32_CANBUS_PA11_PA12", "value": "n",
+                        "line": "# CONFIG_STM32_CANBUS_PA11_PA12 is not set",
+                        "label": "CAN bus (on PA11/PA12)"}]}],
  "state": {"cartographer": {"managed": true, "reason": null, "...": "..."},
            "katapult":     {"managed": true, "reason": null, "...": "..."}}}
 ```
 
 Keyed on the **type**, not on a firmware family: "which profiles apply to this
 board" depends on the family the type declares it runs, not on which trees
-happen to be installed. Upstream Klipper ships none, which is the right answer
-for a tree that builds for two hundred boards.
+happen to be installed. `fw` defaults to the family the type runs. Upstream
+Klipper ships none, which is the right answer for a tree that builds for two
+hundred boards.
+
+`distinguishing` is the answers that tell each entry apart from the others
+offered. Cartographer's USB and CAN variants differ by one answer out of seven,
+so listing all seven under each of eight entries hides the line that decides
+anything. **Disagreement counts; absence does not** — a symbol distinguishes
+when two profiles that both answer it answer it differently, and each entry
+lists only the answers it gives. Vendor seeds are hand-maintained and mention
+computed lines inconsistently, and a custom profile is minimal by construction,
+so treating "not mentioned" as a value would make every entry differ from every
+other in a dozen places. This is text over small files — no Kconfig tree — so
+every listing carries it.
+
+`detail: true` adds `label`, the tree's own prompt text: *"Use PA11/PA12 for
+CANbus"* rather than `STM32_CANBUS_PA11_PA12`. That needs the tree parsed, so it
+is opt-in and costs one parse for the whole list — the same budget
+`fw.kconfig.open` spends, affordable because opening a picker is a click.
+`label` is `null` without it, and also for a symbol the tree gives no prompt.
+It is deliberately **not** decomposed into "Version"/"Interface" dropdowns:
+those axes exist only in the vendor's file names, whose own naming is already
+inconsistent inside one directory (`config.CartoV3USBLite` against
+`config.CartoV4USBlite`), and parsing them would teach a generic tool one
+vendor's board family.
+
+### Your own answers are a profile too
+
+`origin` is `vendor` (shipped in the firmware tree) or `custom` — this type's
+own answers, saved under the reserved name **`config.custom`**. It is shaped
+exactly like a vendor seed, a short list of answer lines, so `fw.profile.apply`
+consumes it through the same path and no caller needs a second concept.
+
+The lifecycle it exists for:
+
+1. Pick a vendor profile → you are **tracking** it. The vendor bumps their
+   config and you get the bump.
+2. Edit it → you are on **your own** profile, saved under that MCU, and the
+   vendor's bump becomes informational.
+3. Switching back and forth is lossless, because your answers have a home.
+
+It is captured when `fw.kconfig.save` writes answers that differ from what the
+profile put there — nearly free, since that call has the tree parsed, and that
+save now returns the minimal `answers` it wrote plus `custom_profile`, the name
+it kept them under or `null` when it kept none — and again
+by `fw.profile.apply` before a `force` would overwrite a customised config,
+which is what catches an edit made out of band by `make menuconfig`. The
+`SeedResult` then reports `kept: "config.custom"`. A vendor shipping that exact
+name is shadowed rather than listed twice under one name.
+
+One slot per (type, fw), at
+`printer_data/config/mcu-updater/types/<type>/<fw>.custom.config` — beside the
+`.config` it was captured from, **not** beside the build artifacts. Once that
+`.config` has been reseeded from a vendor profile this is the only copy of the
+answers the user wrote, so it belongs with the things a backup takes; it is also
+served by Moonraker, so it opens in Mainsail's editor next to the file it
+describes. Never in the vendor's source directory, where a `git pull` would eat
+it. `fw.type.remove` keeps the whole type directory, so removing a type and
+re-adding it under the same name restores its custom profile with everything
+else.
+
+The file is a seed with a comment header (`# forked-from:`, `# base:`). Both
+kconfiglib and the answer parser ignore comments, so it stays safe to hand-edit;
+deleting the header costs the "what changed" display and nothing else.
+
+`parent` is what a custom profile was forked from. It is what lets a UI say
+"yours, forked from CartoV4USB", and what makes going back a named button rather
+than a `force` flag.
+
+### Which comparison runs where
+
+| Question | Compares | Cost | Runs |
+| --- | --- | --- | --- |
+| Has this been edited? Has the vendor moved? | sha256 of the `.config` and of the vendor's file | two small reads | every `fw.status` |
+| What did I change? | the capture's answers against its own `# base:` header | two small reads | every `fw.status`, only when customised |
+| Which profiles exist? | — | one readdir of the tree root | every `fw.status` |
+| What are these settings called? | — | one Kconfig parse | opening the picker (`detail: true`) |
+| Seed / capture / reseed / build | — | reads plus one to three parses | a click or a build |
+
+The vendor's file is only ever compared as **bytes**, never reduced to answers —
+that is what keeps `fw.status` off the Kconfig parser. And `# base:` records the
+fork point, so after a vendor bump the change list is measured against the
+answers you forked from rather than the vendor's current ones. That is the honest
+reading of "yours, forked from CartoV4USB"; re-measuring would cost a parse.
+
+`fw.status` is recomputed on every state event — a mutation, a job finishing, a
+Klipper service-state change, a reconnect — not on a timer. So a vendor bump is
+noticed the next time one of those happens, or on Refresh, exactly as a `git
+pull` of Klipper already behaves for the "Source updated — rebuild" chip.
 
 ### `fw.profile.apply`
 
@@ -1104,7 +1240,40 @@ For the same reason, `fw.profile.apply` refuses rather than overwrites. A config
 that still matches its record is ours to rewrite, which is what makes reseeding
 after a vendor bump safe and repeatable; anything else — a hand-built config
 from before profiles existed, or one edited since — is the user's. `force: true`
-replaces it and keeps one generation as `.bak`.
+replaces it, keeps the answers as `config.custom`, and keeps one generation of
+the file as `.bak`. It is still a refusal by default even though the capture
+makes it recoverable: the capture makes `force` undoable, not automatic.
+
+### Taking a vendor bump, on the button you were already pressing
+
+A build takes the vendor's updated answers before compiling, and reports which
+profile it took as `reseeded` in the job result with a line in the log. Governed
+by **one setting**, `reseed_on_build`, which defaults to true.
+
+One setting rather than a flag per entry point, because there are four ways to
+start a build — the panel, `updatefw build`, a fleet build, `update-all` — and
+they must not disagree about what a build does. It lives in
+`mcu_updater.build.build()`, which all four already call.
+
+- `fw.build` accepts `reseed` as an **override for that run**: the confirm dialog
+  sends `false` when the user picks "build as-is". Omit it and the setting
+  decides.
+- `updatefw build --no-reseed` is the same override on the CLI.
+- Fleet builds and `update-all` inherit the setting; there is nothing to pass.
+
+Two rules bound it:
+
+- **Only on `seed_moved`.** That state means the saved config still matches our
+  record and it is the vendor's file that moved, so nothing of the user's is
+  discarded. A `customised` config is left alone *even when asked*: you are on
+  your own profile and the bump is informational until you say otherwise.
+- **Only in a build, never in `fw.status`.** Status only reports; a writer on the
+  path that describes a config is the failure class `config_rewritten` exists to
+  surface, not to join. Build time is where the config is about to matter and
+  where there is a log to say what was done.
+
+A bootloader config whose profile is `derived:<app>` is re-derived rather than
+seeded, which is what re-runs the offset check that keeps the pair bootable.
 
 Three answers are worth warning about specifically rather than blanketing the
 whole menu, because they are the ones that cost you a board: the **clock

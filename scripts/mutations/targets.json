@@ -37,8 +37,8 @@
     },
     {
       "name": "build is refused without saved menuconfig answers",
-      "find": "                        if artifact.get(\"has_config\")\n                        else self._blocked(",
-      "replace": "                        if True\n                        else self._blocked("
+      "find": "                        if artifact.get(\"has_config\")\n",
+      "replace": "                        if True\n"
     },
     {
       "name": "configure is offered only for the families this type uses",

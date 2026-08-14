@@ -1,5 +1,5 @@
 {
-  "_comment": "Profile seeding. Three of these guards stand between a config file and an unbootable board: the offset agreement check, its refusal to become a no-op, and the refusal to overwrite answers the user wrote by hand. The fourth - the seed name whitelist - stands between a browser and reading an arbitrary file off the printer.",
+  "_comment": "Profile seeding, and the custom profile that makes editing one something other than a dead end. Three of these guards stand between a config file and an unbootable board: the offset agreement check, its refusal to become a no-op, and the refusal to overwrite answers the user wrote by hand. The seed name whitelist stands between a browser and reading an arbitrary file off the printer. The rest stand between a user and the only copy of their own answers.",
   "file": "src/mcu_updater/profiles.py",
   "command": [
     "python",
@@ -27,8 +27,8 @@
     },
     {
       "name": "a local edit outranks a vendor bump",
-      "find": "    if current != record.get(\"config_sha256\"):\n        return ProfileStatus(CUSTOMISED, profile=name)",
-      "replace": "    if False:\n        return ProfileStatus(CUSTOMISED, profile=name)"
+      "find": "    if current != record.get(\"config_sha256\"):\n        return ProfileStatus(CUSTOMISED, profile=name, parent=parent)",
+      "replace": "    if False:\n        return ProfileStatus(CUSTOMISED, profile=name, parent=parent)"
     },
     {
       "name": "a seed name is a basename, not a path",
@@ -55,6 +55,48 @@
       "name": "addresses are compared numerically",
       "find": "        return int(raw, 16)",
       "replace": "        return raw"
+    },
+    {
+      "name": "answers about to be overwritten are kept first",
+      "find": "        kept = _keep_current_answers(paths, mcu_type, fw, families)",
+      "replace": "        kept = None"
+    },
+    {
+      "name": "going back to your own answers does not capture over them",
+      "find": "    if seed.origin != ORIGIN_CUSTOM:",
+      "replace": "    if True:"
+    },
+    {
+      "name": "only a customised config is worth keeping as your own",
+      "find": "    if state.reason != CUSTOMISED:\n        return None",
+      "replace": "    if False:\n        return None"
+    },
+    {
+      "name": "a build takes a vendor bump but never overwrites your own answers",
+      "find": "    if state.reason != SEED_MOVED or not state.profile:\n        return None",
+      "replace": "    if False:\n        return None"
+    },
+    {
+      "name": "a recapture keeps the fork point it already had",
+      "find": "    if resolved is None and existing is not None:\n        return existing.parent, existing.base",
+      "replace": "    if False:\n        return existing.parent, existing.base"
+    },
+    {
+      "name": "the baseline is the parent's own answers, taken from the record",
+      "find": "    if record is not None and recorded == resolved:\n        return resolved, tuple(str(line) for line in record.get(\"answers\") or [])",
+      "replace": ""
+    },
+    {
+      "name": "a vendor shipping the reserved name is shadowed, not listed twice",
+      "find": " and os.path.basename(path) != CUSTOM_PROFILE",
+      "replace": ""
+    },
+    {
+      "_comment": "The custom slot is the one profile this tool writes rather than reads. Writing it into the firmware tree would put it in the path of the vendor's own `git pull`, which is the one thing guaranteed to eat it.",
+      "name": "your own profile is not written into the vendor's tree",
+      "file": "src/mcu_updater/paths.py",
+      "find": "        return os.path.join(self.type_dir(mcu_type), f\"{fw}.custom.config\")",
+      "replace": "        return os.path.join(self.fw_dir(fw), \"config.custom\")"
     },
     {
       "name": "a derived config tracks the application config it came from",

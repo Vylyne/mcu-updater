@@ -33,6 +33,22 @@ def test_artifacts_are_kept_out_of_the_backed_up_config_tree():
         assert os.path.join("config", "mcu-updater") not in artifact
 
 
+def test_answers_a_user_wrote_are_kept_where_backups_look():
+    """The other half of the same rule, and the one that decides where a captured
+    profile goes: it is the only copy of those answers once the .config it came
+    from has been reseeded, so it goes with the irreplaceable things."""
+    p = Paths.from_env(env={"MCU_UPDATER_HOME": os.path.join("/srv", "printer")})
+    for owned in (
+        p.config_file("board", "klipper"),
+        p.custom_profile_file("board", "klipper"),
+        p.main_config,
+    ):
+        assert owned.startswith(p.config_dir)
+    # The verdict *about* a profile is regenerable and stays in the data tree;
+    # the answers themselves are not.
+    assert p.profile_file("board", "klipper").startswith(p.data_dir)
+
+
 def test_each_override_is_honoured_independently(tmp_path):
     p = Paths.from_env(
         env={

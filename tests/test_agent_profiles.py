@@ -23,6 +23,7 @@ from mcu_updater.jobs import JobRunner
 from mcu_updater.paths import Paths
 from mcu_updater.settings import Settings
 
+from .conftest import write_settings
 from .test_profiles import PROFILE_TREE, SEEDS, make_tree
 
 
@@ -84,6 +85,44 @@ def test_listing_an_unknown_type_is_refused(api):
     with pytest.raises(RpcError) as exc:
         api.dispatch("fw.profile.list", {"name": "nope"})
     assert exc.value.data["code"] == "unknown_type"
+
+
+def test_each_profile_carries_what_tells_it_apart(api):
+    """Eight entries whose seven answers are six the same is a picker that hides
+    the line deciding anything. This is text over small files, so it is free and
+    every listing gets it."""
+    listed = api.dispatch("fw.profile.list", {"name": "carto_v4"})
+    usb = next(s for s in listed["available"] if s["name"] == "config.TestBoardUSB")
+    symbols = {row["symbol"]: row for row in usb["distinguishing"]}
+
+    assert "MACH_STM32G431" not in symbols, "answered the same by all four"
+    assert symbols["STM32_CANBUS_PA11_PA12"]["value"] == "n"
+    # No labels without asking: naming them needs the tree parsed.
+    assert symbols["STM32_CANBUS_PA11_PA12"]["label"] is None
+
+
+def test_detail_labels_the_differences_in_the_trees_own_words(api):
+    """`STM32_CANBUS_PA11_PA12` means nothing to anyone. Behind an opt-in
+    because it costs a Kconfig parse - affordable on a click, never on the poll."""
+    listed = api.dispatch("fw.profile.list", {"name": "carto_v4", "detail": True})
+    usb = next(s for s in listed["available"] if s["name"] == "config.TestBoardUSB")
+    labels = {row["symbol"]: row["label"] for row in usb["distinguishing"]}
+
+    assert labels["STM32_CANBUS_PA11_PA12"] == "CAN bus (on PA11/PA12)"
+    assert labels["STM32_USB_PA11_PA12"] == "USB (on PA11/PA12)"
+
+
+def test_your_own_profile_is_listed_with_the_vendors(api):
+    apply(api, name="carto_v4", profile="config.TestBoardUSB")
+    profiles.capture_custom(
+        api.paths, "carto_v4", "klipper", answers=['CONFIG_VERSION="MINE 1.0"']
+    )
+
+    listed = api.dispatch("fw.profile.list", {"name": "carto_v4"})
+    first = listed["available"][0]
+    assert first["name"] == profiles.CUSTOM_PROFILE
+    assert first["origin"] == "custom"
+    assert first["parent"] == "config.TestBoardUSB"
 
 
 # --------------------------------------------------------------------------
@@ -208,10 +247,33 @@ def test_the_artifact_payload_carries_the_profile_verdict(api):
 
     verdict = api.artifact("carto_v4", "klipper")["profile"]
     assert verdict["reason"] == profiles.CUSTOMISED
-    assert verdict["label"] == "Customised"
+    assert verdict["label"] == "Your own answers"
     # A customised config is not a stale artifact and does not want a rebuild -
     # which is why this is a third verdict rather than folded into `reason`.
     assert api.artifact("carto_v4", "klipper")["reason"] != profiles.CUSTOMISED
+
+
+def test_one_artifact_call_hashes_a_config_once(api, monkeypatch):
+    """Two questions of the same file in the same breath.
+
+    "Is the binary current with its inputs" and "do the inputs still say what
+    the profile said" each used to read the saved config for themselves, so one
+    `fw.status` hashed every config on the printer twice.
+    """
+    from mcu_updater import build as build_mod
+
+    seen: list[str] = []
+    real = build_mod.sha256_file
+    monkeypatch.setattr(
+        build_mod, "sha256_file", lambda path: (seen.append(path), real(path))[1]
+    )
+
+    apply(api, name="carto_v4", profile="config.TestBoardUSB")
+    seen.clear()
+    api.artifact("carto_v4", "klipper")
+
+    config = api.paths.config_file("carto_v4", "klipper")
+    assert seen.count(config) == 1, seen
 
 
 def test_an_unmanaged_type_is_not_painted_as_a_problem(api):
@@ -241,6 +303,197 @@ def test_a_vendor_bump_shows_up_as_something_to_do(api):
     verdict = api.artifact("carto_v4", "klipper")["profile"]
     assert verdict["reason"] == profiles.SEED_MOVED
     assert verdict["tone"] == "attention"
+
+
+# --------------------------------------------------------------------------
+# taking the bump, on the button you were pressing anyway
+# --------------------------------------------------------------------------
+
+
+@pytest.fixture
+def building(api) -> Api:
+    """The same agent with builds faked out.
+
+    The reseed lives inside `build.build()` rather than in `fw.status`, so
+    reaching it means running a build.
+    """
+    write_settings(api.paths, dry_run="true", service_backend="null")
+    built = Api(api.paths)
+    built.runner = JobRunner(api.paths, built.settings)
+    return built
+
+
+def _build(api: Api, **params):
+    res = api.dispatch("fw.build", {"name": "carto_v4", "fw": "klipper", **params})
+    assert api.runner.wait(timeout=60)
+    job = api.runner.get(res["job_id"])
+    assert job.state == "succeeded", job.error
+    return job
+
+
+def _bump(api: Api, name: str = "config.TestBoardUSB") -> None:
+    seed = pathlib.Path(api.paths.fw_dir("klipper")) / name
+    seed.write_text(seed.read_text(encoding="utf-8").replace("6.2.0", "6.3.0"), encoding="utf-8")
+
+
+def test_a_build_takes_the_bump_by_default(building):
+    """Asking for nothing gets `reseed_on_build`, which is what makes this call,
+    the CLI and a fleet build do the same thing."""
+    apply(building, name="carto_v4", profile="config.TestBoardUSB")
+    _bump(building)
+
+    job = _build(building)
+
+    assert job.result["reseeded"] == "config.TestBoardUSB"
+    assert "6.3.0" in config_text(building, "klipper")
+    assert any("reseeding" in line for line in _log(job))
+
+
+def test_a_build_can_be_told_to_leave_it(building):
+    """What "build as-is" on the confirm dialog sends. For this run only - the
+    setting is untouched."""
+    apply(building, name="carto_v4", profile="config.TestBoardUSB")
+    _bump(building)
+
+    job = _build(building, reseed=False)
+
+    assert job.result["reseeded"] is None
+    assert "6.2.0" in config_text(building, "klipper")
+
+
+def test_the_setting_turns_it_off_for_every_path(building):
+    write_settings(
+        building.paths, dry_run="true", service_backend="null", reseed_on_build="false"
+    )
+    apply(building, name="carto_v4", profile="config.TestBoardUSB")
+    _bump(building)
+
+    job = _build(building)
+
+    assert job.result["reseeded"] is None
+    assert "6.2.0" in config_text(building, "klipper")
+
+
+def test_the_setting_is_editable_from_the_panel(building):
+    building.dispatch("fw.settings.set", {"settings": {"reseed_on_build": False}})
+    assert building.settings().reseed_on_build is False
+    # Coerced from the settings module's own list of booleans, so a switch never
+    # comes back "must be a whole number".
+    with pytest.raises(RpcError):
+        building.dispatch("fw.settings.set", {"settings": {"reseed_on_build": 1}})
+
+
+def test_a_build_never_reseeds_over_your_own_answers(building):
+    """You are on your own profile; the vendor's bump is informational until you
+    say otherwise. This is the one that would lose work."""
+    apply(building, name="carto_v4", profile="config.TestBoardUSB")
+    target = pathlib.Path(building.paths.config_file("carto_v4", "klipper"))
+    target.write_text(
+        target.read_text(encoding="utf-8").replace('"TESTFW 6.2.0"', '"MINE 1.0"'),
+        encoding="utf-8",
+    )
+    _bump(building)
+
+    job = _build(building)
+
+    assert job.result["reseeded"] is None
+    assert '"MINE 1.0"' in config_text(building, "klipper")
+
+
+def test_a_fleet_build_takes_the_bump_too(building):
+    """The claim that made `build.build()` the right home for this rule.
+
+    A fleet build reaches the compiler through `providers.kconfig_make`, not
+    through `fw.build` - so a reseed implemented in the agent's single-build
+    method left every batch building the older answers, silently.
+    """
+    apply(building, name="carto_v4", profile="config.TestBoardUSB")
+    _bump(building)
+
+    res = building.dispatch("fw.build_all", {"scope": "all"})
+    assert building.runner.wait(timeout=90)
+    job = building.runner.get(res["job_id"])
+    assert job.state == "succeeded", job.error
+
+    assert "6.3.0" in config_text(building, "klipper")
+
+
+def _log(job) -> list[str]:
+    lines, _next, _dropped = job.log_since(0)
+    return [line.text for line in lines]
+
+
+# --------------------------------------------------------------------------
+# a save is where you stop tracking and start owning
+# --------------------------------------------------------------------------
+
+
+def _edit_and_save(api: Api, value: str) -> dict:
+    session = api.dispatch("fw.kconfig.open", {"name": "carto_v4", "fw": "klipper"})[
+        "session"
+    ]
+    api.dispatch("fw.kconfig.set", {"session": session, "id": "VERSION", "value": value})
+    return api.dispatch("fw.kconfig.save", {"session": session})
+
+
+def test_saving_over_a_profile_keeps_the_answers_as_your_own(api):
+    """Without this, editing a profile is the dead end it is today: the drift is
+    reported and the answers that caused it have nowhere to live."""
+    apply(api, name="carto_v4", profile="config.TestBoardUSB")
+
+    saved = _edit_and_save(api, "MINE 1.0")
+
+    assert saved["custom_profile"] == profiles.CUSTOM_PROFILE
+    own = profiles.read_custom(api.paths, "carto_v4", "klipper")
+    assert own is not None and own.parent == "config.TestBoardUSB"
+    assert [row["symbol"] for row in profiles.overrides(api.paths, "carto_v4", "klipper")] == [
+        "VERSION"
+    ]
+
+
+def test_your_profile_survives_removing_and_readding_the_type(api):
+    """`fw.type.remove` already promises it keeps the config directory, and this
+    is now the most valuable thing in there: the answers a user wrote, which
+    nothing else on the machine holds a copy of."""
+    apply(api, name="carto_v4", profile="config.TestBoardUSB")
+    _edit_and_save(api, "MINE 1.0")
+
+    out = api.dispatch("fw.type.remove", {"name": "carto_v4", "force": True})
+    assert out["kept_config_dir"] == api.paths.type_dir("carto_v4")
+    assert profiles.read_custom(api.paths, "carto_v4", "klipper") is not None
+
+    api.dispatch("fw.type.add", {"name": "carto_v4", "chipset": "stm32g431xx"})
+    offered = profiles.available(api.paths, "klipper", mcu_type="carto_v4")
+    assert offered[0].name == profiles.CUSTOM_PROFILE
+    assert offered[0].parent == "config.TestBoardUSB"
+
+
+def test_a_save_that_changed_nothing_keeps_no_second_copy(api):
+    """A capture identical to the vendor's entry is a duplicate in the picker."""
+    apply(api, name="carto_v4", profile="config.TestBoardUSB")
+
+    session = api.dispatch("fw.kconfig.open", {"name": "carto_v4", "fw": "klipper"})[
+        "session"
+    ]
+    saved = api.dispatch("fw.kconfig.save", {"session": session})
+
+    assert saved["custom_profile"] is None
+    assert profiles.read_custom(api.paths, "carto_v4", "klipper") is None
+
+
+def test_a_tree_that_ships_no_profiles_captures_nothing(api):
+    """Katapult ships none, so there is no picker to offer this in and nothing
+    to fork from - the .config is already the whole story."""
+    session = api.dispatch("fw.kconfig.open", {"name": "carto_v4", "fw": "katapult"})[
+        "session"
+    ]
+    api.dispatch(
+        "fw.kconfig.set", {"session": session, "id": "LOW_LEVEL_OPTIONS", "value": "y"}
+    )
+    saved = api.dispatch("fw.kconfig.save", {"session": session})
+
+    assert saved["custom_profile"] is None
+    assert profiles.read_custom(api.paths, "carto_v4", "katapult") is None
 
 
 def test_the_methods_are_advertised(api):

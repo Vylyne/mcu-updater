@@ -35,6 +35,15 @@ class Settings:
     #: a subtly wrong binary.
     clean_before_build: bool = True
 
+    #: Take the vendor's updated answers before compiling, when the profile a
+    #: config was seeded from has changed since. On by default, because the
+    #: alternative is building last month's config from a tree that has moved on
+    #: and never being told. It only ever applies where the saved config still
+    #: matches what the profile wrote - a config you have edited is your own and
+    #: is left alone. One setting rather than a flag per entry point, so the
+    #: panel, the CLI and a fleet build cannot disagree about what a build does.
+    reseed_on_build: bool = True
+
     #: systemd unit name. KIAUH multi-instance setups use klipper-1, klipper-2...
     service: str = "klipper"
 
@@ -76,12 +85,18 @@ class Settings:
         return [f"-j{n}"] if n > 0 else []
 
 
-_BOOL_FIELDS = {
+BOOL_FIELDS = {
     "clean_before_build",
+    "reseed_on_build",
     "dry_run",
     "enable_flashing",
     "allow_flash_while_printing",
 }
+
+#: Kept as a private alias: this module read `_BOOL_FIELDS` throughout before the
+#: agent needed the same list to coerce a browser's values, and two hand-copied
+#: lists of the same thing is how one grows a field the other does not.
+_BOOL_FIELDS = BOOL_FIELDS
 _INT_FIELDS = {"make_jobs", "log_ring_size"}
 _STR_FIELDS = {"service", "service_backend", "display_source", "platformio_bin"}
 _BACKENDS = ("moonraker", "systemd", "null")

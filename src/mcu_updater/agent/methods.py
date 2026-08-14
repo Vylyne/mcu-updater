@@ -20,6 +20,7 @@ import time
 from typing import Any, Callable, Optional
 
 from .. import API_VERSION, __version__, firmware, flashers, profiles, providers
+from .. import settings as settings_mod
 from ..build import read_sidecar
 from ..config import Registry
 from ..devices import (
@@ -257,9 +258,16 @@ class Api:
         uf2 = self.paths.uf2_file(mcu_type, fw)
         side = read_sidecar(self.paths, mcu_type, fw) or {}
 
-        from ..build import artifact_status, git_head, legacy_staleness
+        from ..build import artifact_status, git_head, legacy_staleness, sha256_file
 
-        status = artifact_status(self.paths, mcu_type, fw)
+        # Hashed once and handed to both. These two ask a different question of
+        # the same file in the same breath - "is the binary current with its
+        # inputs" and "do the inputs still say what the profile said" - and each
+        # used to read it for itself, so one fw.status read every saved config
+        # on every printer twice.
+        config_sha = sha256_file(cfg)
+
+        status = artifact_status(self.paths, mcu_type, fw, config_sha=config_sha)
         stale, reason = legacy_staleness(status)
 
         return {
@@ -287,7 +295,9 @@ class Api:
             # A third question, deliberately beside the other two rather than
             # folded into `reason`: a customised config is not a stale artifact
             # and does not want a rebuild, it wants somebody to know about it.
-            "profile": profiles.status(self.paths, mcu_type, fw).to_json(),
+            "profile": profiles.status(
+                self.paths, mcu_type, fw, config_sha=config_sha
+            ).to_json(),
         }
 
     def type_status(
@@ -565,6 +575,11 @@ class Api:
     #: started somewhere else.
     BLOCKED_NO_ARTIFACT = "no_artifact"
     BLOCKED_NO_CONFIG = "no_config"
+    #: Also no saved config - but this tree ships profiles, so the fix is picking
+    #: one rather than answering a menu. Distinct from `no_config` because the
+    #: two send a user to different places, and `no_config`'s message is the one
+    #: a tree with no profiles must keep saying, unchanged.
+    BLOCKED_NO_PROFILE = "no_profile"
     BLOCKED_NO_DEVICE = "no_device"
     #: No source tree to build in. Distinct from `no_config`, which is a saved
     #: answer file that a build would read: this is the tree itself missing, and
@@ -626,9 +641,15 @@ class Api:
     ) -> list[dict[str, Any]]:
         """`types[]` and `displays[]` in one shape."""
         allowed = set(self.available_methods())
-        configurable = self.kconfig_available()
+        # Read once for the whole projection. Every type asks the same two
+        # questions of it - can this tree be configured, and what does it ship -
+        # and a ten-type printer would otherwise re-read the config file ten
+        # times to be told the same thing.
+        families = firmware.load(self.paths)
+        configurable = self.kconfig_available(families)
         return [
-            self._mcu_target(reg, payload, allowed, configurable) for payload in types
+            self._mcu_target(reg, payload, allowed, configurable, families)
+            for payload in types
         ] + [self._display_target(payload, allowed) for payload in displays]
 
     def _mcu_target(
@@ -637,6 +658,7 @@ class Api:
         payload: dict[str, Any],
         allowed: set[str],
         configurable: dict[str, bool],
+        families: dict[str, firmware.FirmwareFamily],
     ) -> dict[str, Any]:
         name = payload["name"]
         fw = payload["firmware"]
@@ -684,6 +706,12 @@ class Api:
                 }
             )
 
+        # What this type could be seeded from - the vendor's variants and its own
+        # captured answers. A directory listing per type, which is the same order
+        # of cost as the file hashes `profile` above it already spends.
+        seeds = profiles.available(self.paths, fw, families, mcu_type=name)
+        profile = self._profile_json(name, fw, artifact, families)
+
         actions: list[dict[str, Any]] = []
         if "fw.build" in allowed:
             actions.append(
@@ -697,6 +725,19 @@ class Api:
                     "blocked": (
                         None
                         if artifact.get("has_config")
+                        # A tree that ships profiles has a better first step than
+                        # menuconfig, and saying "run menuconfig" in front of one
+                        # is what sends people into a tree of hundreds of settings
+                        # to find the seven the vendor already wrote down.
+                        else self._blocked(
+                            self.BLOCKED_NO_PROFILE,
+                            f"'{name}' has no saved {fw} configuration yet. "
+                            f"Choose one of the {len(seeds)} profiles "
+                            f"{fw} ships, or configure it by hand.",
+                            name=name,
+                            fw=fw,
+                        )
+                        if seeds
                         else self._blocked(
                             self.BLOCKED_NO_CONFIG,
                             f"'{name}' has no saved {fw} configuration yet. "
@@ -707,6 +748,7 @@ class Api:
                     ),
                 }
             )
+        actions.extend(self._profile_actions(name, fw, allowed, artifact, profile, seeds))
         for family in reg.get(name).families():
             if "fw.kconfig.open" in allowed and configurable.get(family):
                 actions.append(
@@ -734,10 +776,93 @@ class Api:
             "descriptor": payload["chipset"],
             "firmware": fw,
             "artifact": self._artifact_json(status),
+            # The third verdict, which this projection used to drop on the floor:
+            # `types[]` has carried it since profiles existed, and a panel reading
+            # `targets[]` had no way to know a config had been customised or a
+            # vendor had bumped theirs.
+            "profile": profile,
             "needs_flash": self._aggregate(devices),
             "devices": devices,
             "actions": actions,
         }
+
+    def _profile_json(
+        self,
+        name: str,
+        fw: str,
+        artifact: dict[str, Any],
+        families: dict[str, firmware.FirmwareFamily],
+    ) -> dict[str, Any]:
+        """The profile verdict, plus what was changed when something was.
+
+        `changes` is only computed for a type on its own answers, which is the
+        only state where anyone asks. It costs two small file reads and no parse
+        - both sides are answer lists - so it is affordable on a call every state
+        event recomputes, but spending even that on the eight types tracking a
+        vendor profile unchanged would be paying for an empty list.
+        """
+        verdict = dict(artifact.get("profile") or {})
+        if verdict.get("custom") or verdict.get("reason") == profiles.CUSTOMISED:
+            verdict["changes"] = profiles.overrides(self.paths, name, fw, families)
+        return verdict
+
+    def _profile_actions(
+        self,
+        name: str,
+        fw: str,
+        allowed: set[str],
+        artifact: dict[str, Any],
+        profile: dict[str, Any],
+        seeds: list[profiles.Seed],
+    ) -> list[dict[str, Any]]:
+        """Choosing a profile, and getting back off your own onto the vendor's.
+
+        The picker carries `choices` rather than the eight options themselves:
+        the dialog fetches them when it opens, which is a click and can afford
+        the Kconfig parse that labels them, while `fw.status` - which every state
+        event rebuilds, for every client - cannot. Generic on purpose: the panel
+        renders a radio group for any action carrying `choices`, and never learns
+        what a profile is.
+        """
+        if not seeds or "fw.profile.apply" not in allowed:
+            return []
+
+        out: list[dict[str, Any]] = [
+            {
+                "id": "profile",
+                "label": "Choose profile" if not artifact.get("has_config") else "Change profile",
+                "method": "fw.profile.apply",
+                "params": {"name": name, "fw": fw},
+                "blocked": None,
+                "choices": {
+                    "method": "fw.profile.list",
+                    "params": {"name": name, "fw": fw, "detail": True},
+                    "param": "profile",
+                },
+            }
+        ]
+
+        # Going back is a named button rather than a `force` flag, which is the
+        # whole point of a custom profile recording what it was forked from: the
+        # answers being left behind have somewhere to be.
+        if profile.get("custom"):
+            back, force = profile.get("parent"), profile.get("reason") == profiles.CUSTOMISED
+        elif profile.get("reason") == profiles.CUSTOMISED:
+            back, force = profile.get("profile"), True
+        else:
+            back, force = None, False
+
+        if back and any(seed.name == back for seed in seeds):
+            out.append(
+                {
+                    "id": "profile:revert",
+                    "label": f"Back to {back}",
+                    "method": "fw.profile.apply",
+                    "params": {"name": name, "fw": fw, "profile": back, "force": force},
+                    "blocked": None,
+                }
+            )
+        return out
 
     def _display_target(
         self, payload: dict[str, Any], allowed: set[str]
@@ -817,6 +942,11 @@ class Api:
             # build action carries what a caller actually needs.
             "firmware": None,
             "artifact": self._artifact_json(status),
+            # Always null: PlatformIO carries its configuration in
+            # platformio.ini, so there are no answers to seed and nothing for a
+            # profile to be. Present rather than absent because one shape that a
+            # reader can trust beats one it has to test for.
+            "profile": None,
             "needs_flash": self._aggregate(devices),
             "devices": devices,
             "actions": actions,
@@ -1048,6 +1178,7 @@ class Api:
     SETTABLE = (
         "make_jobs",
         "clean_before_build",
+        "reseed_on_build",
         "dry_run",
         "enable_flashing",
         "allow_flash_while_printing",
@@ -1111,7 +1242,10 @@ class Api:
         the tool does another - the same class of quiet disagreement that made a
         working QGL refusal look like a dead agent.
         """
-        if key in ("clean_before_build", "dry_run", "enable_flashing", "allow_flash_while_printing"):
+        # From the settings module rather than a second list here: a new boolean
+        # added there and forgotten here would be refused as "must be a whole
+        # number", which is a baffling thing to read about a switch.
+        if key in settings_mod.BOOL_FIELDS:
             if not isinstance(raw, bool):
                 raise RpcError(f"'{key}' must be true or false", ERR_INVALID_PARAMS)
             return raw
@@ -1427,6 +1561,10 @@ class Api:
 
         jobs = args.get("jobs")
         clean = args.get("clean")
+        # Tri-state. Absent means "whatever `reseed_on_build` says", which is how
+        # this call, the CLI and a fleet build end up doing the same thing; the
+        # dialog sends an explicit answer when it has asked the user for one.
+        reseed = args.get("reseed")
 
         def run(ctx) -> dict[str, Any]:
             from ..build import build as do_build
@@ -1442,6 +1580,7 @@ class Api:
                 cancel=ctx.cancel,
                 jobs=int(jobs) if jobs is not None else None,
                 clean=bool(clean) if clean is not None else None,
+                reseed=bool(reseed) if reseed is not None else None,
             )
             ctx.step(f"Built {fw} for {name}", 1, 1)
             return {
@@ -1452,6 +1591,10 @@ class Api:
                 "duration": round(result.duration, 2),
                 "fw_sha": result.fw_sha,
                 "config_rewritten": result.config_rewritten,
+                # Which profile was taken before building, if one was. Null on
+                # every build that did not reseed, including one that was willing
+                # to and found nothing to take.
+                "reseeded": result.reseeded,
             }
 
         job = runner.submit("build", {"name": name, "fw": fw}, run)
@@ -3435,6 +3578,13 @@ class Api:
         was compiled from, so changing it underneath would leave provenance that
         does not match the artifact - and staleness would then report a wrong
         binary as fresh.
+
+        The save is also captured as this type's **own profile**. It is the
+        moment a user stops tracking the vendor's answers and starts keeping
+        their own, and it is nearly free here because the tree is parsed and the
+        minimal answers come back from the save itself. Without it, editing a
+        profile stays the dead end it is today: the drift is reported, and the
+        answers that caused it have nowhere to live.
         """
         from ..lock import ExclusiveLock
 
@@ -3449,6 +3599,9 @@ class Api:
                 raise
             try:
                 result = session.save()
+                result["custom_profile"] = self._capture_answers(
+                    session.mcu_type, session.fw, result.get("answers") or []
+                )
             finally:
                 lock.release()
             result["menu"] = session.menu()
@@ -3461,6 +3614,49 @@ class Api:
             started = self.build({"name": session.mcu_type, "fw": session.fw})
             result["job_id"] = started.get("job_id")
         return result
+
+    def _capture_answers(
+        self, mcu_type: str, fw: str, answers: list[str]
+    ) -> Optional[str]:
+        """Keep a just-saved set of answers as this type's own profile.
+
+        Skipped where it would only make noise: a tree that ships no profiles has
+        no picker to offer this in, and a type that has never been near one has
+        nothing to fork from - for those, the `.config` is already the whole
+        story and a second copy of it under a profile name is a file nobody asked
+        for.
+
+        Best effort. The answers are not at risk if this fails - they are in the
+        `.config` that was just written, which is what the capture is a copy of.
+        Failing the save over a bookkeeping write would be the tail wagging the
+        dog, so the result reports null and the caller can see it did not happen.
+        """
+        if not answers:
+            return None
+        try:
+            families = firmware.load(self.paths)
+            # Read after the write, so `customised` here means "this save changed
+            # something". A save that changed nothing leaves a config still
+            # matching what its profile wrote, and copying that under the user's
+            # name would put a duplicate of the vendor's entry in the picker.
+            state = profiles.status(self.paths, mcu_type, fw, families)
+            if state.managed and state.reason != profiles.CUSTOMISED:
+                return None
+            if not state.managed and not profiles.available(
+                self.paths, fw, families, mcu_type=mcu_type
+            ):
+                return None
+            kept = profiles.capture_custom(
+                self.paths,
+                mcu_type,
+                fw,
+                answers=answers,
+                parent=state.profile,
+                families=families,
+            )
+        except (UpdaterError, OSError):
+            return None
+        return kept.name
 
     def kconfig_close(self, args: dict) -> dict[str, Any]:
         session_id = self._require_str(args, "session")
@@ -3475,25 +3671,82 @@ class Api:
         profiles apply to this board" is the question a panel is actually
         asking - and the answer depends on which family the type declares it
         runs, not on which trees happen to be installed.
+
+        Each entry carries the answers that **distinguish** it from the others.
+        Cartographer's USB and CAN variants differ by one answer out of seven, so
+        a picker listing all seven under each of eight entries hides the one line
+        that decides anything. That comparison is text over eight small files, so
+        it is free and unconditional.
+
+        `detail: true` additionally labels those answers with the tree's own
+        prompt text - "Use PA11/PA12 for CANbus" rather than
+        `STM32_CANBUS_PA11_PA12`. That needs the Kconfig tree, so it is opt-in
+        and costs one parse: affordable because opening a picker is a click, in
+        the same budget `fw.kconfig.open` already spends, and deliberately kept
+        off `fw.status`, which every state event recomputes for every client.
         """
         name = self._require_str(args, "name")
         reg = self.registry()
         mcu = reg.get(name)
         families = firmware.load(self.paths)
+        fw = str(args.get("fw") or mcu.firmware).strip()
+        if fw not in families and fw not in firmware.BUILTIN:
+            raise RpcError(
+                f"'fw' must be one of {', '.join(self._fw_names())}", ERR_INVALID_PARAMS
+            )
+
+        seeds = profiles.available(self.paths, fw, families, mcu_type=name)
+        differences = profiles.distinguishing(seeds)
+        labels = (
+            self._prompt_labels(fw, families, differences)
+            if bool(args.get("detail"))
+            else {}
+        )
 
         return {
             "type": name,
             "firmware": mcu.firmware,
+            "fw": fw,
             "profile": mcu.profile,
             "available": [
-                seed.to_json()
-                for seed in profiles.available(self.paths, mcu.firmware, families)
+                {
+                    **seed.to_json(),
+                    "distinguishing": [
+                        {**row, "label": labels.get(str(row["symbol"]))}
+                        for row in differences.get(seed.name, [])
+                    ],
+                }
+                for seed in seeds
             ],
             "state": {
-                fw: profiles.status(self.paths, name, fw, families).to_json()
-                for fw in mcu.families()
+                f: profiles.status(self.paths, name, f, families).to_json()
+                for f in mcu.families()
             },
         }
+
+    def _prompt_labels(
+        self,
+        fw: str,
+        families: dict[str, firmware.FirmwareFamily],
+        differences: dict[str, list[dict[str, Any]]],
+    ) -> dict[str, str]:
+        """One parse, labelling every symbol every profile is told apart by.
+
+        Degrades to no labels rather than failing the listing: a tree that cannot
+        be parsed - not cloned, or missing its vendored kconfiglib - is a picker
+        showing raw symbol names, which is worse than prompt text and far better
+        than an error where the profiles should be.
+        """
+        from .. import kconfig as kconfig_mod
+
+        symbols = {str(row["symbol"]) for rows in differences.values() for row in rows}
+        if not symbols:
+            return {}
+        fw_dir = firmware.resolve(self.paths, fw, families).source_dir(self.paths)
+        try:
+            return kconfig_mod.prompts(fw_dir, sorted(symbols))
+        except (UpdaterError, OSError):
+            return {}
 
     def profile_apply(self, args: dict) -> dict[str, Any]:
         """Seed a type's answers from its firmware tree, bootloader included.
@@ -3535,7 +3788,7 @@ class Api:
         derive = mcu.katapult_installed if derive is None else bool(derive)
         # Named before the job starts, so an unknown profile is a refusal rather
         # than a failed job - and so the confirmation can say what it will write.
-        seed = profiles.find(self.paths, fw, profile, families)
+        seed = profiles.find(self.paths, fw, profile, families, mcu_type=name)
         # Likewise "that config is yours, pass force": a refusal a caller can
         # act on, not a failure it has to read out of a dead job. Two file
         # hashes and no Kconfig parse, so it is fine to ask here and again

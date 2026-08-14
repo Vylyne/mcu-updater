@@ -266,6 +266,34 @@ class Paths:
         """
         return os.path.join(self.artifact_dir(mcu_type), f"{fw}.profile.json")
 
+    def custom_profile_file(self, mcu_type: str, fw: str) -> str:
+        """This type's own answers for `fw`, kept as a seed file of its own.
+
+        Shaped exactly like a vendor seed - a short list of ``CONFIG_X=y`` lines -
+        so seeding from it goes through the same code path as seeding from the
+        vendor's, and editing a profile stops being a dead end: your answers have
+        somewhere to live while you go back to tracking the vendor's.
+
+        Beside the ``.config`` it was captured from, in `config_dir`, because it
+        is the one file here that is genuinely *irreplaceable*: the moment that
+        ``.config`` is reseeded from a vendor profile, this is the only copy of
+        the answers the user wrote. That is the whole of this class's rule for
+        which tree a file belongs in - a restored backup that brought back the
+        ``.config`` and dropped this would silently lose work. Being under the
+        config root also means Moonraker serves it, so it opens in Mainsail's
+        editor next to the file it describes, which is right for something that
+        is the user's own.
+
+        Emphatically *not* in the firmware tree beside the vendor's own seeds. A
+        `git pull` in their fork would eat it, and a file this tool wrote does not
+        belong in somebody else's working copy.
+
+        The name cannot collide with a saved config: `layout` looks for exactly
+        ``<fw>.config`` when deciding whether a directory is one of ours, and
+        ``klipper.custom.config`` is not that.
+        """
+        return os.path.join(self.type_dir(mcu_type), f"{fw}.custom.config")
+
     # --- construction ---
 
     @classmethod

@@ -43,7 +43,7 @@ import os
 import tempfile
 import threading
 import time
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from types import ModuleType
 from typing import Any, Optional
 
@@ -192,6 +192,34 @@ def minimal_answers(kconf: Any, fw_dir: str) -> list[str]:
                 for line in fh
                 if line.strip() and not line.lstrip().startswith("#")
             ]
+
+
+def prompts(fw_dir: str, names: Iterable[str]) -> dict[str, str]:
+    """What a tree calls each of these symbols, in its own words.
+
+    ``STM32_CANBUS_PA11_PA12`` means nothing to anyone; "Use PA11/PA12 for
+    CANbus" is the same fact in the words the vendor wrote for their own menu.
+    Symbols with no prompt, or that this tree does not define, are simply absent
+    - a caller showing the raw name is a worse answer than a wrong one, so it
+    stays the caller's fallback rather than being invented here.
+
+    **One parse, for a whole set of names.** That is a few hundred milliseconds
+    on a Pi, so this belongs behind a user-initiated action - opening a picker -
+    and never in ``fw.status``, which every state event rebuilds for every
+    client. Ask it once for every name you need rather than once per name.
+    """
+    wanted = list(dict.fromkeys(names))
+    if not wanted:
+        return {}
+    _module, kconf = parse_tree(fw_dir)
+    out: dict[str, str] = {}
+    for name in wanted:
+        sym = kconf.syms.get(name)
+        for node in getattr(sym, "nodes", None) or ():
+            if node.prompt:
+                out[name] = node.prompt[0]
+                break
+    return out
 
 
 class Serializer:
@@ -844,11 +872,21 @@ class KconfigSession:
         too - both write the same file for the same type, and a second
         implementation of "replace this safely" is a second chance to get it
         wrong.
+
+        The minimal `answers` ride along because this is the one place they are
+        nearly free: the tree is parsed and in hand. They are what a profile is
+        made of, so a caller capturing this save as the user's own profile does
+        not have to spend a second parse to learn what was just written.
         """
         backup = save_config(self._kconf, self.fw_dir, self.config_path)
         self.dirty = False
         self.touch()
-        return {"path": self.config_path, "backup": backup, "dirty": False}
+        return {
+            "path": self.config_path,
+            "backup": backup,
+            "dirty": False,
+            "answers": minimal_answers(self._kconf, self.fw_dir),
+        }
 
     def reset(self) -> dict[str, Any]:
         """Throw away unsaved edits by reparsing from disk."""

@@ -73,6 +73,7 @@ def test_an_mcu_type_projects_onto_the_shared_shape(api):
         "descriptor",
         "firmware",
         "artifact",
+        "profile",
         "needs_flash",
         "devices",
         "actions",
@@ -437,18 +438,121 @@ def test_flash_is_blocked_with_something_built_but_nothing_connected(
 
 
 def test_build_is_blocked_without_saved_menuconfig_answers(paths, live_registry_text):
-    """menuconfig needs a TTY, so the agent cannot resolve this itself."""
+    """menuconfig needs a TTY, so the agent cannot resolve this itself.
+
+    Upstream Klipper ships no profiles, which is the correct answer for a tree
+    that builds for two hundred boards - so this message and this code are what
+    the common case must keep saying, unchanged by anything profiles added.
+    """
     with open(paths.registry_file, "w", encoding="utf-8") as fh:
         fh.write(live_registry_text)
     api = Api(paths, runner=_runner())
 
     blocked = _action(_targets(api)["bttebb36"], "build")["blocked"]
     assert blocked["code"] == Api.BLOCKED_NO_CONFIG
+    assert blocked["message"] == (
+        "'bttebb36' has no saved klipper configuration yet. Run menuconfig for it first."
+    )
+    assert "profile" not in _ids(_targets(api)["bttebb36"])
 
     os.makedirs(paths.type_dir("bttebb36"), exist_ok=True)
     with open(paths.config_file("bttebb36", "klipper"), "w", encoding="utf-8") as fh:
         fh.write("CONFIG_MACH_STM32=y\n")
     assert _action(_targets(api)["bttebb36"], "build")["blocked"] is None
+
+
+def _ships_seeds(paths, *names: str) -> None:
+    """Give the klipper tree vendor answer files, as a fork's root has."""
+    for name in names or ("config.BoardUSB", "config.BoardCAN"):
+        with open(os.path.join(paths.fw_dir("klipper"), name), "w", encoding="utf-8") as fh:
+            fh.write("CONFIG_MACH_STM32=y\n")
+            fh.write(f"CONFIG_BOARD_NAME=\"{name}\"\n")
+
+
+def test_a_tree_shipping_profiles_offers_one_instead_of_menuconfig(
+    paths, live_registry_text
+):
+    """The visibly broken thing this phase exists for: a blocked Build saying
+    "run menuconfig", in front of a tree that already ships the answers."""
+    with open(paths.registry_file, "w", encoding="utf-8") as fh:
+        fh.write(live_registry_text)
+    _ships_seeds(paths)
+    api = Api(paths, runner=_runner())
+
+    target = _targets(api)["bttebb36"]
+    assert _action(target, "build")["blocked"]["code"] == Api.BLOCKED_NO_PROFILE
+
+    picker = _action(target, "profile")
+    assert picker["method"] == "fw.profile.apply"
+    assert picker["label"] == "Choose profile"
+    # The options are fetched when the dialog opens rather than carried on every
+    # status poll - naming them costs a Kconfig parse, and a click can afford it.
+    assert picker["choices"] == {
+        "method": "fw.profile.list",
+        "params": {"name": "bttebb36", "fw": "klipper", "detail": True},
+        "param": "profile",
+    }
+    # Dissuaded, never blocked.
+    assert "configure:klipper" in _ids(target) or not api.kconfig_available()["klipper"]
+
+
+def test_a_customised_target_says_what_it_changed_and_how_to_go_back(
+    paths, live_registry_text
+):
+    from mcu_updater import profiles
+
+    with open(paths.registry_file, "w", encoding="utf-8") as fh:
+        fh.write(live_registry_text)
+    _ships_seeds(paths)
+    os.makedirs(paths.type_dir("bttebb36"), exist_ok=True)
+    with open(paths.config_file("bttebb36", "klipper"), "w", encoding="utf-8") as fh:
+        fh.write("CONFIG_MACH_STM32=y\n")
+    profiles.write_record(
+        paths,
+        "bttebb36",
+        "klipper",
+        profiles.SeedResult(
+            type="bttebb36",
+            fw="klipper",
+            profile="config.BoardUSB",
+            config_path=paths.config_file("bttebb36", "klipper"),
+            answers=['CONFIG_BOARD_NAME="config.BoardUSB"'],
+            config_sha256="not-what-is-on-disk",
+        ),
+    )
+    profiles.capture_custom(
+        paths,
+        "bttebb36",
+        "klipper",
+        answers=['CONFIG_BOARD_NAME="mine"'],
+        parent="config.BoardUSB",
+    )
+    api = Api(paths, runner=_runner())
+
+    target = _targets(api)["bttebb36"]
+    assert target["profile"]["reason"] == profiles.CUSTOMISED
+    # Your own answers are a destination, not drift.
+    assert target["profile"]["tone"] == "ok"
+    assert [row["symbol"] for row in target["profile"]["changes"]] == ["BOARD_NAME"]
+
+    back = _action(target, "profile:revert")
+    assert back["label"] == "Back to config.BoardUSB"
+    assert back["params"]["profile"] == "config.BoardUSB"
+    # Force, because the config being replaced is the user's - and it is only
+    # offerable at all because those answers were kept first.
+    assert back["params"]["force"] is True
+
+
+def test_a_target_with_nothing_to_seed_from_carries_no_profile_actions(
+    paths, live_registry_text
+):
+    with open(paths.registry_file, "w", encoding="utf-8") as fh:
+        fh.write(live_registry_text)
+    api = Api(paths, runner=_runner())
+
+    target = _targets(api)["bttebb36"]
+    assert _ids(target) & {"profile", "profile:revert"} == set()
+    assert target["profile"]["reason"] == "unmanaged"
 
 
 def test_build_and_flash_is_not_blocked_by_a_missing_artifact(paths, live_registry_text):

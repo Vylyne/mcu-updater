@@ -47,6 +47,21 @@ that the ncurses menuconfig and the panel's editor can both still change; what
 this adds is that the change becomes *visible* (:func:`status` reports
 ``customised``) instead of silent. A lock users cannot override gets worked
 around by editing the file on disk, which is strictly worse - then nobody knows.
+
+**Editing one is not a dead end.** Picking a vendor profile means *tracking* it:
+the vendor bumps their config and you get the bump. Editing it means you are on
+*your own* profile, and the bump becomes informational. That second half only
+works if the user's answers have somewhere to live, which is what
+:func:`capture_custom` is: a custom profile is shaped exactly like a vendor seed
+- a short list of answer lines - so it is offered by :func:`available`, resolved
+by :func:`find`, and consumed by :func:`apply_seed` through the code path that
+already existed. Switching back and forth is then lossless, and
+:func:`refuse_if_customised` stops being the end of the road.
+
+It stores the *minimal answers* rather than the whole file, for the same reason
+:func:`apply_seed` re-emits rather than copies: the other 131 lines are
+recomputed from the current tree on reload, and two answer lists make "what did
+you change" a set comparison rather than a Kconfig parse.
 """
 
 from __future__ import annotations
@@ -57,6 +72,7 @@ import json
 import os
 import tempfile
 import time
+from collections.abc import Callable, Iterable, Sequence
 from typing import Any, Optional
 
 from . import firmware, kconfig
@@ -67,13 +83,43 @@ from .errors import (
     ProfileNotFoundError,
 )
 from .paths import Paths
-from .states import TONE_ATTENTION, TONE_OK, TONE_UNKNOWN
+from .states import TONE_ATTENTION, TONE_OK
 
 #: Vendor seed files live in the tree root and are named ``config.<Variant>``.
 #: Cartographer's fork ships eight of them. Upstream Klipper ships none, which
 #: is the correct answer for upstream Klipper - there is no such thing as "the"
 #: config for a tree that builds for two hundred boards.
 SEED_PREFIX = "config."
+
+#: The user's own answers, offered beside the vendor's under a reserved name.
+#: Deliberately spelled like a seed file: it *is* one, it just lives in the data
+#: tree instead of the firmware tree, so :func:`valid_seed_name`'s whitelist
+#: holds for it unchanged and no caller needs a second code path to name it. A
+#: vendor shipping this exact name is shadowed rather than shown twice.
+CUSTOM_PROFILE = "config.custom"
+
+#: Shipped by whoever defines the board.
+ORIGIN_VENDOR = "vendor"
+#: Captured from what the user actually answered.
+ORIGIN_CUSTOM = "custom"
+
+#: Which profile a custom one was forked from, recorded in its own header. In
+#: the file rather than in the record beside it, because it is a fact about
+#: *this* profile that has to survive the type switching away to another one and
+#: back - and a comment is invisible to both kconfiglib and :func:`parse_answer`.
+PARENT_TAG = "# forked-from:"
+
+#: The parent's own answers, at the moment of the fork, one per tagged line.
+#:
+#: Kept rather than re-read from the vendor's file because the two are not the
+#: same kind of list. A vendor seed is hand-maintained and carries computed
+#: lines - ``USBSERIAL``, ``CLOCK_FREQ`` - that a minimal capture correctly
+#: omits, so diffing one against the other reports a dozen changes nobody made.
+#: Reducing the vendor's file to its minimal answers would cost a Kconfig parse
+#: every time anybody asked "what did I change" - a question ``fw.status``
+#: answers, and every state event rebuilds that. Seven lines of duplication buys
+#: an exact answer for free.
+BASE_TAG = "# base:"
 
 #: Where the application was linked to run, in the application's tree.
 APP_ADDRESS_SYMBOL = "FLASH_APPLICATION_ADDRESS"
@@ -91,15 +137,39 @@ LAUNCH_ADDRESS_SYMBOL = "LAUNCH_APP_ADDRESS"
 
 @dataclasses.dataclass(frozen=True)
 class Seed:
-    """One vendor-supplied answer file, sitting in a firmware tree."""
+    """One answer file that a type can be seeded from.
 
-    #: Basename as it appears in the tree, e.g. ``config.CartoV4USB``.
+    Two origins, one shape. A `vendor` seed sits in the firmware tree and is the
+    vendor's statement about their own board; a `custom` one sits in the data
+    tree and is the user's about theirs. Everything downstream - `find`,
+    `apply_seed`, the picker - treats them identically, which is the whole point
+    of giving a custom profile the shape of a seed rather than machinery of its
+    own.
+    """
+
+    #: Basename as it appears in the tree, e.g. ``config.CartoV4USB``, or
+    #: :data:`CUSTOM_PROFILE` for the user's own.
     name: str
     fw: str
     path: str
+    origin: str = ORIGIN_VENDOR
+    #: Custom only: the profile this was forked from, if it was forked from one.
+    #: What lets a UI say "yours, forked from CartoV4USB" - and what makes going
+    #: back a named button rather than a `force` flag.
+    parent: Optional[str] = None
+    #: Custom only: what `parent` answered at the moment of the fork, so
+    #: :func:`overrides` compares two minimal lists rather than a minimal one
+    #: against a hand-maintained file. A tuple because this is frozen.
+    base: tuple[str, ...] = ()
 
-    def to_json(self) -> dict[str, str]:
-        return {"name": self.name, "fw": self.fw, "path": self.path}
+    def to_json(self) -> dict[str, Optional[str]]:
+        return {
+            "name": self.name,
+            "fw": self.fw,
+            "path": self.path,
+            "origin": self.origin,
+            "parent": self.parent,
+        }
 
 
 def valid_seed_name(name: str) -> str:
@@ -129,20 +199,37 @@ def valid_seed_name(name: str) -> str:
 
 
 def available(
-    paths: Paths, fw: str, families: Optional[dict[str, firmware.FirmwareFamily]] = None
+    paths: Paths,
+    fw: str,
+    families: Optional[dict[str, firmware.FirmwareFamily]] = None,
+    *,
+    mcu_type: Optional[str] = None,
 ) -> list[Seed]:
-    """Every seed file a firmware tree ships, sorted by name.
+    """Every profile a type could be seeded from: the tree's, and its own.
 
     An absent or unreadable tree yields an empty list rather than raising: "this
     firmware offers no profiles" and "this firmware is not installed" are
     answered by different things, and a listing call should not be the one to
     break the news.
+
+    `mcu_type` is what brings the custom slot into the answer, and it is optional
+    because "what does this tree ship" is still a question worth asking without
+    one. The custom profile comes first: it is this board's own, and a picker
+    that buries it under eight vendor variants sorted alphabetically is one where
+    nobody finds their own answers again.
     """
     family = firmware.resolve(paths, fw, families)
     fw_dir = family.source_dir(paths)
     out: list[Seed] = []
+    if mcu_type:
+        own = read_custom(paths, mcu_type, fw)
+        if own is not None:
+            out.append(own)
     for path in sorted(glob.glob(os.path.join(fw_dir, SEED_PREFIX + "*"))):
-        if os.path.isfile(path):
+        # A vendor shipping our reserved name is shadowed rather than listed
+        # twice under one name, which would make the picker ambiguous about
+        # which of the two a click means.
+        if os.path.isfile(path) and os.path.basename(path) != CUSTOM_PROFILE:
             out.append(Seed(name=os.path.basename(path), fw=fw, path=path))
     return out
 
@@ -152,10 +239,12 @@ def find(
     fw: str,
     name: str,
     families: Optional[dict[str, firmware.FirmwareFamily]] = None,
+    *,
+    mcu_type: Optional[str] = None,
 ) -> Seed:
-    """Locate one seed, naming the real alternatives when it isn't there."""
+    """Locate one profile, naming the real alternatives when it isn't there."""
     wanted = valid_seed_name(name)
-    seeds = available(paths, fw, families)
+    seeds = available(paths, fw, families, mcu_type=mcu_type)
     for seed in seeds:
         if seed.name == wanted:
             return seed
@@ -172,6 +261,162 @@ def find(
         path=fw_dir,
         available=[s.name for s in seeds],
     )
+
+
+# --------------------------------------------------------------------------
+# the user's own profile
+# --------------------------------------------------------------------------
+
+
+def read_custom(paths: Paths, mcu_type: str, fw: str) -> Optional[Seed]:
+    """This type's own saved answers for `fw`, if it has any.
+
+    None rather than an exception for every way of not having one - never
+    captured, deleted, unreadable. A missing custom profile is the normal state
+    of nearly every type, and the caller's next line is the same in all of them.
+    """
+    path = paths.custom_profile_file(mcu_type, fw)
+    if not os.path.isfile(path):
+        return None
+    parent, base = _read_header(path)
+    return Seed(
+        name=CUSTOM_PROFILE,
+        fw=fw,
+        path=path,
+        origin=ORIGIN_CUSTOM,
+        parent=parent,
+        base=base,
+    )
+
+
+def _read_header(path: str) -> tuple[Optional[str], tuple[str, ...]]:
+    """The ``# forked-from:`` and ``# base:`` lines a capture wrote.
+
+    Stops at the first answer line: the header is a header, and scanning a whole
+    file for tags that belong at the top invites finding one in a comment
+    somebody pasted in.
+    """
+    parent: Optional[str] = None
+    base: list[str] = []
+    try:
+        with open(path, encoding="utf-8") as fh:
+            for line in fh:
+                if parse_answer(line) is not None:
+                    break
+                text = line.strip()
+                if text.startswith(PARENT_TAG):
+                    parent = text[len(PARENT_TAG) :].strip() or None
+                elif text.startswith(BASE_TAG):
+                    answer = text[len(BASE_TAG) :].strip()
+                    if answer:
+                        base.append(answer)
+    except OSError:
+        return None, ()
+    return parent, tuple(base)
+
+
+def capture_custom(
+    paths: Paths,
+    mcu_type: str,
+    fw: str,
+    *,
+    answers: Optional[list[str]] = None,
+    parent: Optional[str] = None,
+    families: Optional[dict[str, firmware.FirmwareFamily]] = None,
+) -> Seed:
+    """Save what this type currently answers as a profile of its own.
+
+    `answers` is the minimal answer set. Pass it whenever the tree is already
+    parsed - a save from :class:`~mcu_updater.kconfig.KconfigSession` has it in
+    hand, and re-deriving it there would spend a second parse to learn something
+    already known. Omitting it costs one parse, which is the price of catching an
+    edit made out of band by ``make menuconfig``.
+
+    Raises rather than degrading quietly, unlike :func:`write_record`. That one
+    loses a *verdict* and the type reads as unmanaged; this one loses the only
+    copy of the user's answers, and the caller about to overwrite their
+    ``.config`` needs to hear that it failed before it does so.
+    """
+    if answers is None:
+        config = paths.config_file(mcu_type, fw)
+        if not os.path.isfile(config):
+            raise ProfileError(
+                f"'{mcu_type}' has no saved {fw} config at {config}, so there are "
+                f"no answers to keep.",
+                type=mcu_type,
+                fw=fw,
+                path=config,
+            )
+        fw_dir = firmware.resolve(paths, fw, families).source_dir(paths)
+        _module, kconf = kconfig.parse_tree(fw_dir, config)
+        answers = kconfig.minimal_answers(kconf, fw_dir)
+
+    resolved, base = _forked_from(paths, mcu_type, fw, parent)
+    path = paths.custom_profile_file(mcu_type, fw)
+    lines = [
+        f"# {mcu_type}'s own {fw} answers, saved by mcu-updater.",
+        f"{PARENT_TAG} {resolved}" if resolved else PARENT_TAG,
+        f"# captured: {time.strftime('%Y-%m-%d %H:%M:%S')}",
+        *(f"{BASE_TAG} {line}" for line in base),
+        *answers,
+    ]
+    try:
+        os.makedirs(os.path.dirname(path), exist_ok=True)
+        tmp = path + ".tmp"
+        with open(tmp, "w", encoding="utf-8", newline="\n") as fh:
+            fh.write("\n".join(lines) + "\n")
+        os.replace(tmp, path)
+    except OSError as exc:
+        raise ProfileError(
+            f"could not save '{mcu_type}'s own {fw} answers to {path}: {exc}",
+            type=mcu_type,
+            fw=fw,
+            path=path,
+        ) from exc
+    return Seed(
+        name=CUSTOM_PROFILE,
+        fw=fw,
+        path=path,
+        origin=ORIGIN_CUSTOM,
+        parent=resolved,
+        base=base,
+    )
+
+
+def _forked_from(
+    paths: Paths, mcu_type: str, fw: str, parent: Optional[str]
+) -> tuple[Optional[str], tuple[str, ...]]:
+    """Which profile a capture should say it came from, and what that answered.
+
+    A recapture while already on the custom profile keeps the *original* fork
+    point rather than recording "forked from myself" - which would lose the one
+    name that makes "back to CartoV4USB" offerable, and would do so on the second
+    edit, when nobody is watching. The baseline is kept with it, for the same
+    reason and by the same rule.
+
+    A first capture takes both from the record, which at that moment still
+    describes the parent seeding - so both sides of the comparison are minimal
+    answer lists produced the same way. Nothing is invented when the record does
+    not name a parent: an empty baseline means :func:`overrides` reports nothing
+    rather than reporting a diff against a file that is not comparable.
+    """
+    record = read_record(paths, mcu_type, fw)
+    recorded = record.get("profile") if record else None
+    existing = read_custom(paths, mcu_type, fw)
+
+    resolved = parent if parent and parent != CUSTOM_PROFILE else None
+    if resolved is None and existing is not None:
+        return existing.parent, existing.base
+    if resolved is None:
+        resolved = recorded if recorded != CUSTOM_PROFILE else None
+    if resolved is None:
+        return None, ()
+
+    if existing is not None and existing.parent == resolved and existing.base:
+        return resolved, existing.base
+    if record is not None and recorded == resolved:
+        return resolved, tuple(str(line) for line in record.get("answers") or [])
+    return resolved, ()
 
 
 # --------------------------------------------------------------------------
@@ -198,6 +443,11 @@ class SeedResult:
     #: those the bootloader tree does not define. Empty for a plain seed.
     carried: list[str] = dataclasses.field(default_factory=list)
     dropped: list[str] = dataclasses.field(default_factory=list)
+    #: Set when answers that were about to be overwritten were kept first, as
+    #: this type's own profile. Reported rather than silent: "your edits are at
+    #: config.custom" is the difference between a `force` a user can undo and one
+    #: they only find out about afterwards.
+    kept: Optional[str] = None
     #: Derivation only: the two addresses that were compared, once they agreed.
     #: An int, because `_address` parses the hex and compares numerically -
     #: 0x8002000 and 0x08002000 are the same address and two trees need not
@@ -224,6 +474,7 @@ class SeedResult:
                 "fw": self.fw,
                 "config_path": self.config_path,
                 "backup": self.backup,
+                "kept": self.kept,
             }
         )
         return out
@@ -246,13 +497,25 @@ def apply_seed(
     follows from them, so a seed written against last year's Kconfig picks up
     symbols added since instead of leaving them absent. It is exactly what
     ``make olddefconfig`` does, minus needing a terminal.
+
+    Answers this would overwrite are kept first, as this type's own profile. That
+    is what makes `force` something other than a data-loss switch: an edit made
+    out of band - ``make menuconfig`` over SSH, an editor in Mainsail - has never
+    been through :func:`capture_custom`, and this is the last moment anybody can
+    save it.
     """
-    seed = find(paths, fw, name, families)
+    seed = find(paths, fw, name, families, mcu_type=mcu_type)
     family = firmware.resolve(paths, fw, families)
     fw_dir = family.source_dir(paths)
     target = paths.config_file(mcu_type, fw)
 
     refuse_if_customised(paths, mcu_type, fw, force=force)
+    kept = None
+    if seed.origin != ORIGIN_CUSTOM:
+        # Skipped when seeding *from* the custom slot: that is "discard my edits
+        # and go back to my saved answers", and capturing first would overwrite
+        # the file we are about to read with the edits being discarded.
+        kept = _keep_current_answers(paths, mcu_type, fw, families)
 
     _module, kconf = kconfig.parse_tree(fw_dir, seed.path)
     answers = kconfig.minimal_answers(kconf, fw_dir)
@@ -267,9 +530,31 @@ def apply_seed(
         source_sha256=_sha256(seed.path),
         config_sha256=_sha256(target),
         backup=backup,
+        kept=kept.name if kept is not None else None,
     )
     write_record(paths, mcu_type, fw, result)
     return result
+
+
+def _keep_current_answers(
+    paths: Paths,
+    mcu_type: str,
+    fw: str,
+    families: Optional[dict[str, firmware.FirmwareFamily]],
+) -> Optional[Seed]:
+    """Capture answers about to be lost, if there are any that are not ours.
+
+    Only for a ``customised`` config. One that still matches its record holds
+    nothing but what a profile put there, so capturing it would file the vendor's
+    answers under the user's name and put a profile in the picker that is a copy
+    of the one above it.
+    """
+    state = status(paths, mcu_type, fw, families)
+    if state.reason != CUSTOMISED:
+        return None
+    return capture_custom(
+        paths, mcu_type, fw, parent=state.profile, families=families
+    )
 
 
 def derive_bootloader(
@@ -348,6 +633,51 @@ def derive_bootloader(
     return result
 
 
+def reseed_if_moved(
+    paths: Paths,
+    mcu_type: str,
+    fw: str,
+    *,
+    families: Optional[dict[str, firmware.FirmwareFamily]] = None,
+    log: Optional[Callable[[str], None]] = None,
+) -> Optional[str]:
+    """Take the vendor's updated answers, if that is all that has changed.
+
+    Called from :func:`mcu_updater.build.build`, so every way of starting a
+    build gets it - the panel, the CLI, a fleet build, update-all - and "when is
+    it safe to rewrite somebody's config" is answered once rather than per entry
+    point. Never from :func:`status`, which only reports: a writer on the path
+    that describes a config is the failure class ``config_rewritten`` exists to
+    surface rather than to join.
+
+    Only on ``seed_moved``. That state means the saved config still matches our
+    record and it is the vendor's file that moved, so nothing of the user's is
+    being discarded. A ``customised`` config is left alone even when asked: you
+    are on your own profile, and the bump is informational until you say
+    otherwise.
+
+    Returns the profile that was taken, or None if there was nothing to take.
+    """
+    state = status(paths, mcu_type, fw, families)
+    if state.reason != SEED_MOVED or not state.profile:
+        return None
+
+    if state.profile.startswith("derived:"):
+        # A bootloader config is a function of the application's, so its "seed"
+        # moving means the application was reseeded. Re-derive rather than seed,
+        # or the pair drifts apart on exactly the answer the offset check exists
+        # to catch.
+        app_fw = state.profile[len("derived:") :]
+        if log:
+            log(f"re-deriving {fw} from {app_fw}, which was reseeded")
+        derive_bootloader(paths, mcu_type, app_fw, fw, families=families)
+    else:
+        if log:
+            log(f"reseeding from {state.profile}, which the vendor updated")
+        apply_seed(paths, mcu_type, fw, state.profile, families=families)
+    return state.profile
+
+
 def _check_addresses(
     mcu_type: str,
     app_fw: str,
@@ -419,6 +749,111 @@ def parse_answer(line: str) -> Optional[tuple[str, str]]:
         return None
     name, _, value = text.partition("=")
     return name[len("CONFIG_") :].strip(), value.strip()
+
+
+def answer_lines(path: str) -> list[str]:
+    """The answer lines of a seed file, headers and blank lines dropped.
+
+    Deliberately not a Kconfig load. Reading a seed as text is what keeps "which
+    of these eight profiles differ, and how" on the cheap path - eight small
+    files and a set comparison, against eight tree parses.
+    """
+    try:
+        with open(path, encoding="utf-8") as fh:
+            return [line.strip() for line in fh if parse_answer(line) is not None]
+    except OSError:
+        return []
+
+
+def answer_map(lines: Iterable[str]) -> dict[str, str]:
+    """``["CONFIG_X=y"]`` -> ``{"X": "y"}``, last one winning."""
+    out: dict[str, str] = {}
+    for line in lines:
+        parsed = parse_answer(line)
+        if parsed is not None:
+            out[parsed[0]] = parsed[1]
+    return out
+
+
+def distinguishing(seeds: Sequence[Seed]) -> dict[str, list[dict[str, Optional[str]]]]:
+    """Per profile, the answers that set it apart from the others offered.
+
+    ``config.CartoV4USB`` and ``config.CartoV4CAN`` differ by one answer out of
+    seven, and their names are the only other thing telling them apart - so a
+    picker showing all seven shows six identical lines under every entry and
+    buries the one that matters.
+
+    **Disagreement counts; absence does not.** A symbol is distinguishing when
+    two profiles that both answer it answer it differently. One file mentioning
+    ``USBSERIAL`` and the next omitting it is not a statement about the board:
+    vendor seeds are hand-maintained and carry computed lines inconsistently,
+    and a custom profile is minimal by construction, so treating "not mentioned"
+    as a value makes every entry differ from every other in a dozen places -
+    which is the noise this exists to remove. Each entry then lists only the
+    answers it actually gives.
+    """
+    parsed = {seed.name: answer_map(answer_lines(seed.path)) for seed in seeds}
+    if len(parsed) < 2:
+        return {name: [] for name in parsed}
+
+    symbols = {sym for answers in parsed.values() for sym in answers}
+    differing = {
+        sym
+        for sym in symbols
+        if len({a[sym] for a in parsed.values() if sym in a}) > 1
+    }
+    return {
+        name: [
+            {
+                "symbol": sym,
+                "value": answers[sym],
+                # Rendered as-is by anything without a Kconfig tree to hand.
+                "line": _answer_line(sym, answers[sym]),
+            }
+            for sym in sorted(differing & set(answers))
+        ]
+        for name, answers in parsed.items()
+    }
+
+
+def _answer_line(symbol: str, value: Optional[str]) -> str:
+    if value is None:
+        return f"# CONFIG_{symbol} unanswered"
+    if value == "n":
+        return f"# CONFIG_{symbol} is not set"
+    return f"CONFIG_{symbol}={value}"
+
+
+def overrides(
+    paths: Paths,
+    mcu_type: str,
+    fw: str,
+    families: Optional[dict[str, firmware.FirmwareFamily]] = None,
+) -> list[dict[str, Optional[str]]]:
+    """What this type's own profile changed, against the one it forked from.
+
+    The question a customised target actually raises - "fine, but what did I
+    change?" - answered without a Kconfig parse, because both sides are minimal
+    answer lists captured the same way. Empty when the type has no captured
+    profile, or when the capture has no baseline to measure against: an honest
+    nothing rather than a diff against a file that is not comparable.
+    """
+    own = read_custom(paths, mcu_type, fw)
+    if own is None or not own.base:
+        return []
+
+    before = answer_map(own.base)
+    after = answer_map(answer_lines(own.path))
+    return [
+        {
+            "symbol": sym,
+            "was": before.get(sym),
+            "now": after.get(sym),
+            "line": _answer_line(sym, after.get(sym)),
+        }
+        for sym in sorted(set(before) | set(after))
+        if before.get(sym) != after.get(sym)
+    ]
 
 
 def _unquote(value: str) -> str:
@@ -557,10 +992,15 @@ CUSTOMISED = "customised"
 #: bumped their config. Reseeding is what resolves it.
 SEED_MOVED = "seed_moved"
 
+#: `customised` is an OK tone, not an unknown one. It reported "this tool cannot
+#: vouch for these answers" while there was nowhere to put them; now that
+#: :func:`capture_custom` gives them a home, being on your own profile is a
+#: destination rather than drift, and painting it amber would nag at the one
+#: state a user deliberately chose.
 _PROFILE_TONE: dict[Optional[str], str] = {
     None: TONE_OK,
     UNMANAGED: TONE_OK,
-    CUSTOMISED: TONE_UNKNOWN,
+    CUSTOMISED: TONE_OK,
     SEED_MOVED: TONE_ATTENTION,
 }
 
@@ -569,9 +1009,14 @@ PROFILE_REASONS = tuple(r for r in _PROFILE_TONE if r is not None)
 _PROFILE_LABEL: dict[Optional[str], str] = {
     None: "Matches profile",
     UNMANAGED: "Not profile-managed",
-    CUSTOMISED: "Customised",
+    CUSTOMISED: "Your own answers",
     SEED_MOVED: "Profile updated - reseed available",
 }
+
+#: What a type tracking its own captured profile reads as. Distinct from
+#: `customised` by one thing only: those answers were saved, so switching away
+#: and back is lossless. "Matches profile" is true of it and tells nobody whose.
+_CUSTOM_LABEL = "Your own profile"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -580,6 +1025,10 @@ class ProfileStatus:
 
     reason: Optional[str] = None
     profile: Optional[str] = None
+    #: Only for a type tracking :data:`CUSTOM_PROFILE`: what that was forked
+    #: from. Elsewhere `profile` already names the fork point, because a
+    #: customised config's record still names the vendor seed it drifted from.
+    parent: Optional[str] = None
 
     def __post_init__(self) -> None:
         if self.reason not in _PROFILE_TONE:
@@ -593,17 +1042,26 @@ class ProfileStatus:
         return self.reason != UNMANAGED
 
     @property
+    def custom(self) -> bool:
+        """Whether the profile being tracked is this type's own."""
+        return self.profile == CUSTOM_PROFILE
+
+    @property
     def tone(self) -> str:
         return _PROFILE_TONE[self.reason]
 
     @property
     def label(self) -> str:
+        if self.custom and self.reason is None:
+            return _CUSTOM_LABEL
         return _PROFILE_LABEL[self.reason]
 
     def to_json(self) -> dict[str, Any]:
         return {
             "managed": self.managed,
             "profile": self.profile,
+            "custom": self.custom,
+            "parent": self.parent,
             "reason": self.reason,
             "tone": self.tone,
             "label": self.label,
@@ -615,27 +1073,52 @@ def status(
     mcu_type: str,
     fw: str,
     families: Optional[dict[str, firmware.FirmwareFamily]] = None,
+    *,
+    config_sha: Optional[str] = None,
 ) -> ProfileStatus:
     """Does this type's .config still hold what its profile put there?
 
     ``customised`` takes precedence over ``seed_moved``: both can be true at
     once, and the one that changes what a caller may safely do is the local
     edit. Reseeding over it is the thing that would lose work.
+
+    **Read-only, and cheap, because every client's whole picture is rebuilt from
+    the call that asks it.** `fw.status` is recomputed on every state event - a
+    mutation, a finished job, a service-state change, a reconnect - so a Kconfig
+    parse here would be paid on all of them. It stays two file hashes.
+
+    And it never reseeds on the vendor's behalf. A verdict that quietly rewrote
+    the thing it was asked to describe is the failure class ``config_rewritten``
+    exists to surface, not to join; taking a vendor bump belongs in
+    :func:`reseed_if_moved`, which a build calls.
+
+    `config_sha` is for a caller that has already hashed the ``.config`` -
+    :meth:`Api.artifact` asks this and `artifact_status` about the same file at
+    the same moment. None means "read it here".
     """
     record = read_record(paths, mcu_type, fw)
     if record is None:
         return ProfileStatus(UNMANAGED)
 
     name = record.get("profile")
-    current = _sha256(paths.config_file(mcu_type, fw))
+    # One extra small read, and only for a type on its own profile: everywhere
+    # else `profile` already names the thing the UI would call the parent.
+    parent = (
+        _read_header(paths.custom_profile_file(mcu_type, fw))[0]
+        if name == CUSTOM_PROFILE
+        else None
+    )
+    current = (
+        config_sha if config_sha is not None else _sha256(paths.config_file(mcu_type, fw))
+    )
     if current != record.get("config_sha256"):
-        return ProfileStatus(CUSTOMISED, profile=name)
+        return ProfileStatus(CUSTOMISED, profile=name, parent=parent)
 
     seeded = record.get("source_sha256")
     source = _current_source_sha(paths, mcu_type, fw, name, families)
     if seeded and source and seeded != source:
-        return ProfileStatus(SEED_MOVED, profile=name)
-    return ProfileStatus(profile=name)
+        return ProfileStatus(SEED_MOVED, profile=name, parent=parent)
+    return ProfileStatus(profile=name, parent=parent)
 
 
 def _current_source_sha(
@@ -647,17 +1130,18 @@ def _current_source_sha(
 ) -> Optional[str]:
     """Hash of whatever this profile was seeded *from*, as it stands now.
 
-    Two shapes: a vendor seed file in the firmware tree, or - for a derived
-    bootloader config - the application's own ``.config``, which is what a
-    derivation is a function of. A tree that is missing or has since dropped
-    the file yields None, which reads as "cannot tell" rather than "moved".
+    Three shapes: a vendor seed file in the firmware tree, this type's own
+    captured profile, or - for a derived bootloader config - the application's
+    own ``.config``, which is what a derivation is a function of. A tree that is
+    missing or has since dropped the file yields None, which reads as "cannot
+    tell" rather than "moved".
     """
     if not name:
         return None
     if name.startswith("derived:"):
         return _sha256(paths.config_file(mcu_type, name[len("derived:") :]))
     try:
-        return _sha256(find(paths, fw, name, families).path)
+        return _sha256(find(paths, fw, name, families, mcu_type=mcu_type).path)
     except (ProfileError, OSError):
         return None
 
@@ -668,8 +1152,10 @@ def refuse_if_customised(paths: Paths, mcu_type: str, fw: str, *, force: bool) -
     A config matching its record is ours to rewrite - that is what makes
     reseeding after a vendor bump a safe, repeatable operation. Anything else -
     a hand-built config from before profiles existed, or one edited since - is
-    the user's, and is refused rather than backed up and replaced. `force` still
-    keeps one generation of backup, because :func:`kconfig.save_config` does.
+    the user's, and is refused rather than backed up and replaced. Still refused
+    now that :func:`capture_custom` would keep those answers: the capture makes
+    `force` recoverable, not automatic, and "which of my two profiles am I on"
+    is a question the user should have answered rather than found out.
 
     Public because it is worth asking *before* committing to the work as well as
     during it. Seeding is a job, and "this config is yours, pass force" is a
@@ -692,8 +1178,9 @@ def refuse_if_customised(paths: Paths, mcu_type: str, fw: str, *, force: bool) -
     raise ProfileCustomisedError(
         f"'{mcu_type}' already has a {fw} config at {target} and {detail}. "
         f"Seeding would discard those answers, and they are the one thing here "
-        f"that cannot be regenerated. Pass force to replace it anyway - the "
-        f"previous file is kept as a .bak.",
+        f"that cannot be regenerated. Pass force to replace it anyway - they are "
+        f"kept as '{CUSTOM_PROFILE}', this type's own profile, and the previous "
+        f"file is kept as a .bak.",
         type=mcu_type,
         fw=fw,
         path=target,

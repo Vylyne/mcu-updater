@@ -382,6 +382,9 @@ class BuildResult:
     #: True if `make` rewrote our .config (klipper runs olddefconfig when
     #: src/Kconfig is newer than the config, e.g. right after a git pull).
     config_rewritten: bool = False
+    #: The profile whose updated answers were taken before compiling, if any.
+    #: None on every build that had nothing to take, which is nearly all of them.
+    reseeded: Optional[str] = None
 
     def to_sidecar(self) -> dict[str, Any]:
         return {
@@ -403,11 +406,23 @@ def read_sidecar(paths: Paths, mcu_type: str, fw: str) -> Optional[dict[str, Any
     return data if isinstance(data, dict) else None
 
 
-def artifact_status(paths: Paths, mcu_type: str, fw: str) -> ArtifactStatus:
+def artifact_status(
+    paths: Paths,
+    mcu_type: str,
+    fw: str,
+    *,
+    config_sha: Optional[str] = None,
+) -> ArtifactStatus:
     """Does this type's built image still match the inputs that produced it?
 
     Compares recorded provenance rather than mtimes, so a `touch` doesn't lie
     and a git pull of klipper is correctly reported as making every board stale.
+
+    `config_sha` lets a caller that has already hashed the ``.config`` hand it
+    over. `profiles.status` asks the same question of the same file in the same
+    breath, and one `fw.status` used to read every saved config twice for it.
+    None means "read it here", and reads as identical either way: a config that
+    is not there hashes to None whoever asks.
     """
     if not os.path.exists(paths.bin_file(mcu_type, fw)):
         return ArtifactStatus(NEVER_BUILT)
@@ -420,7 +435,9 @@ def artifact_status(paths: Paths, mcu_type: str, fw: str) -> ArtifactStatus:
         # still reports the legacy "never_built" for both; see below.
         return ArtifactStatus(NO_PROVENANCE)
 
-    cfg_hash = sha256_file(paths.config_file(mcu_type, fw))
+    cfg_hash = config_sha if config_sha is not None else sha256_file(
+        paths.config_file(mcu_type, fw)
+    )
     if cfg_hash and side.get("config_sha256") and cfg_hash != side["config_sha256"]:
         return ArtifactStatus(CONFIG_CHANGED)
 
@@ -516,6 +533,7 @@ def build(
     cancel: Optional[threading.Event] = None,
     jobs: Optional[int] = None,
     clean: Optional[bool] = None,
+    reseed: Optional[bool] = None,
 ) -> BuildResult:
     """Compile one type/firmware pair and stage the artifacts.
 
@@ -523,6 +541,13 @@ def build(
     could continue; that decision now belongs to the caller, which is what makes
     this safe to call from a daemon). The auto-launch-menuconfig-if-unconfigured
     behaviour also moved to the CLI - see cli.py.
+
+    `reseed` follows `clean` and `jobs`: None means "whatever the settings say",
+    and a value overrides it for this build only. Taking the vendor's updated
+    answers lives *here*, rather than in each caller, because there are four ways
+    to start a build - the panel, the CLI, a fleet build, update-all - and three
+    of them used to be different. A rule about what a build does belongs where
+    builds happen.
     """
     mcu = registry.get(mcu_type)
     family = firmware.resolve(paths, fw)
@@ -541,6 +566,24 @@ def build(
             fw=fw,
             path=config_file,
         )
+
+    # Before the hash below, deliberately: `config_before` is what the sidecar
+    # records as the provenance of this binary and what `config_rewritten`
+    # compares against, so both must describe the config actually compiled rather
+    # than the one that was there when the build was asked for.
+    #
+    # Imported here rather than at module scope: profiles reaches back into this
+    # module for sha256_file, and one of the two has to be the lazy side.
+    from . import profiles
+
+    do_reseed = settings.reseed_on_build if reseed is None else reseed
+    reseeded = (
+        profiles.reseed_if_moved(
+            paths, mcu_type, fw, log=lambda message: reporter("info", message)
+        )
+        if do_reseed
+        else None
+    )
 
     dry_run = settings.dry_run
     extra_args = shlex.split(mcu.fw(fw).extra_args or "")
@@ -638,6 +681,7 @@ def build(
         config_sha256=config_after,
         bin_sha256=sha256_file(bin_out),
         config_rewritten=rewritten,
+        reseeded=reseeded,
     )
     try:
         with open(paths.sidecar_file(mcu_type, fw), "w", encoding="utf-8") as fh:

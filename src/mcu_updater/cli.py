@@ -123,7 +123,20 @@ def list_profiles(args: argparse.Namespace) -> None:
     c = ctx()
     mcu = c.registry().get(args.type)
     families = firmware.load(c.paths)
-    seeds = profiles.available(c.paths, mcu.firmware, families)
+    seeds = profiles.available(c.paths, mcu.firmware, families, mcu_type=args.type)
+    # From the verdict rather than from the registry key. The two disagree the
+    # moment a config is edited or the tool is used on a type that predates
+    # profiles, and this printed a `*` beside a hand-written `profile:` while the
+    # line below it said "Not profile-managed".
+    applied = profiles.status(c.paths, args.type, mcu.firmware, families)
+    current = applied.profile
+    if applied.reason == profiles.CUSTOMISED:
+        # The config came from that profile and no longer holds it, so marking it
+        # as the one in use would contradict the verdict printed underneath. Your
+        # own captured answers are what is actually loaded, if they were kept.
+        own = profiles.read_custom(c.paths, args.type, mcu.firmware)
+        current = own.name if own is not None else None
+    differences = profiles.distinguishing(seeds)
 
     print(f"{args.type} runs {mcu.firmware}.")
     if not seeds:
@@ -136,12 +149,27 @@ def list_profiles(args: argparse.Namespace) -> None:
     else:
         print("  Available:")
         for seed in seeds:
-            mark = "*" if seed.name == mcu.profile else " "
-            print(f"   {mark} {seed.name}")
+            mark = "*" if seed.name == current else " "
+            note = ""
+            if seed.origin == profiles.ORIGIN_CUSTOM:
+                note = (
+                    f"  (yours, forked from {seed.parent})"
+                    if seed.parent
+                    else "  (yours)"
+                )
+            print(f"   {mark} {seed.name}{note}")
+            # The one or two answers that tell this apart from its neighbours.
+            # Printing all seven under each of eight entries hides them.
+            for row in differences.get(seed.name, []):
+                print(f"       {row['line']}")
 
     for fw in mcu.families():
         state = profiles.status(c.paths, args.type, fw, families)
         detail = f" (from {state.profile})" if state.profile else ""
+        if state.reason == profiles.CUSTOMISED and state.profile:
+            detail = f" (forked from {state.parent or state.profile})"
+        elif state.custom and state.parent:
+            detail = f" (yours, forked from {state.parent})"
         print(f"  {fw}: {state.label}{detail}")
 
 
@@ -158,6 +186,8 @@ def apply_profile(args: argparse.Namespace) -> None:
     print(f"Seeded {args.type} ({fw}) from {applied.profile}:")
     for line in applied.answers:
         print(f"    {line}")
+    if applied.kept:
+        print(f"  Your previous answers are kept as '{applied.kept}' - apply it to go back.")
     if applied.backup:
         print(f"  Previous config kept at {applied.backup}")
 
@@ -278,7 +308,13 @@ def make_menuconfig_cmd(args: argparse.Namespace) -> None:
     menuconfig_tty(c.paths, args.type, args.fw, pause=not getattr(args, "no_pause", False))
 
 
-def _build_interactive(c: Context, mcu_type: str, fw: str, jobs: Optional[int] = None):
+def _build_interactive(
+    c: Context,
+    mcu_type: str,
+    fw: str,
+    jobs: Optional[int] = None,
+    reseed: Optional[bool] = None,
+):
     """Build, offering menuconfig first if this type has never been configured.
 
     The original did this inside do_build via an `interactive` flag. It lives here
@@ -288,20 +324,31 @@ def _build_interactive(c: Context, mcu_type: str, fw: str, jobs: Optional[int] =
     reg = c.registry()
     try:
         return build(
-            c.paths, reg, c.settings, mcu_type, fw, reporter=stdout_reporter, jobs=jobs
+            c.paths, reg, c.settings, mcu_type, fw,
+            reporter=stdout_reporter, jobs=jobs, reseed=reseed,
         )
     except ConfigNotFoundError:
         print(f"Configuration file not found for {mcu_type} ({fw}). Launching menuconfig...")
         menuconfig_tty(c.paths, mcu_type, fw)
         return build(
-            c.paths, reg, c.settings, mcu_type, fw, reporter=stdout_reporter, jobs=jobs
+            c.paths, reg, c.settings, mcu_type, fw,
+            reporter=stdout_reporter, jobs=jobs, reseed=reseed,
         )
 
 
 def build_fw_cmd(args: argparse.Namespace) -> None:
     c = ctx()
     with exclusive(c.paths, f"build {args.fw}/{args.type}"):
-        _build_interactive(c, args.type, args.fw, jobs=getattr(args, "jobs", None))
+        _build_interactive(
+            c,
+            args.type,
+            args.fw,
+            jobs=getattr(args, "jobs", None),
+            # None means "whatever reseed_on_build says", which is the same
+            # answer the panel and a fleet build get. --no-reseed declines for
+            # this run without touching the setting.
+            reseed=False if getattr(args, "no_reseed", False) else None,
+        )
 
 
 # --------------------------------------------------------------------------
@@ -598,6 +645,12 @@ def build_parser(fw_choices: Optional[Sequence[str]] = None) -> argparse.Argumen
     p.add_argument("-t", "--type", required=True, help="MCU Type Name")
     p.add_argument("-f", "--fw", required=True, choices=choices, help="Firmware target")
     p.add_argument("-j", "--jobs", type=int, default=None, help="Parallel make jobs (0 disables -j)")
+    p.add_argument(
+        "--no-reseed",
+        action="store_true",
+        help="Build the saved config as it stands, even if the profile it came "
+        "from has been updated since",
+    )
     p.set_defaults(func=build_fw_cmd)
 
     p = subparsers.add_parser(

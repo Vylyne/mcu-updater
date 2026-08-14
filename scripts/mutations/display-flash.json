@@ -1,5 +1,5 @@
 {
-  "_comment": "Display flash gates in the agent.",
+  "_comment": "Display flash gates. One behaviour area, two files: the agent decides whether a flash may start, and the esptool flasher decides where each screen is written.",
   "file": "src/mcu_updater/agent/methods.py",
   "command": [
     "python",
@@ -18,8 +18,8 @@
     },
     {
       "name": "the idle gate applies to displays too",
-      "find": "        assert_printer_idle(\n            settings,\n            activity=self._printer_activity,\n            force=bool(args.get(\"force\")),\n            reporter=self._log_reporter,\n        )\n\n        def run(ctx) -> dict[str, Any]:\n            from .. import displays as displays_mod",
-      "replace": "        def run(ctx) -> dict[str, Any]:\n            from .. import displays as displays_mod"
+      "find": "        assert_printer_idle(\n            settings,\n            activity=self._printer_activity,\n            force=bool(args.get(\"force\")),\n            reporter=self._log_reporter,\n        )\n\n        # Built from the list read *before* the stop",
+      "replace": "        # Built from the list read *before* the stop"
     },
     {
       "name": "screens are matched by their type's own section prefix",
@@ -38,28 +38,33 @@
     },
     {
       "name": "the port watcher is stopped for the upload",
-      "find": "            ), paused(watcher, reporter=ctx.reporter):",
-      "replace": "            ):"
+      "file": "src/mcu_updater/flashers/esptool.py",
+      "find": "                if display.service:\n                    stack.enter_context(\n                        paused(bench.controller(display.service), reporter=ctx.reporter)\n                    )",
+      "replace": "                if False:\n                    stack.enter_context(\n                        paused(bench.controller(display.service), reporter=ctx.reporter)\n                    )"
     },
     {
       "name": "identity is verified once the ports are free",
-      "find": "                discovered = self._discover_displays(display, settings_now, ctx)",
-      "replace": "                discovered = {}"
+      "file": "src/mcu_updater/flashers/esptool.py",
+      "find": "            yield {\n                name: discover(bench, display, ctx)\n                for name, display in families.items()\n            }",
+      "replace": "            yield {}"
     },
     {
       "name": "a screen is written where it answered, not where it was",
-      "find": "        if found.port != configured:",
-      "replace": "        return configured, None\n        if found.port != configured:"
+      "file": "src/mcu_updater/flashers/esptool.py",
+      "find": "    if found.port != configured:",
+      "replace": "    return configured, None\n    if found.port != configured:"
     },
     {
       "name": "a screen that did not answer is not flashed at its old port",
-      "find": "                    if problem is not None:\n                        failures.append(problem)\n                        continue",
-      "replace": "                    if False:\n                        failures.append(problem)\n                        continue"
+      "file": "src/mcu_updater/flashers/esptool.py",
+      "find": "        if problem is not None:",
+      "replace": "        if False:"
     },
     {
       "name": "a dry run never opens a serial port",
-      "find": "        if settings.dry_run:\n            ctx.reporter(\"info\", \"[dry-run] would ask the displays which they are\")\n            return {}",
-      "replace": "        if False:\n            ctx.reporter(\"info\", \"[dry-run] would ask the displays which they are\")\n            return {}"
+      "file": "src/mcu_updater/flashers/esptool.py",
+      "find": "    if bench.settings.dry_run:\n        ctx.reporter(\"info\", \"[dry-run] would ask the displays which they are\")\n        return {}",
+      "replace": "    if False:\n        ctx.reporter(\"info\", \"[dry-run] would ask the displays which they are\")\n        return {}"
     }
   ]
 }

@@ -21,8 +21,20 @@
     },
     {
       "name": "each board is waited for after its write",
-      "find": "                    if not settings.dry_run:",
-      "replace": "                    if True is False:"
+      "file": "src/mcu_updater/flashers/flashtool.py",
+      "find": "        if bench.settings.dry_run:\n            return\n        try:\n            wait_for_device(",
+      "replace": "        if True:\n            return\n        try:\n            wait_for_device("
+    },
+    {
+      "name": "a write that needs no stop stays outside the outage",
+      "file": "src/mcu_updater/flashers/registry.py",
+      "find": "        (stopped if by_name(target.flasher).needs_klipper_stopped else free).append(\n            target\n        )",
+      "replace": "        stopped.append(target)"
+    },
+    {
+      "name": "a batch settles each device after writing it",
+      "find": "                            flasher.settled(bench, target, ctx)",
+      "replace": "                            pass"
     },
     {
       "name": "update_all re-checks the idle gate after building",

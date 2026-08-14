@@ -252,7 +252,7 @@ def apply_seed(
     fw_dir = family.source_dir(paths)
     target = paths.config_file(mcu_type, fw)
 
-    _refuse_if_customised(paths, mcu_type, fw, target, force=force)
+    refuse_if_customised(paths, mcu_type, fw, force=force)
 
     _module, kconf = kconfig.parse_tree(fw_dir, seed.path)
     answers = kconfig.minimal_answers(kconf, fw_dir)
@@ -305,7 +305,7 @@ def derive_bootloader(
 
     boot_dir = firmware.resolve(paths, boot_fw, families).source_dir(paths)
     target = paths.config_file(mcu_type, boot_fw)
-    _refuse_if_customised(paths, mcu_type, boot_fw, target, force=force)
+    refuse_if_customised(paths, mcu_type, boot_fw, force=force)
 
     app_module, app_kconf = kconfig.parse_tree(app_dir, app_config)
     answers = kconfig.minimal_answers(app_kconf, app_dir)
@@ -662,9 +662,7 @@ def _current_source_sha(
         return None
 
 
-def _refuse_if_customised(
-    paths: Paths, mcu_type: str, fw: str, target: str, *, force: bool
-) -> None:
+def refuse_if_customised(paths: Paths, mcu_type: str, fw: str, *, force: bool) -> None:
     """Never overwrite answers this tool did not write.
 
     A config matching its record is ours to rewrite - that is what makes
@@ -672,7 +670,15 @@ def _refuse_if_customised(
     a hand-built config from before profiles existed, or one edited since - is
     the user's, and is refused rather than backed up and replaced. `force` still
     keeps one generation of backup, because :func:`kconfig.save_config` does.
+
+    Public because it is worth asking *before* committing to the work as well as
+    during it. Seeding is a job, and "this config is yours, pass force" is a
+    refusal rather than a failure - a caller wants that back immediately so it
+    can re-ask, not three Kconfig parses later on a job that died. Cheap enough
+    to ask twice: two file hashes and no parse. The call inside the write is
+    still the authority; this one is only allowed to be early.
     """
+    target = paths.config_file(mcu_type, fw)
     if force or not os.path.exists(target):
         return
     state = status(paths, mcu_type, fw)

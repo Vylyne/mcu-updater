@@ -92,7 +92,7 @@ application error (see `data.code`), `-32603` internal.
 | `fw.build` | `name`, `fw`, `jobs?`, `clean?` | `{job_id, job}` — returns immediately |
 | `fw.flash` | `serial`, `name?`, `force?` | `{job_id, job}` — **off by default**, see below |
 | `fw.build_all` | `fw?`, `scope?` | `{job_id, job, types, builds, skipped}` — builds only, touches no board |
-| `fw.flash_all` | `scope?`, `name?`, `force?` | `{job_id, job, boards}` — **off by default** |
+| `fw.flash_all` | `scope?`, `name?`, `force?` | `{job_id, job, boards, displays}` — **off by default** |
 | `fw.update_all` | `scope?`, `name?`, `force?` | `{job_id, job, types}` — **off by default** |
 | `fw.display.list` | — | `{displays, reachable, watcher}` — read-only |
 | `fw.display.build` | `name` | `{job_id, job}` — PlatformIO, touches no screen |
@@ -517,15 +517,18 @@ failure this whole area exists to make impossible.
 ```
 
 `flash_all` takes every tracked serial that is online, belongs to a type with a
-built artifact, and (under `stale`) has `needs_flash: true`. It is per-serial, not
-per-type: two boards of one model genuinely do run different firmware. Passing
-`name` narrows it to a single type — that is "flash this type", implemented as
-this same operation with a filter.
+built artifact, and (under `stale`) has `needs_flash: true` — **and every screen
+that meets the same three tests.** It is per-device, not per-type: two boards of
+one model genuinely do run different firmware. Passing `name` narrows it to a
+single type, board or screen — that is "flash this type", implemented as this
+same operation with a filter.
 
-`update_all` is `build_all` followed by `flash_all`, so it builds displays and
-does not yet flash them. That is the composition being honest rather than a
-special case: both halves gain screens where they are defined, not where they
-are called from — the flasher seam is the other half of this work.
+Screens are selected **before anything stops**, because the screen list comes
+from the klippy module's own printer objects and only a running Klipper answers.
+That constraint is why selection is the agent's job rather than the flasher's.
+
+`update_all` is `build_all` followed by `flash_all`, so it now covers screens on
+both halves.
 
 Both refuse with `nothing_to_do` when the selection comes out empty, rather than
 starting a job that does nothing and reads as a bug.
@@ -537,8 +540,16 @@ in its confirmation:
 {"job_id": "job-9", "job": {...},
  "boards": [{"type": "flylllplusbuffer", "serial": "4C00...-if00",
              "chipset": "stm32f072xb", "state": "klipper",
-             "reason": "artifact_changed"}]}
+             "reason": "artifact_changed"}],
+ "displays": [{"type": "knomi_toolchanger", "id": "/dev/knomi_t0",
+               "flasher": "esptool", "name": "t0_knomi",
+               "section": "knomi_serial t0_knomi", "reason": "source_changed"}]}
 ```
+
+Two keys rather than one merged list: the selections answer with different facts
+— a board has a chipset and a serial, a screen has a port and a klippy section —
+and flattening them would invent nulls for half of each. The *batch* is uniform;
+the confirmation is not, because a human reading it wants the real names.
 
 #### Failures do not abandon the batch
 
@@ -546,14 +557,33 @@ One type failing to compile is usually about that type, so the loop continues an
 reports what happened — matching what the CLI's `update-all` has always done:
 
 ```json
-{"build": {"fw": "klipper", "built": ["bttebb36"],
-           "failures": [{"type": "bttmmbv1", "error": "make failed (exit 2)"}]},
- "flash": {"flashed": [{"type": "bttebb36", "serial": "2900...-if00"}],
+{"build": {"built": [{"type": "bttebb36", "fw": "klipper", "provider": "kconfig_make"}],
+           "failures": [{"type": "bttmmbv1", "fw": "klipper",
+                         "provider": "kconfig_make", "error": "make failed (exit 2)"}]},
+ "flash": {"flashed": [{"type": "bttebb36", "id": "2900...-if00",
+                        "flasher": "flashtool", "serial": "2900...-if00"}],
            "failures": []}}
 ```
 
 A job with failures still ends `succeeded`; `result.*.failures` is the thing to
 render, not the job state.
+
+Both halves name what did the work — `provider` for a build, `flasher` for a
+write — because "bttmmbv1 failed" stopped being enough once a type can build more
+than one family and a host can write with more than one tool. `id` is the uniform
+slot: a board's serial, a screen's configured port. `serial` rides along on a
+flashtool result because that is what a board's id has always been called here.
+
+#### Grouped by requirement, not by kind
+
+A flash batch splits on whether each write needs Klipper down, and opens the stop
+once for the group that does. A board needs it because *getting* to Katapult does
+— the reboot request goes over the port Klipper is holding — and a screen needs it
+because the klippy module holds the port for the write itself. dfu-util does not:
+by the time it runs the board is in DFU, so it was never on the Klipper bus.
+
+That is what lets one batch cover boards and screens without either path knowing
+about the other, and what keeps a write that needs no outage from inheriting one.
 
 #### Two things `update_all` does that a naive composition would not
 
@@ -873,12 +903,18 @@ could be skipped.
 
 ```json
 {"env": "knomi_toolchanger",
- "flashed": [{"name": "t0_knomi", "port": "/dev/knomi_t0",
+ "flashed": [{"type": "knomi_toolchanger", "id": "/dev/knomi_t0", "flasher": "esptool",
+              "name": "t0_knomi", "port": "/dev/knomi_t0",
               "mac": "cc:ba:97:19:aa:38", "chip": "ESP32-S3 (QFN56) (revision v0.2)"}],
  "failures": [],
  "moved": [{"name": "t0_knomi", "port": "/dev/knomi_t0",
             "was": "aa:bb:...", "now": "cc:ba:..."}]}
 ```
+
+This runs the same batch machinery `fw.flash_all` does — one flasher, one stop,
+the watcher paused and the screens rediscovered inside it — and projects the
+result back onto the shape above. `flashed` gained the uniform `type`/`id`/
+`flasher` slots; `failures` and `moved` are unchanged.
 
 `moved` is the swap signal. A display's MAC is in efuse, so it survives
 reflashing — and the CH340 in front of it has no serial of its own, making this
@@ -1003,9 +1039,24 @@ for a tree that builds for two hundred boards.
  "derive": true, "force": false}
 ```
 
-Returns `{"applied": SeedResult, "derived": SeedResult|null}`, where a
-`SeedResult` carries the minimal `answers`, the `carried` / `dropped` split for
-a derivation, and the sha256 of both the seed and the config written.
+Returns `{"job_id", "job", "type", "fw"}`. The job's `result` is
+`{"applied": SeedResult, "derived": SeedResult|null}`, where a `SeedResult`
+carries the minimal `answers`, the `carried` / `dropped` split for a derivation,
+and the sha256 of both the seed and the config written.
+
+**A job for its runtime, not its danger** — it writes a `.config` and touches no
+board. Seeding parses a Kconfig tree up to three times (the seed, a bare probe of
+the bootloader tree, then the carried answers), and one parse is a few hundred
+milliseconds on a Pi. Every method here answers in well under a second because
+Moonraker awaits with no timeout, so this could not stay synchronous.
+
+Everything answerable without a parse is still checked **before** the job exists,
+and comes back as a refusal a caller can act on: an unknown type or family, a
+profile the tree does not ship, a name that is not a plain basename, and a config
+that has been customised (`force` is the answer to that one, and a caller wants
+to be told so immediately rather than reading it out of a job that died). The
+offset check is the exception — the two addresses only exist after the parse — so
+a mismatch fails the job rather than refusing the call.
 
 **Katapult is derived, not seeded, and by default rather than on request.**
 There is no vendor config for it, and a second table describing the same board

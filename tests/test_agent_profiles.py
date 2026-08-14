@@ -19,9 +19,21 @@ from mcu_updater import profiles
 from mcu_updater.agent.methods import Api
 from mcu_updater.agent.rpc import RpcError
 from mcu_updater.config import Registry
+from mcu_updater.jobs import JobRunner
 from mcu_updater.paths import Paths
+from mcu_updater.settings import Settings
 
 from .test_profiles import PROFILE_TREE, SEEDS, make_tree
+
+
+def _api_for(paths: Paths) -> Api:
+    """An agent with a runner, because seeding is a job.
+
+    Three Kconfig parses at a few hundred milliseconds each, against a rule that
+    every method answers in well under a second - Moonraker awaits with no
+    timeout, so a slow method holds a browser's request open.
+    """
+    return Api(paths, runner=JobRunner(paths, Settings))
 
 
 @pytest.fixture
@@ -33,7 +45,20 @@ def api(tmp_path) -> Api:
     paths = Paths.from_env(env={"MCU_UPDATER_HOME": str(tmp_path)})
     with Registry.mutate(paths, "test setup") as reg:
         reg.add_type("carto_v4", "stm32g431xx")
-    return Api(paths)
+    return _api_for(paths)
+
+
+def apply(api: Api, **params):
+    """Seed, wait, and hand back the result the call used to return directly."""
+    job = _run_apply(api, **params)
+    assert job.state == "succeeded", job.error
+    return job.result
+
+
+def _run_apply(api: Api, **params):
+    res = api.dispatch("fw.profile.apply", params)
+    assert api.runner.wait(timeout=60)
+    return api.runner.get(res["job_id"])
 
 
 def config_text(api: Api, fw: str) -> str:
@@ -70,9 +95,7 @@ def test_applying_seeds_the_application_and_derives_the_bootloader(api):
     """The default. Seeding only the application leaves a type whose two
     configs describe different boards, and they only have to disagree about one
     address for the pair to produce something that does not come back."""
-    out = api.dispatch(
-        "fw.profile.apply", {"name": "carto_v4", "profile": "config.TestBoardUSB"}
-    )
+    out = apply(api, name="carto_v4", profile="config.TestBoardUSB")
 
     assert out["applied"]["fw"] == "klipper"
     assert out["derived"]["fw"] == "katapult"
@@ -82,7 +105,7 @@ def test_applying_seeds_the_application_and_derives_the_bootloader(api):
 
 
 def test_the_intent_is_recorded_in_the_hand_edited_config(api):
-    api.dispatch("fw.profile.apply", {"name": "carto_v4", "profile": "config.TestBoardUSB"})
+    apply(api, name="carto_v4", profile="config.TestBoardUSB")
 
     assert Registry.load(api.paths).get("carto_v4").profile == "config.TestBoardUSB"
     # ...and only for the application. Katapult's is always derived, so a second
@@ -92,10 +115,7 @@ def test_the_intent_is_recorded_in_the_hand_edited_config(api):
 
 
 def test_deriving_can_be_declined(api):
-    out = api.dispatch(
-        "fw.profile.apply",
-        {"name": "carto_v4", "profile": "config.TestBoardUSB", "derive": False},
-    )
+    out = apply(api, name="carto_v4", profile="config.TestBoardUSB", derive=False)
     assert out["derived"] is None
     assert not pathlib.Path(api.paths.config_file("carto_v4", "katapult")).exists()
 
@@ -104,21 +124,25 @@ def test_a_board_with_no_bootloader_derives_nothing(api):
     with Registry.mutate(api.paths, "no katapult") as reg:
         reg.add_type("bare", "stm32g431xx", katapult_installed=False)
 
-    out = api.dispatch("fw.profile.apply", {"name": "bare", "profile": "config.TestBoardUSB"})
+    out = apply(api, name="bare", profile="config.TestBoardUSB")
     assert out["derived"] is None
 
 
 def test_a_failed_derivation_is_not_reported_as_success(api):
     """A bootloader that cannot be derived is a board that should not be
-    flashed. Returning the application seeding with a warning attached is how
-    that gets missed."""
-    with pytest.raises(RpcError) as exc:
-        api.dispatch(
-            "fw.profile.apply", {"name": "carto_v4", "profile": "config.TestBoardBigLoader"}
-        )
+    flashed. Reporting the application seeding as a success with a warning
+    attached is how that gets missed.
 
-    assert exc.value.data["code"] == "offset_mismatch"
-    assert exc.value.data["data"]["app_address"] == "0x8008000"
+    The job *fails* - it does not succeed with a null `derived`. Only the two
+    addresses can be compared after the parse, so this is the one refusal here
+    that cannot be hoisted in front of the job; what matters is that it stays a
+    refusal rather than becoming a footnote.
+    """
+    job = _run_apply(api, name="carto_v4", profile="config.TestBoardBigLoader")
+
+    assert job.state == "failed"
+    assert job.error["code"] == "offset_mismatch"
+    assert job.error["data"]["app_address"] == "0x8008000"
     # The application's config is valid on its own and stays; the bootloader's
     # was never written.
     assert pathlib.Path(api.paths.config_file("carto_v4", "klipper")).exists()
@@ -146,6 +170,14 @@ def test_a_traversing_profile_name_is_refused(api):
 
 
 def test_existing_answers_are_not_overwritten_without_force(api):
+    """And the refusal comes back *before* a job exists.
+
+    "That config is yours, pass force" is something a caller acts on - it
+    re-asks with force - so it has to arrive as a refusal it can catch, not as
+    an error read out of a job that died three Kconfig parses later. The same
+    check still runs inside the write, where it is the authority; this one is
+    only allowed to be early.
+    """
     target = pathlib.Path(api.paths.config_file("carto_v4", "klipper"))
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text("CONFIG_MACH_STM32=y\n# mine\n", encoding="utf-8")
@@ -156,11 +188,9 @@ def test_existing_answers_are_not_overwritten_without_force(api):
         )
     assert exc.value.data["code"] == "profile_customised"
     assert "# mine" in target.read_text(encoding="utf-8")
+    assert api.runner.current() is None, "refused before a job was submitted"
 
-    out = api.dispatch(
-        "fw.profile.apply",
-        {"name": "carto_v4", "profile": "config.TestBoardUSB", "force": True},
-    )
+    out = apply(api, name="carto_v4", profile="config.TestBoardUSB", force=True)
     assert out["applied"]["backup"] is not None
 
 
@@ -170,7 +200,7 @@ def test_existing_answers_are_not_overwritten_without_force(api):
 
 
 def test_the_artifact_payload_carries_the_profile_verdict(api):
-    api.dispatch("fw.profile.apply", {"name": "carto_v4", "profile": "config.TestBoardUSB"})
+    apply(api, name="carto_v4", profile="config.TestBoardUSB")
     assert api.artifact("carto_v4", "klipper")["profile"]["reason"] is None
 
     target = pathlib.Path(api.paths.config_file("carto_v4", "klipper"))
@@ -192,7 +222,7 @@ def test_an_unmanaged_type_is_not_painted_as_a_problem(api):
 
 
 def test_forgetting_detaches_without_touching_the_answers(api):
-    api.dispatch("fw.profile.apply", {"name": "carto_v4", "profile": "config.TestBoardUSB"})
+    apply(api, name="carto_v4", profile="config.TestBoardUSB")
     before = config_text(api, "klipper")
 
     out = api.dispatch("fw.profile.forget", {"name": "carto_v4"})
@@ -204,7 +234,7 @@ def test_forgetting_detaches_without_touching_the_answers(api):
 
 
 def test_a_vendor_bump_shows_up_as_something_to_do(api):
-    api.dispatch("fw.profile.apply", {"name": "carto_v4", "profile": "config.TestBoardUSB"})
+    apply(api, name="carto_v4", profile="config.TestBoardUSB")
     seed = pathlib.Path(api.paths.fw_dir("klipper")) / "config.TestBoardUSB"
     seed.write_text(seed.read_text(encoding="utf-8").replace("6.2.0", "6.3.0"), encoding="utf-8")
 
@@ -214,11 +244,22 @@ def test_a_vendor_bump_shows_up_as_something_to_do(api):
 
 
 def test_the_methods_are_advertised(api):
-    """Not job methods and not flash methods: seeding writes a config file, in
-    the same category as saving from the kconfig editor, and a read-only
-    deployment still has answers worth looking at."""
+    """Not flash methods: seeding writes a config file and touches no board."""
     advertised = api.available_methods()
     assert {"fw.profile.list", "fw.profile.apply", "fw.profile.forget"} <= set(advertised)
+
+
+def test_a_read_only_agent_still_lists_and_forgets(api):
+    """Applying is a job for its *runtime*, not its danger - three Kconfig
+    parses against a method budget of well under a second. So it needs a runner
+    and disappears without one, while reading which profiles exist and
+    detaching from one stay available: neither costs a parse, and an install
+    with nothing to submit jobs to still has answers worth looking at."""
+    read_only = Api(api.paths)
+    advertised = set(read_only.available_methods())
+
+    assert "fw.profile.apply" not in advertised
+    assert {"fw.profile.list", "fw.profile.forget"} <= advertised
 
 
 def test_seeding_a_cartographer_fork_through_the_agent(tmp_path):
@@ -238,15 +279,13 @@ def test_seeding_a_cartographer_fork_through_the_agent(tmp_path):
         "firmware: cartographer\n",
         encoding="utf-8",
     )
-    api = Api(paths)
+    api = _api_for(paths)
 
     listing = api.dispatch("fw.profile.list", {"name": "carto_v4"})
     assert listing["firmware"] == "cartographer"
     assert [s["name"] for s in listing["available"]] == sorted(SEEDS)
 
-    out = api.dispatch(
-        "fw.profile.apply", {"name": "carto_v4", "profile": "config.TestBoardCAN"}
-    )
+    out = apply(api, name="carto_v4", profile="config.TestBoardCAN")
     assert out["applied"]["fw"] == "cartographer"
     assert out["derived"]["app_address"] == 0x8002000
 

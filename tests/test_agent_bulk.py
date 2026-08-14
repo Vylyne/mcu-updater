@@ -15,6 +15,7 @@ import os
 
 import pytest
 
+from mcu_updater import flashers
 from mcu_updater.agent.methods import Api
 from mcu_updater.agent.rpc import ERR_INVALID_PARAMS, RpcError
 from mcu_updater.config import Registry
@@ -673,16 +674,59 @@ def test_each_board_is_waited_for_before_klipper_is_started(bulk, paths, fake_ro
     )
     write_settings(paths, dry_run="false", service_backend="null", enable_flashing="true")
 
-    boards = [
-        {"type": EBB, "serial": EBB_A, "chipset": EBB_CHIPSET, "state": "klipper",
-         "fw": "klipper", "reason": "x"},
-        {"type": EBB, "serial": EBB_B, "chipset": EBB_CHIPSET, "state": "klipper",
-         "fw": "klipper", "reason": "x"},
-    ]
-    bulk._do_flash_all(_ctx(), boards)
+    bulk._do_flash_all(_ctx(), [_board(EBB_A), _board(EBB_B)])
 
     assert order == [f"flash {EBB_A}", f"wait {EBB_A}", f"flash {EBB_B}", f"wait {EBB_B}"]
     assert svc.actions == ["stop", "start"]
+
+
+def test_a_write_that_needs_no_stop_stays_outside_the_outage(bulk, paths, monkeypatch):
+    """Klipper goes down for the flashers that need it, and no others.
+
+    dfu-util does not: by the time it is called the board is holding BOOT0, so
+    it was never on the Klipper bus or whatever put it there already dealt with
+    Klipper. Grouping by that requirement rather than by kind is the whole point
+    of the flag - a batch that stopped Klipper for every write would take a
+    printer down to talk to a board that is not even on its bus.
+    """
+    import mcu_updater.flash as flash_mod
+
+    order: list[str] = []
+    svc = NullService()
+    monkeypatch.setattr("mcu_updater.service.make_controller", lambda *a, **k: svc)
+    monkeypatch.setattr(
+        flash_mod, "flash_dfu_stm32", lambda *a, **k: order.append("dfu write")
+    )
+    write_settings(paths, dry_run="false", service_backend="null", enable_flashing="true")
+
+    bare = flashers.dfu_util.target_for(
+        "/tmp/katapult.bin", chipset=EBB_CHIPSET, dfu_serial="3941335F3434"
+    )
+    result = bulk._do_flash_all(_ctx(), [bare])
+
+    assert order == ["dfu write"]
+    assert svc.actions == [], "Klipper was never stopped"
+    assert result["flashed"] == [
+        {
+            "type": EBB_CHIPSET,
+            "id": "3941335F3434",
+            "flasher": "dfu_util",
+            "dfu_serial": "3941335F3434",
+        }
+    ]
+
+
+def _board(serial: str) -> flashers.FlashTarget:
+    return flashers.flashtool.target_for(
+        {
+            "type": EBB,
+            "serial": serial,
+            "chipset": EBB_CHIPSET,
+            "state": "klipper",
+            "fw": "klipper",
+            "reason": "x",
+        }
+    )
 
 
 def test_only_the_compile_is_interruptible_mid_step(bulk):

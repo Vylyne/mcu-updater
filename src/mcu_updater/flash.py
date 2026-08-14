@@ -21,7 +21,7 @@ import subprocess
 import sys
 import threading
 import time
-from typing import Optional
+from typing import Any, Optional
 
 from . import firmware
 from .build import Reporter, null_reporter, run_streamed
@@ -41,7 +41,6 @@ from .errors import (
     FlashError,
     OperationCancelled,
     ToolMissingError,
-    UnsupportedChipsetError,
 )
 from .paths import HUMAN_ACTION_TIMEOUT, REENUMERATE_TIMEOUT, Paths
 from .settings import Settings
@@ -450,23 +449,60 @@ def flash_initial_bootloader(
     reporter: Reporter = null_reporter,
     target_serial: Optional[str] = None,
 ) -> None:
-    """Dispatch a first-time katapult install by chipset family."""
-    if chipset.startswith("stm32"):
-        flash_dfu_stm32(paths, settings, fw_bin, reporter=reporter, target_serial=target_serial)
-        return
-    if chipset == "rp2040":
-        # Wired up in a later phase: BOOTSEL mass storage only accepts .uf2, so
-        # this needs the .uf2 that build() now stages, plus picotool or a mount.
-        raise UnsupportedChipsetError(
-            "RP2040 BOOTSEL flashing isn't wired up yet - hold BOOTSEL, mount the "
-            "RPI-RP2 drive, copy the katapult .uf2 across, then use 'add-serial' "
-            "once it enumerates as Katapult.",
-            chipset=chipset,
-        )
-    raise UnsupportedChipsetError(
-        f"don't know how to perform a first-time flash for chipset '{chipset}'. "
-        f"Flash katapult manually, then use 'add-serial' once it enumerates.",
-        chipset=chipset,
+    """Install a first bootloader on a bare board of this chipset.
+
+    The dispatch is a table in :mod:`mcu_updater.flashers` rather than a chain
+    of `startswith` here. It was two branches and a fallback, which is exactly
+    the size at which a chain still looks fine and has already stopped being
+    extensible - adding RP2040's BOOTSEL route should be one module and one row,
+    not an edit to this function.
+
+    Driven through the same `Flasher` protocol a batch uses, so a route added
+    for this path is a route a batch could take too. That is what makes the
+    table a seam rather than a lookup with extra steps.
+    """
+    from . import flashers
+
+    flasher = flashers.bootstrap_for(chipset)
+    target = flashers.dfu_util.target_for(
+        fw_bin, chipset=chipset, dfu_serial=target_serial
+    )
+    bench = flashers.Bench(
+        paths=paths,
+        settings=settings,
+        # Nothing on this path touches a service: the board is in DFU, not on
+        # the Klipper bus, which is what `needs_klipper_stopped: False` says.
+        controller=_no_services,
+    )
+    with flasher.prepared(bench, [target], _Ctx(reporter)) as session:
+        flasher.write(bench, session, target, _Ctx(reporter))
+        flasher.settled(bench, target, _Ctx(reporter))
+
+
+class _Ctx:
+    """The sliver of a job context a flasher actually uses, for the CLI path.
+
+    `flash_initial_bootloader` is called from the CLI as well as the agent, and
+    the CLI has no job. Rather than making the protocol take a reporter *and* an
+    optional context - two ways to say the same thing - this supplies the one
+    that has no job behind it.
+    """
+
+    def __init__(self, reporter: Reporter) -> None:
+        self.reporter = reporter
+        self.cancel = None
+
+    def check_cancelled(self) -> None:
+        """Nothing to cancel: this is a single synchronous write."""
+
+    def step(self, *args: object, **kwargs: object) -> None:
+        """No progress to report to - the CLI is watching the stream."""
+
+
+def _no_services(name: Optional[str] = None) -> Any:
+    raise AssertionError(
+        "the bootstrap flash path controls no services; "
+        f"something asked for {name!r}"
     )
 
 

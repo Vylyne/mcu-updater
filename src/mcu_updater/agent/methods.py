@@ -19,7 +19,7 @@ import re
 import time
 from typing import Any, Callable, Optional
 
-from .. import API_VERSION, __version__, firmware, profiles, providers
+from .. import API_VERSION, __version__, firmware, flashers, profiles, providers
 from ..build import read_sidecar
 from ..config import Registry
 from ..devices import (
@@ -56,6 +56,30 @@ from .rpc import ERR_INVALID_PARAMS, ERR_METHOD_NOT_FOUND, MethodNotFound, RpcEr
 #: Small on purpose - these are best-effort enrichments of fw.status, and the
 #: whole call has a sub-second budget.
 PROBE_TIMEOUT = 1.5
+
+
+def _board_target(board: dict) -> flashers.FlashTarget:
+    """One entry from `_boards_to_flash`, as something a batch can write.
+
+    A one-line alias so the two bulk callers say the same thing, and so the
+    board selection's dict shape - which is on the wire - stays the selection's
+    business rather than leaking a second copy into each of them.
+    """
+    return flashers.flashtool.target_for(board)
+
+
+def _screen_json(target: flashers.FlashTarget) -> dict[str, Any]:
+    """A selected screen, for a caller naming what is about to happen.
+
+    The uniform slots plus the two facts a confirmation actually reads out: the
+    klipper section a human recognises, and why this one was picked.
+    """
+    return {
+        **target.to_json(),
+        "name": target.detail["screen"]["name"],
+        "section": target.detail["screen"]["section"],
+        "reason": target.detail.get("reason"),
+    }
 
 
 def _mtime(path: str) -> Optional[float]:
@@ -723,15 +747,7 @@ class Api:
 
         devices = []
         for screen in payload["screens"]:
-            # A screen has two ways to want firmware and they are independent: a
-            # protocol mismatch is the device saying it cannot talk to this
-            # module, and `behind` is it running an older commit. The version
-            # comparison has no word for the first, so it is applied on top.
-            device = DeviceStatus(screen.get("reason"))
-            if screen.get("protocol_match") is False:
-                device = DeviceStatus(PROTOCOL_MISMATCH)
-            elif not screen["present"]:
-                device = DeviceStatus(OFFLINE)
+            device = self._screen_device_status(screen)
             devices.append(
                 {
                     "id": screen["configured_path"],
@@ -819,6 +835,26 @@ class Api:
                 ],
             },
         }
+
+    @staticmethod
+    def _screen_device_status(screen: dict[str, Any]) -> DeviceStatus:
+        """Does this screen want firmware, and why?
+
+        A screen has two independent ways to want it: a protocol mismatch is the
+        device saying it cannot talk to this module at all, and `source_changed`
+        is it running an older commit. The version comparison has no word for
+        the first, so it is applied on top rather than folded in.
+
+        One function because there are two callers and they must not disagree -
+        the panel row and the fleet-flash selection. A screen the panel paints
+        as needing firmware and the batch passes over is the same class of
+        silent wrong answer as everything else here.
+        """
+        if screen.get("protocol_match") is False:
+            return DeviceStatus(PROTOCOL_MISMATCH)
+        if not screen["present"]:
+            return DeviceStatus(OFFLINE)
+        return DeviceStatus(screen.get("reason"))
 
     @staticmethod
     def _screen_state(screen: dict[str, Any]) -> str:
@@ -1778,6 +1814,10 @@ class Api:
         "fw.add_mcu.start",
         "fw.display.build",
         "fw.display.flash",
+        # Seeding is a job for its runtime, not its danger - it writes a
+        # .config and touches no hardware - but a job is a job, and a read-only
+        # agent has no runner to submit one to.
+        "fw.profile.apply",
     )
 
     #: Advertised only when enable_flashing is on. The panel hides its flash
@@ -2015,95 +2055,6 @@ class Api:
         # answering.
         return {"displays": displays, "reachable": True, "watcher": None}
 
-    def _discover_displays(self, display: Any, settings: Settings, ctx: Any) -> dict[str, Any]:
-        """Ask the screens which they are, now that the ports are free.
-
-        Never fatal. Discovery needs pyserial and the display source tree, and
-        a host missing either was flashing by configured path perfectly well
-        before this existed - degrading to that is strictly what it used to do,
-        whereas refusing to flash would be a new way to fail.
-
-        Skipped entirely on a dry run: it opens real serial ports, and a
-        rehearsal that touches hardware is not a rehearsal.
-        """
-        from .. import displays as displays_mod
-
-        if settings.dry_run:
-            ctx.reporter("info", "[dry-run] would ask the displays which they are")
-            return {}
-        try:
-            return displays_mod.discover(
-                self.paths, settings, display, reporter=ctx.reporter
-            )
-        except UpdaterError as exc:
-            ctx.reporter(
-                "warn",
-                f"could not ask the displays which they are ({exc}) - falling back to "
-                f"the ports Klipper reported before it stopped.",
-            )
-            return {}
-
-    @staticmethod
-    def _port_for(
-        target: dict, discovered: dict[str, Any], ctx: Any
-    ) -> tuple[str, Optional[dict]]:
-        """Where to write this screen, and why not if there is no answer.
-
-        Three cases, and the middle one is the point:
-
-        * **Nothing was discovered at all** - no pyserial, no source tree, or a
-          dry run. Fall back to the configured path, which is what every flash
-          did before this. No worse than it was.
-        * **This screen answered** - write to the port it answered on, not the
-          one it used to be on. If those differ it moved, and saying so is the
-          only warning anybody would ever get.
-        * **Others answered and this one did not** - it is not there. The ports
-          were free and every other screen spoke, so a silent write to its old
-          path would be a write to whatever is on that path now. Recorded as a
-          failure rather than guessed at; the batch carries on, as it does for
-          any other per-screen failure.
-
-        A screen with no id at all is the fourth case and falls back rather than
-        failing. A `serial:` section names a socket, and its identity only
-        arrives from the module's own report - so a module too old to send one,
-        or a screen that was silent when the list was read, has nothing to match
-        on. Failing those would take flashing away from installs that have it
-        today, to punish them for what their klippy module does not say.
-        """
-        configured = target["configured_path"]
-        if not discovered:
-            return configured, None
-
-        ident = (target.get("device_id") or target.get("reported_id") or "").lower()
-        if not ident:
-            ctx.reporter(
-                "warn",
-                f"{target['name']} reports no hardware id, so the screen on "
-                f"{configured} cannot be confirmed as the one meant. Writing to the "
-                f"configured port.",
-            )
-            return configured, None
-
-        found = discovered.get(ident)
-        if found is None:
-            return configured, {
-                "name": target["name"],
-                "port": configured,
-                "error": (
-                    "did not answer when asked which displays are present, so its "
-                    "port cannot be confirmed. Writing to the port it used to be on "
-                    "could write to a different screen."
-                ),
-            }
-
-        if found.port != configured:
-            ctx.reporter(
-                "warn",
-                f"{target['name']} ({ident}) answered on {found.port}, not "
-                f"{configured} - it has moved. Writing to where it actually is.",
-            )
-        return found.port, None
-
     def _watcher_map(self) -> dict[str, Any]:
         """Each display family's watcher: is it running, and what has it found?
 
@@ -2243,83 +2194,42 @@ class Api:
             reporter=self._log_reporter,
         )
 
+        # Built from the list read *before* the stop, which is the only list a
+        # running Klipper can produce. Everything after this - the stop, the
+        # watcher pause, the discovery, the writes - is the same machinery a
+        # fleet flash uses, because there was never anything display-shaped
+        # about it beyond the two steps the esptool flasher now owns.
+        screens = [flashers.esptool.target_for(display, s) for s in targets]
+
         def run(ctx) -> dict[str, Any]:
-            from .. import displays as displays_mod
-            from ..service import klipper_stopped, make_controller, paused
-
-            settings_now = self.settings()
-            svc = make_controller(settings_now, call=self._call_for_service)
-            # The port watcher, if this display family has one. Stopped inside
-            # the klipper stop and started before it, which is the order the
-            # knomi_serial docs give: klipper holds the port, the watcher only
-            # contends for it.
-            watcher = (
-                make_controller(
-                    settings_now, call=self._call_for_service, name=display.service
-                )
-                if display.service
-                else None
-            )
-            flashed: list[dict] = []
-            failures: list[dict] = []
-            moved: list[dict] = []
-            total = len(targets)
-
-            with klipper_stopped(
-                self.paths, svc, f"flash {total} display(s)", reporter=ctx.reporter
-            ), paused(watcher, reporter=ctx.reporter):
-                # The ports are free for the first time here, which is the only
-                # moment identity can be resolved rather than remembered. The
-                # list above came from Klipper *before* the stop, so its paths
-                # describe where these screens were, and a remembered path is
-                # what the whole device-id scheme exists to avoid.
-                discovered = self._discover_displays(display, settings_now, ctx)
-
-                for index, target in enumerate(targets):
-                    ctx.check_cancelled()
-                    ctx.step(f"Flashing {target['name']}", index, total)
-
-                    port, problem = self._port_for(target, discovered, ctx)
-                    if problem is not None:
-                        failures.append(problem)
-                        continue
-                    try:
-                        result = displays_mod.upload(
-                            self.paths,
-                            settings_now,
-                            display,
-                            port,
-                            reporter=ctx.reporter,
-                        )
-                    except OperationCancelled:
-                        raise
-                    except UpdaterError as exc:
-                        ctx.reporter("warn", f"{target['name']}: {exc}")
-                        failures.append({"name": target["name"], "port": port, "error": str(exc)})
-                        continue
-
-                    previous = displays_mod.record_mac(
-                        self.paths, port, result.get("mac"), display.env
-                    )
-                    if previous:
-                        # Not an error, and not fatal: the write succeeded. But a
-                        # different display answering on this port means something
-                        # was re-cabled, and nothing else would ever say so.
-                        ctx.reporter(
-                            "warn",
-                            f"{target['name']} on {port} is now MAC {result.get('mac')}, "
-                            f"was {previous} - a display appears to have moved.",
-                        )
-                        moved.append(
-                            {"name": target["name"], "port": port,
-                             "was": previous, "now": result.get("mac")}
-                        )
-                    flashed.append({"name": target["name"], **result})
-                ctx.step(f"Flashed {len(flashed)} of {total}", total, total)
-
-            ctx.reporter("info", "Waiting for Klipper to be ready...")
-            self._await_klippy_ready(ctx.reporter)
-            return {"env": display.env, "flashed": flashed, "failures": failures, "moved": moved}
+            result = self._do_flash_all(ctx, screens)
+            # Projected back onto this method's own documented shape rather
+            # than leaking the uniform one. The batch says `type`/`id`; a
+            # display caller has always been told `name`/`port`, and `id` for a
+            # screen *is* its configured port.
+            named = {t.id: t.detail["screen"]["name"] for t in screens}
+            return {
+                "env": display.env,
+                "flashed": result["flashed"],
+                "failures": [
+                    {
+                        "name": named.get(f["id"], f["id"]),
+                        "port": f["id"],
+                        "error": f["error"],
+                    }
+                    for f in result["failures"]
+                ],
+                "moved": [
+                    {
+                        "name": f["name"],
+                        "port": f["port"],
+                        "was": f["moved_from"],
+                        "now": f.get("mac"),
+                    }
+                    for f in result["flashed"]
+                    if f.get("moved_from")
+                ],
+            }
 
         job = runner.submit("display_flash", {"name": name, "count": len(targets)}, run)
         return {"job_id": job.id, "job": job.to_dict(), "displays": targets}
@@ -2793,6 +2703,50 @@ class Api:
                     )
         return out
 
+    def _screens_to_flash(
+        self, scope: str, only: Optional[str] = None
+    ) -> list[flashers.FlashTarget]:
+        """Which screens a flash_all should write, with the reason for each.
+
+        **Selected here, at submission time, because only a running Klipper can
+        answer.** The screen list comes from the klippy module's own printer
+        objects, so it has to be read before anything stops - which is exactly
+        why selection is the agent's job and not the flasher's.
+
+        The same two exclusions as boards, for the same reasons: a display with
+        nothing built has nothing to write, and a screen that is not there
+        cannot be written to. `scope: all` overrides the judgement, never the
+        physics.
+        """
+        known = self.display_types()
+        out: list[flashers.FlashTarget] = []
+        for payload in self.display_status():
+            if only is not None and payload["name"] != only:
+                continue
+            if not payload["has_firmware"]:
+                continue
+            # The live object, not one rebuilt from the payload: `to_json` is a
+            # wire projection and reversing it is the thing this codebase keeps
+            # deciding not to do.
+            display = known[payload["name"]]
+            for screen in payload["screens"]:
+                if not screen["present"]:
+                    continue
+                status = self._screen_device_status(screen)
+                if scope != "all" and status.needs_flash is not True:
+                    continue
+                target = flashers.esptool.target_for(display, screen)
+                out.append(
+                    dataclasses.replace(
+                        target,
+                        detail={
+                            **target.detail,
+                            "reason": "forced" if scope == "all" else status.reason,
+                        },
+                    )
+                )
+        return out
+
     def _do_build_all(
         self, ctx: Any, targets: list[providers.BuildTarget]
     ) -> dict[str, Any]:
@@ -2836,70 +2790,89 @@ class Api:
         ctx.step(f"Built {len(built)} of {total}", total, total)
         return {"built": built, "failures": failures}
 
-    def _do_flash_all(self, ctx: Any, boards: list[dict]) -> dict[str, Any]:
-        """Write every selected board, with Klipper stopped once for the batch.
+    def _bench(self, settings: Settings) -> flashers.Bench:
+        """The host, as a flasher needs to see it.
 
-        Once per batch rather than once per board: ten stop/start cycles would take
-        far longer and give ten chances for the restart to be the thing that fails.
+        A controller *factory* rather than a controller: the units are not known
+        until the batch is - a display family names its own port watcher, and a
+        batch spanning two families needs two. Sharing the factory keeps the
+        backend choice in one place, which is what stops a dry run from stopping
+        a real service.
+        """
+        from ..service import ServiceController, make_controller
 
-        Cancellation is honoured *between* boards only. Interrupting a flashtool
-        write leaves half an image on a board, so the check is at the top of each
+        def controller(name: Optional[str] = None) -> ServiceController:
+            return make_controller(settings, call=self._call_for_service, name=name)
+
+        return flashers.Bench(
+            paths=self.paths, settings=settings, controller=controller
+        )
+
+    def _do_flash_all(
+        self, ctx: Any, targets: list[flashers.FlashTarget]
+    ) -> dict[str, Any]:
+        """Write every selected device, with Klipper stopped once for the batch.
+
+        Once per batch rather than once per device: ten stop/start cycles would
+        take far longer and give ten chances for the restart to be the thing
+        that fails.
+
+        **Grouped by requirement, not by kind.** A board and a screen both need
+        Klipper down - for different reasons, neither of which this loop knows -
+        so one stop covers both and neither path had to learn about the other.
+        A write that needs no stop runs outside it rather than inheriting an
+        outage it does not need.
+
+        Cancellation is honoured *between* devices only. Interrupting a write
+        leaves half an image on a board, so the check is at the top of each
         iteration and never inside one.
         """
-        from ..devices import KLIPPER_FW_NAME, wait_for_device
-        from ..errors import BootloaderTimeoutError
-        from ..flash import flash_katapult
-        from ..service import klipper_stopped, make_controller
+        from ..service import klipper_stopped
 
         settings = self.settings()
-        svc = make_controller(settings, call=self._call_for_service)
-        flashed: list[dict[str, str]] = []
-        failures: list[dict[str, str]] = []
-        total = len(boards)
+        bench = self._bench(settings)
+        stopped, free = flashers.group_by_stop(targets)
 
-        with klipper_stopped(self.paths, svc, f"flash {total} board(s)", reporter=ctx.reporter):
-            for index, board in enumerate(boards):
-                # Between boards, never inside a write.
-                ctx.check_cancelled()
-                ctx.step(f"Flashing {board['serial']} ({board['type']})", index, total)
-                try:
-                    flash_katapult(
-                        self.paths,
-                        settings,
-                        board["type"],
-                        board["chipset"],
-                        board["serial"],
-                        fw=board["fw"],
-                        reporter=ctx.reporter,
-                    )
-                    flashed.append({"type": board["type"], "serial": board["serial"]})
-                    # Same contract as the single flash: the board reboots into
-                    # the new firmware and re-enumerates over USB, and starting
-                    # Klipper before its device node exists brings it up in an
-                    # error state. Per board rather than once at the end - the
-                    # last board of a batch would otherwise have nothing at all
-                    # between its write and the service restart.
-                    if not settings.dry_run:
+        flashed: list[dict[str, Any]] = []
+        failures: list[dict[str, Any]] = []
+        total = len(targets)
+        done = 0
+
+        def write_group(group: list[flashers.FlashTarget]) -> None:
+            nonlocal done
+            for flasher, mine in flashers.by_flasher(group):
+                # Once per flasher, inside whatever stop it asked for. This is
+                # where a port watcher gets paused and the screens are asked
+                # which they are - the only moment identity can be resolved
+                # rather than remembered.
+                with flasher.prepared(bench, mine, ctx) as session:
+                    for target in mine:
+                        # Between devices, never inside a write.
+                        ctx.check_cancelled()
+                        ctx.step(f"Flashing {target.id} ({target.type})", done, total)
+                        done += 1
                         try:
-                            wait_for_device(
-                                self.paths,
-                                board["chipset"],
-                                board["serial"],
-                                KLIPPER_FW_NAME,
-                                timeout=REENUMERATE_TIMEOUT,
-                                settle=1.0,
-                            )
-                        except BootloaderTimeoutError as exc:
-                            # Not fatal, and deliberately not counted as a
-                            # failure: the write succeeded, and the readiness
-                            # check after the batch is the real verdict.
-                            ctx.reporter("warn", str(exc))
-                except OperationCancelled:
-                    raise
-                except UpdaterError as exc:
-                    ctx.reporter("warn", f"{board['serial']}: {exc}")
-                    failures.append({"serial": board["serial"], "error": str(exc)})
-            ctx.step(f"Flashed {len(flashed)} of {total}", total, total)
+                            extra = flasher.write(bench, session, target, ctx)
+                            flashed.append({**target.to_json(), **extra})
+                            # After the write and after it is recorded: a device
+                            # that came back slowly is still flashed.
+                            flasher.settled(bench, target, ctx)
+                        except OperationCancelled:
+                            raise
+                        except UpdaterError as exc:
+                            ctx.reporter("warn", f"{target.id}: {exc}")
+                            failures.append({**target.to_json(), "error": str(exc)})
+
+        write_group(free)
+        if stopped:
+            with klipper_stopped(
+                self.paths,
+                bench.controller(None),
+                f"flash {len(stopped)} device(s)",
+                reporter=ctx.reporter,
+            ):
+                write_group(stopped)
+        ctx.step(f"Flashed {len(flashed)} of {total}", total, total)
 
         # klipper_stopped has started the service again by now; confirm it really
         # came back, which is the release gate for every flashing path.
@@ -2972,8 +2945,25 @@ class Api:
             "skipped": [s.to_json() for s in selection.skipped],
         }
 
+    def _require_flashable_type(self, reg: Registry, only: str) -> str:
+        """A name that must be something this host can flash, board or screen.
+
+        Fails fast on a typo, before a job exists. Both registries are consulted
+        because "flash this type" means the same thing whichever kind it names,
+        and refusing a display here would be the kind filter creeping back in
+        through the front door.
+        """
+        if only in reg.names() or only in self.display_types():
+            return only
+        reg.get(only)  # raises with the registry's own unknown_type payload
+        return only
+
     def flash_all(self, args: dict) -> dict[str, Any]:
-        """Flash every board that needs it, or every board of one type.
+        """Flash everything that needs it, or everything of one type.
+
+        Boards and screens both. `flash_all` walked the `[mcu ...]` registry
+        because that was the only selection it had, so "Flash All" meant "flash
+        all the boards" and every display was left behind without a word.
 
         `name` narrows it to a single type - that is `flash_type`, which is the same
         operation with a filter rather than a second implementation of it.
@@ -2995,17 +2985,20 @@ class Api:
         only = args.get("name")
         reg = self.registry()
         if only is not None:
-            reg.get(str(only))  # fail fast on a typo, before a job exists
-            only = str(only)
+            only = self._require_flashable_type(reg, str(only))
 
         boards = self._boards_to_flash(reg, scope, only)
-        if not boards:
+        # Read now, while Klipper can still answer - the same constraint
+        # `display_flash` has always had, and the reason this is selection
+        # rather than something the batch could work out for itself.
+        screens = self._screens_to_flash(scope, only)
+        if not boards and not screens:
             raise RpcError(
-                "nothing to flash: every online board already matches its built "
+                "nothing to flash: every online device already matches its built "
                 "firmware. Use scope 'all' to flash regardless.",
                 data={
                     "code": "nothing_to_do",
-                    "message": "no boards need flashing",
+                    "message": "no devices need flashing",
                     "data": {"scope": scope, "name": only},
                 },
             )
@@ -3021,15 +3014,26 @@ class Api:
             reporter=self._log_reporter,
         )
 
+        targets = [_board_target(b) for b in boards] + screens
+
         def run(ctx) -> dict[str, Any]:
-            return self._do_flash_all(ctx, boards)
+            return self._do_flash_all(ctx, targets)
 
         job = runner.submit(
             "flash_all",
-            {"scope": scope, "name": only, "count": len(boards)},
+            {"scope": scope, "name": only, "count": len(targets)},
             run,
         )
-        return {"job_id": job.id, "job": job.to_dict(), "boards": boards}
+        return {
+            "job_id": job.id,
+            "job": job.to_dict(),
+            "boards": boards,
+            # Beside `boards` rather than merged into it: the two selections
+            # answer with different facts - a board has a chipset and a serial,
+            # a screen has a port and a section - and flattening them would
+            # invent nulls for half of each.
+            "displays": [_screen_json(t) for t in screens],
+        }
 
     def update_all(self, args: dict) -> dict[str, Any]:
         """Build what is stale, then flash what is behind - one Klipper stop.
@@ -3066,8 +3070,7 @@ class Api:
         only = args.get("name")
         install = self._install()
         if only is not None:
-            install.registry.get(str(only))  # fail fast on a typo, before a job exists
-            only = str(only)
+            only = self._require_flashable_type(install.registry, str(only))
         # Every family each type uses, not klipper for all of them. A fleet
         # update that rebuilds klipper and leaves the probe on last month's
         # cartographer is the failure this exists to prevent, and it was silent.
@@ -3088,12 +3091,16 @@ class Api:
                 if targets
                 else {"built": [], "failures": []}
             )
-            # Selected *after* building, because a build is what makes boards stale:
-            # choosing the boards up front would use provenance that the build has
-            # just invalidated.
+            # Selected *after* building, because a build is what makes a device
+            # stale: choosing up front would use provenance the build has just
+            # invalidated. Screens included - a fleet update that rebuilt a
+            # screen's firmware and then declined to write it is half a job.
             boards = self._boards_to_flash(self.registry(), scope, only)
-            if not boards:
-                ctx.reporter("info", "No board needs flashing.")
+            devices = [_board_target(b) for b in boards] + self._screens_to_flash(
+                scope, only
+            )
+            if not devices:
+                ctx.reporter("info", "No device needs flashing.")
                 return {"build": build_result, "flash": {"flashed": [], "failures": []}}
 
             # Gate again. The check before submission was minutes ago - a whole
@@ -3105,7 +3112,7 @@ class Api:
                 force=bool(args.get("force")),
                 reporter=ctx.reporter,
             )
-            return {"build": build_result, "flash": self._do_flash_all(ctx, boards)}
+            return {"build": build_result, "flash": self._do_flash_all(ctx, devices)}
 
         names = sorted({t.name for t in targets})
         job = runner.submit("update_all", {"scope": scope, "name": only, "types": names}, run)
@@ -3500,7 +3507,17 @@ class Api:
         `derive` is still separable, because a type with no bootloader
         (`katapult_installed: false`) has nothing to derive and asking for it
         would be an error rather than a no-op.
+
+        **A job, not a synchronous answer.** Seeding parses a Kconfig tree up to
+        three times - the seed, a bare probe of the bootloader tree, then the
+        carried answers - and one parse is a few hundred milliseconds on a Pi.
+        Moonraker awaits our reply with no timeout, so a method that might sit
+        past a second holds a browser's HTTP request open; the rule at the top
+        of this file exists for exactly that. Every argument is still validated
+        *before* the job exists, so a typo is refused immediately rather than
+        arriving as a job that dies a second later.
         """
+        runner = self._require_runner()
         name = self._require_str(args, "name")
         profile = self._require_str(args, "profile")
         force = bool(args.get("force"))
@@ -3516,30 +3533,56 @@ class Api:
 
         derive = args.get("derive")
         derive = mcu.katapult_installed if derive is None else bool(derive)
+        # Named before the job starts, so an unknown profile is a refusal rather
+        # than a failed job - and so the confirmation can say what it will write.
+        seed = profiles.find(self.paths, fw, profile, families)
+        # Likewise "that config is yours, pass force": a refusal a caller can
+        # act on, not a failure it has to read out of a dead job. Two file
+        # hashes and no Kconfig parse, so it is fine to ask here and again
+        # inside the write, where it is the authority.
+        for family in [fw] + ([firmware.BOOTLOADER] if derive else []):
+            profiles.refuse_if_customised(self.paths, name, family, force=force)
 
-        applied = profiles.apply_seed(
-            self.paths, name, fw, profile, families=families, force=force
+        def run(ctx) -> dict[str, Any]:
+            steps = 2 if derive else 1
+            ctx.step(f"Seeding {name} ({fw}) from {seed.name}", 0, steps)
+            applied = profiles.apply_seed(
+                self.paths, name, fw, seed.name, families=families, force=force
+            )
+            for line in applied.answers:
+                ctx.reporter("stdout", line)
+            out: dict[str, Any] = {"applied": applied.to_json(), "derived": None}
+
+            if derive:
+                # Not wrapped in a try: a bootloader that cannot be derived is a
+                # board that should not be flashed, and reporting the application
+                # seeding as a success with a warning attached is how that gets
+                # missed. The application's config stays - it is valid on its own.
+                ctx.step(f"Deriving {firmware.BOOTLOADER} from {fw}", 1, steps)
+                derived = profiles.derive_bootloader(
+                    self.paths, name, fw, families=families, force=force
+                )
+                for line in derived.dropped:
+                    ctx.reporter(
+                        "info", f"{firmware.BOOTLOADER} does not define {line} - dropped"
+                    )
+                out["derived"] = derived.to_json()
+
+            # The intent goes in the hand-edited config; the verdict stays in the
+            # data tree. Only for the application - katapult's is always derived,
+            # so recording a second key would be restating that.
+            if fw == mcu.firmware:
+                with Registry.mutate(self.paths, f"profile for {name}") as writable:
+                    writable.get(name).profile = applied.profile
+
+            ctx.step(f"Seeded {name}", steps, steps)
+            self._changed()
+            return out
+
+        job = runner.submit(
+            "profile_apply", {"name": name, "fw": fw, "profile": seed.name}, run
         )
-        out: dict[str, Any] = {"applied": applied.to_json(), "derived": None}
-
-        if derive:
-            # Not wrapped in a try: a bootloader that cannot be derived is a
-            # board that should not be flashed, and reporting the application
-            # seeding as a success with a warning attached is how that gets
-            # missed. The application's config stays - it is valid on its own.
-            out["derived"] = profiles.derive_bootloader(
-                self.paths, name, fw, families=families, force=force
-            ).to_json()
-
-        # The intent goes in the hand-edited config; the verdict stays in the
-        # data tree. Only for the application - katapult's is always derived,
-        # so recording a second key would be restating that.
-        if fw == mcu.firmware:
-            with Registry.mutate(self.paths, f"profile for {name}") as writable:
-                writable.get(name).profile = applied.profile
-
-        self._changed()
-        return out
+        return {"job_id": job.id, "job": job.to_dict(), "type": name, "fw": fw}
 
     def profile_forget(self, args: dict) -> dict[str, Any]:
         """Detach a type from its profile, leaving every answer exactly as is.

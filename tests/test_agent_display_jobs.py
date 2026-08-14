@@ -14,6 +14,8 @@ two of them on the printer, with no way for the user to know which it took.
 
 from __future__ import annotations
 
+import pathlib
+
 import pytest
 
 from mcu_updater import displays as displays_mod
@@ -571,3 +573,76 @@ def test_a_dry_run_never_opens_a_serial_port(api, paths, no_pio, screens, monkey
     res = api.dispatch("fw.display.flash", {"name": ENV})
     assert api.runner.wait(timeout=30)
     assert api.runner.get(res["job_id"]).state == "succeeded"
+
+
+# --------------------------------------------------------------------------
+# a fleet flash reaches the screens
+#
+# The complaint this whole restructure came from: "Flash All does not include
+# the pio boards only the kmake". Not an oversight in the loop - `flash_all`
+# walked the `[mcu ...]` registry, so a screen could not be selected even in
+# principle.
+# --------------------------------------------------------------------------
+
+
+def _built(api, paths, fake_root) -> None:
+    """An image on disk for the display env, so there is something to write."""
+    from mcu_updater import displays as dm
+
+    display = api.display_types()[ENV]
+    path = pathlib.Path(dm.firmware_bin(display))
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_bytes(b"\0" * 512)
+
+
+def test_flash_all_selects_screens_beside_boards(api, paths, fake_root, screens):
+    """Both kinds, one selection, one confirmation.
+
+    `scope: all` because a screen's staleness is a version comparison against a
+    source tree and these fixtures have neither - what is being asserted is that
+    a screen can be *chosen* at all, which it previously could not be.
+    """
+    _built(api, paths, fake_root)
+
+    res = api.dispatch("fw.flash_all", {"scope": "all"})
+    api.runner.cancel(res["job_id"])
+    api.runner.wait(timeout=30)
+
+    assert [d["flasher"] for d in res["displays"]] == ["esptool", "esptool"]
+    assert {d["id"] for d in res["displays"]} == {
+        screens_port(screens, "t0"),
+        screens_port(screens, "t1"),
+    }
+    assert all(d["reason"] == "forced" for d in res["displays"])
+
+
+def test_a_display_with_nothing_built_is_not_selected(api, paths, screens):
+    """Same rule as a board with no artifact: there is nothing to write, so
+    including it would guarantee a failure partway through a batch that has
+    already stopped Klipper."""
+    with pytest.raises(RpcError) as exc:
+        api.dispatch("fw.flash_all", {"scope": "all"})
+    assert exc.value.data["code"] == "nothing_to_do"
+
+
+def test_a_fleet_flash_writes_boards_and_screens_under_one_stop(
+    api, paths, fake_root, no_pio, screens, monkeypatch
+):
+    """The point of grouping by requirement rather than by kind.
+
+    Both need Klipper down - a board because *getting* to Katapult goes over the
+    port Klipper holds, a screen because the klippy module holds it for the
+    write - so one stop covers both and neither loop knows the other exists.
+    """
+    _built(api, paths, fake_root)
+    svc = NullService()
+    monkeypatch.setattr("mcu_updater.service.make_controller", lambda *a, **k: svc)
+
+    res = api.dispatch("fw.flash_all", {"scope": "all"})
+    assert api.runner.wait(timeout=60)
+    job = api.runner.get(res["job_id"])
+
+    assert job.state == "succeeded", job.error
+    assert [f["flasher"] for f in job.result["flashed"]] == ["esptool", "esptool"]
+    # Stopped once for the batch, not once per device.
+    assert svc.actions == ["stop", "start"]

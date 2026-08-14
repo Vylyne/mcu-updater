@@ -52,13 +52,13 @@
     },
     {
       "name": "a protocol mismatch outranks the version comparison",
-      "find": "            if screen.get(\"protocol_match\") is False:\n                device = DeviceStatus(PROTOCOL_MISMATCH)",
-      "replace": "            if False:\n                device = DeviceStatus(PROTOCOL_MISMATCH)"
+      "find": "        if screen.get(\"protocol_match\") is False:\n            return DeviceStatus(PROTOCOL_MISMATCH)",
+      "replace": "        if False:\n            return DeviceStatus(PROTOCOL_MISMATCH)"
     },
     {
       "name": "an unreachable screen is never reported current",
-      "find": "            elif not screen[\"present\"]:\n                device = DeviceStatus(OFFLINE)",
-      "replace": "            elif False:\n                device = DeviceStatus(OFFLINE)"
+      "find": "        if not screen[\"present\"]:\n            return DeviceStatus(OFFLINE)",
+      "replace": "        if False:\n            return DeviceStatus(OFFLINE)"
     },
     {
       "name": "the exact artifact reason survives the legacy collapse",

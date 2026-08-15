@@ -3006,74 +3006,20 @@ class Api:
     def _do_flash_all(
         self, ctx: Any, targets: list[flashers.FlashTarget]
     ) -> dict[str, Any]:
-        """Write every selected device, with Klipper stopped once for the batch.
+        """Write every selected device. The loop itself is `flashers.write_all`.
 
-        Once per batch rather than once per device: ten stop/start cycles would
-        take far longer and give ten chances for the restart to be the thing
-        that fails.
-
-        **Grouped by requirement, not by kind.** A board and a screen both need
-        Klipper down - for different reasons, neither of which this loop knows -
-        so one stop covers both and neither path had to learn about the other.
-        A write that needs no stop runs outside it rather than inheriting an
-        outage it does not need.
-
-        Cancellation is honoured *between* devices only. Interrupting a write
-        leaves half an image on a board, so the check is at the top of each
-        iteration and never inside one.
+        What is left here is the half that is the agent's: the bench this host
+        presents, and the readiness check that asks Moonraker whether klippy came
+        back - and issues a FIRMWARE_RESTART when it came back in an error state.
+        The CLI has nobody to ask, which is exactly why that is a hook rather
+        than a step in the loop.
         """
-        from ..service import klipper_stopped
-
-        settings = self.settings()
-        bench = self._bench(settings)
-        stopped, free = flashers.group_by_stop(targets)
-
-        flashed: list[dict[str, Any]] = []
-        failures: list[dict[str, Any]] = []
-        total = len(targets)
-        done = 0
-
-        def write_group(group: list[flashers.FlashTarget]) -> None:
-            nonlocal done
-            for flasher, mine in flashers.by_flasher(group):
-                # Once per flasher, inside whatever stop it asked for. This is
-                # where a port watcher gets paused and the screens are asked
-                # which they are - the only moment identity can be resolved
-                # rather than remembered.
-                with flasher.prepared(bench, mine, ctx) as session:
-                    for target in mine:
-                        # Between devices, never inside a write.
-                        ctx.check_cancelled()
-                        ctx.step(f"Flashing {target.id} ({target.type})", done, total)
-                        done += 1
-                        try:
-                            extra = flasher.write(bench, session, target, ctx)
-                            flashed.append({**target.to_json(), **extra})
-                            # After the write and after it is recorded: a device
-                            # that came back slowly is still flashed.
-                            flasher.settled(bench, target, ctx)
-                        except OperationCancelled:
-                            raise
-                        except UpdaterError as exc:
-                            ctx.reporter("warn", f"{target.id}: {exc}")
-                            failures.append({**target.to_json(), "error": str(exc)})
-
-        write_group(free)
-        if stopped:
-            with klipper_stopped(
-                self.paths,
-                bench.controller(None),
-                f"flash {len(stopped)} device(s)",
-                reporter=ctx.reporter,
-            ):
-                write_group(stopped)
-        ctx.step(f"Flashed {len(flashed)} of {total}", total, total)
-
-        # klipper_stopped has started the service again by now; confirm it really
-        # came back, which is the release gate for every flashing path.
-        ctx.reporter("info", "Waiting for Klipper to be ready...")
-        self._await_klippy_ready(ctx.reporter)
-        return {"flashed": flashed, "failures": failures}
+        return flashers.write_all(
+            self._bench(self.settings()),
+            targets,
+            ctx,
+            on_ready=self._await_klippy_ready,
+        )
 
     def build_all(self, args: dict) -> dict[str, Any]:
         """Build everything that needs it. Touches no board and stops nothing.

@@ -33,8 +33,9 @@
     },
     {
       "name": "a batch settles each device after writing it",
-      "find": "                            flasher.settled(bench, target, ctx)",
-      "replace": "                            pass"
+      "find": "                        flasher.settled(bench, target, ctx)",
+      "replace": "                        pass  # settled",
+      "file": "src/mcu_updater/flashers/batch.py"
     },
     {
       "name": "update_all re-checks the idle gate after building",

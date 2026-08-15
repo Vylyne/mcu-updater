@@ -44,6 +44,7 @@ from ..errors import (
 )
 from ..paths import HUMAN_ACTION_TIMEOUT, REENUMERATE_TIMEOUT, Paths
 from ..settings import Settings
+from .batch import PlainContext
 
 DFU_VID_PID = "0483:df11"
 
@@ -474,29 +475,10 @@ def flash_initial_bootloader(
         # the Klipper bus, which is what `needs_klipper_stopped: False` says.
         controller=_no_services,
     )
-    with flasher.prepared(bench, [target], _Ctx(reporter)) as session:
-        flasher.write(bench, session, target, _Ctx(reporter))
-        flasher.settled(bench, target, _Ctx(reporter))
+    with flasher.prepared(bench, [target], PlainContext(reporter)) as session:
+        flasher.write(bench, session, target, PlainContext(reporter))
+        flasher.settled(bench, target, PlainContext(reporter))
 
-
-class _Ctx:
-    """The sliver of a job context a flasher actually uses, for the CLI path.
-
-    `flash_initial_bootloader` is called from the CLI as well as the agent, and
-    the CLI has no job. Rather than making the protocol take a reporter *and* an
-    optional context - two ways to say the same thing - this supplies the one
-    that has no job behind it.
-    """
-
-    def __init__(self, reporter: Reporter) -> None:
-        self.reporter = reporter
-        self.cancel = None
-
-    def check_cancelled(self) -> None:
-        """Nothing to cancel: this is a single synchronous write."""
-
-    def step(self, *args: object, **kwargs: object) -> None:
-        """No progress to report to - the CLI is watching the stream."""
 
 
 def _no_services(name: Optional[str] = None) -> Any:

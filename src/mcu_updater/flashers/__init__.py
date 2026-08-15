@@ -16,6 +16,7 @@ of it.
 
 from __future__ import annotations
 
+from .batch import PlainContext, write_all
 from .dfu_util import DfuUtil
 from .esptool import Esptool
 from .flashtool import Flashtool
@@ -24,28 +25,11 @@ from .registry import (
     FLASHERS,
     BootstrapRoute,
     bootstrap_for,
+    by_flasher,
     by_name,
     group_by_stop,
 )
 from .spec import Bench, Flasher, FlashTarget
-
-
-def by_flasher(targets: list[FlashTarget]) -> list[tuple[Flasher, list[FlashTarget]]]:
-    """Group targets by the flasher that owns them, in first-seen order.
-
-    Order preserved rather than sorted, because a batch's order came from its
-    selection - the registry's order for boards, the config file's for screens -
-    and reordering it inside a refactor is a behaviour change nobody asked for.
-    """
-    order: list[str] = []
-    groups: dict[str, list[FlashTarget]] = {}
-    for target in targets:
-        if target.flasher not in groups:
-            order.append(target.flasher)
-            groups[target.flasher] = []
-        groups[target.flasher].append(target)
-    return [(by_name(name), groups[name]) for name in order]
-
 
 __all__ = [
     "BOOTSTRAP",
@@ -57,8 +41,10 @@ __all__ = [
     "FlashTarget",
     "Flasher",
     "Flashtool",
+    "PlainContext",
     "bootstrap_for",
     "by_flasher",
     "by_name",
     "group_by_stop",
+    "write_all",
 ]

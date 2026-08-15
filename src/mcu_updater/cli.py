@@ -19,7 +19,7 @@ import sys
 from collections.abc import Sequence
 from typing import Optional
 
-from . import __version__, firmware, profiles
+from . import __version__, firmware, flashers, profiles, providers, sections
 from .build import build, menuconfig_tty, staleness
 from .config import Registry
 from .devices import (
@@ -34,11 +34,11 @@ from .errors import (
     UnknownSerialError,
     UpdaterError,
 )
-from .flashers.flash import adoptable_devices, flash_initial_bootloader, flash_katapult
+from .flashers.flash import adoptable_devices, flash_initial_bootloader
 from .layout import migrate_type_dirs
 from .lock import exclusive
 from .paths import FW_TARGETS, Paths
-from .service import Journal, klipper_stopped, make_controller, reconcile
+from .service import Journal, make_controller, reconcile
 from .settings import Settings, load_settings
 
 # --------------------------------------------------------------------------
@@ -338,6 +338,22 @@ def _build_interactive(
 
 def build_fw_cmd(args: argparse.Namespace) -> None:
     c = ctx()
+    install = providers.Install.load(c.paths, c.settings)
+
+    # A PlatformIO type has no family axis - its env already names the board, the
+    # partition table and the flags - so `-f` is not merely optional there, it is
+    # meaningless, and there is no menuconfig to fall back to.
+    if args.type in install.displays:
+        target = providers.BuildTarget(sections.PLATFORMIO, args.type)
+        provider = providers.by_name(sections.PLATFORMIO)
+        blocked = provider.blocked(install, target)
+        if blocked:
+            print(f"ERROR: {blocked}", file=sys.stderr)
+            sys.exit(1)
+        with exclusive(c.paths, f"build {args.type}"):
+            provider.build(install, target, reporter=stdout_reporter)
+        return
+
     with exclusive(c.paths, f"build {args.fw}/{args.type}"):
         _build_interactive(
             c,
@@ -353,7 +369,109 @@ def build_fw_cmd(args: argparse.Namespace) -> None:
 
 # --------------------------------------------------------------------------
 # flash commands
+#
+# Selection lives here, in the caller, because that is what both seams say: a
+# provider answers questions about files it produces, a flasher writes one
+# device, and which devices exist is the Inventory axis that stays deferred.
+# What the CLI hands `flashers.write_all` is a list it decided on itself.
 # --------------------------------------------------------------------------
+
+
+def _bench(c: Context) -> flashers.Bench:
+    """This host, as a flasher needs to see it.
+
+    A controller *factory* rather than a controller: a PlatformIO family names
+    its own port watcher, and a batch spanning two needs two. Sharing the
+    factory is what keeps a dry run from stopping a real service.
+    """
+    return flashers.Bench(
+        paths=c.paths,
+        settings=c.settings,
+        controller=lambda name=None: make_controller(c.settings, name=name),
+    )
+
+
+def _board_targets(c: Context, mcu_type: str, serials: list[str]) -> list:
+    """Tracked boards of one kconfig type, as things a batch can write."""
+    mcu = c.registry().get(mcu_type)
+    return [
+        flashers.flashtool.target_for(
+            {
+                "type": mcu_type,
+                "serial": serial,
+                "chipset": mcu.chipset,
+                "fw": mcu.firmware,
+            }
+        )
+        for serial in serials
+    ]
+
+
+def _pio_targets(c: Context, name: str, only_id: Optional[str] = None) -> list:
+    """Devices of one PlatformIO type, from the watcher's map.
+
+    **Not from Klipper.** The agent reads its list from the klippy module's own
+    printer objects, and the CLI has no Moonraker to ask - so it uses the source
+    written for exactly this moment: the watcher's `id -> port` map, which is
+    the one thing that still answers while Klipper is down.
+
+    That map is only true while the watcher is *running* - it carries no
+    timestamps, so an entry means "identified during the current run and its
+    port has not vanished since". An empty map is therefore reported as "cannot
+    tell", not as "no devices": flashing nothing and calling it success is the
+    failure this whole area exists to prevent.
+    """
+    from .providers import pio
+
+    display = pio.load(c.paths, default_source=c.settings.pio_source)[name]
+    found = pio.read_device_map(c.paths, display)
+    if not found:
+        where = pio.device_map_path(c.paths, display) or "(no device_map configured)"
+        watcher = f"the '{display.service}' watcher" if display.service else "a watcher"
+        raise UpdaterError(
+            f"no device map for '{name}' at {where}. The CLI reads it rather than "
+            f"asking Klipper, so {watcher} has to be running for this to know which "
+            f"devices exist and where."
+        )
+    return [
+        flashers.esptool.target_for(
+            display,
+            {
+                "name": device.device_id,
+                "section": f"{display.klipper_section} {device.device_id}",
+                "configured_path": device.port,
+                "device_id": device.device_id,
+                "present": device.present,
+            },
+        )
+        for device in sorted(found.values(), key=lambda d: d.port)
+        if device.present and (only_id is None or only_id in (device.port, device.device_id))
+    ]
+
+
+def _run_batch(c: Context, targets: list, label: str) -> int:
+    """Write a batch and print what happened. Returns an exit code.
+
+    The same `flashers.write_all` the agent submits as a job, with a context that
+    has no job behind it. `on_ready` is deliberately absent: the agent asks
+    Moonraker whether klippy really came back and will issue a FIRMWARE_RESTART,
+    and the CLI has nobody to ask - `klipper_stopped` restarting the unit is the
+    whole of its answer.
+    """
+    result = flashers.write_all(
+        _bench(c), targets, flashers.PlainContext(stdout_reporter)
+    )
+    for failure in result["failures"]:
+        print(f"ERROR: {failure['id']}: {failure['error']}", file=sys.stderr)
+    if result["failures"]:
+        print(
+            f"\n{len(result['flashed'])} of {len(targets)} written; "
+            f"{len(result['failures'])} failed.",
+            file=sys.stderr,
+        )
+        return 1
+    print(f"\n{label}: {len(result['flashed'])} device(s) written.")
+    return 0
 
 
 def flash_fw_cmd(args: argparse.Namespace) -> None:
@@ -371,36 +489,29 @@ def flash_fw_cmd(args: argparse.Namespace) -> None:
         print("Aborted.")
         return
 
-    svc = make_controller(c.settings)
+    # A PlatformIO type: its devices are ports, not tracked serials, and the
+    # batch knows how to write them. Nothing below this applies - there is no
+    # serial to resolve and no registry entry to add one to.
+    if args.type and args.type not in reg.names():
+        with exclusive(c.paths, f"flash type {args.type}"):
+            targets = _pio_targets(c, args.type, only_id=args.serial)
+            if not targets:
+                print(f"No device is reachable for '{args.type}'.", file=sys.stderr)
+                sys.exit(1)
+            sys.exit(_run_batch(c, targets, f"flash {args.type}"))
 
-    # Whole type: flash every tracked serial under it.
+    # Whole type: flash every tracked board under it.
     if args.type and not args.serial:
         mcu = reg.get(args.type)
         if not mcu.serials:
             print(f"No serials tracked under '{args.type}'.", file=sys.stderr)
             sys.exit(1)
 
-        failures = []
         with exclusive(c.paths, f"flash type {args.type}"):
-            with klipper_stopped(c.paths, svc, f"flash {args.type}", reporter=stdout_reporter):
-                for serial in mcu.serials:
-                    try:
-                        flash_katapult(
-                            c.paths,
-                            c.settings,
-                            args.type,
-                            mcu.chipset,
-                            serial,
-                            fw=mcu.firmware,
-                            reporter=stdout_reporter,
-                        )
-                    except UpdaterError as exc:
-                        print(f"ERROR: {exc}", file=sys.stderr)
-                        failures.append(serial)
-        if failures:
-            print(f"Failures: {', '.join(failures)}", file=sys.stderr)
-            sys.exit(1)
-        return
+            code = _run_batch(
+                c, _board_targets(c, args.type, mcu.serials), f"flash {args.type}"
+            )
+        sys.exit(code)
 
     # Single device.
     if args.type:
@@ -422,93 +533,96 @@ def flash_fw_cmd(args: argparse.Namespace) -> None:
         mcu_type = reg.resolve_serial(args.serial)
         print(f"Resolved serial {args.serial} -> type '{mcu_type}'")
 
-    target = reg.get(mcu_type)
-    chipset = target.chipset
     with exclusive(c.paths, f"flash {mcu_type}/{args.serial}"):
-        with klipper_stopped(c.paths, svc, f"flash {args.serial}", reporter=stdout_reporter):
-            flash_katapult(
-                c.paths,
-                c.settings,
-                mcu_type,
-                chipset,
-                args.serial,
-                fw=target.firmware,
-                reporter=stdout_reporter,
-            )
+        code = _run_batch(
+            c, _board_targets(c, mcu_type, [args.serial]), f"flash {args.serial}"
+        )
+    sys.exit(code)
 
 
 def update_all(args: argparse.Namespace) -> None:
+    """Rebuild what is stale, then write it - across every build system.
+
+    This walked the `[mcu ...]` registry because that was the only list it had,
+    so "update everything" meant "update every board" and left every PlatformIO
+    device on whatever it happened to be running. Nothing said so. That is the
+    same bug `build_all` had before the Provider seam, one layer down.
+
+    Both halves go through the seams now, so a provider or flasher added later
+    is picked up here without this function being edited.
+    """
     c = ctx()
-    reg = c.registry()
-    if not reg:
-        print("No MCU types configured.", file=sys.stderr)
+    install = providers.Install.load(c.paths, c.settings)
+    if not install.registry and not install.displays:
+        print("No types configured.", file=sys.stderr)
         sys.exit(1)
+
+    # Everything not provably current, which is the only safe collapse: an image
+    # we cannot vouch for is exactly the one worth rebuilding.
+    selection = providers.select(install, stale_only=True)
+    kinds = sorted({t.provider for t in selection.build})
+    summary = ", ".join(providers.by_name(k).label for k in kinds) or "nothing"
 
     if not args.yes and not _confirm(
         f"This stops the '{c.settings.service}' service (aborts any active print!), "
-        f"rebuilds + reflashes every tracked MCU, then restarts it. Continue?"
+        f"rebuilds what is stale ({summary}) and writes it to every tracked "
+        f"device, then restarts it. Continue?"
     ):
         print("Aborted.")
         return
 
-    svc = make_controller(c.settings)
     failures: list[tuple[str, Optional[str]]] = []
 
     with exclusive(c.paths, "update-all"):
-        # Klipper stays down across the builds too. That matches the original;
-        # narrowing the window to just the flashes is a later change, not a
-        # silent one.
-        with klipper_stopped(c.paths, svc, "update-all", reporter=stdout_reporter):
-            for name in reg.names():
-                mcu = reg.get(name)
-                print(f"\n=== {name} ===")
-                try:
-                    result = build(
-                        c.paths,
-                        reg,
-                        c.settings,
-                        name,
-                        # What this board *runs*, not klipper for everything.
-                        # The flash below writes `result.bin_path` at
-                        # `fw=mcu.firmware`, so a hardcoded klipper build here
-                        # meant a cartographer probe with a stray klipper
-                        # .config got klipper written to it under its own
-                        # firmware's name. Without that config it merely failed,
-                        # which is why this stayed invisible.
-                        mcu.firmware,
-                        reporter=stdout_reporter,
-                        jobs=getattr(args, "jobs", None),
-                    )
-                except UpdaterError as exc:
-                    print(f"ERROR: {exc}", file=sys.stderr)
-                    failures.append((name, None))
-                    continue
+        for skipped in selection.skipped:
+            # Named, never silent. A type dropped from a fleet build without a
+            # word is the bug the Provider seam was written for.
+            print(f"SKIP {skipped.target.name}: {skipped.reason}", file=sys.stderr)
 
-                for serial in mcu.serials:
-                    try:
-                        flash_katapult(
-                            c.paths,
-                            c.settings,
-                            name,
-                            mcu.chipset,
-                            serial,
-                            fw_bin=result.bin_path,
-                            fw=mcu.firmware,
-                            reporter=stdout_reporter,
-                        )
-                    except UpdaterError as exc:
-                        print(f"ERROR: {exc}", file=sys.stderr)
-                        failures.append((name, serial))
+        built: list[str] = []
+        for target in selection.build:
+            provider = providers.by_name(target.provider)
+            print(f"\n=== {provider.describe(target)} ===")
+            try:
+                provider.build(install, target, reporter=stdout_reporter)
+                built.append(target.name)
+            except UpdaterError as exc:
+                print(f"ERROR: {exc}", file=sys.stderr)
+                failures.append((target.name, None))
+
+        # Selected after building, because a build is what makes a device stale.
+        targets: list = []
+        for name in sorted(install.registry.names()):
+            targets += _board_targets(c, name, install.registry.get(name).serials)
+        for name in sorted(install.displays):
+            try:
+                targets += _pio_targets(c, name)
+            except UpdaterError as exc:
+                # Not fatal: the boards are still worth writing, and a host with
+                # no watcher running is a configuration gap rather than a fault.
+                print(f"SKIP {name}: {exc}", file=sys.stderr)
+                failures.append((name, "no devices found"))
+
+        if not targets:
+            print("\nNothing to write.")
+        else:
+            result = flashers.write_all(
+                _bench(c), targets, flashers.PlainContext(stdout_reporter)
+            )
+            for failure in result["failures"]:
+                print(f"ERROR: {failure['id']}: {failure['error']}", file=sys.stderr)
+                failures.append((failure["type"], failure["id"]))
+            print(f"\nWrote {len(result['flashed'])} of {len(targets)} device(s).")
 
     if failures:
         print("\nCompleted with failures:")
-        for failed_type, failed_serial in failures:
+        for failed_type, failed_id in failures:
             print(
                 f"  - {failed_type}"
-                + (f" / {failed_serial}" if failed_serial else " (build failed)")
+                + (f" / {failed_id}" if failed_id else " (build failed)")
             )
         sys.exit(1)
-    print("\nAll MCU types built and flashed successfully.")
+    print(f"\nBuilt {len(built)} type(s) and flashed everything tracked.")
 
 
 def add_mcu(args: argparse.Namespace) -> None:

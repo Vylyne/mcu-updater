@@ -29,7 +29,7 @@ import os
 import time
 from typing import Any, Optional
 
-from .paths import Paths
+from ..paths import Paths
 
 #: How long a pairing stays actionable. Long enough to cover "flash it now, plug
 #: it into the toolhead this evening", short enough that a board found in a

@@ -6,7 +6,7 @@
     "-m",
     "pytest",
     "tests/test_states.py",
-    "tests/test_displays.py",
+    "tests/test_pio.py",
     "tests/test_build.py",
     "-q"
   ],

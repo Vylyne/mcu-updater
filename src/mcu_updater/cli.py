@@ -34,7 +34,7 @@ from .errors import (
     UnknownSerialError,
     UpdaterError,
 )
-from .flash import adoptable_devices, flash_initial_bootloader, flash_katapult
+from .flashers.flash import adoptable_devices, flash_initial_bootloader, flash_katapult
 from .layout import migrate_type_dirs
 from .lock import exclusive
 from .paths import FW_TARGETS, Paths

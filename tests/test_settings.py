@@ -203,17 +203,39 @@ def test_negative_jobs_means_auto():
 # --------------------------------------------------------------------------
 
 
-def test_display_source_is_read_from_the_updater_section(paths):
+def test_pio_source_is_read_from_the_updater_section(paths):
+    with open(paths.settings_file, "w", encoding="utf-8") as fh:
+        fh.write("[updater]\npio_source: ~/knomi_serial\n")
+    assert load_settings(paths.settings_file).pio_source == "~/knomi_serial"
+
+
+def test_the_old_display_source_spelling_still_reads(paths):
+    """It is in hand-edited files on printers nobody is watching. Renaming the
+    field is our business; making somebody edit a working config is not."""
     with open(paths.settings_file, "w", encoding="utf-8") as fh:
         fh.write("[updater]\ndisplay_source: ~/knomi_serial\n")
-    assert load_settings(paths.settings_file).display_source == "~/knomi_serial"
+    assert load_settings(paths.settings_file).pio_source == "~/knomi_serial"
 
 
-def test_a_comment_after_display_source_is_not_part_of_the_path(paths):
+def test_a_comment_after_pio_source_is_not_part_of_the_path(paths):
     """The README writes it exactly this way."""
     with open(paths.settings_file, "w", encoding="utf-8") as fh:
-        fh.write("[updater]\ndisplay_source: ~/knomi_serial     # shared by every env\n")
-    assert load_settings(paths.settings_file).display_source == "~/knomi_serial"
+        fh.write("[updater]\npio_source: ~/knomi_serial     # shared by every env\n")
+    assert load_settings(paths.settings_file).pio_source == "~/knomi_serial"
+
+
+def test_saving_drops_the_old_spelling_rather_than_keeping_both(paths):
+    """Both keys in one file means the next load takes whichever `doc.options`
+    happens to yield last - a setting that works until it silently does not."""
+    with open(paths.settings_file, "w", encoding="utf-8") as fh:
+        fh.write("[updater]\ndisplay_source: ~/knomi_serial\n")
+
+    s = load_settings(paths.settings_file)
+    save_settings(paths.settings_file, s)
+    text = open(paths.settings_file, encoding="utf-8").read()
+
+    assert "display_source" not in text
+    assert load_settings(paths.settings_file).pio_source == "~/knomi_serial"
 
 
 def test_platformio_bin_is_read_from_the_updater_section(paths):
@@ -222,9 +244,9 @@ def test_platformio_bin_is_read_from_the_updater_section(paths):
     assert load_settings(paths.settings_file).platformio_bin == "/opt/pio/bin/pio"
 
 
-def test_display_settings_default_to_empty(paths):
+def test_pio_settings_default_to_empty(paths):
     s = load_settings(paths.settings_file)
-    assert s.display_source == ""
+    assert s.pio_source == ""
     assert s.platformio_bin == ""
 
 

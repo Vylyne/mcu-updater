@@ -5,7 +5,7 @@ The odd one out, and the reason `needs_klipper_stopped` is a property of the
 flashtool's protocol and no Klipper to ask for a reboot - the board is holding
 BOOT0 because somebody fitted a jumper and replugged it.
 
-:func:`mcu_updater.flash.flash_dfu_stm32` keeps its body, including the two
+:func:`mcu_updater.flashers.flash.flash_dfu_stm32` keeps its body, including the two
 things that are easy to get wrong and were: refusing to guess between several
 boards in DFU, and treating dfu-util's non-zero exit after ``:leave`` as the
 expected detach it is rather than a failure.
@@ -46,7 +46,7 @@ class DfuUtil:
     def write(
         self, bench: Bench, session: Any, target: FlashTarget, ctx: Any
     ) -> dict[str, Any]:
-        from ..flash import flash_dfu_stm32
+        from .flash import flash_dfu_stm32
 
         flash_dfu_stm32(
             bench.paths,

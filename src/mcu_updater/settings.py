@@ -65,9 +65,11 @@ class Settings:
     #: Per-job log ring buffer size, in lines.
     log_ring_size: int = 2000
 
-    #: Default PlatformIO source tree for every [display <name>] section, so one
+    #: Default PlatformIO source tree for every type that provider builds, so one
     #: repo shared by every env is written once. A section's own `source:` wins.
-    display_source: str = ""
+    #: Read from `display_source` too, which is what it was called when the
+    #: provider was spelled in the section name.
+    pio_source: str = ""
 
     #: PlatformIO launcher, if it is somewhere `pio` on PATH and the standard
     #: ~/.platformio/penv/bin/pio will not find it.
@@ -98,8 +100,15 @@ BOOL_FIELDS = {
 #: lists of the same thing is how one grows a field the other does not.
 _BOOL_FIELDS = BOOL_FIELDS
 _INT_FIELDS = {"make_jobs", "log_ring_size"}
-_STR_FIELDS = {"service", "service_backend", "display_source", "platformio_bin"}
+_STR_FIELDS = {"service", "service_backend", "pio_source", "platformio_bin"}
 _BACKENDS = ("moonraker", "systemd", "null")
+
+#: Old spellings, read as the field that replaced them. A key here is not
+#: deprecated - it is in hand-edited files on printers nobody is watching, and
+#: warning about a setting that works would be noise. `save_settings` drops the
+#: old key when it writes the new one, so a file is only ever rewritten by an
+#: edit the user asked for.
+_KEY_ALIASES = {"display_source": "pio_source"}
 
 
 def _read(path: str) -> CfgDocument:
@@ -137,6 +146,7 @@ def load_settings(path: str) -> Settings:
 
     for key in doc.options(SECTION):
         name = key.replace("-", "_")
+        name = _KEY_ALIASES.get(name, name)
         raw = doc.get(SECTION, key)
         if raw is None:
             continue
@@ -173,6 +183,12 @@ def save_settings(path: str, settings: Settings) -> None:
     this cannot clobber [mcu ...] sections written in the meantime.
     """
     doc = _read(path)
+    # Before writing anything: a file carrying `display_source` would otherwise
+    # come out with that *and* `pio_source`, and the next load would pick
+    # whichever `doc.options` yielded last. One key, one meaning.
+    for old, new in _KEY_ALIASES.items():
+        if doc.get(SECTION, old) is not None and new in {f.name for f in dataclasses.fields(settings)}:
+            doc.remove_option(SECTION, old)
     for field in dataclasses.fields(settings):
         value: Any = getattr(settings, field.name)
         if isinstance(value, bool):

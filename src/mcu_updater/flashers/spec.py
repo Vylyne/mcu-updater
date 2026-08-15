@@ -152,8 +152,8 @@ class Flasher(Protocol):
         Never cancellable. Interrupting a write leaves half an image on a
         board, so the batch checks between targets and never inside one.
 
-        Returns whatever is worth recording beside the uniform result - a
-        screen's MAC, a board's serial under the name it has always had.
+        Returns whatever is worth recording beside the uniform result - the chip
+        esptool reported, a board's serial under the name it has always had.
         """
         ...
 

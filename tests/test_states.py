@@ -21,8 +21,9 @@ import os
 
 import pytest
 
-from mcu_updater import build, displays, states
-from mcu_updater.displays import (
+from mcu_updater import build, states
+from mcu_updater.providers import pio
+from mcu_updater.providers.pio import (
     ART_CURRENT,
     ART_DIRTY,
     ART_FOREIGN,
@@ -32,7 +33,7 @@ from mcu_updater.displays import (
     FW_CURRENT,
     FW_DIRTY,
     FW_UNKNOWN,
-    DisplayType,
+    PioType,
     SourceState,
 )
 from mcu_updater.states import ArtifactStatus, DeviceStatus
@@ -212,12 +213,12 @@ def test_a_device_tone_is_just_its_verdict_coloured():
 
 def test_the_display_artifact_adapter_covers_every_reason():
     """A reason with no legacy word would KeyError in front of a user."""
-    covered = set(displays._LEGACY_ART_STATE)
+    covered = set(pio._LEGACY_ART_STATE)
     assert covered == set(states.ARTIFACT_REASONS) | {None}
 
 
 def test_every_legacy_art_word_is_still_reachable():
-    assert set(displays._LEGACY_ART_STATE.values()) == {
+    assert set(pio._LEGACY_ART_STATE.values()) == {
         ART_CURRENT,
         ART_NEVER,
         ART_STALE,
@@ -227,7 +228,7 @@ def test_every_legacy_art_word_is_still_reachable():
 
 
 def test_every_legacy_fw_word_is_still_reachable():
-    assert set(displays._LEGACY_FW_STATE.values()) == {
+    assert set(pio._LEGACY_FW_STATE.values()) == {
         FW_CURRENT,
         FW_BEHIND,
         FW_DIRTY,
@@ -240,7 +241,7 @@ def test_the_fw_adapter_covers_what_a_screen_can_actually_be():
     state to be in a bootloader and no flash record to contradict, so FW_* has
     no honest word for those - and inventing one would be worse than the
     KeyError, which would at least be true."""
-    assert set(displays._LEGACY_FW_STATE) == {
+    assert set(pio._LEGACY_FW_STATE) == {
         None,
         states.SOURCE_CHANGED,
         states.DEVICE_DIRTY,
@@ -252,7 +253,7 @@ def test_the_fw_adapter_covers_what_a_screen_can_actually_be():
         states.ARTIFACT_CHANGED,
         states.PROTOCOL_MISMATCH,
     }
-    assert not unreachable & set(displays._LEGACY_FW_STATE)
+    assert not unreachable & set(pio._LEGACY_FW_STATE)
 
 
 def test_the_mcu_staleness_words_are_the_model_words_bar_one():
@@ -271,7 +272,7 @@ def test_the_mcu_staleness_words_are_the_model_words_bar_one():
     ],
 )
 def test_firmware_state_still_speaks_fw_words(running, expected):
-    assert displays.firmware_state(running, TREE) == expected
+    assert pio.firmware_state(running, TREE) == expected
 
 
 @pytest.mark.parametrize(
@@ -284,13 +285,13 @@ def test_firmware_state_still_speaks_fw_words(running, expected):
     ],
 )
 def test_the_same_answers_in_the_shared_vocabulary(running, reason):
-    assert displays.device_status(running, TREE).reason == reason
+    assert pio.device_status(running, TREE).reason == reason
 
 
 def test_a_dirty_screen_is_not_reported_as_wanting_a_flash():
     """It cannot be shown current, but it is not evidence of being behind
     either - which is what the old FW_DIRTY meant and must keep meaning."""
-    assert displays.device_status("0.4.0+3.gd34db33.dirty", TREE).needs_flash is None
+    assert pio.device_status("0.4.0+3.gd34db33.dirty", TREE).needs_flash is None
 
 
 # --------------------------------------------------------------------------
@@ -302,11 +303,11 @@ def test_a_dirty_screen_is_not_reported_as_wanting_a_flash():
 def display(tmp_path):
     source = tmp_path / "knomi_serial"
     (source / ".pio" / "build" / "knomi").mkdir(parents=True)
-    return DisplayType(name="knomi", env="knomi", source=str(source))
+    return PioType(name="knomi", env="knomi", source=str(source))
 
 
 def _bin(display, content=b"\x00firmware"):
-    path = displays.firmware_bin(display)
+    path = pio.firmware_bin(display)
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "wb") as fh:
         fh.write(content)
@@ -318,11 +319,11 @@ def test_an_image_that_is_not_the_one_we_recorded_cannot_be_vouched_for(paths, d
     contains*, and only the second question matters before writing it to six
     screens. Attestation by another tool is what would earn a better answer."""
     _bin(display)
-    displays.record_build(paths, display, TREE)
+    pio.record_build(paths, display, TREE)
     _bin(display, b"\x00different and longer")
 
-    assert displays.artifact_status(paths, display, TREE).reason == states.NO_PROVENANCE
-    assert displays.artifact_state(paths, display, TREE) == ART_FOREIGN
+    assert pio.artifact_status(paths, display, TREE).reason == states.NO_PROVENANCE
+    assert pio.artifact_state(paths, display, TREE) == ART_FOREIGN
 
 
 def test_a_rebuild_producing_the_same_bytes_is_still_our_build(paths, display):
@@ -330,12 +331,12 @@ def test_a_rebuild_producing_the_same_bytes_is_still_our_build(paths, display):
     byte-identical rebuild somebody else's work - and the bytes are the only
     thing that reaches the screen."""
     _bin(display)
-    displays.record_build(paths, display, TREE)
+    pio.record_build(paths, display, TREE)
 
-    path = displays.firmware_bin(display)
+    path = pio.firmware_bin(display)
     os.utime(path, (os.stat(path).st_atime + 120, os.stat(path).st_mtime + 120))
 
-    assert displays.artifact_status(paths, display, TREE).is_current
+    assert pio.artifact_status(paths, display, TREE).is_current
 
 
 def test_an_untouched_image_is_judged_without_hashing_it(paths, display, monkeypatch):
@@ -344,20 +345,20 @@ def test_an_untouched_image_is_judged_without_hashing_it(paths, display, monkeyp
     stat that already answers it - and the stat happens regardless, so this
     costs nothing to keep."""
     _bin(display)
-    displays.record_build(paths, display, TREE)
+    pio.record_build(paths, display, TREE)
 
     def boom(_path):
         raise AssertionError("hashed an image that had not changed")
 
-    monkeypatch.setattr(displays, "sha256_file", boom)
-    assert displays.artifact_status(paths, display, TREE).is_current
+    monkeypatch.setattr(pio, "sha256_file", boom)
+    assert pio.artifact_status(paths, display, TREE).is_current
 
 
 def test_a_record_from_before_hashing_still_judges_by_size_and_mtime(paths, display):
     """An existing install keeps its verdict until its next build, instead of
     being told once that everything it has is suddenly unverifiable."""
     _bin(display)
-    displays.record_build(paths, display, TREE)
+    pio.record_build(paths, display, TREE)
 
     sidecar = paths.display_sidecar(display.env)
     with open(sidecar, encoding="utf-8") as fh:
@@ -366,7 +367,7 @@ def test_a_record_from_before_hashing_still_judges_by_size_and_mtime(paths, disp
     with open(sidecar, "w", encoding="utf-8") as fh:
         json.dump(record, fh)
 
-    assert displays.artifact_status(paths, display, TREE).is_current
+    assert pio.artifact_status(paths, display, TREE).is_current
 
 
 def test_foreign_build_is_reserved_and_nothing_claims_it_yet(paths, display):
@@ -377,23 +378,23 @@ def test_foreign_build_is_reserved_and_nothing_claims_it_yet(paths, display):
     scenarios = []
 
     _bin(display)
-    scenarios.append(displays.artifact_status(paths, display, TREE))
+    scenarios.append(pio.artifact_status(paths, display, TREE))
 
-    displays.record_build(paths, display, TREE)
-    scenarios.append(displays.artifact_status(paths, display, TREE))
+    pio.record_build(paths, display, TREE)
+    scenarios.append(pio.artifact_status(paths, display, TREE))
 
     _bin(display, b"\x00different")
-    scenarios.append(displays.artifact_status(paths, display, TREE))
+    scenarios.append(pio.artifact_status(paths, display, TREE))
 
-    scenarios.append(displays.artifact_status(paths, display, SourceState()))
+    scenarios.append(pio.artifact_status(paths, display, SourceState()))
 
     assert states.FOREIGN_BUILD not in [s.reason for s in scenarios]
 
 
 def test_no_record_at_all_is_the_other_kind_of_unknown(paths, display):
     _bin(display)
-    assert displays.artifact_status(paths, display, TREE).reason == states.NO_PROVENANCE
-    assert displays.artifact_state(paths, display, TREE) == ART_FOREIGN
+    assert pio.artifact_status(paths, display, TREE).reason == states.NO_PROVENANCE
+    assert pio.artifact_state(paths, display, TREE) == ART_FOREIGN
 
 
 def test_a_corrupt_record_is_absence_of_evidence_not_evidence_of_a_rebuild(paths, display):
@@ -402,7 +403,7 @@ def test_a_corrupt_record_is_absence_of_evidence_not_evidence_of_a_rebuild(paths
     os.makedirs(os.path.dirname(sidecar), exist_ok=True)
     with open(sidecar, "w", encoding="utf-8") as fh:
         fh.write("{not json")
-    assert displays.artifact_status(paths, display, TREE).reason == states.NO_PROVENANCE
+    assert pio.artifact_status(paths, display, TREE).reason == states.NO_PROVENANCE
 
 
 def test_the_two_unknowns_are_different_statuses_wearing_one_word(paths, display):
@@ -410,8 +411,8 @@ def test_the_two_unknowns_are_different_statuses_wearing_one_word(paths, display
     nothing on the wire moved."""
     assert states.FOREIGN_BUILD != states.NO_PROVENANCE
     assert (
-        displays._LEGACY_ART_STATE[states.FOREIGN_BUILD]
-        == displays._LEGACY_ART_STATE[states.NO_PROVENANCE]
+        pio._LEGACY_ART_STATE[states.FOREIGN_BUILD]
+        == pio._LEGACY_ART_STATE[states.NO_PROVENANCE]
         == ART_FOREIGN
     )
 
@@ -426,7 +427,7 @@ def test_the_two_unknowns_are_different_statuses_wearing_one_word(paths, display
     ],
 )
 def test_the_unambiguous_reasons_keep_their_own_words(reason, legacy):
-    assert displays._LEGACY_ART_STATE[reason] == legacy
+    assert pio._LEGACY_ART_STATE[reason] == legacy
 
 
 # --------------------------------------------------------------------------
@@ -453,11 +454,11 @@ def test_a_binary_with_no_record_means_the_same_on_both_sides(paths, display):
     _bin(display)
 
     assert build.artifact_status(paths, "bttebb36", "klipper").reason == states.NO_PROVENANCE
-    assert displays.artifact_status(paths, display, TREE).reason == states.NO_PROVENANCE
+    assert pio.artifact_status(paths, display, TREE).reason == states.NO_PROVENANCE
 
     # ...and neither wire format noticed.
     assert build.staleness(paths, "bttebb36", "klipper") == (True, "never_built")
-    assert displays.artifact_state(paths, display, TREE) == ART_FOREIGN
+    assert pio.artifact_state(paths, display, TREE) == ART_FOREIGN
 
 
 def test_a_genuinely_absent_mcu_artifact_is_still_never_built(paths):

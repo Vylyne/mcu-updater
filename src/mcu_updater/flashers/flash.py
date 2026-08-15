@@ -23,9 +23,9 @@ import threading
 import time
 from typing import Any, Optional
 
-from . import firmware
-from .build import Reporter, null_reporter, run_streamed
-from .devices import (
+from .. import firmware
+from ..build import Reporter, null_reporter, run_streamed
+from ..devices import (
     KATAPULT_FW_NAME,
     KLIPPER_FW_NAME,
     BusDevice,
@@ -34,7 +34,7 @@ from .devices import (
     wait_for_device,
     wait_for_new_device,
 )
-from .errors import (
+from ..errors import (
     AmbiguousDfuError,
     DeviceNotFoundError,
     DfuPermissionError,
@@ -42,8 +42,8 @@ from .errors import (
     OperationCancelled,
     ToolMissingError,
 )
-from .paths import HUMAN_ACTION_TIMEOUT, REENUMERATE_TIMEOUT, Paths
-from .settings import Settings
+from ..paths import HUMAN_ACTION_TIMEOUT, REENUMERATE_TIMEOUT, Paths
+from ..settings import Settings
 
 DFU_VID_PID = "0483:df11"
 
@@ -149,7 +149,7 @@ def flash_katapult(
     # and "flash only the stale ones" would skip exactly the boards a patch
     # change affected.
     if not settings.dry_run:
-        from .build import FlashLog, git_head, read_sidecar
+        from ..build import FlashLog, git_head, read_sidecar
 
         side = read_sidecar(paths, mcu_type, fw) or {}
         FlashLog(paths).record(
@@ -461,7 +461,7 @@ def flash_initial_bootloader(
     for this path is a route a batch could take too. That is what makes the
     table a seam rather than a lookup with extra steps.
     """
-    from . import flashers
+    from .. import flashers
 
     flasher = flashers.bootstrap_for(chipset)
     target = flashers.dfu_util.target_for(

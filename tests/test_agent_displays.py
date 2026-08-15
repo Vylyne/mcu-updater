@@ -640,7 +640,7 @@ def test_every_new_field_is_none_against_a_module_too_old_to_report_it(api, fake
 
 import json as _json  # noqa: E402
 
-from mcu_updater import displays as displays_mod  # noqa: E402
+from mcu_updater.providers import pio as pio_mod  # noqa: E402
 
 
 def _declare_display(paths, env="knomi_toolchanger"):
@@ -671,7 +671,7 @@ GOOD_MAP = {
 
 
 def _display(env="knomi"):
-    return displays_mod.DisplayType(name=env, env=env, source="/nowhere")
+    return pio_mod.PioType(name=env, env=env, source="/nowhere")
 
 
 def test_the_map_is_read_when_klipper_cannot_answer(api, paths):
@@ -700,7 +700,7 @@ def test_the_map_is_not_consulted_while_klipper_is_answering(api, paths, monkeyp
 
 def test_an_entry_carries_what_the_screen_reported(paths):
     _write_map(paths, GOOD_MAP)
-    devices = displays_mod.read_device_map(paths, _display())
+    devices = pio_mod.read_device_map(paths, _display())
 
     assert list(devices) == ["19aa44"]
     entry = devices["19aa44"]
@@ -711,14 +711,14 @@ def test_an_entry_carries_what_the_screen_reported(paths):
 
 def test_ids_are_lowered_so_they_compare(paths):
     _write_map(paths, {"version": 1, "devices": {"19AA44": {"port": "/dev/ttyUSB0"}}})
-    assert list(displays_mod.read_device_map(paths, _display())) == ["19aa44"]
+    assert list(pio_mod.read_device_map(paths, _display())) == ["19aa44"]
 
 
 def test_a_version_we_do_not_know_is_ignored_rather_than_guessed_at(paths):
     """The format is somebody else's to change, and a half-understood port is a
     write to the wrong display."""
     _write_map(paths, {"version": 2, "devices": {"19aa44": {"port": "/dev/ttyUSB0"}}})
-    assert displays_mod.read_device_map(paths, _display()) == {}
+    assert pio_mod.read_device_map(paths, _display()) == {}
 
 
 @pytest.mark.parametrize(
@@ -735,34 +735,34 @@ def test_anything_unusable_is_an_empty_map_not_an_error(paths, payload):
     """Every one of these means "we cannot tell you where these displays are",
     and the caller's answer to that is the same in each case."""
     _write_map(paths, payload)
-    assert displays_mod.read_device_map(paths, _display()) == {}
+    assert pio_mod.read_device_map(paths, _display()) == {}
 
 
 def test_a_missing_or_corrupt_file_is_not_an_error(paths):
-    assert displays_mod.read_device_map(paths, _display()) == {}
+    assert pio_mod.read_device_map(paths, _display()) == {}
 
     path = os.path.join(paths.printer_data, "knomi", "devices.json")
     os.makedirs(os.path.dirname(path), exist_ok=True)
     with open(path, "w", encoding="utf-8") as fh:
         fh.write("{not json")
-    assert displays_mod.read_device_map(paths, _display()) == {}
+    assert pio_mod.read_device_map(paths, _display()) == {}
 
 
 def test_a_family_can_declare_it_has_no_map(paths):
     _write_map(paths, GOOD_MAP)
-    display = displays_mod.DisplayType(name="x", env="x", source="/nowhere", device_map="")
-    assert displays_mod.device_map_path(paths, display) == ""
-    assert displays_mod.read_device_map(paths, display) == {}
+    display = pio_mod.PioType(name="x", env="x", source="/nowhere", device_map="")
+    assert pio_mod.device_map_path(paths, display) == ""
+    assert pio_mod.read_device_map(paths, display) == {}
 
 
 def test_an_absolute_map_path_is_used_as_given(paths, tmp_path):
     elsewhere = tmp_path / "elsewhere.json"
     with open(elsewhere, "w", encoding="utf-8") as fh:
         _json.dump(GOOD_MAP, fh)
-    display = displays_mod.DisplayType(
+    display = pio_mod.PioType(
         name="x", env="x", source="/nowhere", device_map=str(elsewhere)
     )
-    assert displays_mod.read_device_map(paths, display)["19aa44"].port == "/dev/ttyUSB0"
+    assert pio_mod.read_device_map(paths, display)["19aa44"].port == "/dev/ttyUSB0"
 
 
 def test_a_port_that_is_gone_proves_the_entry_is_stale(paths, fake_root):
@@ -781,7 +781,7 @@ def test_a_port_that_is_gone_proves_the_entry_is_stale(paths, fake_root):
             },
         },
     )
-    devices = displays_mod.read_device_map(paths, _display())
+    devices = pio_mod.read_device_map(paths, _display())
 
     assert devices["19aa44"].present is True
     assert devices["19aa45"].present is False, "a vanished port is not present"

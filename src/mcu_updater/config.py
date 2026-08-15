@@ -44,7 +44,7 @@ import re
 from collections.abc import Iterable, Iterator
 from typing import Any, Optional
 
-from . import firmware
+from . import firmware, sections
 from .cfgdoc import CfgDocument, parse_bool
 from .errors import (
     AmbiguousSerialError,
@@ -58,6 +58,9 @@ from .errors import (
 )
 from .paths import FW_TARGETS, Paths
 
+#: The spelling this module *writes* when a type is new. Reading is
+#: `sections.read`'s job and spans `[type ...]` too - keeping a second prefix
+#: constant here is what would let the two drift.
 SECTION_PREFIX = "mcu"
 PATCH_SEPARATOR = "->"
 
@@ -260,10 +263,8 @@ class Registry:
         fw_names = firmware.names_of(firmware.load_from_doc(doc))
 
         types: dict[str, McuType] = {}
-        for section in doc.section_names(SECTION_PREFIX):
-            name = section[len(SECTION_PREFIX) :].strip()
-            if not name:
-                continue
+        for declared in sections.read(doc, provider=sections.KCONFIG_MAKE):
+            name, section = declared.name, declared.section
             mcu = McuType(name=name, chipset=(doc.get(section, "chipset") or "").strip())
             mcu.serials = doc.get_list(section, "serials")
 
@@ -359,13 +360,15 @@ class Registry:
         doc = self._doc
         fw_names = firmware.names_of(firmware.load_from_doc(doc))
 
-        for section in doc.section_names(SECTION_PREFIX):
-            name = section[len(SECTION_PREFIX) :].strip()
-            if name not in self.types:
-                doc.remove_section(section)
+        for declared in sections.read(doc, provider=sections.KCONFIG_MAKE):
+            if declared.name not in self.types:
+                doc.remove_section(declared.section)
 
         for name, mcu in self.types.items():
-            section = section_name(name)
+            # Whatever spelling this type already has, so a file full of
+            # `[mcu ...]` is not rewritten into `[type ...]` by an unrelated
+            # edit. Only a type this document has never seen gets the new one.
+            section = sections.section_for(doc, name, sections.KCONFIG_MAKE)
             doc.set(section, "chipset", mcu.chipset)
             doc.set(section, "serials", list(mcu.serials))
 

@@ -23,7 +23,7 @@ import pytest
 from mcu_updater.agent.methods import Api
 from mcu_updater.config import Registry
 from mcu_updater.devices import dfu_serial_for
-from mcu_updater.pairings import Pairings
+from mcu_updater.flashers.pairings import Pairings
 
 from .conftest import make_device
 
@@ -239,8 +239,8 @@ def test_the_flash_records_the_pairing_before_waiting(paths, live_registry_text,
     import pytest as _pytest
 
     monkeypatch = _pytest.MonkeyPatch()
-    monkeypatch.setattr("mcu_updater.flash.subprocess.run", _FakeRun(ONE_BOARD))
-    monkeypatch.setattr("mcu_updater.flash.flash_initial_bootloader", lambda *a, **k: None)
+    monkeypatch.setattr("mcu_updater.flashers.flash.subprocess.run", _FakeRun(ONE_BOARD))
+    monkeypatch.setattr("mcu_updater.flashers.flash.flash_initial_bootloader", lambda *a, **k: None)
     try:
         res = api.dispatch("fw.add_mcu.start", {"name": "bttebb36"})
         assert runner.wait(timeout=30)

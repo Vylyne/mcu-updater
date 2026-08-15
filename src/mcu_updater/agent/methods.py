@@ -19,7 +19,7 @@ import re
 import time
 from typing import Any, Callable, Optional
 
-from .. import API_VERSION, __version__, firmware, flashers, profiles, providers
+from .. import API_VERSION, __version__, firmware, flashers, profiles, providers, sections
 from .. import settings as settings_mod
 from ..build import read_sidecar
 from ..config import Registry
@@ -38,7 +38,7 @@ from ..errors import (
     ToolMissingError,
     UpdaterError,
 )
-from ..pairings import PAIRING_TTL as _PAIRING_TTL
+from ..flashers.pairings import PAIRING_TTL as _PAIRING_TTL
 from ..paths import REENUMERATE_TIMEOUT, Paths
 from ..settings import Settings, load_settings, save_settings
 from ..states import (
@@ -454,7 +454,7 @@ class Api:
         else. Cheap when unconfigured: no `[display]` sections means no work at
         all, not even the configfile query.
         """
-        from .. import displays as displays_mod
+        from ..providers import pio as pio_mod
 
         types = self.display_types()
         if not types:
@@ -467,13 +467,13 @@ class Api:
             prefix = display.klipper_section
             # Once per type, not once per screen: they share a source tree, and
             # it costs three git calls.
-            tree = displays_mod.source_state(display.source)
-            art = displays_mod.artifact_status(self.paths, display, tree)
+            tree = pio_mod.source_state(display.source)
+            art = pio_mod.artifact_status(self.paths, display, tree)
             screens = []
             for entry in listed["displays"]:
                 if not entry["section"].startswith(prefix + " "):
                     continue
-                device = displays_mod.device_status(entry.get("firmware_version"), tree)
+                device = pio_mod.device_status(entry.get("firmware_version"), tree)
                 screens.append(
                     {
                         **entry,
@@ -481,7 +481,7 @@ class Api:
                         # baked into what the screen reports running against the
                         # source tree's HEAD - so unlike the MCU artifact check,
                         # this is about the device rather than a built file.
-                        "firmware_state": displays_mod.legacy_firmware_state(device),
+                        "firmware_state": pio_mod.legacy_firmware_state(device),
                         # The same verdict in the shared vocabulary, named as the
                         # MCU rows name theirs. Both are on the wire because the
                         # FW_* word is what the panel reads today and the reason
@@ -496,13 +496,13 @@ class Api:
                     # Built by PlatformIO, not by us - so this is "is there an
                     # image on disk", not staleness. PlatformIO decides whether a
                     # rebuild is needed, and it is fast when nothing changed.
-                    "has_firmware": os.path.exists(displays_mod.firmware_bin(display)),
+                    "has_firmware": os.path.exists(pio_mod.firmware_bin(display)),
                     # current | source_changed | dirty | never_built | unknown.
                     # Real staleness, unlike has_firmware: fw.display.flash
                     # uploads whatever is in .pio/build without building, so a
                     # tree that moved since the last build writes old firmware
                     # to every screen with nothing to say so.
-                    "artifact_state": displays_mod.legacy_artifact_state(art),
+                    "artifact_state": pio_mod.legacy_artifact_state(art),
                     # The same verdict, un-collapsed. The ART_* word above folds
                     # foreign_build and no_provenance together, which is why this
                     # cannot be recovered from it by the reader.
@@ -529,7 +529,7 @@ class Api:
                     # be several commits old and still speak the protocol fine.
                     "needs_flash": any(
                         s.get("protocol_match") is False
-                        or s.get("firmware_state") == displays_mod.FW_BEHIND
+                        or s.get("firmware_state") == pio_mod.FW_BEHIND
                         for s in screens
                     ),
                     # What the tree would build right now, for the panel to show
@@ -758,6 +758,11 @@ class Api:
         )
 
         return {
+            # Which build system owns this type. `kind` said the same thing in a
+            # vocabulary that only had two words in it - and a reader switching on
+            # it was re-deriving what the provider registry already knows.
+            "provider": sections.KCONFIG_MAKE,
+            # Deprecated alias for `provider`. A deployed panel switches on it.
             "kind": "mcu",
             "name": name,
             "descriptor": payload["chipset"],
@@ -921,6 +926,8 @@ class Api:
         )
 
         return {
+            "provider": sections.PLATFORMIO,
+            # Deprecated alias for `provider`. A deployed panel switches on it.
             "kind": "display",
             "name": name,
             "descriptor": payload["env"],
@@ -1515,10 +1522,50 @@ class Api:
             )
         return self.runner
 
+    def _provider_of(self, name: str) -> str:
+        """Which build system owns this type, by name.
+
+        The whole reason `fw.display.build` existed as a separate method: the
+        caller had to know which kind of thing it was addressing, so the panel
+        carried a `kind` and picked a method from it. It does not have to. A type
+        name resolves to exactly one provider, and this is where that happens -
+        once, rather than at every call site that would otherwise branch.
+
+        Raises rather than guessing. A name belonging to neither is a typo or a
+        section somebody deleted, and defaulting it to kconfig would produce
+        "no saved klipper config" for a screen.
+        """
+        if name in self.display_types():
+            return sections.PLATFORMIO
+        if name in self.registry().names():
+            return sections.KCONFIG_MAKE
+        raise RpcError(
+            f"no type '{name}' is configured.",
+            data={
+                "code": "unknown_type",
+                "message": "no such type",
+                "data": {
+                    "name": name,
+                    "known": sorted(
+                        set(self.registry().names()) | set(self.display_types())
+                    ),
+                },
+            },
+        )
+
     def build(self, args: dict) -> dict[str, Any]:
-        """Start a build. Returns a job id immediately - never blocks."""
+        """Start a build. Returns a job id immediately - never blocks.
+
+        Every type, whichever build system compiles it. A PlatformIO type has no
+        family - its env already names the board, the partitions and the flags -
+        so `fw` is not merely optional there, it is meaningless, and passing one
+        is a caller still thinking in kinds.
+        """
         runner = self._require_runner()
         name = args.get("name")
+        if name and self._provider_of(str(name)) == sections.PLATFORMIO:
+            return self._pio_build(args)
+
         fw = args.get("fw")
         known = self._fw_names()
         if not name or fw not in known:
@@ -1608,11 +1655,18 @@ class Api:
                 },
             )
 
-        serial = args.get("serial")
+        name = args.get("name")
+        if name and self._provider_of(str(name)) == sections.PLATFORMIO:
+            return self._pio_flash(args)
+
+        # `id` is the uniform slot - `FlashTarget.id` is a serial for a board and
+        # a port for a screen - and `serial` is what this method has always been
+        # called with. Both, so a caller reading `targets[].devices[].id` off the
+        # wire can hand it straight back.
+        serial = args.get("serial") or args.get("id")
         if not serial:
             raise RpcError("'serial' is required", ERR_INVALID_PARAMS)
         serial = str(serial)
-        name = args.get("name")
         force = bool(args.get("force"))
 
         reg = self.registry()
@@ -1659,7 +1713,7 @@ class Api:
         def run(ctx) -> dict[str, Any]:
             from ..devices import KLIPPER_FW_NAME, wait_for_device
             from ..errors import BootloaderTimeoutError
-            from ..flash import flash_katapult
+            from ..flashers.flash import flash_katapult
             from ..service import klipper_stopped, make_controller
 
             settings_now = self.settings()
@@ -1894,6 +1948,11 @@ class Api:
         "fw.type.list": "type_list",
         "fw.bus.scan": "bus_scan",
         "fw.dfu.scan": "dfu_scan",
+        "fw.device.list": "device_list",
+        # The three that named a build system in the method rather than routing
+        # by the type's own provider. `fw.build` and `fw.flash` answer for every
+        # kind now; these stay registered because a panel built before that is
+        # still calling them, and they are two lines each.
         "fw.display.list": "display_list",
         "fw.display.build": "display_build",
         "fw.display.flash": "display_flash",
@@ -1990,7 +2049,12 @@ class Api:
     # -- ESP32 displays -----------------------------------------------------
 
     def display_list(self, args: dict) -> dict[str, Any]:
-        """The displays Klipper is configured for, and whether they are there.
+        """Deprecated alias for `fw.device.list`. Kept because a deployed panel
+        calls it."""
+        return self.device_list(args)
+
+    def device_list(self, args: dict) -> dict[str, Any]:
+        """The devices Klipper is configured for, and whether they are there.
 
         **The device list comes from Klipper, not from our registry.** A
         `[knomi_serial T0_knomi]` section names its own path one of two ways:
@@ -2194,7 +2258,7 @@ class Api:
         watcher leaves a file that still parses and may name ports that have
         since moved, and nothing in it says so.
         """
-        from .. import displays as displays_mod
+        from ..providers import pio as pio_mod
         from ..service import make_controller
 
         settings = self.settings()
@@ -2205,7 +2269,7 @@ class Api:
                 if display.service
                 else None
             )
-            devices = displays_mod.read_device_map(self.paths, display)
+            devices = pio_mod.read_device_map(self.paths, display)
             out[name] = {
                 "service": display.service or None,
                 "active": svc.is_active() if svc is not None else None,
@@ -2215,42 +2279,51 @@ class Api:
                 # second after writing - and an old one does not mean the map is
                 # wrong, because nothing changing means nothing to write. Shown
                 # so a human can judge; never branched on.
-                "updated": _mtime(displays_mod.device_map_path(self.paths, display)),
+                "updated": _mtime(pio_mod.device_map_path(self.paths, display)),
                 "devices": [d.to_json() for d in devices.values()],
             }
         return out
 
     def display_types(self) -> dict:
         """Configured `[display <env>]` sections, with the shared source default."""
-        from .. import displays as displays_mod
+        from ..providers import pio as pio_mod
 
         # Attribute access, not getattr-with-a-default: `display_source` was
         # documented in the README before it existed on Settings, and the
         # forgiving lookup meant every display silently came back with no source
         # tree instead of anything saying so.
-        return displays_mod.load(self.paths, default_source=self.settings().display_source)
+        return pio_mod.load(self.paths, default_source=self.settings().pio_source)
 
     def display_build(self, args: dict) -> dict[str, Any]:
-        """Compile one display env with PlatformIO. Touches no display."""
+        """Deprecated alias for `fw.build`. Kept because a deployed panel calls it.
+
+        Nothing here is display-shaped: `fw.build` routes by the type's provider,
+        so this is the same call with a name that says which build system to use
+        - which is the thing the caller should not have had to know.
+        """
+        return self._pio_build(args)
+
+    def _pio_build(self, args: dict) -> dict[str, Any]:
+        """Compile one PlatformIO env. Touches no hardware."""
         runner = self._require_runner()
         name = self._require_str(args, "name")
         types = self.display_types()
         if name not in types:
             raise RpcError(
-                f"no display type '{name}' is configured.",
+                f"no PlatformIO type '{name}' is configured.",
                 data={
                     "code": "unknown_type",
-                    "message": "no such display type",
+                    "message": "no such type",
                     "data": {"name": name, "known": sorted(types)},
                 },
             )
         display = types[name]
 
         def run(ctx) -> dict[str, Any]:
-            from .. import displays as displays_mod
+            from ..providers import pio as pio_mod
 
             ctx.step(f"Building {display.env}", 0, 1)
-            path = displays_mod.build(
+            path = pio_mod.build(
                 self.paths, self.settings(), display, reporter=ctx.reporter, cancel=ctx.cancel
             )
             ctx.step(f"Built {display.env}", 1, 1)
@@ -2260,7 +2333,11 @@ class Api:
         return {"job_id": job.id, "job": job.to_dict()}
 
     def display_flash(self, args: dict) -> dict[str, Any]:
-        """Write a display env to its configured screens.
+        """Deprecated alias for `fw.flash`. Kept because a deployed panel calls it."""
+        return self._pio_flash(args)
+
+    def _pio_flash(self, args: dict) -> dict[str, Any]:
+        """Write one PlatformIO env to the devices configured for it.
 
         **The device list is read before Klipper is stopped, not after.** It comes
         from the klippy module's own printer objects, which only a *running*
@@ -2287,15 +2364,16 @@ class Api:
         types = self.display_types()
         if name not in types:
             raise RpcError(
-                f"no display type '{name}' is configured.",
-                data={"code": "unknown_type", "message": "no such display type",
+                f"no PlatformIO type '{name}' is configured.",
+                data={"code": "unknown_type", "message": "no such type",
                       "data": {"name": name, "known": sorted(types)}},
             )
         display = types[name]
 
-        # Read the screens NOW, while Klipper can still answer.
-        listed = self.display_list({})
-        wanted = args.get("port")
+        # Read the devices NOW, while Klipper can still answer.
+        listed = self.device_list({})
+        # `id` is the uniform slot, `port` what this call has always taken.
+        wanted = args.get("port") or args.get("id")
         targets = [
             d
             for d in listed["displays"]
@@ -2303,8 +2381,8 @@ class Api:
         ]
         if not targets:
             raise RpcError(
-                "no display is reachable to flash. Check that the configured ports "
-                "exist - fw.display.list shows which are missing.",
+                "no device is reachable to flash. Check that the configured ports "
+                "exist - fw.device.list shows which are missing.",
                 data={
                     "code": "nothing_to_do",
                     "message": "no reachable displays",
@@ -2375,7 +2453,7 @@ class Api:
         happening is the thing to avoid.
         """
         from ..devices import KATAPULT_FW_NAME, dfu_serial_for, find_untracked
-        from ..pairings import Pairings
+        from ..flashers.pairings import Pairings
 
         pairings = Pairings(self.paths, ttl=self.PAIRING_TTL)
         if not pairings.all():
@@ -2484,7 +2562,7 @@ class Api:
             them. Not a dead end: dfu-util takes `-S/-p/-n`, so naming one is
             enough - `ready` is false only because the *caller* has not chosen.
         """
-        from ..flash import DFU_VID_PID, dfu_devices
+        from ..flashers.flash import DFU_VID_PID, dfu_devices
 
         out: dict[str, Any] = {
             "vid_pid": DFU_VID_PID,
@@ -2643,7 +2721,7 @@ class Api:
 
         def run(ctx) -> dict[str, Any]:
             from ..devices import KATAPULT_FW_NAME, wait_for_new_device
-            from ..flash import flash_initial_bootloader
+            from ..flashers.flash import flash_initial_bootloader
 
             ctx.step(f"Flashing Katapult onto the DFU board for {name}", 0, 2)
             flash_initial_bootloader(
@@ -2660,7 +2738,7 @@ class Api:
             # port, or unplugged and brought back tomorrow, then still arrives
             # with its intent attached rather than as an anonymous stranger.
             if target:
-                from ..pairings import Pairings
+                from ..flashers.pairings import Pairings
 
                 Pairings(self.paths).record(target, name)
 
@@ -3164,11 +3242,11 @@ class Api:
         its boards", which is the same operation with a filter rather than a third
         one to keep in step.
 
-        The build half now covers displays, because it is literally `build_all`.
-        The flash half does not yet, because it is literally `flash_all` - so a
-        stale screen is rebuilt here and still waits for its own flash. That is
-        the composition being honest rather than a special case: both halves gain
-        displays where they are defined, not where they are called from.
+        Both halves cover every provider, because each is literally `build_all`
+        and `flash_all` - which is the composition paying off rather than a
+        special case. A screen gained the build half when the provider seam
+        landed and the flash half when the flasher seam did, both times without
+        this method being edited.
         """
         runner = self._require_runner()
         settings = self.settings()
@@ -3427,7 +3505,7 @@ class Api:
         import or hold the state.
         """
         if self._kconfig_sessions is None:
-            from ..kconfig import SessionStore
+            from ..providers.kconfig import SessionStore
 
             self._kconfig_sessions = SessionStore(self.paths)
         return self._kconfig_sessions
@@ -3445,7 +3523,7 @@ class Api:
         `firmware_families`, on the same status call - does not re-read the
         config file to learn what it already knows.
         """
-        from ..kconfig import kconfiglib_path
+        from ..providers.kconfig import kconfiglib_path
 
         if families is None:
             families = firmware.load(self.paths)
@@ -3711,7 +3789,7 @@ class Api:
         showing raw symbol names, which is worse than prompt text and far better
         than an error where the profiles should be.
         """
-        from .. import kconfig as kconfig_mod
+        from ..providers import kconfig as kconfig_mod
 
         symbols = {str(row["symbol"]) for rows in differences.values() for row in rows}
         if not symbols:

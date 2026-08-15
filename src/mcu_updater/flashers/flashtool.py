@@ -1,6 +1,6 @@
 """Katapult's flashtool.py: the normal case for a board on the Klipper bus.
 
-A thin adapter. :func:`mcu_updater.flash.flash_katapult` keeps its whole body -
+A thin adapter. :func:`mcu_updater.flashers.flash.flash_katapult` keeps its whole body -
 the bootloader request, the re-enumeration wait, the flash-log record - because
 this is not a rewrite. What moves here is the *shape*: what has to be true
 before the write, and what has to be waited for after it.
@@ -37,7 +37,7 @@ class Flashtool:
     def write(
         self, bench: Bench, session: Any, target: FlashTarget, ctx: Any
     ) -> dict[str, Any]:
-        from ..flash import flash_katapult
+        from .flash import flash_katapult
 
         flash_katapult(
             bench.paths,

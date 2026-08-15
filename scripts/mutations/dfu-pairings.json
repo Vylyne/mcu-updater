@@ -37,7 +37,7 @@
     },
     {
       "name": "the pairing is recorded BEFORE the re-enumeration wait",
-      "find": "            if target:\n                from ..pairings import Pairings\n\n                Pairings(self.paths).record(target, name)\n",
+      "find": "            if target:\n                from ..flashers.pairings import Pairings\n\n                Pairings(self.paths).record(target, name)\n",
       "replace": ""
     }
   ]

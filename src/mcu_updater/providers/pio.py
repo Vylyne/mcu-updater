@@ -28,12 +28,13 @@ import threading
 import time
 from typing import Any, Optional
 
-from .build import Reporter, null_reporter, run_streamed, sha256_file
-from .cfgdoc import CfgDocument
-from .errors import BuildError, ConfigError, FlashError, SourceTreeMissingError, ToolMissingError
-from .paths import Paths
-from .settings import Settings
-from .states import (
+from .. import sections
+from ..build import Reporter, null_reporter, run_streamed, sha256_file
+from ..cfgdoc import CfgDocument
+from ..errors import BuildError, ConfigError, FlashError, SourceTreeMissingError, ToolMissingError
+from ..paths import Paths
+from ..settings import Settings
+from ..states import (
     BUILT_DIRTY,
     CONFIG_CHANGED,
     DEVICE_DIRTY,
@@ -45,8 +46,6 @@ from .states import (
     ArtifactStatus,
     DeviceStatus,
 )
-
-SECTION_PREFIX = "display"
 
 #: Where PlatformIO puts itself. `pio` on PATH first, because that is what a
 #: user's own symlinks give; the venv path is the fallback for a service whose
@@ -73,7 +72,7 @@ _WAITING_FOR_PORT_RE = re.compile(r"Couldn't find a board on the selected port",
 
 
 @dataclasses.dataclass
-class DisplayType:
+class PioType:
     """One PlatformIO env, and where its devices are declared in printer.cfg."""
 
     name: str
@@ -110,25 +109,28 @@ class DisplayType:
         }
 
 
-def load(paths: Paths, default_source: str = "") -> dict[str, DisplayType]:
-    """Read `[display <name>]` sections from the shared config file."""
+def load(paths: Paths, default_source: str = "") -> dict[str, PioType]:
+    """Read this provider's type sections from the shared config file.
+
+    Which sections those are is :mod:`~mcu_updater.sections`' business, not this
+    module's: `[type x]` with `provider: platformio`, and `[display x]` for
+    every config written before the provider became a key rather than a prefix.
+    """
     try:
         with open(paths.main_config, encoding="utf-8") as fh:
             doc = CfgDocument(fh.read())
     except OSError:
         return {}
 
-    out: dict[str, DisplayType] = {}
-    for section in doc.section_names(SECTION_PREFIX):
-        name = section[len(SECTION_PREFIX) :].strip()
-        if not name:
-            continue
+    out: dict[str, PioType] = {}
+    for declared in sections.read(doc, provider=sections.PLATFORMIO):
+        name, section = declared.name, declared.section
         # Absent and blank differ here, unlike every other key: an absent
         # `service:` takes the default watcher, while `service:` with nothing
         # after it is how you say this family has no watcher to pause.
         watcher = doc.get(section, "service")
         device_map = doc.get(section, "device_map")
-        out[name] = DisplayType(
+        out[name] = PioType(
             name=name,
             env=(doc.get(section, "env") or "").strip(),
             source=(doc.get(section, "source") or default_source).strip(),
@@ -179,7 +181,7 @@ class WatcherDevice:
         }
 
 
-def device_map_path(paths: Paths, display: DisplayType) -> str:
+def device_map_path(paths: Paths, display: PioType) -> str:
     """Where this family's watcher writes its map. Empty if it has none."""
     configured = display.device_map.strip()
     if not configured:
@@ -190,7 +192,7 @@ def device_map_path(paths: Paths, display: DisplayType) -> str:
     return os.path.join(paths.printer_data, expanded)
 
 
-def read_device_map(paths: Paths, display: DisplayType) -> dict[str, WatcherDevice]:
+def read_device_map(paths: Paths, display: PioType) -> dict[str, WatcherDevice]:
     """Parse the watcher's id -> port map.
 
     **This says nothing about whether the file is current.** There are
@@ -276,7 +278,7 @@ print("{_DISCOVER_MARKER}" + json.dumps(out))
 def discover(
     paths: Paths,
     settings: Settings,
-    display: DisplayType,
+    display: PioType,
     *,
     listen: Optional[float] = None,
     reporter: Reporter = null_reporter,
@@ -392,17 +394,17 @@ def find_pio(settings: Settings) -> str:
     )
 
 
-def _source_dir(display: DisplayType) -> str:
+def _source_dir(display: PioType) -> str:
     path = os.path.expanduser(display.source)
     if not path:
         raise ConfigError(
-            f"display '{display.name}' has no source tree configured. Set 'source:' "
-            f"in its [display] section, or 'display_source' in [updater].",
+            f"'{display.name}' has no source tree configured. Set 'source:' in its "
+            f"section, or 'pio_source' in [updater].",
             type=display.name,
         )
     if not os.path.isdir(path):
         raise SourceTreeMissingError(
-            f"source directory {path} not found for display '{display.name}'.",
+            f"source directory {path} not found for '{display.name}'.",
             fw=display.env,
             path=path,
         )
@@ -574,7 +576,7 @@ ART_DIRTY = "dirty"
 ART_FOREIGN = "unknown"
 
 
-def record_build(paths: Paths, display: DisplayType, state: SourceState) -> None:
+def record_build(paths: Paths, display: PioType, state: SourceState) -> None:
     """Note which commit produced the image now sitting in .pio/build.
 
     Records a hash of the binary itself, which is what makes "is this still our
@@ -646,7 +648,7 @@ def _is_our_image(record: dict, path: str, stat: os.stat_result) -> bool:
     return sha256_file(path) == recorded
 
 
-def artifact_status(paths: Paths, display: DisplayType, state: SourceState) -> ArtifactStatus:
+def artifact_status(paths: Paths, display: PioType, state: SourceState) -> ArtifactStatus:
     """Does the built image match the source tree?
 
     Never a guess when the provenance cannot be trusted - no sidecar, a binary
@@ -726,7 +728,7 @@ def legacy_artifact_state(status: ArtifactStatus) -> str:
     return _LEGACY_ART_STATE[status.reason]
 
 
-def artifact_state(paths: Paths, display: DisplayType, state: SourceState) -> str:
+def artifact_state(paths: Paths, display: PioType, state: SourceState) -> str:
     """`artifact_status()` in the ART_* words. See that function for the reasoning."""
     return legacy_artifact_state(artifact_status(paths, display, state))
 
@@ -754,7 +756,7 @@ def resolve_port(port: str) -> str:
         return port
 
 
-def firmware_bin(display: DisplayType) -> str:
+def firmware_bin(display: PioType) -> str:
     """Where PlatformIO leaves the image for this env."""
     return os.path.join(
         os.path.expanduser(display.source), ".pio", "build", display.env, "firmware.bin"
@@ -764,7 +766,7 @@ def firmware_bin(display: DisplayType) -> str:
 def build(
     paths: Paths,
     settings: Settings,
-    display: DisplayType,
+    display: PioType,
     *,
     reporter: Reporter = null_reporter,
     cancel: Optional[threading.Event] = None,
@@ -800,7 +802,7 @@ def build(
 def upload(
     paths: Paths,
     settings: Settings,
-    display: DisplayType,
+    display: PioType,
     port: str,
     *,
     reporter: Reporter = null_reporter,

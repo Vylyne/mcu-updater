@@ -75,7 +75,7 @@ import time
 from collections.abc import Callable, Iterable, Sequence
 from typing import Any, Optional
 
-from . import firmware, kconfig
+from . import firmware
 from .errors import (
     OffsetMismatchError,
     ProfileCustomisedError,
@@ -83,6 +83,7 @@ from .errors import (
     ProfileNotFoundError,
 )
 from .paths import Paths
+from .providers import kconfig
 from .states import TONE_ATTENTION, TONE_OK
 
 #: Vendor seed files live in the tree root and are named ``config.<Variant>``.
@@ -327,7 +328,7 @@ def capture_custom(
     """Save what this type currently answers as a profile of its own.
 
     `answers` is the minimal answer set. Pass it whenever the tree is already
-    parsed - a save from :class:`~mcu_updater.kconfig.KconfigSession` has it in
+    parsed - a save from :class:`~mcu_updater.providers.kconfig.KconfigSession` has it in
     hand, and re-deriving it there would spend a second parse to learn something
     already known. Omitting it costs one parse, which is the price of catching an
     edit made out of band by ``make menuconfig``.

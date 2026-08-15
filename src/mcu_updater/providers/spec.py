@@ -2,7 +2,7 @@
 
 Two build systems were already here, written as parallel modules rather than as
 two instances of one thing. :mod:`~mcu_updater.build` runs kconfig and ``make``
-against a klipper-shaped tree; :mod:`~mcu_updater.displays` runs PlatformIO
+against a klipper-shaped tree; :mod:`~mcu_updater.providers.pio` runs PlatformIO
 against an ESP32 one. Each grew its own ``build()``, its own
 ``artifact_status()``, and its own idea of what "configured enough to build"
 means - so every caller wanting both had to know both, and every caller knowing
@@ -36,12 +36,12 @@ import dataclasses
 import threading
 from typing import Optional, Protocol
 
-from .. import displays as displays_mod
 from ..build import Reporter
 from ..config import Registry
 from ..paths import Paths
 from ..settings import Settings
 from ..states import ArtifactStatus
+from . import pio as pio_mod
 
 
 @dataclasses.dataclass(frozen=True)
@@ -62,11 +62,11 @@ class Install:
 
     paths: Paths
     settings: Settings
-    #: The ``[mcu ...]`` sections.
+    #: Types this host builds with kconfig and make.
     registry: Registry
-    #: The ``[display ...]`` sections, with `display_source` already applied as
-    #: the default so a provider never has to know about that fallback.
-    displays: dict[str, displays_mod.DisplayType]
+    #: Types this host builds with PlatformIO, with `pio_source` already applied
+    #: as the default so a provider never has to know about that fallback.
+    displays: dict[str, pio_mod.PioType]
 
     @classmethod
     def load(cls, paths: Paths, settings: Settings) -> Install:
@@ -74,7 +74,7 @@ class Install:
             paths=paths,
             settings=settings,
             registry=Registry.load(paths),
-            displays=displays_mod.load(paths, default_source=settings.display_source),
+            displays=pio_mod.load(paths, default_source=settings.pio_source),
         )
 
 
@@ -82,7 +82,7 @@ class Install:
 class BuildTarget:
     """One thing one provider can build.
 
-    A key, not a model. `McuType` and `DisplayType` stay where they are and stay
+    A key, not a model. `McuType` and `PioType` stay where they are and stay
     what they are; this only says which provider to ask and which of its things
     to ask about. Making it a domain object in its own right would mean a third
     description of a board to keep in step with the two that already exist.

@@ -15,13 +15,13 @@ import shutil
 import pytest
 
 from mcu_updater.errors import KconfigError
-from mcu_updater.kconfig import (
+from mcu_updater.paths import Paths
+from mcu_updater.providers.kconfig import (
     Serializer,
     SessionStore,
     _srctree,
     load_kconfiglib,
 )
-from mcu_updater.paths import Paths
 
 FIXTURES = pathlib.Path(__file__).resolve().parent / "fixtures"
 VENDORED = FIXTURES / "kconfiglib" / "kconfiglib.py"
@@ -240,7 +240,7 @@ def test_help_is_flagged_but_not_included(tree):
 
 
 def test_help_is_fetchable_on_demand(tree):
-    from mcu_updater.kconfig import help_for
+    from mcu_updater.providers.kconfig import help_for
 
     kconf, _ = parse(tree)
     node = kconf.syms["WITH_HELP"].nodes[0]
@@ -649,7 +649,7 @@ def test_klipper_and_katapult_are_separate_targets(store):
     ],
 )
 def test_same_value_normalises_only_where_it_should(kind, requested, actual, same):
-    from mcu_updater.kconfig import same_value
+    from mcu_updater.providers.kconfig import same_value
 
     assert same_value(kind, requested, actual) is same
 

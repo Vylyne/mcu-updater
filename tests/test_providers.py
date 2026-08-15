@@ -147,8 +147,8 @@ def test_a_display_target_carries_no_family(paths, settings, tmp_path):
     assert PlatformIO().blocked(install, targets[0]) is None
 
 
-def test_a_display_source_and_a_wrong_display_source_read_differently(paths, settings):
-    """Two different fixes: one is a missing `source:`/`display_source`, the
+def test_a_missing_source_and_a_wrong_source_read_differently(paths, settings):
+    """Two different fixes: one is a missing `source:`/`pio_source`, the
     other is a path that is there and wrong. A single "not configured" would send
     somebody to edit a key that is already set."""
     with open(paths.main_config, "a", encoding="utf-8") as fh:
@@ -163,13 +163,13 @@ def test_a_display_source_and_a_wrong_display_source_read_differently(paths, set
     assert "not found" in reasons["bad_source"]
 
 
-def test_the_shared_display_source_is_applied_before_a_provider_sees_it(paths, settings, tmp_path):
-    """`display_source` is a fallback in the config layer, and `Install` resolves
+def test_the_shared_pio_source_is_applied_before_a_provider_sees_it(paths, settings, tmp_path):
+    """`pio_source` is a fallback in the config layer, and `Install` resolves
     it. A provider re-implementing that would be a second place for it to drift -
     and it was already documented in the README before it existed."""
     tree = tmp_path / "shared"
     tree.mkdir()
-    settings.display_source = str(tree)
+    settings.pio_source = str(tree)
     with open(paths.main_config, "a", encoding="utf-8") as fh:
         fh.write("\n[display knomi]\n")
 

@@ -199,7 +199,7 @@ def test_menuconfig_sessions_open_the_configured_tree(paths, fake_root):
     """menuconfig reads the tree's *vendored* kconfiglib, so opening the wrong
     tree would parse one klipper's Kconfig against another's library."""
     from mcu_updater.errors import KconfigError
-    from mcu_updater.kconfig import KconfigSession
+    from mcu_updater.providers.kconfig import KconfigSession
 
     _write_firmware(paths, "klipper", source=str(fake_root / "elsewhere"))
 
@@ -348,7 +348,7 @@ def test_a_misspelt_family_is_refused_rather_than_defaulted(paths):
     reg.save(paths)
     text = open(paths.main_config, encoding="utf-8").read()
     with open(paths.main_config, "w", encoding="utf-8") as fh:
-        fh.write(text.replace("[mcu carto_v4]", "[mcu carto_v4]\nfirmware: cartographr"))
+        fh.write(text.replace("[type carto_v4]", "[type carto_v4]\nfirmware: cartographr"))
 
     with pytest.raises(ConfigCorruptError) as exc:
         Registry.load(paths)

@@ -150,6 +150,15 @@ def test_no_mutation_is_left_live_in_the_source():
     for spec_path in sorted(glob.glob(str(root / "scripts" / "mutations" / "*.json"))):
         with open(spec_path, encoding="utf-8") as fh:
             spec = json.load(fh)
+        # The command's test paths, for the same reason as the mutation's file
+        # path below. A spec pointing at a renamed test module reports "fix the
+        # suite first - a red baseline makes every result meaningless", which
+        # reads as a broken suite rather than a broken spec; the guards it names
+        # are never run and never reported missing. `tests/test_displays.py`
+        # became `tests/test_pio.py` and took ten guards down that way.
+        for arg in spec.get("command", []):
+            if arg.startswith("tests/") and not (root / arg).exists():
+                live.append(f"{pathlib.Path(spec_path).name}: command names a missing {arg}")
         for mutation in spec["mutations"]:
             # Per-mutation, falling back to the spec's default: one spec covers a
             # behaviour area, and a behaviour area spans files.
@@ -157,6 +166,13 @@ def test_no_mutation_is_left_live_in_the_source():
             assert relative, f"{spec_path}: {mutation['name']} names no file"
             target = root / relative
             if not target.exists():
+                # A moved or deleted module used to skip silently, which meant a
+                # rename quietly orphaned every guard in the spec: the harness
+                # still reported them green because it never opened the file.
+                # `providers/pio.py` was `displays.py` and took nine guards with
+                # it. A path that names nothing is a broken spec, not an absent
+                # one.
+                live.append(f"{relative}: no such file - {mutation['name']}")
                 continue
             source = target.read_text(encoding="utf-8")
             if mutation["find"] in source:

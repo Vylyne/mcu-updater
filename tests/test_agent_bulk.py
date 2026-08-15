@@ -661,7 +661,7 @@ def test_each_board_is_waited_for_before_klipper_is_started(bulk, paths, fake_ro
     have nothing between its write and the service restart.
     """
     import mcu_updater.devices as devices_mod
-    import mcu_updater.flash as flash_mod
+    import mcu_updater.flashers.flash as flash_mod
 
     order: list[str] = []
     svc = NullService()
@@ -689,7 +689,7 @@ def test_a_write_that_needs_no_stop_stays_outside_the_outage(bulk, paths, monkey
     of the flag - a batch that stopped Klipper for every write would take a
     printer down to talk to a board that is not even on its bus.
     """
-    import mcu_updater.flash as flash_mod
+    import mcu_updater.flashers.flash as flash_mod
 
     order: list[str] = []
     svc = NullService()

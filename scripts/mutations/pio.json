@@ -1,11 +1,11 @@
 {
   "_comment": "Display upload guards. Firmware written to the wrong screen is the failure these prevent.",
-  "file": "src/mcu_updater/displays.py",
+  "file": "src/mcu_updater/providers/pio.py",
   "command": [
     "python",
     "-m",
     "pytest",
-    "tests/test_displays.py",
+    "tests/test_pio.py",
     "tests/test_agent_display_jobs.py",
     "tests/test_agent_displays.py",
     "-q"

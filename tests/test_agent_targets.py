@@ -64,10 +64,13 @@ def _add_display(paths, fake_root, api):
 def test_an_mcu_type_projects_onto_the_shared_shape(api):
     ebb = _targets(api)["bttebb36"]
 
+    assert ebb["provider"] == "kconfig_make"
+    # The old two-word discriminator, still sent for a panel that switches on it.
     assert ebb["kind"] == "mcu"
     assert ebb["descriptor"] == "stm32g0b1xx"
     assert ebb["firmware"] == "klipper"
     assert set(ebb) == {
+        "provider",
         "kind",
         "name",
         "descriptor",

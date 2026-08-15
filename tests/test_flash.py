@@ -4,7 +4,6 @@ import os
 
 import pytest
 
-from mcu_updater import flash as flash_mod
 from mcu_updater.errors import (
     AmbiguousDfuError,
     DeviceNotFoundError,
@@ -12,7 +11,8 @@ from mcu_updater.errors import (
     ToolMissingError,
     UnsupportedChipsetError,
 )
-from mcu_updater.flash import (
+from mcu_updater.flashers import flash as flash_mod
+from mcu_updater.flashers.flash import (
     flash_dfu_stm32,
     flash_initial_bootloader,
     flash_katapult,

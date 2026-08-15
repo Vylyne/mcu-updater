@@ -9,7 +9,7 @@ That is one step, in one place, and it is the whole reason `prepared()` exists
 on the protocol. Without it the batch loop would have to know that screens need
 a discovery pass and boards do not - which is the branching this removes.
 
-:mod:`mcu_updater.displays` keeps its body, including the parts with no MCU
+:mod:`mcu_updater.providers.pio` keeps its body, including the parts with no MCU
 counterpart at all: never letting PlatformIO choose its own upload port, and
 following a udev symlink to the device PlatformIO can actually see.
 
@@ -34,7 +34,7 @@ from .spec import Bench, FlashTarget
 
 
 class Esptool:
-    """Writes one screen of one `[display ...]` family."""
+    """Writes one device of one PlatformIO type."""
 
     name = "esptool"
     label = "esptool (PlatformIO)"
@@ -87,7 +87,7 @@ class Esptool:
     def write(
         self, bench: Bench, session: Any, target: FlashTarget, ctx: Any
     ) -> dict[str, Any]:
-        from .. import displays as displays_mod
+        from ..providers import pio as pio_mod
 
         display = target.detail["display"]
         screen = target.detail["screen"]
@@ -101,7 +101,7 @@ class Esptool:
             # now.
             raise FlashError(problem, type=display.name, port=port)
 
-        result = displays_mod.upload(
+        result = pio_mod.upload(
             bench.paths, bench.settings, display, port, reporter=ctx.reporter
         )
 
@@ -124,13 +124,13 @@ def discover(bench: Bench, display: Any, ctx: Any) -> dict[str, Any]:
     Skipped entirely on a dry run: it opens real serial ports, and a rehearsal
     that touches hardware is not a rehearsal.
     """
-    from .. import displays as displays_mod
+    from ..providers import pio as pio_mod
 
     if bench.settings.dry_run:
         ctx.reporter("info", "[dry-run] would ask the displays which they are")
         return {}
     try:
-        return displays_mod.discover(
+        return pio_mod.discover(
             bench.paths, bench.settings, display, reporter=ctx.reporter
         )
     except UpdaterError as exc:

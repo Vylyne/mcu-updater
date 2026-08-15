@@ -13,8 +13,8 @@ import os
 
 import pytest
 
-from mcu_updater import displays
 from mcu_updater.errors import ConfigError, FlashError, SourceTreeMissingError
+from mcu_updater.providers import pio
 
 # Captured verbatim from a successful `pio run -e knomi_toolchanger -t upload`
 # on the printer. Parsing invented output is how the dfu-util altsetting bug
@@ -55,7 +55,7 @@ def tree(tmp_path):
 
 @pytest.fixture
 def display(tree):
-    return displays.DisplayType(name="knomi_toolchanger", source=str(tree))
+    return pio.PioType(name="knomi_toolchanger", source=str(tree))
 
 
 # --------------------------------------------------------------------------
@@ -69,7 +69,7 @@ def test_the_env_is_the_type(paths):
     with open(paths.main_config, "w", encoding="utf-8") as fh:
         fh.write("[display knomi_toolchanger]\nsource: ~/knomi_serial\n")
 
-    found = displays.load(paths)
+    found = pio.load(paths)
     assert list(found) == ["knomi_toolchanger"]
     assert found["knomi_toolchanger"].env == "knomi_toolchanger"
 
@@ -77,7 +77,7 @@ def test_the_env_is_the_type(paths):
 def test_an_env_can_be_named_separately_if_they_ever_diverge(paths):
     with open(paths.main_config, "w", encoding="utf-8") as fh:
         fh.write("[display tool_screens]\nenv: knomi_toolchanger\n")
-    assert displays.load(paths)["tool_screens"].env == "knomi_toolchanger"
+    assert pio.load(paths)["tool_screens"].env == "knomi_toolchanger"
 
 
 def test_a_shared_source_tree_is_the_default(paths):
@@ -85,7 +85,7 @@ def test_a_shared_source_tree_is_the_default(paths):
     with open(paths.main_config, "w", encoding="utf-8") as fh:
         fh.write("[display knomi]\n[display knomi_toolchanger]\n")
 
-    found = displays.load(paths, default_source="~/knomi_serial")
+    found = pio.load(paths, default_source="~/knomi_serial")
     assert {d.source for d in found.values()} == {"~/knomi_serial"}
 
 
@@ -94,13 +94,13 @@ def test_the_klipper_section_defaults_to_knomi_serial(paths):
     one bringing its own module sets this."""
     with open(paths.main_config, "w", encoding="utf-8") as fh:
         fh.write("[display knomi_toolchanger]\n")
-    assert displays.load(paths)["knomi_toolchanger"].klipper_section == "knomi_serial"
+    assert pio.load(paths)["knomi_toolchanger"].klipper_section == "knomi_serial"
 
 
 def test_no_display_sections_is_not_an_error(paths):
     with open(paths.main_config, "w", encoding="utf-8") as fh:
         fh.write("[updater]\ndry_run: true\n")
-    assert displays.load(paths) == {}
+    assert pio.load(paths) == {}
 
 
 def test_display_sections_do_not_disturb_the_mcu_registry(paths, live_registry_text):
@@ -111,7 +111,7 @@ def test_display_sections_do_not_disturb_the_mcu_registry(paths, live_registry_t
         fh.write(live_registry_text + "\n[display knomi_toolchanger]\nsource: ~/k\n")
 
     assert "bttebb36" in Registry.load(paths).names()
-    assert "knomi_toolchanger" in displays.load(paths)
+    assert "knomi_toolchanger" in pio.load(paths)
 
 
 # --------------------------------------------------------------------------
@@ -122,23 +122,22 @@ def test_display_sections_do_not_disturb_the_mcu_registry(paths, live_registry_t
 def test_an_upload_without_a_port_is_refused(paths, settings, display):
     """PlatformIO would auto-detect one. With several identical CH340s attached
     that means writing firmware to whichever answered first - seen doing exactly
-    that on the printer, choosing between two displays."""
+    that on the printer, choosing between two pio."""
     with pytest.raises(FlashError) as exc:
-        displays.upload(paths, settings, display, "")
+        pio.upload(paths, settings, display, "")
     assert "explicit port" in str(exc.value)
 
 
 def test_the_upload_command_always_pins_the_port(paths, settings, display, monkeypatch):
     commands = []
-    monkeypatch.setattr(
-        displays, "run_streamed", lambda cmd, **kw: commands.append(cmd) or 0
+    monkeypatch.setattr(pio, "run_streamed", lambda cmd, **kw: commands.append(cmd) or 0
     )
-    monkeypatch.setattr(displays, "find_pio", lambda s: "/usr/bin/pio")
+    monkeypatch.setattr(pio, "find_pio", lambda s: "/usr/bin/pio")
     # Held steady so this stays about pinning: the suite runs on Windows, where
     # realpath turns a /dev path into C:\dev. Resolution has its own tests.
-    monkeypatch.setattr(displays.os.path, "realpath", lambda p: p)
+    monkeypatch.setattr(pio.os.path, "realpath", lambda p: p)
 
-    displays.upload(paths, settings, display, "/dev/knomi_t0")
+    pio.upload(paths, settings, display, "/dev/knomi_t0")
 
     cmd = commands[0]
     assert "--upload-port" in cmd
@@ -162,10 +161,10 @@ def test_the_chip_is_captured_from_a_real_transcript(paths, settings, display, m
             reporter("stdout", line)
         return 0
 
-    monkeypatch.setattr(displays, "run_streamed", fake)
-    monkeypatch.setattr(displays, "find_pio", lambda s: "/usr/bin/pio")
+    monkeypatch.setattr(pio, "run_streamed", fake)
+    monkeypatch.setattr(pio, "find_pio", lambda s: "/usr/bin/pio")
 
-    result = displays.upload(paths, settings, display, "/dev/knomi_t0")
+    result = pio.upload(paths, settings, display, "/dev/knomi_t0")
 
     assert result["chip"] == "ESP32-S3 (QFN56) (revision v0.2)"
     assert result["port"] == "/dev/knomi_t0"
@@ -179,10 +178,10 @@ def test_a_transcript_with_no_chip_reports_none_rather_than_guessing(
         kwargs["reporter"]("stdout", "Uploading...")
         return 0
 
-    monkeypatch.setattr(displays, "run_streamed", fake)
-    monkeypatch.setattr(displays, "find_pio", lambda s: "/usr/bin/pio")
+    monkeypatch.setattr(pio, "run_streamed", fake)
+    monkeypatch.setattr(pio, "find_pio", lambda s: "/usr/bin/pio")
 
-    assert displays.upload(paths, settings, display, "/dev/x")["chip"] is None
+    assert pio.upload(paths, settings, display, "/dev/x")["chip"] is None
 
 
 def test_a_failed_upload_raises_rather_than_returning_a_result(
@@ -195,11 +194,11 @@ def test_a_failed_upload_raises_rather_than_returning_a_result(
         kwargs["reporter"]("stderr", "A fatal error occurred: Failed to connect to ESP32-S3")
         return 2
 
-    monkeypatch.setattr(displays, "run_streamed", fake)
-    monkeypatch.setattr(displays, "find_pio", lambda s: "/usr/bin/pio")
+    monkeypatch.setattr(pio, "run_streamed", fake)
+    monkeypatch.setattr(pio, "find_pio", lambda s: "/usr/bin/pio")
 
     with pytest.raises(FlashError):
-        displays.upload(paths, settings, display, "/dev/knomi_t0")
+        pio.upload(paths, settings, display, "/dev/knomi_t0")
 
 
 # --------------------------------------------------------------------------
@@ -215,10 +214,10 @@ def test_a_build_runs_the_named_env_in_the_source_tree(paths, settings, display,
         seen["cwd"] = kwargs["cwd"]
         return 0
 
-    monkeypatch.setattr(displays, "run_streamed", fake)
-    monkeypatch.setattr(displays, "find_pio", lambda s: "/usr/bin/pio")
+    monkeypatch.setattr(pio, "run_streamed", fake)
+    monkeypatch.setattr(pio, "find_pio", lambda s: "/usr/bin/pio")
 
-    out = displays.build(paths, settings, display)
+    out = pio.build(paths, settings, display)
 
     assert seen["cmd"][1:] == ["run", "-e", "knomi_toolchanger"]
     assert seen["cwd"] == str(display.source)
@@ -226,26 +225,26 @@ def test_a_build_runs_the_named_env_in_the_source_tree(paths, settings, display,
 
 
 def test_a_missing_source_tree_says_so_before_running_anything(paths, settings):
-    absent = displays.DisplayType(name="knomi", source="/no/such/tree")
+    absent = pio.PioType(name="knomi", source="/no/such/tree")
     with pytest.raises(SourceTreeMissingError):
-        displays.build(paths, settings, absent)
+        pio.build(paths, settings, absent)
 
 
 def test_no_source_configured_is_its_own_error(paths, settings):
     """Distinct from a missing tree: one is a typo in a path, the other is a
     setting nobody filled in."""
     with pytest.raises(ConfigError):
-        displays.build(paths, settings, displays.DisplayType(name="knomi"))
+        pio.build(paths, settings, pio.PioType(name="knomi"))
 
 
 def test_pio_not_installed_names_the_fix(settings, monkeypatch):
     from mcu_updater.errors import ToolMissingError
 
-    monkeypatch.setattr(displays.shutil, "which", lambda name: None)
-    monkeypatch.setattr(displays.os.path, "exists", lambda path: False)
+    monkeypatch.setattr(pio.shutil, "which", lambda name: None)
+    monkeypatch.setattr(pio.os.path, "exists", lambda path: False)
 
     with pytest.raises(ToolMissingError) as exc:
-        displays.find_pio(settings)
+        pio.find_pio(settings)
     assert "penv/bin/pio" in str(exc.value)
 
 
@@ -262,13 +261,13 @@ def test_a_symlinked_port_is_resolved_before_platformio_sees_it(
     paths, settings, display, monkeypatch, tmp_path
 ):
     commands = []
-    monkeypatch.setattr(displays, "run_streamed", lambda cmd, **kw: commands.append(cmd) or 0)
-    monkeypatch.setattr(displays, "find_pio", lambda s: "/usr/bin/pio")
+    monkeypatch.setattr(pio, "run_streamed", lambda cmd, **kw: commands.append(cmd) or 0)
+    monkeypatch.setattr(pio, "find_pio", lambda s: "/usr/bin/pio")
     monkeypatch.setattr(
-        displays.os.path, "realpath", lambda p: "/dev/ttyUSB0" if p == "/dev/knomi_t0" else p
+        pio.os.path, "realpath", lambda p: "/dev/ttyUSB0" if p == "/dev/knomi_t0" else p
     )
 
-    result = displays.upload(paths, settings, display, "/dev/knomi_t0")
+    result = pio.upload(paths, settings, display, "/dev/knomi_t0")
 
     cmd = commands[0]
     assert cmd[cmd.index("--upload-port") + 1] == "/dev/ttyUSB0"
@@ -281,13 +280,13 @@ def test_the_resolution_is_reported_so_the_written_device_is_visible(
     paths, settings, display, monkeypatch
 ):
     lines = []
-    monkeypatch.setattr(displays, "run_streamed", lambda cmd, **kw: 0)
-    monkeypatch.setattr(displays, "find_pio", lambda s: "/usr/bin/pio")
+    monkeypatch.setattr(pio, "run_streamed", lambda cmd, **kw: 0)
+    monkeypatch.setattr(pio, "find_pio", lambda s: "/usr/bin/pio")
     monkeypatch.setattr(
-        displays.os.path, "realpath", lambda p: "/dev/ttyUSB0" if p == "/dev/knomi_t0" else p
+        pio.os.path, "realpath", lambda p: "/dev/ttyUSB0" if p == "/dev/knomi_t0" else p
     )
 
-    displays.upload(
+    pio.upload(
         paths, settings, display, "/dev/knomi_t0", reporter=lambda s, t: lines.append(t)
     )
 
@@ -298,12 +297,12 @@ def test_a_port_that_is_not_a_symlink_is_passed_through_unchanged(
     paths, settings, display, monkeypatch
 ):
     commands = []
-    monkeypatch.setattr(displays, "run_streamed", lambda cmd, **kw: commands.append(cmd) or 0)
-    monkeypatch.setattr(displays, "find_pio", lambda s: "/usr/bin/pio")
-    monkeypatch.setattr(displays.os.path, "realpath", lambda p: p)
+    monkeypatch.setattr(pio, "run_streamed", lambda cmd, **kw: commands.append(cmd) or 0)
+    monkeypatch.setattr(pio, "find_pio", lambda s: "/usr/bin/pio")
+    monkeypatch.setattr(pio.os.path, "realpath", lambda p: p)
 
     lines = []
-    displays.upload(
+    pio.upload(
         paths, settings, display, "/dev/ttyUSB1", reporter=lambda s, t: lines.append(t)
     )
 
@@ -322,10 +321,10 @@ def test_the_upload_command_carries_no_option_pio_run_does_not_have(
     Klipper stop/start cycle, because the batch has already stopped it by then.
     """
     commands = []
-    monkeypatch.setattr(displays, "run_streamed", lambda cmd, **kw: commands.append(cmd) or 0)
-    monkeypatch.setattr(displays, "find_pio", lambda s: "/usr/bin/pio")
+    monkeypatch.setattr(pio, "run_streamed", lambda cmd, **kw: commands.append(cmd) or 0)
+    monkeypatch.setattr(pio, "find_pio", lambda s: "/usr/bin/pio")
 
-    displays.upload(paths, settings, display, "/dev/ttyUSB0")
+    pio.upload(paths, settings, display, "/dev/ttyUSB0")
 
     cmd = commands[0]
     assert "--project-option" not in cmd
@@ -354,11 +353,11 @@ def test_waiting_for_a_new_port_is_explained_rather_than_reported_as_exit_2(
             kwargs["reporter"]("stdout", line)
         return 1
 
-    monkeypatch.setattr(displays, "run_streamed", fake)
-    monkeypatch.setattr(displays, "find_pio", lambda s: "/usr/bin/pio")
+    monkeypatch.setattr(pio, "run_streamed", fake)
+    monkeypatch.setattr(pio, "find_pio", lambda s: "/usr/bin/pio")
 
     with pytest.raises(FlashError) as exc:
-        displays.upload(paths, settings, display, "/dev/knomi_t0")
+        pio.upload(paths, settings, display, "/dev/knomi_t0")
 
     message = str(exc.value)
     assert "board_upload.wait_for_upload_port = no" in message
@@ -376,11 +375,11 @@ def test_an_ordinary_build_failure_keeps_the_plain_message(
         kwargs["reporter"]("stderr", "src/main.cpp:42:3: error: 'fooo' was not declared")
         return 1
 
-    monkeypatch.setattr(displays, "run_streamed", fake)
-    monkeypatch.setattr(displays, "find_pio", lambda s: "/usr/bin/pio")
+    monkeypatch.setattr(pio, "run_streamed", fake)
+    monkeypatch.setattr(pio, "find_pio", lambda s: "/usr/bin/pio")
 
     with pytest.raises(FlashError) as exc:
-        displays.upload(paths, settings, display, "/dev/knomi_t0")
+        pio.upload(paths, settings, display, "/dev/knomi_t0")
 
     assert "pio exited 1" in str(exc.value)
     assert "wait_for_upload_port" not in str(exc.value)
@@ -390,9 +389,9 @@ def test_resolve_port_survives_a_path_it_cannot_stat(monkeypatch):
     def boom(p):
         raise OSError("nope")
 
-    monkeypatch.setattr(displays.os.path, "realpath", boom)
+    monkeypatch.setattr(pio.os.path, "realpath", boom)
     # PlatformIO's own "missing port" message beats anything invented here.
-    assert displays.resolve_port("/dev/knomi_t9") == "/dev/knomi_t9"
+    assert pio.resolve_port("/dev/knomi_t9") == "/dev/knomi_t9"
 
 
 # --------------------------------------------------------------------------
@@ -404,7 +403,7 @@ def test_resolve_port_survives_a_path_it_cannot_stat(monkeypatch):
 # against its source, which says nothing about what is on the board.
 # --------------------------------------------------------------------------
 
-from mcu_updater.displays import (  # noqa: E402
+from mcu_updater.providers.pio import (  # noqa: E402
     FW_BEHIND,
     FW_CURRENT,
     FW_DIRTY,
@@ -472,7 +471,7 @@ def test_a_screen_that_reports_no_version_is_unknown():
 
 
 def test_source_state_survives_a_directory_that_is_not_a_checkout(tmp_path):
-    from mcu_updater.displays import source_state
+    from mcu_updater.providers.pio import source_state
 
     assert source_state(str(tmp_path)).head is None
     assert source_state(str(tmp_path / "nope")).head is None
@@ -487,7 +486,7 @@ def test_source_state_survives_a_directory_that_is_not_a_checkout(tmp_path):
 # every screen of the type - silently, because the upload itself succeeds.
 # --------------------------------------------------------------------------
 
-from mcu_updater.displays import (  # noqa: E402
+from mcu_updater.providers.pio import (  # noqa: E402
     ART_CURRENT,
     ART_DIRTY,
     ART_FOREIGN,
@@ -499,7 +498,7 @@ from mcu_updater.displays import (  # noqa: E402
 
 
 def _bin(display):
-    from mcu_updater.displays import firmware_bin
+    from mcu_updater.providers.pio import firmware_bin
 
     path = firmware_bin(display)
     os.makedirs(os.path.dirname(path), exist_ok=True)
@@ -544,7 +543,7 @@ def test_a_rebuild_by_someone_else_invalidates_our_provenance(paths, display):
     record_build(paths, display, TREE)
     assert artifact_state(paths, display, TREE) == ART_CURRENT
 
-    from mcu_updater.displays import firmware_bin
+    from mcu_updater.providers.pio import firmware_bin
 
     with open(firmware_bin(display), "wb") as fh:
         fh.write(b"\x00different and longer")
@@ -578,10 +577,10 @@ def test_the_sidecar_stays_out_of_the_users_source_tree(paths, display):
 def test_a_dry_run_build_records_no_provenance(paths, settings, display, monkeypatch):
     """Nothing was compiled, so there is nothing to describe."""
     settings.dry_run = True
-    monkeypatch.setattr(displays, "find_pio", lambda s: "/usr/bin/pio")
-    monkeypatch.setattr(displays, "run_streamed", lambda cmd, **kw: 0)
+    monkeypatch.setattr(pio, "find_pio", lambda s: "/usr/bin/pio")
+    monkeypatch.setattr(pio, "run_streamed", lambda cmd, **kw: 0)
 
-    displays.build(paths, settings, display)
+    pio.build(paths, settings, display)
 
     assert not os.path.exists(paths.display_sidecar(display.env))
 
@@ -596,8 +595,8 @@ def test_a_dry_run_build_records_no_provenance(paths, settings, display, monkeyp
 # remembered path is the thing the whole identity scheme exists to avoid.
 # --------------------------------------------------------------------------
 
-from mcu_updater.displays import discover  # noqa: E402
 from mcu_updater.errors import ToolMissingError  # noqa: E402
+from mcu_updater.providers.pio import discover  # noqa: E402
 
 
 def _fake_python(tmp_path, stdout: str, rc: int = 0):
@@ -625,8 +624,8 @@ REAL = MARKER + (
 
 def test_every_display_that_answered_is_returned(paths, settings, display, monkeypatch, tmp_path):
     calls, which, run = _fake_python(tmp_path, REAL)
-    monkeypatch.setattr("mcu_updater.displays.shutil.which", which)
-    monkeypatch.setattr("mcu_updater.displays.run_streamed", run)
+    monkeypatch.setattr("mcu_updater.providers.pio.shutil.which", which)
+    monkeypatch.setattr("mcu_updater.providers.pio.run_streamed", run)
 
     found = discover(paths, settings, display)
 
@@ -643,8 +642,8 @@ def test_noise_on_stdout_is_not_mistaken_for_the_answer(
     """A deprecation warning or a udev grumble shares stdout with the result."""
     noisy = "DeprecationWarning: something\n" + REAL + "\nall done\n"
     calls, which, run = _fake_python(tmp_path, noisy)
-    monkeypatch.setattr("mcu_updater.displays.shutil.which", which)
-    monkeypatch.setattr("mcu_updater.displays.run_streamed", run)
+    monkeypatch.setattr("mcu_updater.providers.pio.shutil.which", which)
+    monkeypatch.setattr("mcu_updater.providers.pio.run_streamed", run)
 
     assert sorted(discover(paths, settings, display)) == ["196c94", "19aa38"]
 
@@ -655,24 +654,24 @@ def test_nothing_answering_is_an_empty_map_not_an_error(
     """Klipper still holding the ports looks exactly like this, and the caller's
     answer - flash nothing we cannot identify - is the same either way."""
     calls, which, run = _fake_python(tmp_path, MARKER + "{}")
-    monkeypatch.setattr("mcu_updater.displays.shutil.which", which)
-    monkeypatch.setattr("mcu_updater.displays.run_streamed", run)
+    monkeypatch.setattr("mcu_updater.providers.pio.shutil.which", which)
+    monkeypatch.setattr("mcu_updater.providers.pio.run_streamed", run)
 
     assert discover(paths, settings, display) == {}
 
 
 def test_an_entry_with_no_port_is_not_offered(paths, settings, display, monkeypatch, tmp_path):
     calls, which, run = _fake_python(tmp_path, MARKER + '{"19aa38": {"fw": "0.5.0"}}')
-    monkeypatch.setattr("mcu_updater.displays.shutil.which", which)
-    monkeypatch.setattr("mcu_updater.displays.run_streamed", run)
+    monkeypatch.setattr("mcu_updater.providers.pio.shutil.which", which)
+    monkeypatch.setattr("mcu_updater.providers.pio.run_streamed", run)
 
     assert discover(paths, settings, display) == {}
 
 
 def test_ids_are_lowered_so_they_compare(paths, settings, display, monkeypatch, tmp_path):
     calls, which, run = _fake_python(tmp_path, MARKER + '{"19AA38": {"port": "/dev/ttyUSB0"}}')
-    monkeypatch.setattr("mcu_updater.displays.shutil.which", which)
-    monkeypatch.setattr("mcu_updater.displays.run_streamed", run)
+    monkeypatch.setattr("mcu_updater.providers.pio.shutil.which", which)
+    monkeypatch.setattr("mcu_updater.providers.pio.run_streamed", run)
 
     assert list(discover(paths, settings, display)) == ["19aa38"]
 
@@ -683,8 +682,8 @@ def test_a_missing_pyserial_says_what_to_install(
     calls, which, run = _fake_python(
         tmp_path, "ModuleNotFoundError: No module named 'serial'", rc=1
     )
-    monkeypatch.setattr("mcu_updater.displays.shutil.which", which)
-    monkeypatch.setattr("mcu_updater.displays.run_streamed", run)
+    monkeypatch.setattr("mcu_updater.providers.pio.shutil.which", which)
+    monkeypatch.setattr("mcu_updater.providers.pio.run_streamed", run)
 
     with pytest.raises(ToolMissingError) as exc:
         discover(paths, settings, display)
@@ -698,8 +697,8 @@ def test_the_helper_runs_against_the_configured_source_tree(
     """knomi_serial is imported from the tree, so a relocated checkout has to
     be the one asked - otherwise discovery and the build disagree."""
     calls, which, run = _fake_python(tmp_path, MARKER + "{}")
-    monkeypatch.setattr("mcu_updater.displays.shutil.which", which)
-    monkeypatch.setattr("mcu_updater.displays.run_streamed", run)
+    monkeypatch.setattr("mcu_updater.providers.pio.shutil.which", which)
+    monkeypatch.setattr("mcu_updater.providers.pio.run_streamed", run)
 
     discover(paths, settings, display)
 

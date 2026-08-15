@@ -18,10 +18,10 @@ import pathlib
 
 import pytest
 
-from mcu_updater import displays as displays_mod
 from mcu_updater.agent.methods import Api
 from mcu_updater.agent.rpc import RpcError
 from mcu_updater.jobs import JobRunner
+from mcu_updater.providers import pio as pio_mod
 from mcu_updater.service import NullService
 
 from .conftest import display_objects, serve_klipper, write_settings
@@ -85,8 +85,8 @@ def no_pio(monkeypatch):
             reporter("stdout", f"MAC: cc:ba:97:19:aa:{len(calls):02d}")
         return 0
 
-    monkeypatch.setattr(displays_mod, "run_streamed", fake)
-    monkeypatch.setattr(displays_mod, "find_pio", lambda s: "/usr/bin/pio")
+    monkeypatch.setattr(pio_mod, "run_streamed", fake)
+    monkeypatch.setattr(pio_mod, "find_pio", lambda s: "/usr/bin/pio")
     return calls
 
 
@@ -160,13 +160,13 @@ def test_the_screens_are_read_before_klipper_is_stopped(api, no_pio, monkeypatch
 
     monkeypatch.setattr(svc, "stop", watched_stop)
 
-    original = api.display_list
+    original = api.device_list
 
     def watched_list(args):
         order.append("listed")
         return original(args)
 
-    monkeypatch.setattr(api, "display_list", watched_list)
+    monkeypatch.setattr(api, "device_list", watched_list)
 
     res = api.dispatch("fw.display.flash", {"name": ENV})
     assert api.runner.wait(timeout=30)
@@ -243,7 +243,7 @@ def test_one_failing_screen_does_not_abandon_the_others(api, no_pio, monkeypatch
             kwargs["reporter"]("stdout", "MAC: cc:ba:97:19:aa:38")
         return 0
 
-    monkeypatch.setattr(displays_mod, "run_streamed", selective)
+    monkeypatch.setattr(pio_mod, "run_streamed", selective)
 
     res = api.dispatch("fw.display.flash", {"name": ENV})
     assert api.runner.wait(timeout=30)
@@ -432,7 +432,7 @@ def screens_port(screens: dict, which: str) -> str:
 
 
 def _found(**by_id):
-    from mcu_updater.displays import WatcherDevice
+    from mcu_updater.providers.pio import WatcherDevice
 
     return {
         i: WatcherDevice(device_id=i, port=p, present=True) for i, p in by_id.items()
@@ -452,13 +452,13 @@ def test_a_screen_is_written_where_it_answered_not_where_it_was(
     moved_to = str(fake_root / "ttyUSB9")
     write_settings(paths, dry_run="false", enable_flashing="true", service_backend="null")
     monkeypatch.setattr(
-        "mcu_updater.displays.discover", lambda *a, **k: _found(aaa111=moved_to)
+        "mcu_updater.providers.pio.discover", lambda *a, **k: _found(aaa111=moved_to)
     )
     api._call = serve_klipper(display_objects(screens, _with_ids(screens, t0_knomi="aaa111")))
 
     ports: list[str] = []
     monkeypatch.setattr(
-        "mcu_updater.displays.upload",
+        "mcu_updater.providers.pio.upload",
         lambda p, s, d, port, **k: ports.append(port) or {"port": port, "chip": None},
     )
 
@@ -477,14 +477,14 @@ def test_a_screen_that_does_not_answer_is_not_flashed_at_its_old_port(
     there - and its old path now names whatever is on that path."""
     write_settings(paths, dry_run="false", enable_flashing="true", service_backend="null")
     monkeypatch.setattr(
-        "mcu_updater.displays.discover",
+        "mcu_updater.providers.pio.discover",
         lambda *a, **k: _found(somebodyelse=str(fake_root / "ttyUSB9")),
     )
     api._call = serve_klipper(display_objects(screens, _with_ids(screens, t0_knomi="aaa111")))
 
     ports: list[str] = []
     monkeypatch.setattr(
-        "mcu_updater.displays.upload",
+        "mcu_updater.providers.pio.upload",
         lambda p, s, d, port, **k: ports.append(port) or {"port": port, "chip": None},
     )
 
@@ -510,12 +510,12 @@ def test_discovery_failing_falls_back_to_the_configured_ports(
         raise ToolMissingError("pyserial is not installed", tool="discover")
 
     write_settings(paths, dry_run="false", enable_flashing="true", service_backend="null")
-    monkeypatch.setattr("mcu_updater.displays.discover", boom)
+    monkeypatch.setattr("mcu_updater.providers.pio.discover", boom)
     api._call = serve_klipper(display_objects(screens, _with_ids(screens, t0_knomi="aaa111")))
 
     ports: list[str] = []
     monkeypatch.setattr(
-        "mcu_updater.displays.upload",
+        "mcu_updater.providers.pio.upload",
         lambda p, s, d, port, **k: ports.append(port) or {"port": port, "chip": None},
     )
 
@@ -534,14 +534,14 @@ def test_a_screen_with_no_hardware_id_is_still_flashed(
     ability to flash."""
     write_settings(paths, dry_run="false", enable_flashing="true", service_backend="null")
     monkeypatch.setattr(
-        "mcu_updater.displays.discover",
+        "mcu_updater.providers.pio.discover",
         lambda *a, **k: _found(somebodyelse=str(fake_root / "ttyUSB9")),
     )
     api._call = serve_klipper(display_objects(screens))  # no live fields at all
 
     ports: list[str] = []
     monkeypatch.setattr(
-        "mcu_updater.displays.upload",
+        "mcu_updater.providers.pio.upload",
         lambda p, s, d, port, **k: ports.append(port) or {"port": port, "chip": None},
     )
 
@@ -558,7 +558,7 @@ def test_a_dry_run_never_opens_a_serial_port(api, paths, no_pio, screens, monkey
     def boom(*a, **k):
         raise AssertionError("opened serial ports during a dry run")
 
-    monkeypatch.setattr("mcu_updater.displays.discover", boom)
+    monkeypatch.setattr("mcu_updater.providers.pio.discover", boom)
     write_settings(paths, dry_run="true", enable_flashing="true", service_backend="null")
     api._call = serve_klipper(display_objects(screens, _with_ids(screens, t0_knomi="aaa111")))
 
@@ -579,7 +579,7 @@ def test_a_dry_run_never_opens_a_serial_port(api, paths, no_pio, screens, monkey
 
 def _built(api, paths, fake_root) -> None:
     """An image on disk for the display env, so there is something to write."""
-    from mcu_updater import displays as dm
+    from mcu_updater.providers import pio as dm
 
     display = api.display_types()[ENV]
     path = pathlib.Path(dm.firmware_bin(display))
@@ -638,3 +638,65 @@ def test_a_fleet_flash_writes_boards_and_screens_under_one_stop(
     assert [f["flasher"] for f in job.result["flashed"]] == ["esptool", "esptool"]
     # Stopped once for the batch, not once per device.
     assert svc.actions == ["stop", "start"]
+
+
+# --------------------------------------------------------------------------
+# one method per operation, whichever build system owns the type
+#
+# `fw.display.build` and `fw.display.flash` named a build system in the method,
+# so a caller had to know which kind of thing it was addressing before it could
+# pick one - which is the branching the Provider and Flasher seams removed
+# everywhere else. `fw.build` and `fw.flash` route on the type's own provider.
+# The old names stay registered: a panel built before this is still calling them.
+# --------------------------------------------------------------------------
+
+
+def test_the_generic_build_reaches_a_platformio_type(api, no_pio):
+    """No `fw` argument. A PlatformIO env already names the board, the partition
+    table and the flags, so there is no family axis to name one on."""
+    res = api.dispatch("fw.build", {"name": ENV})
+    assert api.runner.wait(timeout=30)
+    job = api.runner.get(res["job_id"])
+
+    assert job.state == "succeeded", job.error
+    assert job.result["env"] == ENV
+
+
+def test_the_generic_flash_reaches_a_platformio_type(api, no_pio, screens):
+    res = api.dispatch("fw.flash", {"name": ENV})
+    assert api.runner.wait(timeout=30)
+    job = api.runner.get(res["job_id"])
+
+    assert job.state == "succeeded", job.error
+    assert len(job.result["flashed"]) == 2
+
+
+def test_the_uniform_id_slot_pins_one_device(api, no_pio, screens):
+    """`targets[].devices[].id` is a serial for a board and a port for a screen.
+    A caller reading one off the wire must be able to hand it straight back."""
+    port = screens["knomi_serial t0_knomi"]["serial"]
+    res = api.dispatch("fw.flash", {"name": ENV, "id": port})
+    assert api.runner.wait(timeout=30)
+    job = api.runner.get(res["job_id"])
+
+    assert job.state == "succeeded", job.error
+    assert [f["port"] for f in job.result["flashed"]] == [port]
+
+
+def test_the_old_method_names_still_answer(api, no_pio):
+    """They are two lines each, and they are what a deployed panel calls."""
+    assert "displays" in api.dispatch("fw.display.list")
+    assert "displays" in api.dispatch("fw.device.list")
+
+    res = api.dispatch("fw.display.build", {"name": ENV})
+    assert api.runner.wait(timeout=30)
+    assert api.runner.get(res["job_id"]).state == "succeeded"
+
+
+def test_a_name_belonging_to_no_type_is_refused_rather_than_guessed(api, no_pio):
+    """Defaulting an unknown name to kconfig would answer a mistyped screen with
+    "no saved klipper config", which sends somebody to run menuconfig for a
+    display."""
+    with pytest.raises(RpcError) as exc:
+        api.dispatch("fw.build", {"name": "not_a_type"})
+    assert exc.value.data["code"] == "unknown_type"

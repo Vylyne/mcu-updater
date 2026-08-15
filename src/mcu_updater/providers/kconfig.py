@@ -47,9 +47,9 @@ from collections.abc import Iterable, Iterator
 from types import ModuleType
 from typing import Any, Optional
 
-from . import firmware
-from .errors import KconfigError
-from .paths import Paths
+from .. import firmware
+from ..errors import KconfigError
+from ..paths import Paths
 
 #: Where each firmware tree keeps the copy of kconfiglib it expects to be used.
 VENDORED_KCONFIGLIB = os.path.join("lib", "kconfiglib", "kconfiglib.py")

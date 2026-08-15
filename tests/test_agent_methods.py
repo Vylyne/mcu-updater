@@ -1266,7 +1266,7 @@ def test_a_flash_writes_a_record(paths, live_registry_text):
 
     from mcu_updater.build import FlashLog, build
     from mcu_updater.config import Registry
-    from mcu_updater.flash import flash_katapult
+    from mcu_updater.flashers.flash import flash_katapult
     from mcu_updater.settings import Settings
 
     with open(paths.registry_file, "w", encoding="utf-8") as fh:

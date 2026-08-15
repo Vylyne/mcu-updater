@@ -93,8 +93,8 @@
     {
       "name": "the display block is the provider's, not a second opinion",
       "file": "src/mcu_updater/providers/platformio.py",
-      "find": "    if not os.path.isdir(source):\n        return f\"source directory {source} not found for display '{display.name}'.\"",
-      "replace": "    if False:\n        return f\"source directory {source} not found for display '{display.name}'.\""
+      "find": "    if not os.path.isdir(source):\n        return f\"source directory {source} not found for '{target.name}'.\"",
+      "replace": "    if False:\n        return f\"source directory {source} not found for '{target.name}'.\""
     },
     {
       "name": "a declared family with no source tree is not reported present",

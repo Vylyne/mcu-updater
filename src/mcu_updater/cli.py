@@ -12,6 +12,7 @@ still drops into the interactive menu. New flags (``--dry-run``, ``-j``,
 from __future__ import annotations
 
 import argparse
+import contextlib
 import dataclasses
 import json
 import os
@@ -38,7 +39,7 @@ from .flashers.flash import adoptable_devices, flash_initial_bootloader
 from .layout import migrate_type_dirs
 from .lock import exclusive
 from .paths import FW_TARGETS, Paths
-from .service import Journal, make_controller, reconcile
+from .service import Journal, klipper_stopped, make_controller, paused, reconcile
 from .settings import Settings, load_settings
 
 # --------------------------------------------------------------------------
@@ -407,31 +408,58 @@ def _board_targets(c: Context, mcu_type: str, serials: list[str]) -> list:
     ]
 
 
-def _pio_targets(c: Context, name: str, only_id: Optional[str] = None) -> list:
-    """Devices of one PlatformIO type, from the watcher's map.
+def _pio_targets(
+    c: Context,
+    name: str,
+    only_id: Optional[str] = None,
+    *,
+    allow_discovery: bool = False,
+) -> list:
+    """Devices of one PlatformIO type: the watcher's map, or ask them ourselves.
 
     **Not from Klipper.** The agent reads its list from the klippy module's own
-    printer objects, and the CLI has no Moonraker to ask - so it uses the source
-    written for exactly this moment: the watcher's `id -> port` map, which is
-    the one thing that still answers while Klipper is down.
+    printer objects, and the CLI has no Moonraker to ask.
 
-    That map is only true while the watcher is *running* - it carries no
-    timestamps, so an entry means "identified during the current run and its
-    port has not vanished since". An empty map is therefore reported as "cannot
-    tell", not as "no devices": flashing nothing and calling it success is the
-    failure this whole area exists to prevent.
+    So, in order of what it costs: the watcher's `id -> port` map, which answers
+    instantly and is the source written for exactly this moment; and failing
+    that, `pio.discover`, which is the *authoritative* one - each device
+    broadcasts its id every couple of seconds unprompted, so this opens the free
+    ports and reads what answered. Their own docs are explicit that identity
+    belongs at flash time rather than to a remembered path, and the map is a
+    remembered path.
+
+    Discovery needs the ports free, which is why `allow_discovery` exists rather
+    than it simply always being tried: the caller has to have stopped Klipper and
+    paused the watcher first. `klipper_stopped` is idempotent, so the batch's own
+    stop inside that one correctly no-ops.
+
+    An empty answer from both is reported as "cannot tell", not as "no devices".
+    Flashing nothing and calling it success is the failure this whole area exists
+    to prevent.
     """
     from .providers import pio
 
     display = pio.load(c.paths, default_source=c.settings.pio_source)[name]
     found = pio.read_device_map(c.paths, display)
+    if not found and allow_discovery:
+        # The ports are free by now, which is the one moment this is possible.
+        print(f"No device map for '{name}' - asking the devices which they are...")
+        try:
+            found = pio.discover(c.paths, c.settings, display, reporter=stdout_reporter)
+        except UpdaterError as exc:
+            # Best effort, as it is in the esptool flasher: discovery needs
+            # pyserial and the source tree, and a host missing either should get
+            # the message below naming both sources rather than a tool error
+            # from the fallback.
+            stdout_reporter("warn", f"could not ask the devices ({exc})")
     if not found:
         where = pio.device_map_path(c.paths, display) or "(no device_map configured)"
         watcher = f"the '{display.service}' watcher" if display.service else "a watcher"
         raise UpdaterError(
-            f"no device map for '{name}' at {where}. The CLI reads it rather than "
-            f"asking Klipper, so {watcher} has to be running for this to know which "
-            f"devices exist and where."
+            f"nothing found for '{name}'. Neither the device map at {where} nor "
+            f"asking the devices directly turned anything up - so either {watcher} "
+            f"is not running and nothing answered on the free ports, or there is "
+            f"nothing plugged in."
         )
     return [
         flashers.esptool.target_for(
@@ -447,6 +475,35 @@ def _pio_targets(c: Context, name: str, only_id: Optional[str] = None) -> list:
         for device in sorted(found.values(), key=lambda d: d.port)
         if device.present and (only_id is None or only_id in (device.port, device.device_id))
     ]
+
+
+@contextlib.contextmanager
+def _ports_free(c: Context, names: Sequence[str], label: str):
+    """Klipper down and every named family's watcher paused, so discovery works.
+
+    Hoisted out of the batch because the CLI has to *select* inside the stop, not
+    just write inside it: with no Moonraker to ask, asking the devices themselves
+    is its fallback and that needs the ports free. `klipper_stopped` is
+    idempotent, so `write_all`'s own stop inside this one sees it already stopped
+    and correctly leaves it that way - one stop/start cycle, not two.
+    """
+    from .providers import pio
+
+    displays = pio.load(c.paths, default_source=c.settings.pio_source)
+    with klipper_stopped(
+        c.paths, make_controller(c.settings), label, reporter=stdout_reporter
+    ):
+        with contextlib.ExitStack() as stack:
+            for name in names:
+                unit = displays[name].service if name in displays else ""
+                if unit:
+                    stack.enter_context(
+                        paused(
+                            make_controller(c.settings, name=unit),
+                            reporter=stdout_reporter,
+                        )
+                    )
+            yield
 
 
 def _run_batch(c: Context, targets: list, label: str) -> int:
@@ -494,11 +551,15 @@ def flash_fw_cmd(args: argparse.Namespace) -> None:
     # serial to resolve and no registry entry to add one to.
     if args.type and args.type not in reg.names():
         with exclusive(c.paths, f"flash type {args.type}"):
-            targets = _pio_targets(c, args.type, only_id=args.serial)
-            if not targets:
-                print(f"No device is reachable for '{args.type}'.", file=sys.stderr)
-                sys.exit(1)
-            sys.exit(_run_batch(c, targets, f"flash {args.type}"))
+            with _ports_free(c, [args.type], f"flash {args.type}"):
+                targets = _pio_targets(
+                    c, args.type, only_id=args.serial, allow_discovery=True
+                )
+                if not targets:
+                    print(f"No device is reachable for '{args.type}'.", file=sys.stderr)
+                    sys.exit(1)
+                code = _run_batch(c, targets, f"flash {args.type}")
+        sys.exit(code)
 
     # Whole type: flash every tracked board under it.
     if args.type and not args.serial:
@@ -590,29 +651,32 @@ def update_all(args: argparse.Namespace) -> None:
                 print(f"ERROR: {exc}", file=sys.stderr)
                 failures.append((target.name, None))
 
-        # Selected after building, because a build is what makes a device stale.
-        targets: list = []
-        for name in sorted(install.registry.names()):
-            targets += _board_targets(c, name, install.registry.get(name).serials)
-        for name in sorted(install.displays):
-            try:
-                targets += _pio_targets(c, name)
-            except UpdaterError as exc:
-                # Not fatal: the boards are still worth writing, and a host with
-                # no watcher running is a configuration gap rather than a fault.
-                print(f"SKIP {name}: {exc}", file=sys.stderr)
-                failures.append((name, "no devices found"))
+        # Selected after building, because a build is what makes a device stale -
+        # and inside the stop, because with no Moonraker to ask, asking the
+        # devices themselves is how a PlatformIO family gets enumerated.
+        with _ports_free(c, sorted(install.displays), "update-all"):
+            targets: list = []
+            for name in sorted(install.registry.names()):
+                targets += _board_targets(c, name, install.registry.get(name).serials)
+            for name in sorted(install.displays):
+                try:
+                    targets += _pio_targets(c, name, allow_discovery=True)
+                except UpdaterError as exc:
+                    # Not fatal: the boards are still worth writing, and a host with
+                    # no watcher running is a configuration gap rather than a fault.
+                    print(f"SKIP {name}: {exc}", file=sys.stderr)
+                    failures.append((name, "no devices found"))
 
-        if not targets:
-            print("\nNothing to write.")
-        else:
-            result = flashers.write_all(
-                _bench(c), targets, flashers.PlainContext(stdout_reporter)
-            )
-            for failure in result["failures"]:
-                print(f"ERROR: {failure['id']}: {failure['error']}", file=sys.stderr)
-                failures.append((failure["type"], failure["id"]))
-            print(f"\nWrote {len(result['flashed'])} of {len(targets)} device(s).")
+            if not targets:
+                print("\nNothing to write.")
+            else:
+                result = flashers.write_all(
+                    _bench(c), targets, flashers.PlainContext(stdout_reporter)
+                )
+                for failure in result["failures"]:
+                    print(f"ERROR: {failure['id']}: {failure['error']}", file=sys.stderr)
+                    failures.append((failure["type"], failure["id"]))
+                print(f"\nWrote {len(result['flashed'])} of {len(targets)} device(s).")
 
     if failures:
         print("\nCompleted with failures:")

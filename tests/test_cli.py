@@ -228,3 +228,53 @@ def test_building_a_platformio_type_with_no_tree_refuses_before_the_lock(
 
     assert exc.value.code == 1
     assert "no source tree configured" in capsys.readouterr().err
+
+
+def test_an_empty_device_map_falls_back_to_asking_the_devices(
+    c, pio_type, captured, fake_root, monkeypatch
+):
+    """The map is a remembered path; discovery is the authority. knomi_serial's
+    own docs put identity at flash time for exactly this reason, and the ports
+    are free by the time this runs - which is the only moment it is possible.
+    """
+    from mcu_updater.providers import pio
+
+    port = fake_root / "ttyUSB7"
+    port.write_text("", encoding="utf-8")
+    asked: list[str] = []
+
+    def fake_discover(paths, settings, display, **kwargs):
+        asked.append(display.name)
+        return {
+            "aaa111": pio.WatcherDevice(
+                device_id="aaa111", port=str(port), present=True
+            )
+        }
+
+    monkeypatch.setattr(pio, "discover", fake_discover)
+    monkeypatch.setattr(cli, "_confirm", lambda prompt: True)
+
+    with pytest.raises(SystemExit):
+        cli.flash_fw_cmd(argparse.Namespace(type=ENV, serial=None, yes=True))
+
+    assert asked == [ENV]
+    assert [t.id for t in captured[0]] == [str(port)]
+
+
+def test_discovery_failing_still_names_both_sources(c, pio_type, monkeypatch):
+    """A host with no pyserial must not surface a tool error from the fallback -
+    the useful message is the one naming what it tried."""
+    from mcu_updater.errors import ToolMissingError
+    from mcu_updater.providers import pio
+
+    def boom(*a, **k):
+        raise ToolMissingError("no python3 here", tool="python3")
+
+    monkeypatch.setattr(pio, "discover", boom)
+    monkeypatch.setattr(cli, "_confirm", lambda prompt: True)
+
+    with pytest.raises(UpdaterError) as exc:
+        cli.flash_fw_cmd(argparse.Namespace(type=ENV, serial=None, yes=True))
+
+    assert "device map" in str(exc.value)
+    assert "asking the devices directly" in str(exc.value)

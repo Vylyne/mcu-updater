@@ -3,7 +3,7 @@
 Mainsail has no plugin API — only CSS theming — so a real panel needs a fork.
 This document is the runbook for keeping that fork cheap to maintain.
 
-Fork: **`Vylyne/mainsail`**, working branch **`ku/stable`**.
+Fork: **`Vylyne/mainsail`**, working branch **`mu/stable`**.
 
 ## Branch layout
 
@@ -13,7 +13,7 @@ mirror, so **rebase commands must say `upstream/master`**.
 
 | Branch | Base | Role |
 | --- | --- | --- |
-| `ku/stable` | `upstream/master` | **Primary.** Where the code is written, what CI releases, what the printer installs. |
+| `mu/stable` | `upstream/master` | **Primary.** Where the code is written, what CI releases, what the printer installs. |
 | `ku/develop` | `upstream/develop` | Cherry-pick target, only when preparing or refreshing an upstream PR. |
 
 Upstream requires PRs target `develop`, which is the only reason the second
@@ -26,7 +26,7 @@ First-time setup:
 ```bash
 git remote add upstream https://github.com/mainsail-crew/mainsail.git
 git fetch upstream --tags
-git switch -c ku/stable upstream/master
+git switch -c mu/stable upstream/master
 ```
 
 ## The delta
@@ -37,7 +37,7 @@ strategy — don't grow the edited list.
 Added:
 
 ```
-.github/workflows/ku-ci.yml                                       (fork-only)
+.github/workflows/mu-ci.yml                                       (fork-only)
 src/components/panels/Machine/FirmwareUpdaterPanel.vue
 src/components/panels/Machine/FirmwareUpdaterPanel/FirmwareUpdaterPanelType.vue
 src/components/panels/Machine/FirmwareUpdaterPanel/FirmwareUpdaterPanelUntracked.vue
@@ -99,9 +99,51 @@ and the two details that look cosmetic are not:
   it at nine releases per base. Zero-padding or hex only move that cap; the dot
   removes it.
 
-`ku-release.yml` refuses any tag that breaks either rule before it builds
+`mu-release.yml` refuses any tag that breaks either rule before it builds
 anything, so a mistake here fails loudly instead of publishing a release nobody
 is ever offered.
+
+## Releasing
+
+Two steps, deliberately. A tag reaches the beta host; a human decides it reaches
+every host.
+
+```bash
+git tag -a v2.18.4-vylyne.16 -m "what changed"
+git push origin v2.18.4-vylyne.16        # one tag, never --tags
+```
+
+The push fires `mu-release.yml`, which builds the tree at that tag and publishes
+it as a **prerelease** — visible to `channel: beta`, invisible to
+`channel: stable`. Install it on the beta host and check it against the agent it
+has to work with.
+
+When it is good, flip that release — the one that was tested — to stable, from
+the Releases UI or:
+
+```bash
+gh release edit v2.18.4-vylyne.16 --repo Vylyne/mainsail --prerelease=false --latest
+```
+
+Two ways to get this wrong, both silent:
+
+- **`--latest` is not optional.** `channel: stable` reads `/releases/latest`,
+  and GitHub does not move that pointer just because a release stopped being a
+  prerelease. Clear the flag alone and the release looks promoted in the UI while
+  no stable host is ever offered it.
+- **Do not promote by re-running `mu-release` with `stable: true`.** That
+  rebuilds, so what reaches every host is a fresh bundle rather than the one the
+  beta host has been running. `npm ci` against a lockfile usually makes those
+  identical, which is the wrong kind of "usually" here — the point of the beta
+  channel is that a *specific artifact* was exercised. The input stays for the
+  case promotion cannot serve: publishing a tag straight to stable with no beta
+  to promote.
+
+`mu-release.yml`'s guard checks the tag sorts above whatever the channel it is
+publishing to already has — the newest of any kind for beta, the newest
+non-prerelease for stable. Those are different questions, because the two
+channels read different endpoints, and asking the beta question about a stable
+publish refuses valid promotions.
 
 **Never `git push --tags`.** `git fetch upstream --tags` brings in ~95 of
 upstream's own release tags, and they are worth having locally — they are how you
@@ -117,10 +159,10 @@ git push --tags                      # no
 
 ## Keeping up with upstream
 
-`ku-upstream-sync.yml` runs daily. It rebases `ku/stable` onto
+`mu-upstream-sync.yml` runs daily. It rebases `mu/stable` onto
 `upstream/master` **on a scratch branch**, runs every gate against the result,
 and then either opens a PR (clean, and green) or an issue (conflicts, or the
-gates failed). It never touches `ku/stable`: landing a rebase means a force-push
+gates failed). It never touches `mu/stable`: landing a rebase means a force-push
 to the branch releases are cut from, which is not an unattended operation.
 
 The gates matter more than the conflict check. A rebase that applies cleanly and
@@ -176,7 +218,7 @@ fails, and CI on ubuntu has `zip`. To produce the artifact locally anyway, zip
 `npm run format:check` covers the whole repo, and **upstream/master does not pass
 its own check** — `CLAUDE.md` and `.github/copilot-instructions.md` fail on a
 pristine checkout. Running it unscoped would go red on inherited debt while
-saying nothing about our code, so `ku-ci.yml` checks only the files this fork
+saying nothing about our code, so `mu-ci.yml` checks only the files this fork
 owns. ESLint *is* run unscoped, because upstream does pass that cleanly, which
 means any error there is genuinely ours.
 

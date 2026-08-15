@@ -39,7 +39,14 @@ from .flashers.flash import adoptable_devices, flash_initial_bootloader
 from .layout import migrate_type_dirs
 from .lock import exclusive
 from .paths import FW_TARGETS, Paths
-from .service import Journal, klipper_stopped, make_controller, paused, reconcile
+from .service import (
+    Journal,
+    ServiceController,
+    klipper_stopped,
+    make_controller,
+    paused,
+    reconcile,
+)
 from .settings import Settings, load_settings
 
 # --------------------------------------------------------------------------
@@ -385,11 +392,10 @@ def _bench(c: Context) -> flashers.Bench:
     its own port watcher, and a batch spanning two needs two. Sharing the
     factory is what keeps a dry run from stopping a real service.
     """
-    return flashers.Bench(
-        paths=c.paths,
-        settings=c.settings,
-        controller=lambda name=None: make_controller(c.settings, name=name),
-    )
+    def controller(name: Optional[str] = None) -> ServiceController:
+        return make_controller(c.settings, name=name)
+
+    return flashers.Bench(paths=c.paths, settings=c.settings, controller=controller)
 
 
 def _board_targets(c: Context, mcu_type: str, serials: list[str]) -> list:

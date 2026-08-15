@@ -25,7 +25,12 @@ from .spec import Bench, FlashTarget
 #: really came back. The agent asks Moonraker and will issue a FIRMWARE_RESTART
 #: if klippy came up in an error state; the CLI has nobody to ask, so
 #: `klipper_stopped` restarting the unit is the whole of its answer.
-ReadyCheck = Callable[[Any], None]
+#:
+#: The return is deliberately `Any` and deliberately ignored. The agent's
+#: `_await_klippy_ready` hands back the state it settled on, which is useful to
+#: its own callers and means nothing to a batch that has already finished
+#: writing - pinning this to `None` would only stop it being passed in.
+ReadyCheck = Callable[[Any], Any]
 
 
 class PlainContext:

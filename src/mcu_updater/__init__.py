@@ -18,7 +18,14 @@ __version__ = "0.9.0"
 
 # Bumped only on a breaking change to the agent's JSON-RPC surface. The Mainsail
 # panel refuses to render if it sees an API version it doesn't know.
-API_VERSION = 1
+#
+# 2: fields were *removed*. `screens[].mac`/`flashed_at`/`moved_from`/`moved_at`
+#    and `targets[].extra.moved` went with the identity tracking, and a panel
+#    written against 1 reads `extra?.moved.length` - where the `?.` guards
+#    `extra` and not `moved`, so an absent key is a TypeError rather than a
+#    missing warning. Additions do not need a bump; removals do, which is what
+#    this number is for and what the removal should have carried at the time.
+API_VERSION = 2
 
 AGENT_NAME = "mcu_updater"
 

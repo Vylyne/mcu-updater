@@ -6,7 +6,13 @@ truth** — and `tests/test_agent_methods.py` is what stops them drifting.
 
 - Agent name: `mcu_updater` — a protocol identifier, deliberately unchanged
   when the project was renamed to `mcu-updater`; the panel matches on it.
-- `api_version`: **1**
+- `api_version`: **2**
+
+  Bumped only when a field is *removed* or changes meaning; additions do not
+  need one, since a panel that has never heard of a key simply does not read it.
+  Version 2 removed `screens[].mac`/`flashed_at`/`moved_from`/`moved_at` and
+  `targets[].extra.moved`, which went with the per-port identity tracking - see
+  "Which screen is on which port is not tracked" below.
 - Every planned capability has shipped: build, flash, bulk build/flash/update,
   registry and settings editing, Kconfig in the browser, and DFU setup of a new
   board. The flashing ones stay behind `enable_flashing`, off by default.
@@ -103,7 +109,7 @@ application error (see `data.code`), `-32603` internal.
 ### `fw.ping`
 
 ```json
-{"api_version": 1, "version": "0.9.0", "dry_run": false, "enable_flashing": false,
+{"api_version": 2, "version": "0.9.0", "dry_run": false, "enable_flashing": false,
  "phase": 1, "capabilities": ["fw.artifacts", "fw.bus.scan", "..."],
  "host": {"nproc": 4, "python": "3.9.2",
           "config_dir": "/home/biqu/printer_data/config/mcu-updater",
@@ -114,6 +120,12 @@ application error (see `data.code`), `-32603` internal.
 The panel should refuse to render if `api_version` exceeds what it knows, and use
 `capabilities` to decide which controls to show — that is how a Phase-1 agent and
 a Phase-3 panel coexist without either lying to the user.
+
+This is not belt-and-braces. A panel built against version 1 reads
+`targets[].extra.moved` as `extra?.moved.length`, where the optional chain guards
+`extra` and not `moved` — so against a version-2 agent it does not degrade, it
+throws. Refusing to render is what turns that into a message telling somebody to
+update the panel.
 
 ### `fw.status`
 

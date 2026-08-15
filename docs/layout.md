@@ -4,9 +4,10 @@ Files are split by *what they are*, following the `printer_data` conventions.
 
 ```
 ~/printer_data/config/mcu-updater/     # hand-edited. backed up. editable in Mainsail.
-    mcu-updater.cfg                        #   [updater] settings + one [mcu ...] per board
+    mcu-updater.cfg                        #   [updater] settings + one [mcu ...]/[type ...] per board
     types/bttebb36/klipper.config          #   saved menuconfig answers, per type
     types/flylllplusbuffer/klipper.config
+    types/carto_v4/cartographer.custom.config  #   your own answers, kept before a reseed would overwrite them
 
 ~/printer_data/mcu-updater/            # generated. not backed up.
     bttebb36/klipper.bin                   #   built firmware
@@ -76,15 +77,30 @@ klipper_makefile_patches:
 | --- | --- |
 | `chipset` | Required. Matches the chipset segment of the `/dev/serial/by-id` name. |
 | `serials` | One tracked board per line. |
+| `firmware` | Which family this board runs, e.g. `cartographer`. Default `klipper` — see `[firmware ...]` sections, below. |
 | `katapult_installed` | Only written when `false`; a board with no bootloader is the exception. |
+| `profile` | The vendor answer file the config was seeded from, e.g. `config.CartoV4USB`. |
 | `<fw>_extra_args` | Appended to the `make` command line. |
 | `<fw>_makefile_patches` | `<file> -> <line>`, appended to that Makefile for one build then reverted. |
 
-`<fw>` is `klipper` or `katapult`.
+`<fw>` is `klipper`, `katapult`, or a declared family's name.
 
-The `[updater]` section holds `make_jobs`, `clean_before_build`, `service`,
-`service_backend`, `dry_run`, `enable_flashing`, `allow_flash_while_printing`,
-`log_ring_size`, and — for ESP32 displays — `display_source` and
+`[mcu <name>]` is shorthand for `[type <name>]` with `provider: kconfig_make` —
+the Kconfig+`make` build system klipper and katapult both use. ESP32 displays
+are the other provider: `[display <name>]` means `provider: platformio`. A
+section keeps whatever spelling it already has; both prefixes stay readable
+indefinitely, since they're in hand-edited files on printers nobody is
+watching.
+
+A source tree that doesn't follow the `~/<name>` / `out/<name>.bin` convention
+— any vendor fork, e.g. Cartographer's — gets a `[firmware <name>]` section of
+its own, with `source:` and `artifact:` keys. See the main
+[README](../README.md#firmware-families).
+
+The `[updater]` section holds `make_jobs`, `clean_before_build`,
+`reseed_on_build`, `service`, `service_backend`, `dry_run`, `enable_flashing`,
+`allow_flash_while_printing`, `log_ring_size`, and — for ESP32 displays —
+`pio_source` (still read as `display_source`, its old name) and
 `platformio_bin`. All optional.
 
 **Edit the existing `[updater]` section rather than appending a second one.** A

@@ -1,13 +1,30 @@
 # mcu-updater
 
+![The MCU Firmware panel in Mainsail](docs/img/panel_1.png)
+
 Firmware management for a Klipper printer with more than one MCU. It keeps a
 registry of your board types and the USB serials of the physical boards of each
 type, remembers each type's `menuconfig` answers, builds Klipper and Katapult,
 and flashes every board — so "Klipper updated, now reflash six toolheads" is one
-command instead of an afternoon.
+command instead of an afternoon. Driven from the CLI or from the [web
+UI](#web-ui) shown above.
 
 Linux only (it needs `/dev/serial/by-id`, systemd and `sudo`). Python 3.9+,
 standard library only — no pip dependencies, no virtualenv.
+
+## Contents
+
+- [Requirements](#requirements)
+- [Usage](#usage)
+- [Web UI](#web-ui)
+- [Configuration](#configuration)
+  - [Firmware families](#firmware-families)
+  - [Profiles](#profiles)
+  - [ESP32 displays](#esp32-displays)
+- [Layout](#layout)
+- [Development](#development)
+  - [Checking that a guard is load-bearing](#checking-that-a-guard-is-load-bearing)
+  - [Line endings](#line-endings)
 
 ## Requirements
 
@@ -35,16 +52,61 @@ standard library only — no pip dependencies, no virtualenv.
 | `add-serial -t NAME -s SERIAL` | Track a physical board under a type |
 | `remove-type` / `remove-serial` | The inverse |
 | `profiles -t NAME` | List the vendor answer files this type's firmware tree ships |
-| `apply-profile -t NAME -p config.CartoV4USB` | Seed a type's menuconfig answers from one, deriving Katapult's to match |
-| `menuconfig -t NAME -f klipper\|katapult` | Configure a type, saved per type so it survives rebuilds |
-| `build -t NAME -f klipper\|katapult` | Compile and stage the artifact |
+| `apply-profile -t NAME -p config.CartoV4USB [-f FW]` | Seed a type's menuconfig answers from one, deriving Katapult's to match |
+| `menuconfig -t NAME -f FW` | Configure a type, saved per type so it survives rebuilds |
+| `build -t NAME -f FW [--no-reseed]` | Compile and stage the artifact |
 | `flash -t NAME [-s SERIAL]` | Flash one board, or every board of a type |
 | `update-all` | Stop Klipper, rebuild and reflash everything, start Klipper |
 | `add-mcu -t NAME` | Guided first-time Katapult install on a new board |
 
+`FW` is `klipper`, `katapult`, or the name of any declared [firmware
+family](#firmware-families). `apply-profile` defaults `-f` to whichever family
+the type runs, so it's only needed to seed a different target (Katapult's own
+config, say). `build --no-reseed` builds the saved config as it stands even if
+its profile has moved on since — see [reseed_on_build](#profiles).
+
 Useful flags: `--dry-run` (global) rehearses anything without building or
 flashing a thing; `-j N` on `build`/`update-all` for parallel make; `-y` to skip
 confirmation prompts; `--force` where a prompt guards something destructive.
+
+## Web UI
+
+Everything above also works from a browser instead of SSH. A Moonraker agent
+(`src/mcu_updater/agent`) talks to a small fork of Mainsail —
+[Vylyne/mainsail](https://github.com/Vylyne/mainsail) — that adds a native "MCU
+Firmware" panel to the Machine page. Mainsail has no plugin API, so a real panel
+needs a fork; [docs/mainsail-fork.md](docs/mainsail-fork.md) covers how it's kept
+small and rebaseable against upstream.
+
+Same registry, same `mcu-updater.cfg`, same builds — the panel shown at the top
+of this page lists every tracked type, whether its firmware is current, and
+whether each board is online, expandable down to the individual serial.
+
+**Kconfig in the browser**, seeded from a vendor [profile](#profiles) instead of
+an empty menu:
+
+![menuconfig panel](docs/img/panel_menu_config.png)
+
+**Settings**, including the switch that turns on flashing:
+
+![settings panel](docs/img/panel_settings.png)
+
+**ESP32 displays tracked alongside the MCUs:**
+
+![knomi displays panel](docs/img/panel_knomi_serial.png)
+
+**Boards on the bus that aren't tracked yet, one tap to adopt:**
+
+![untracked board panel](docs/img/pannel_untracked.png)
+
+`install.sh` sets up the agent and prints the one-line `moonraker.conf` change
+that points Mainsail's Update Manager at the fork instead of upstream. See
+[docs/agent-api.md](docs/agent-api.md) for the JSON-RPC contract between the two.
+
+Flashing from the panel is **off by default** — installing or updating the
+agent never silently grants a browser the ability to write to a board. Turn it
+on with `enable_flashing` (below) in the cfg, or with the toggle in the panel's
+own Settings, shown above.
 
 ## Configuration
 
@@ -60,6 +122,7 @@ writing to it.
 enable_flashing: true      ; let the web UI flash boards. Off by default.
 make_jobs: 0               ; 0 = no -j flag, negative = one per CPU
 clean_before_build: true   ; leave on: a stale object mix flashes a wrong binary
+reseed_on_build: true      ; take a vendor's updated profile answers before building
 service: klipper           ; klipper-1, klipper-2... for KIAUH multi-instance
 
 # Toolhead boards. The buffer patch is specific to this batch.
@@ -72,16 +135,26 @@ klipper_makefile_patches:
     src/Makefile -> src-y += buffer.c
 ```
 
+`[mcu <name>]` is the classic spelling and still works — it's shorthand for
+`[type <name>]` with `provider: kconfig_make`, the Kconfig+`make` build system
+klipper and katapult both use. ESP32 displays are the other provider
+(`[display <name>]`, i.e. `provider: platformio` — see [ESP32
+displays](#esp32-displays)). A section keeps whatever spelling it already has;
+write `[type <name>]` yourself only if you want the spelling to say so.
+
 Per-type keys:
 
 - **`chipset`** — required; matches the chipset segment of the by-id name.
 - **`serials`** — one tracked board per line.
+- **`firmware`** — which family this board actually runs, e.g. `cartographer`.
+  Defaults to `klipper`. See [Firmware families](#firmware-families).
 - **`katapult_installed`** — only written when `false`; a board with no
   bootloader is the exception.
 - **`profile`** — the vendor answer file this type's config is seeded from, e.g.
   `config.CartoV4USB`. Names a file in that firmware's *own source tree*, not
   one shipped here. See [Profiles](#profiles).
-- **`<fw>_extra_args`** — appended to the `make` command line.
+- **`<fw>_extra_args`** — appended to the `make` command line. `<fw>` is
+  `klipper`, `katapult`, or a declared family's name.
 - **`<fw>_makefile_patches`** — `<file> -> <line>`, appended to that Makefile
   *for one build only*, then reverted. This exists because Klipper's build system
   has no way to add `src-y +=` lines from the command line, and a permanent edit
@@ -98,6 +171,35 @@ later copy silently do nothing.
 > the version from git while the patch is applied, so the tree is briefly dirty.
 > `v0.13.0-712-g6d43f8b3-dirty-...` is expected for a patched type and does not
 > mean you have local Klipper modifications.
+
+### Firmware families
+
+Every type builds klipper and katapult by convention: source at `~/<name>`,
+output at `out/<name>.bin`. A vendor fork breaks both. Cartographer's firmware
+is a Klipper fork that lives in `~/MCU-Firmware---Based-on-Klipper` and, being
+a Klipper fork, still drops `out/klipper.bin`. Declare the mismatch once:
+
+```ini
+[firmware cartographer]
+source: ~/MCU-Firmware---Based-on-Klipper
+artifact: klipper           ; what the build actually leaves in out/
+```
+
+then point a type at it:
+
+```ini
+[mcu carto_v4]
+chipset: stm32g431xx
+firmware: cartographer
+```
+
+Both keys are optional, and so is the section itself — with none declared,
+every family resolves to the plain convention, which is every install
+predating this. `menuconfig -f`/`build -f` take `cartographer` exactly like
+`klipper` or `katapult`, and so do `cartographer_extra_args` /
+`cartographer_makefile_patches`. Which flasher writes the board is still
+chosen by chipset, not by family, since one firmware can need `dfu-util` on an
+STM32 board and BOOTSEL on an RP2040 one.
 
 ### Profiles
 
@@ -148,6 +250,19 @@ saying nothing. A lock users cannot override just gets worked around by editing
 the file on disk, and then nobody knows. `apply-profile` refuses to overwrite a
 config it did not write — `--force` replaces it and keeps a `.bak`.
 
+**Editing one isn't a dead end.** The moment something would reseed over a
+customised config — `apply-profile --force`, or the automatic reseed below —
+your edited answers are kept first, as this type's own profile
+(`config.custom`). `profiles -t NAME` lists it alongside the vendor's, marked
+"yours"; `apply-profile -t NAME -p config.custom` gets you back.
+
+**Vendor bumps are taken automatically, never over your own edits.** With
+`reseed_on_build` on (the default), a build first checks whether the profile a
+config was seeded from has moved on — the vendor pushed a new
+`config.CartoV4USB` — and reseeds from it before compiling. It only fires when
+the saved config still matches what the profile last wrote; a `Customised`
+config is always left alone. `build --no-reseed` skips the check for one build.
+
 > Three answers are worth knowing you can break, out of that whole menu: the
 > **clock reference** (wrong and the board never enumerates), the
 > **communication interface** (mismatched to how it is wired and the board
@@ -162,20 +277,34 @@ Knomis and anything else PlatformIO builds, managed alongside the MCUs:
 ```ini
 # mcu-updater.cfg
 [updater]
-display_source: ~/knomi_serial     # one repo, shared by every env
+pio_source: ~/knomi_serial         # one repo, shared by every env (was display_source)
 
-[display knomi_toolchanger]        # the section name IS the PlatformIO env
+[display knomi_toolchanger]        # the section name is the PlatformIO env by default
 ```
 
-A section's own `source:` overrides `display_source`, and `platformio_bin` in
-`[updater]` points at `pio` if neither the `PATH` nor
-`~/.platformio/penv/bin/pio` finds it.
+`[display <name>]` is shorthand for `[type <name>]` with `provider: platformio`
+— the same aliasing `[mcu ...]` gets, see [above](#configuration). A section's
+own `source:` overrides `pio_source`, and `platformio_bin` in `[updater]`
+points at `pio` if neither the `PATH` nor `~/.platformio/penv/bin/pio` finds it.
+
+| Key | Meaning |
+| --- | --- |
+| `env` | The PlatformIO env, if it differs from the section name |
+| `source` | This display's own source tree, overriding `pio_source` |
+| `klipper_section` | The `printer.cfg` prefix its displays are declared under. Default `knomi_serial` |
+| `service` | The systemd unit watching its ports, paused while flashing. Default `knomi_serial`; blank means nothing to pause |
+| `device_map` | Where that watcher writes its id → port map, relative to `printer_data`. Default `knomi/devices.json` |
+
+Every key defaults to what a Knomi needs, so a bare `[display
+knomi_toolchanger]` is still enough for the common case — the three that
+usually change are for a second display family with its own klippy module and
+port watcher.
 
 The screens themselves are not listed here — `[knomi_serial T0_knomi]` in
 `printer.cfg` already names its port, and a second copy would only be something
 to disagree with.
 
-Two things to know:
+A few things to know:
 
 - **A port is never inferred.** `pio run -t upload` picks one on its own when
   told nothing, and every screen is an indistinguishable CH340 — so an upload
@@ -217,6 +346,7 @@ reasoning.
 ~/printer_data/config/mcu-updater/   hand-edited, backed up, editable in Mainsail
     mcu-updater.cfg                      settings + the MCU registry
     types/<type>/<fw>.config             saved menuconfig answers
+    types/<type>/<fw>.custom.config      your own answers, kept before a reseed would overwrite them
 
 ~/printer_data/mcu-updater/          generated, not backed up
     <type>/<fw>.bin                      built firmware

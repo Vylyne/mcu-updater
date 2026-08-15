@@ -125,12 +125,16 @@ the Releases UI or:
 gh release edit v2.18.4-vylyne.16 --repo Vylyne/mainsail --prerelease=false --latest
 ```
 
-Two ways to get this wrong, both silent:
+`--latest` is belt-and-braces rather than load-bearing. GitHub recomputes
+"latest" as the most recent non-prerelease by creation date — which is why
+`.13` held it while `.14` and `.15` sat as prereleases — so clearing the
+prerelease flag moves the pointer on its own. Moonraker's update manager and
+athena-updater compare versions out of the release list rather than reading the
+pointer at all. Pass it anyway: it states the intent, and it is the one thing
+that would matter if `latest` had ever been pinned by hand to something older.
 
-- **`--latest` is not optional.** `channel: stable` reads `/releases/latest`,
-  and GitHub does not move that pointer just because a release stopped being a
-  prerelease. Clear the flag alone and the release looks promoted in the UI while
-  no stable host is ever offered it.
+One way to get this wrong, and it is silent:
+
 - **Do not promote by re-running `mu-release` with `stable: true`.** That
   rebuilds, so what reaches every host is a fresh bundle rather than the one the
   beta host has been running. `npm ci` against a lockfile usually makes those

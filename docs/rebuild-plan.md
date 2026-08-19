@@ -939,6 +939,54 @@ surprises:  none - Step 4b's five-point instruction list mapped onto the code
             needed disambiguating context or a full rewrite to keep testing
             what they claimed to.
 
+### Step 4b — review                                   [closed two open items]
+reviewer:   Vi, against katapult source at C:\git\Public\katapult and the diff
+finding:    Both open items from Step 4b's log resolved:
+            (1) klipper_dict — confirmed at flashtool.py:229-233, a literal
+            `fw_name != "klipper.bin"` check. Additionally: the check only
+            catches a *wrong-chipset* binary, and that's already refused
+            earlier - find_device matches chipset from the by-id name before
+            a flasher is ever reached. So even renaming our artifacts to
+            trigger it would add near-zero marginal safety. Close it
+            permanently, not "left open".
+            (2) --force scope — confirmed assert_printer_idle is agent-only
+            (never called from cli.py), so the literal reading was correct.
+            But the resulting lockout is real: an unreadable probe (format
+            drift, a katapult variant that doesn't print the line) refuses
+            every CLI flash of that board with no override on the primary
+            interface, which is a different risk than a genuine mismatch
+            (where refusing-with-no-override is exactly correct). Fix: wire
+            `--force` on the single-device CLI flash path only, straight into
+            flash_katapult's existing parameter; leave update_all and the
+            whole-type batch path strict.
+process:    No process change - both were legitimate open items correctly
+            surfaced rather than guessed at, and both had a clear, narrow
+            answer once looked at directly.
+action:     klipper_dict: recorded as closed-with-reasoning here, no code
+            change. --force: implemented, commit 3f86a61 -
+            `_board_targets` gained a `force` parameter (default False,
+            carried in `FlashTarget.detail["force"]`); only the single-device
+            branch of `flash_fw_cmd` passes `args.force` through, driven by a
+            new `flash --force` CLI flag; `Flashtool.write()` reads
+            `target.detail.get("force", False)`. A new mutation anchor
+            (`scripts/mutations/flash-offset-diagnostic.json`, now 10 guards)
+            pins that a whole-type/update-all batch can never carry
+            force=True even if the code tried to leak it. Gate: pytest 1139
+            passed/0 failed/10 skipped · ruff ok · mypy ok · line-endings ok ·
+            all 10 mutation anchors CAUGHT.
+limitation: **A `--dry-run` flash cannot exercise either offset check, and
+            will read as clean regardless of what a real flash would find.**
+            `_verify_offset_before_write`'s probe is correctly skipped in
+            dry-run (`not settings.dry_run`), but the reason goes deeper than
+            "nothing real happens": under dry-run the earlier `-r`
+            reboot-into-bootloader request is itself faked, so the board
+            never actually leaves Klipper and has no bootloader there to
+            answer a real `-s` handshake even if the probe ran. There is no
+            way to rehearse this specific check without real hardware. Do
+            not read a clean `--dry-run` as clearance for the offset check -
+            only a real flash (or explicit on-printer verification, see this
+            file's "Verification" section) does.
+
 ---
 
 ## Appendix B — open items, not in scope

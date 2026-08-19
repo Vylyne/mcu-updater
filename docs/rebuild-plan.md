@@ -685,6 +685,19 @@ surprises:  None — matched the plan exactly: 65 failed/1058 passed/10 skipped
             exactly matched already-committed content), so only mcu-updater.cfg
             and the new NOTES.md ended up in the commit.
 
+### Step 2 — repo standards            [done]
+commit:     b418338
+gate:       pytest 1123 passed/0 failed/10 skipped · ruff ok · mypy ok · line-endings ok
+deviation:  TODO section content wasn't specified by the plan beyond "add a
+            TODO section" — filled it from Appendix B's "open items, not in
+            scope" plus a pointer back to this runbook, since those are the
+            actual outstanding items and Appendix B itself says they're out of
+            scope for the steps below.
+untested:   none
+surprises:  none — README, CLAUDE.md, docs/rebuild-plan.md, and the CI lint-scope
+            fix all applied cleanly. ~/.claude/CLAUDE.md (global) was also
+            written but lives outside this repo so isn't part of this commit.
+
 ---
 
 ## Appendix B — open items, not in scope

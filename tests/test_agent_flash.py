@@ -81,6 +81,50 @@ def flashable(paths, live_registry_text, fake_root):
     runner.wait(timeout=20)
 
 
+CARTOGRAPHER_SERIAL = "carto-serial-0001"
+CARTOGRAPHER_CHIPSET = "stm32g431xx"
+
+
+@pytest.fixture
+def flashable_non_klipper(paths, live_registry_text, fake_root):
+    """A type whose firmware family is not klipper.
+
+    Regression coverage: the flash path used to hardcode "klipper" at three
+    call sites, so a type built from another family (cartographer) always
+    reported no_artifact even with a binary staged - the build was invisible
+    to the code that was supposed to flash it.
+    """
+    with open(paths.registry_file, "w", encoding="utf-8") as fh:
+        fh.write(live_registry_text)
+        fh.write(
+            "\n[mcu carto_v4]\n"
+            f"chipset: {CARTOGRAPHER_CHIPSET}\n"
+            "firmware: cartographer\n"
+            "serials:\n"
+            f"    {CARTOGRAPHER_SERIAL}\n"
+        )
+    with open(paths.main_config, "a", encoding="utf-8") as fh:
+        fh.write("\n[firmware cartographer]\nsource: ~/carto\nartifact: klipper\n")
+    _write_settings(paths, enable_flashing="true")
+    os.makedirs(paths.artifact_dir("carto_v4"), exist_ok=True)
+    with open(paths.bin_file("carto_v4", "cartographer"), "wb") as fh:
+        fh.write(b"\0" * 1024)
+    (fake_root / "katapult" / "scripts").mkdir(parents=True, exist_ok=True)
+    (fake_root / "katapult" / "scripts" / "flashtool.py").write_text("", encoding="utf-8")
+    make_device(fake_root / "bus", "Klipper", CARTOGRAPHER_CHIPSET, CARTOGRAPHER_SERIAL)
+
+    runner = JobRunner(paths, lambda: __import__(
+        "mcu_updater.settings", fromlist=["load_settings"]
+    ).load_settings(paths.settings_file))
+    api = Api(paths, runner=runner, call=_moonraker())
+    api.KLIPPY_READY_TIMEOUT = 2.0
+    api.KLIPPY_RESTART_TIMEOUT = 2.0
+    api.KLIPPY_POLL_INTERVAL = 0.05
+    yield api
+    runner._cancel.set()
+    runner.wait(timeout=20)
+
+
 # --------------------------------------------------------------------------
 # the capability gate
 # --------------------------------------------------------------------------
@@ -224,6 +268,17 @@ def test_a_flash_stops_klipper_flashes_then_starts_it_again(flashable, paths):
     flash_at = joined.index("Flashing")
     start_at = joined.index("would start klipper")
     assert stop_at < flash_at < start_at, "klipper must be down only for the write"
+
+
+def test_a_type_whose_firmware_is_not_klipper_can_still_be_flashed(flashable_non_klipper):
+    """The artifact staged for a non-klipper family must actually be the one
+    the flash path looks for - see the `flashable_non_klipper` fixture."""
+    res = flashable_non_klipper.dispatch("fw.flash", {"serial": CARTOGRAPHER_SERIAL})
+    assert flashable_non_klipper.runner.wait(timeout=30)
+
+    job = flashable_non_klipper.runner.get(res["job_id"])
+    assert job.state == "succeeded", job.error
+    assert job.result["serial"] == CARTOGRAPHER_SERIAL
 
 
 def test_the_journal_is_cleared_after_a_successful_flash(flashable, paths):

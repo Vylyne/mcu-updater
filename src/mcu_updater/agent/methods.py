@@ -278,7 +278,7 @@ class Api:
             "bin_size": _size(binary),
             "has_uf2": os.path.exists(uf2),
             "built_fw_sha": side.get("fw_sha"),
-            "current_fw_sha": git_head(self.paths.fw_dir(fw)),
+            "current_fw_sha": git_head(firmware.resolve(self.paths, fw).source_dir(self.paths)),
             "stale": stale,
             "stale_reason": reason,
             # The same verdict, un-collapsed. `stale_reason` reports
@@ -1413,7 +1413,7 @@ class Api:
                     # .config, neither of which changes when the chipset does - so
                     # a binary built for the old chip would keep reporting itself
                     # as fresh. Say so rather than let it be flashed.
-                    if self.artifact(name, "klipper").get("has_bin"):
+                    if self.artifact(name, mcu.firmware).get("has_bin"):
                         warnings.append(
                             f"the built firmware for '{name}' was compiled for "
                             f"{mcu.chipset}. Rebuild before flashing - staleness "
@@ -1675,7 +1675,7 @@ class Api:
         mcu_type = reg.resolve_serial(serial, str(name) if name else None)
         mcu = reg.get(mcu_type)
 
-        fw_bin = self.paths.bin_file(mcu_type, "klipper")
+        fw_bin = self.paths.bin_file(mcu_type, mcu.firmware)
         if not os.path.exists(fw_bin):
             raise RpcError(
                 f"no built firmware for {mcu_type} at {fw_bin}. Build it first.",

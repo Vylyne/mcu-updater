@@ -1019,6 +1019,91 @@ surprises:  `tests/test_repo_hygiene.py::test_no_mutation_is_left_live_in_
             the same commit, and this hygiene test is what catches it if
             missed - it already did, once.
 
+### Step 6 — `[type]` takes a firmware list        [done-with-deviation]
+commit:     df9b13b
+gate:       pytest 1150 passed/0 failed/10 skipped · ruff ok · mypy ok · line-endings ok
+            · every mutation spec in scripts/mutations/ re-run individually
+            after this step, all guards CAUGHT, none STALE
+deviation:  **Scope grew past config.py.** The plan named config.py as the
+            file, but "now delete firmware.DEFAULT_APPLICATION and
+            BOOTLOADER" (Step 5's note) forced every remaining caller to be
+            fixed in the same commit, since Python doesn't catch a deleted
+            module attribute until the line actually runs - a partial delete
+            would have shipped green and broken at runtime. Also touched:
+            cli.py, profiles.py (one default value), flashers/flash.py (one
+            default value), providers/kconfig_make.py (on_demand's
+            derivation - see below).
+
+            **`_is_bootloader`'s default is resolved per-key, not
+            per-section** - same reasoning as Step 5's `bootloader` field,
+            now applied to `McuType.application()`/`.bootloader()`: an
+            undeclared family falls back to "true only for katapult", not a
+            blanket False, so a caller that doesn't pass `families` still
+            gets the right answer for the common case.
+
+            **`on_demand` in providers/kconfig_make.py now reads
+            `FirmwareFamily.bootloader`** instead of `family ==
+            firmware.BOOTLOADER` - this is Step 8's own stated task
+            ("Derive it from FirmwareFamily.bootloader rather than
+            hardcoding katapult"), done here because BOOTLOADER's deletion
+            left no hardcoded name to compare against. Step 8 should find
+            this already satisfied and needs no further change there.
+
+            **`add_type()` and `fw.type.update` keep their existing
+            parameter names** (`katapult_installed`, `firmware` as a single
+            string in args) as an intentional compatibility layer - the CLI
+            and agent wire *input* contracts are unchanged, translated
+            internally into the new list. Only `McuType.to_json()`'s
+            *output* changes (`firmware` → `firmwares` list), exactly the
+            one wire change the plan itself flagged for Step 16.
+
+            **`derive_bootloader`'s default `boot_fw` parameter and
+            `flash_katapult`'s default `fw` parameter** both changed from
+            `firmware.BOOTLOADER`/`firmware.DEFAULT_APPLICATION` to literal
+            `"katapult"`/`"klipper"` strings rather than being generalised -
+            every internal caller now passes these explicitly (via
+            `mcu.bootloader(families)`/`mcu.application(families)`), so the
+            defaults are unreachable in production and exist only so
+            test_flash.py's ~15 calls that omit `fw=` (staging their
+            artifact at the conventional `klipper.bin` path) keep working
+            unchanged. Not generalised further because nothing needs it to
+            be.
+untested:   none beyond what was already true (POSIX-only paths, no
+            hardware).
+surprises:  **Breaking change, confirmed deliberate against the plan's own
+            target schema, not a bug:** an absent `firmware:` key now means
+            "klipper alone", not "klipper plus katapult" - the old
+            `katapult_installed` default-True is gone with the flag itself.
+            This broke `live_registry_text` (the repo-root sample cfg,
+            unmigrated until Step 15) for every test that needed `bttebb36`
+            or a hand-written `[mcu carto_v4]` section to actually carry
+            katapult - about a dozen tests across test_agent_bulk.py,
+            test_agent_targets.py, test_agent_profiles.py, test_config.py,
+            and test_firmware.py needed either an explicit
+            `Registry.mutate`-based bootloader addition (new
+            `_add_bootloader` helper in test_agent_bulk.py) or updated raw
+            config text (`firmware: cartographer, katapult` instead of
+            `firmware: cartographer`). None of this touches
+            `mcu-updater.cfg` itself - that stays Step 15's job, per the
+            plan's own gate note ("Update assertions in place - the sample
+            cfg is rewritten in Step 15").
+
+            **A near-miss with concurrent mutation_test.py runs.** Running
+            several mutation specs in parallel (backgrounded by the 120s
+            tool timeout) corrupted nothing permanently - the tool's own
+            hash-verified restore-in-`finally` worked every time - but a
+            *sequential* `for` loop over every spec, killed by a 10-minute
+            outer timeout mid-run, left one real stranded mutation in
+            firmware.py (`bootloader=bool(parse_bool(doc.get(section,
+            "bootloader"), False))` instead of `name == "katapult"`) that
+            `test_no_mutation_is_left_live_in_the_source` caught immediately
+            on the next full test run. Fixed by hand; verified clean by
+            re-running every spec once more, one at a time. Lesson for the
+            steps ahead: never run more than one `mutation_test.py` at once,
+            and don't run a from-scratch full sweep under a shell timeout
+            shorter than it needs - check the hygiene test's output, not
+            just "did it finish", after any interrupted mutation run.
+
 ---
 
 ## Appendix B — open items, not in scope

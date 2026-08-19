@@ -698,6 +698,24 @@ surprises:  none — README, CLAUDE.md, docs/rebuild-plan.md, and the CI lint-sc
             fix all applied cleanly. ~/.claude/CLAUDE.md (global) was also
             written but lives outside this repo so isn't part of this commit.
 
+### Step 3 — Cartographer: the flash-path hardcodes            [done]
+commit:     273651e
+gate:       pytest 1124 passed/0 failed/10 skipped · ruff ok · mypy ok · line-endings ok
+deviation:  Line 281's fix reads `firmware.resolve(self.paths, fw).source_dir(self.paths)`
+            rather than the plan's literal `firmware.resolve(self.paths, fw,
+            families)` — `artifact()` has no `families` variable in scope and
+            wasn't otherwise threading one through (its only caller with the
+            family list nearby, `type_status()`, doesn't pass one to the
+            equivalent `firmware.resolve` call at what is now line 326
+            either), so I matched that existing pattern rather than adding a
+            new parameter Step 3's scope didn't ask for.
+untested:   none
+surprises:  All three line numbers matched exactly. Verified the new test
+            (`test_a_type_whose_firmware_is_not_klipper_can_still_be_flashed`)
+            fails if the fw.flash artifact-lookup fix (line 1678) is reverted
+            in isolation, confirming it's load-bearing and not just
+            incidentally green.
+
 ---
 
 ## Appendix B — open items, not in scope

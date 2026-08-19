@@ -1210,6 +1210,128 @@ surprises:  A genuinely flaky, pre-existing test
             dependent agent-service teardown). Not this step's doing; noted
             here only because it happened during this step's own gate run.
 
+### Step 9 — `sections.py` reduced        [done-with-deviation]
+commit:     fb6f047
+gate:       pytest 1153 passed/0 failed/10 skipped · ruff ok · mypy ok · line-endings ok
+            · scripts/mutations/pio-provider-selection.json (2 stale anchors
+            re-indented, 1 anchor for the retired `provider:` fallback
+            removed rather than replaced - see deviation) · scripts/
+            mutations/provider-family-axis.json (1 anchor updated for the
+            same removal) · all 17 specs in scripts/mutations/ re-run
+            individually and sequentially (never in parallel - see Step 6's
+            postmortem), all CAUGHT/none STALE
+deviation:  **Two design forks, both put to Vi rather than decided alone,
+            both resolved before the section-reduction landed:**
+
+            1. Whether to retire Step 7's old-style `provider:` key /
+            `[display ...]` prefix fallback now, or leave it until Step 14
+            as the plan's own text implied ("kept as a parallel path"). **Vi
+            chose to retire it now**, matching Step 9's literal instruction
+            to delete `LEGACY_PREFIXES` / `DEFAULT_PROVIDER` outright rather
+            than stage the removal.
+
+            2. Retiring that fallback meant `sections.py` stopped
+            recognising `[mcu ...]` at all, and the repo-root
+            `mcu-updater.cfg` sample was still in its Step-1-reverted,
+            pre-rename state (`[mcu ...]` exclusively, confirmed by
+            re-reading it rather than trusting memory of an earlier
+            session) - so `live_registry_text`, used by nearly every test
+            file, loaded zero types and cascaded into 252 failures. Step 15
+            is where the plan means to rewrite this sample from NOTES.md's
+            real printer config; leaving it broken from here to there would
+            have meant five steps with a red suite, which the plan's own
+            per-step gate discipline does not allow. **Vi chose a
+            mechanical rename now** - `[mcu X]` -> `[type X]`, no new
+            schema content (no `firmware:` lists, no `[firmware]`
+            sections) - with the real content rewrite still deferred to
+            Step 15 as planned. Dropped the failures from 252 to 97; the
+            rest was mechanical `[mcu ...]`/`[display ...]` -> `[type ...]`
+            rework across the test suite; see surprises for the parts that
+            were not purely mechanical.
+
+            **A mutation written for the "old-style" retirement did not
+            survive contact with the actual code.** Tried to replace
+            `pio-provider-selection.json`'s now-dead "falls back to the
+            `provider:` key convention" mutation with a guard on `pio.py`'s
+            `if not raw_firmware: continue` early-exit. It SURVIVED - the
+            very next check in the same loop (`if family.builder !=
+            "platformio": continue`) already refuses an empty-name family
+            by construction (`firmware.resolve(paths, "", families_map)`
+            resolves to `DEFAULT_BUILDER`, never `"platformio"`), so
+            flipping the first guard changes nothing observable. Removed
+            the mutation rather than keep a SURVIVED one in a committed
+            spec or invent a distinction the code does not actually make;
+            the early-exit itself stays in `pio.py` as a harmless,
+            genuinely-redundant fast path.
+
+            **Cleanup beyond the plan's literal text, in the same spirit as
+            the retirement Vi approved:** `PioType.firmware` is now
+            required to load a type at all (`pio.load()` skips a section
+            with no `firmware:` key before a `PioType` is ever
+            constructed), which makes the `display.firmware or name`
+            fallback in `providers/platformio.py`'s `targets()` - and the
+            identical `display.firmware or args.type` in `cli.py`'s
+            `build_fw_cmd` - dead code describing a case that can no longer
+            occur. Simplified both to `display.firmware` outright and
+            corrected the docstrings that described the "a type predating
+            `firmware:`" case as still live (`providers/platformio.py`'s
+            module docstring and `PlatformIO` class docstring; `pio.py`'s
+            `PioType.firmware` field docstring).
+untested:   **`pio_source` is temporarily disconnected, not merely
+            untested.** `source:` moved from the type's own section onto
+            its `[firmware ...]` family in Step 7/9, and `Install.load()`
+            still threads `settings.pio_source` into `pio.load()`'s
+            `default_source` parameter - but that parameter's body stopped
+            reading it once every family resolved its own source instead.
+            A family with no `source:` now falls back to `~/<family name>`,
+            the same convention klipper and katapult have always used, not
+            to `pio_source`. This is a direct, deliberate consequence of
+            retiring the fallback early rather than at Step 14 (deviation
+            1 above) - reconnecting `pio_source` or retiring the setting
+            outright belongs to Step 14 alongside `default_source`'s
+            removal, which the plan already scopes there. Made visible
+            rather than silently left broken: `test_providers.py::
+            test_pio_source_is_not_yet_applied_to_a_family_with_no_source`
+            asserts the current (gap) behaviour explicitly, so Step 14
+            has to touch it deliberately rather than notice the drift by
+            accident.
+
+            A related, smaller unreachability: `providers/platformio.py`'s
+            `source_problem()` has an `if not source: return "no source
+            tree configured"` branch that used to fire for a type with no
+            `source:` key at all. `family.source_dir(paths)` never returns
+            an empty string now (same convention fallback as above), so
+            that branch is unreachable through the config-loading path -
+            every family now fails as "not found at <path>" instead,
+            whether the path came from an explicit `source:` or the
+            convention. Left the branch in place as harmless defensive
+            code for a directly-constructed `PioType`; adjusted the
+            affected tests (`test_providers.py`,
+            `test_cli.py`) to assert the path-based "not found" wording
+            they now actually get, rather than the unreachable one.
+surprises:  **The 252-failure number itself was the surprise** - see
+            deviation 2. The proximate cause was a fact about repo state
+            (`mcu-updater.cfg`'s actual spelling) rather than a bug in this
+            step's code, but the size of the blast radius - nearly every
+            test file, because nearly every test file reads
+            `live_registry_text` - was not anticipated going in.
+
+            Beyond the sample-config fallout, the remaining ~86 failures
+            (test_agent_display_jobs.py, test_config.py,
+            test_agent_targets.py, test_cli.py, test_agent_displays.py,
+            test_agent_bulk.py, test_providers.py, test_agent_methods.py,
+            test_repo_hygiene.py, test_profiles.py, test_agent_profiles.py,
+            test_agent_flash.py) were all the same two mechanical shapes
+            repeated: `[mcu X]`/`[display X]` rewritten to `[type X]` (plus
+            a `[firmware ...]` section and explicit `firmware:` key for
+            anything that used to be PlatformIO-by-prefix), and a handful
+            of assertions on `t.fw` updated from a type's own name to its
+            declared family name now that every `PioType` genuinely has
+            one. `tests/test_sections.py` needed a full rewrite rather than
+            a mechanical one - it tested the removed `.provider` field,
+            `provider=` parameters and legacy-prefix aliasing directly, so
+            every test in it was about behaviour that no longer exists.
+
 ---
 
 ## Appendix B — open items, not in scope

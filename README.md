@@ -14,6 +14,8 @@ standard library only — no pip dependencies, no virtualenv.
 
 ## Contents
 
+- [Features](#features)
+- [TODO](#todo)
 - [Requirements](#requirements)
 - [Usage](#usage)
 - [Web UI](#web-ui)
@@ -25,6 +27,54 @@ standard library only — no pip dependencies, no virtualenv.
 - [Development](#development)
   - [Checking that a guard is load-bearing](#checking-that-a-guard-is-load-bearing)
   - [Line endings](#line-endings)
+
+## Features
+
+Build systems ("builders" — one module + one registry line to add another):
+- [x] `kconfig_make` — Klipper, Katapult, and forks (menuconfig + make)
+- [x] `platformio` — anything with a `platformio.ini`
+- [ ] prebuilt images — download a release asset instead of building
+
+Flashing:
+- [x] `flashtool.py` — Katapult over USB, STM32 and RP2040
+- [x] `dfu-util` — bare STM32, first bootloader install
+- [x] `esptool` — ESP32, via PlatformIO
+- [ ] RP2040 BOOTSEL — copy a `.uf2` to the mounted volume
+- [ ] CAN — `flashtool.py -i <iface> -u <uuid>`
+- [ ] Katapult deployer — replaces a bootloader; no software recovery if wrong
+
+Firmware and boards:
+- [x] Multiple firmware families, each with its own tree and builder
+- [x] Multiple firmwares per board type
+- [x] Per-type saved menuconfig answers, per firmware
+- [x] Per-type Makefile patches
+- [x] Vendor profile seeding, custom profiles, drift detection
+- [x] Flash-time bootloader offset check
+- [x] Board tracking by `/dev/serial/by-id` serial
+- [ ] CAN device discovery (needs `canbus_uuid` from printer.cfg)
+
+Interfaces:
+- [x] CLI and interactive TUI
+- [x] Moonraker agent (JSON-RPC over the unix socket)
+- [x] Mainsail panel, including menuconfig in the browser
+- [x] Bulk build / flash / update-all
+- [x] Guided first-time MCU setup over DFU
+- [ ] Standalone embeddable UI (today it is a Mainsail fork)
+- [ ] Event-driven bus watching via pyudev (today: adaptive polling)
+
+## TODO
+
+- Finish the schema-first rebuild tracked in
+  [docs/rebuild-plan.md](docs/rebuild-plan.md) — config vocabulary, the
+  Cartographer flash-path bugs, the flash-time bootloader offset check, and the
+  legacy-key purge it drives.
+- Decide stable-or-beta for the Mainsail fork before tagging: it sits three
+  commits past `v2.18.4-vylyne.14`, which was never promoted to stable, so the
+  existing Flash All / Build All fixes haven't reached anyone's update manager.
+- Generalise `needs_klipper_stopped` into a per-type "services to stop" list —
+  deferred until it can land together with that list, not as a bare rename.
+- Reproduce and fix the flaky teardown `RuntimeError` in
+  `test_an_unknown_inbound_method_gets_an_error_not_silence`.
 
 ## Requirements
 

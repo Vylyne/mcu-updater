@@ -324,6 +324,90 @@ this guard must fail a test, because what it prevents is an unbootable board.
 
 **Gate:** `GATE` + `python scripts/mutation_test.py scripts/mutations/<file>.json`.
 
+### Step 4b — make the offset check preventive ⚠️
+
+⚠️ **Safety-critical, and it supersedes Step 4's deviation.** Read Step 4's
+Progress log block first, then this.
+
+**Why this step exists.** Step 4 shipped a *post-write* diagnostic instead of a
+*pre-write* refusal, on this documented premise:
+
+> "flashtool.py has no query-only mode (its only non-write query is for CAN UUID
+> discovery, unrelated)"
+
+That premise is false, and Step 4's log correctly flagged it as unverified
+(`untested:` — "taken on Vi's word, not verified against the actual katapult
+source (not present on this dev box)"). The source **is** available at
+`C:\git\Public\katapult`. Verified against it:
+
+```
+flashtool.py:1165   "-s", "--status", action="store_true",
+                    help="Connect to bootloader and print status"
+flashtool.py:554    def is_status_req(self) -> bool: return self._args.status
+flashtool.py:1077   await flasher.connect_btl()                 # USB path
+                    if not self.is_status_req:
+                        await flasher.send_file()               # SKIPPED under -s
+                        await flasher.verify_file()             # SKIPPED under -s
+flashtool.py:842    ... same guard on the CAN path
+flashtool.py:1080   if self.is_flash_req: await flasher.finish()  # also skipped
+```
+
+`connect_btl()` is the method that prints `Application Start: 0x{addr:4X}`
+(`flashtool.py:301`). So `flashtool.py -d <dev> -s`:
+
+- prints the bootloader's real application start address,
+- **writes nothing** — no erase, no send, no verify,
+- **leaves the board in the bootloader**, because `finish()` is skipped too, so
+  the probe costs no re-enumeration before the real write,
+- works on both USB and CAN, and exits 0 with `Status Request Complete`.
+
+The consequence of leaving Step 4 as-is: in the exact failure this was written to
+prevent, the tool reports the mismatch to the job log *after* the write — a
+message telling the user their board is already bricked.
+
+**What to change.** Most of Step 4's plumbing is correct and stays. Do not revert
+it.
+
+1. **Keep** the sidecar work: `BuildResult.app_address`, recorded from the built
+   `.config` reusing `profiles.answer_map` / `APP_ADDRESS_SYMBOL`. Correct as
+   shipped.
+2. **Keep** the `Application Start:` regex and its
+   `test_the_minimum_width_hex_quirk_is_tolerated` coverage. Correct as shipped.
+3. **Add the probe.** In `flash_katapult`, after the reboot-into-Katapult step
+   and its re-enumeration wait, and *before* the `-f` invocation: run
+   `flashtool.py -d <dev> -s`, parse the address from its output.
+4. **Refuse before writing**, per Step 4's original text — `OffsetMismatchError`
+   (`errors.py:222`), naming both numbers. Refuse also when the probe yields no
+   parseable address but a sidecar address exists: "a check that quietly stops
+   checking is worse than no check, it reads as verified." No recorded sidecar
+   address at all (older build, or a tree without the symbol) stays silent —
+   there is nothing of ours to compare against.
+5. **Restore `--force`.** There is now something to force past. Wire it the same
+   way `assert_printer_idle`'s `force` already is.
+6. **Keep the post-write diagnostic** as a second line of defence. It costs
+   nothing and covers the board changing between probe and write.
+7. **Move the mutation anchors.** `scripts/mutations/flash-offset-diagnostic.json`
+   currently pins a diagnostic that refuses nothing — all five anchors would
+   still pass with the preventive guard deleted. Re-point them at the refusal.
+
+**Also investigate, same step.** `connect_btl` already raises `FlashError` when
+the MCU type Katapult reports disagrees with the MCU recorded in the binary — but
+only when `self.klipper_dict is not None` (`flashtool.py:304`). Check whether our
+invocation populates it. If it does not, that is a second free guard we are
+leaving switched off, and turning it on is cheap. Report the finding either way;
+do not silently skip it.
+
+**Do not** revert to a post-write design again without escalating. If the probe
+turns out to be unusable for a reason not listed here, stop and ask — do not
+degrade the guard to make a gate pass.
+
+**Tests:** matching addresses proceed; mismatched refuse *and no write is
+attempted*; unparseable-probe-with-recorded-address refuses; no recorded address
+stays silent; `--force` overrides. The "no write attempted" assertion is the
+load-bearing one — assert on the subprocess argv, not just on the raised error.
+
+**Gate:** `GATE` + the re-pointed mutation anchors, each CAUGHT.
+
 ### Step 5 — `[firmware]` gains `builder` and `bootloader`
 
 `src/mcu_updater/firmware.py`.
@@ -780,6 +864,27 @@ surprises:  Mid-implementation, Vi separately raised that `-r` against a board
             (Step 10's device states, or wherever "is this board running
             Katapult" gets asked). Noted here so it isn't lost; not acted on
             in this step.
+
+### Step 4 — review                                            [superseded by 4b]
+reviewer:   planning session, against katapult source at C:\git\Public\katapult
+finding:    The deviation's premise — "flashtool.py has no query-only mode" — is
+            false. `-s, --status` ("Connect to bootloader and print status")
+            runs `connect_btl()`, which prints `Application Start:`, then skips
+            `send_file()`/`verify_file()` (`flashtool.py:1077` USB, `:842` CAN)
+            and skips `finish()` too, so it writes nothing and leaves the board
+            in the bootloader. The preventive check Step 4 specified is
+            achievable on both USB and CAN for the cost of one extra
+            invocation.
+process:    The escalation itself was correct and the claim was honestly marked
+            `untested:`. The premise was confirmed from memory rather than from
+            the source, which was present on the box the whole time. Nothing to
+            change about how the step was run — only about how the premise was
+            checked.
+action:     Step 4b added. Step 4's plumbing (sidecar `app_address`, the regex
+            and its quirk test, the post-write diagnostic) is correct and is
+            kept; only the refusal point moves. Its five mutation anchors
+            currently pin a diagnostic that refuses nothing and must be
+            re-pointed.
 
 ---
 

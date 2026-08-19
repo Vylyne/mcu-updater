@@ -168,6 +168,42 @@ def test_flashing_a_type_hands_its_boards_to_the_batch(c, captured, monkeypatch)
     assert {t.flasher for t in captured[0]} == {"flashtool"}
 
 
+def test_a_whole_type_never_carries_force_even_if_one_board_would(c, captured, monkeypatch):
+    """A blanket override across a fleet is exactly what the offset check
+    exists to prevent - --force only ever reaches a single-device flash."""
+    monkeypatch.setattr(cli, "_confirm", lambda prompt: True)
+
+    with pytest.raises(SystemExit):
+        cli.flash_fw_cmd(argparse.Namespace(type="board", serial=None, yes=True))
+
+    assert len(captured) == 1
+    assert all(t.detail.get("force") is False for t in captured[0])
+
+
+def test_a_single_device_flash_can_be_forced(c, captured, monkeypatch):
+    monkeypatch.setattr(cli, "_confirm", lambda prompt: True)
+
+    with pytest.raises(SystemExit):
+        cli.flash_fw_cmd(
+            argparse.Namespace(type=None, serial="AAAA-if00", yes=True, force=True)
+        )
+
+    assert len(captured) == 1
+    assert captured[0][0].detail["force"] is True
+
+
+def test_a_single_device_flash_defaults_to_not_forced(c, captured, monkeypatch):
+    monkeypatch.setattr(cli, "_confirm", lambda prompt: True)
+
+    with pytest.raises(SystemExit):
+        cli.flash_fw_cmd(
+            argparse.Namespace(type=None, serial="AAAA-if00", yes=True, force=False)
+        )
+
+    assert len(captured) == 1
+    assert captured[0][0].detail["force"] is False
+
+
 def test_flashing_a_platformio_type_uses_the_watcher_map(
     c, pio_type, captured, fake_root, monkeypatch
 ):

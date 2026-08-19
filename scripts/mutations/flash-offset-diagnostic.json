@@ -7,6 +7,7 @@
     "pytest",
     "tests/test_flash.py",
     "tests/test_build.py",
+    "tests/test_cli.py",
     "-q"
   ],
   "mutations": [
@@ -57,6 +58,13 @@
       "file": "src/mcu_updater/build.py",
       "find": "        return int(raw, 16)",
       "replace": "        return None"
+    },
+    {
+      "_comment": "force overriding a genuine mismatch is a deliberate, single-device decision. Letting it leak into a whole-type or update-all batch would let one board's exception silently force every board in the batch past a check that exists specifically to stop a fleet-wide brick.",
+      "name": "a whole-type or update-all batch never carries force, only a single device does",
+      "file": "src/mcu_updater/cli.py",
+      "find": "                \"fw\": mcu.firmware,\n                \"force\": force,",
+      "replace": "                \"fw\": mcu.firmware,\n                \"force\": True,"
     }
   ]
 }

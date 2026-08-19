@@ -118,7 +118,11 @@ its profile has moved on since — see [reseed_on_build](#profiles).
 
 Useful flags: `--dry-run` (global) rehearses anything without building or
 flashing a thing; `-j N` on `build`/`update-all` for parallel make; `-y` to skip
-confirmation prompts; `--force` where a prompt guards something destructive.
+confirmation prompts; `--force` where a prompt guards something destructive. On
+`flash`, `--force` only applies flashing a single device with `-s SERIAL` — it
+overrides a refused [bootloader offset check](#profiles), never a whole type or
+`update-all`, where one board's exception would otherwise force every board in
+the batch past a check that exists to stop a fleet-wide brick.
 
 ## Web UI
 

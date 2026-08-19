@@ -398,8 +398,17 @@ def _bench(c: Context) -> flashers.Bench:
     return flashers.Bench(paths=c.paths, settings=c.settings, controller=controller)
 
 
-def _board_targets(c: Context, mcu_type: str, serials: list[str]) -> list:
-    """Tracked boards of one kconfig type, as things a batch can write."""
+def _board_targets(
+    c: Context, mcu_type: str, serials: list[str], *, force: bool = False
+) -> list:
+    """Tracked boards of one kconfig type, as things a batch can write.
+
+    `force` overrides a refused bootloader offset check (flash_katapult's own
+    `force` parameter) and defaults off - a caller flashing more than one board
+    at a time should never pass it, since a blanket override across a fleet is
+    exactly what that check exists to prevent. Single-device `flash --force` is
+    the only caller that sets it.
+    """
     mcu = c.registry().get(mcu_type)
     return [
         flashers.flashtool.target_for(
@@ -408,6 +417,7 @@ def _board_targets(c: Context, mcu_type: str, serials: list[str]) -> list:
                 "serial": serial,
                 "chipset": mcu.chipset,
                 "fw": mcu.firmware,
+                "force": force,
             }
         )
         for serial in serials
@@ -602,7 +612,9 @@ def flash_fw_cmd(args: argparse.Namespace) -> None:
 
     with exclusive(c.paths, f"flash {mcu_type}/{args.serial}"):
         code = _run_batch(
-            c, _board_targets(c, mcu_type, [args.serial]), f"flash {args.serial}"
+            c,
+            _board_targets(c, mcu_type, [args.serial], force=args.force),
+            f"flash {args.serial}",
         )
     sys.exit(code)
 
@@ -846,6 +858,11 @@ def build_parser(fw_choices: Optional[Sequence[str]] = None) -> argparse.Argumen
     )
     p.add_argument("-s", "--serial", default=None, help="Device serial (must already be tracked)")
     p.add_argument("-y", "--yes", action="store_true", help="Skip the confirmation prompt")
+    p.add_argument(
+        "--force", action="store_true",
+        help="Override a refused bootloader offset check. Single device only - "
+        "never applies when flashing a whole type",
+    )
     p.set_defaults(func=flash_fw_cmd)
 
     p = subparsers.add_parser(

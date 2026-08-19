@@ -47,6 +47,9 @@ class Flashtool:
             target.id,
             fw=target.detail["fw"],
             reporter=ctx.reporter,
+            # Absent for any caller that never sets it - a batch across more
+            # than one board never should. See cli.py's _board_targets.
+            force=bool(target.detail.get("force", False)),
         )
         # `serial` as well as the uniform `id`, because that is what a board's
         # id has always been called on this wire and in the CLI. Same reason

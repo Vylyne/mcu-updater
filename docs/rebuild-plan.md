@@ -1152,12 +1152,8 @@ surprises:  **Breaking change #2 in as many steps, same shape as Step 6's,
             `[type knomi]` section is commented `# the section name IS the
             PlatformIO env` and carries no explicit `env:` key - so it will
             fail to load with a clear ConfigError until Step 11's migration
-            adds one. Recorded here specifically so that fact is not lost
-            before Step 11 is written: the migration needs to add `env:
-            knomi` (or whatever the real env is named - worth Vi confirming
-            against the actual `platformio.ini`, since "the section name is
-            the env" was true by convention, not by anything this tool ever
-            checked).
+            adds one. **Confirmed with Vi: `env: knomi` is correct** - the
+            migration script can add it verbatim, no further check needed.
 
             **Fallout was much wider than Step 6's** - 60 failing tests
             across 7 files after the first pass, versus Step 6's dozen.

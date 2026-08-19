@@ -1104,6 +1104,74 @@ surprises:  **Breaking change, confirmed deliberate against the plan's own
             shorter than it needs - check the hygiene test's output, not
             just "did it finish", after any interrupted mutation run.
 
+### Step 7 — `[type]` for PlatformIO        [done-with-deviation]
+commit:     09d44ab
+gate:       pytest 1156 passed/0 failed/10 skipped · ruff ok · mypy ok · line-endings ok
+            · scripts/mutations/pio-provider-selection.json (new, 8 anchors)
+            all CAUGHT · every other spec in scripts/mutations/ re-checked,
+            all CAUGHT/none STALE (full-suite hygiene test plus targeted
+            re-runs of pio.json and display-flash.json, the two most likely
+            to have gone stale from this step's pio.py rewrite)
+deviation:  **Scope grew into config.py again**, same shape as Step 6's
+            deviation and for the same underlying reason. The plan's own
+            text ("Select sections by 'family builder is platformio' instead
+            of `sections.read(doc, provider=PLATFORMIO)`") only names
+            pio.py, but making pio.py claim a `[type X]` section by its
+            firmware's builder - rather than by an explicit `provider:` key
+            - creates a section `config.py`'s *unchanged*
+            `sections.read(doc, provider=sections.KCONFIG_MAKE)` would ALSO
+            pick up (no explicit `provider:` key defaults to KCONFIG_MAKE
+            there). Left alone, a `[type knomi]\nfirmware: knomi_serial\n...`
+            section would be loaded as *both* a PioType and a McuType -
+            double registration, not a hypothetical: it is exactly the shape
+            the target schema's own `[type knomi]` example uses. Fixed with
+            a new `_is_platformio_only()` helper in config.py, used in two
+            places: `load()` skips such a type; `save()`'s section-cleanup
+            loop also skips it, or the very next save would delete the
+            section entirely, reading the deliberate exclusion as "the user
+            removed this type". `sections.py` itself is still untouched -
+            both fixes work by checking the *referenced firmware's builder*
+            before `sections.read()`'s own provider filter ever gets a say.
+
+            **The old `provider:` key / `[display ...]` prefix mechanism is
+            kept as a parallel path, not replaced**, exactly matching the
+            plan's own "keep `pio_source` readable for one more step"
+            reasoning for `source:`. A `[type X]` section with no
+            `firmware:` key at all cannot be asked "what does your firmware
+            build with", so it falls back to `sections.read()`'s existing
+            `.provider` field. Both paths are tested (test_pio.py's
+            `test_env_is_required_with_no_default` etc. for the old path;
+            `test_a_type_is_pio_when_its_declared_firmware_is_platformio_
+            built` etc. for the new one).
+untested:   none beyond what was already true.
+surprises:  **Breaking change #2 in as many steps, same shape as Step 6's,
+            confirmed against real data this time.** `PioType.env`'s
+            auto-default (section name = env) is gone; every PlatformIO
+            type must now name `env:` explicitly. NOTES.md's captured
+            printer config settles what this means on the real printer: its
+            `[type knomi]` section is commented `# the section name IS the
+            PlatformIO env` and carries no explicit `env:` key - so it will
+            fail to load with a clear ConfigError until Step 11's migration
+            adds one. Recorded here specifically so that fact is not lost
+            before Step 11 is written: the migration needs to add `env:
+            knomi` (or whatever the real env is named - worth Vi confirming
+            against the actual `platformio.ini`, since "the section name is
+            the env" was true by convention, not by anything this tool ever
+            checked).
+
+            **Fallout was much wider than Step 6's** - 60 failing tests
+            across 7 files after the first pass, versus Step 6's dozen.
+            Nearly all of it was the exact same one-line fix (add
+            `env: <name>` to a hand-written `[display ...]`/`[type ...]`
+            section in a test), just repeated across every file that builds
+            its own config text rather than going through `Registry.add_
+            type()`-equivalent helpers - PlatformIO types have no such
+            helper, so every test wrote raw sections directly. Nothing here
+            suggests the fix was wrong, only that this particular default
+            was load-bearing test-infrastructure-wide in a way `McuType`'s
+            equivalent default was not (config.py's own tests mostly go
+            through `Registry.add_type()`, which never relied on it).
+
 ---
 
 ## Appendix B — open items, not in scope

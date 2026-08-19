@@ -1732,6 +1732,7 @@ class Api:
                     fw_bin=fw_bin,
                     fw=mcu.firmware,
                     reporter=ctx.reporter,
+                    force=force,
                 )
 
                 # The board reboots into the new firmware and re-enumerates over

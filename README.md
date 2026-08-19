@@ -297,12 +297,13 @@ with both addresses named, rather than discovered afterwards.
 
 **That only checks our own two configs against each other** — it cannot see
 what bootloader is actually on a given board, which may be the vendor's own
-prebuilt one rather than anything built here. So flashing an application also
-compares the address it was built for against what the board's own bootloader
-reports during the write. flashtool has no way to ask beforehand without
-starting the write it would need to refuse, so this can only report a
-disagreement once it is known, immediately after — not prevent it, but say
-loudly and specifically why a board that flashed cleanly did not come back.
+prebuilt one rather than anything built here. So flashing an application asks
+the board directly first: `flashtool.py --status` connects to the bootloader
+and reads the same address the write would use, but writes nothing — and
+refuses before the real write if the two disagree. A second check runs against
+what the write itself reported, in case the board changed in the moment
+between the two; by then the write has already happened, so that one can only
+report loudly, not prevent it.
 
 **Nothing is locked.** A seeded `.config` is an ordinary one that `menuconfig`
 still edits; what this adds is that `status` then says `Customised` instead of

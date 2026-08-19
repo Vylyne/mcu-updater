@@ -1,5 +1,5 @@
 {
-  "_comment": "The flash-time offset diagnostic. flashtool has no query-only mode and once -f is called there is no safe way to act before the write completes - see flash_katapult's module docstring - so none of this refuses anything. It only tells the operator, as soon as it is known, whether the board just written to will come back running what was just flashed. What it prevents is the silent version of that: a board that doesn't boot and nothing pointing at why.",
+  "_comment": "The flash-time offset checks. flashtool's -s/--status probe (connect_btl(), skip send/verify/finish) lets flash_katapult refuse a mismatched write before -f is ever called - see _verify_offset_before_write. _report_offset_mismatch is the second line of defence, checking again from what -f itself reported, for the board changing between the probe and the write; by the time that one runs the write has already happened, so it can only report, never refuse.",
   "file": "src/mcu_updater/flashers/flash.py",
   "command": [
     "python",
@@ -11,14 +11,35 @@
   ],
   "mutations": [
     {
-      "name": "a disagreement between the build and the board is reported",
-      "find": "    elif app_address != board_address:",
-      "replace": "    elif False:"
+      "name": "the pre-write probe is wired into the write path",
+      "find": "        _verify_offset_before_write(\n            paths, settings, flashtool, dev, fw_bin, mcu_type, fw, serial, side, reporter, force\n        )",
+      "replace": "        pass"
     },
     {
-      "name": "a handshake that did not parse is reported, not silently skipped",
-      "find": "    if board_address is None:",
-      "replace": "    if False:"
+      "_comment": "-s is the whole reason this call is safe to act on - it is what makes connect_btl() skip send_file/verify_file/finish. Losing it turns the 'probe' into an unflagged real write.",
+      "name": "the probe passes -s, so it never actually writes",
+      "find": "        [sys.executable, flashtool, \"-d\", dev.path, \"-f\", fw_bin, \"-s\"],",
+      "replace": "        [sys.executable, flashtool, \"-d\", dev.path, \"-f\", fw_bin],"
+    },
+    {
+      "name": "a mismatch found before writing is refused, not waved through",
+      "find": "        else:\n            raise OffsetMismatchError(\n                message,\n                type=mcu_type,\n                serial=serial,\n                fw=fw,\n                app_address=f\"{app_address:#x}\",\n                board_address=f\"{board_address:#x}\",\n            )",
+      "replace": "        else:\n            pass"
+    },
+    {
+      "name": "an unreadable probe is refused too, before writing",
+      "find": "            raise OffsetMismatchError(message, type=mcu_type, serial=serial, fw=fw)",
+      "replace": "            pass"
+    },
+    {
+      "name": "a disagreement is still reported if the board changed after the probe",
+      "find": "    elif app_address != board_address:\n        reporter(\n            \"error\",",
+      "replace": "    elif False:\n        reporter(\n            \"error\","
+    },
+    {
+      "name": "a post-write handshake that did not parse is reported, not silently skipped",
+      "find": "    if board_address is None:\n        reporter(\n            \"warn\",",
+      "replace": "    if False:\n        reporter(\n            \"warn\","
     },
     {
       "name": "the handshake address is read numerically, not left as text",
@@ -31,7 +52,7 @@
       "replace": "_APP_START_RE = re.compile(r\"Application Start: 0x([0-9A-Fa-f]+)\")"
     },
     {
-      "_comment": "The build-time half. Without a recorded app_address there is nothing to compare a handshake against, so this guard is what makes the diagnostic possible at all rather than something that would always read as 'nothing to report'.",
+      "_comment": "The build-time half. Without a recorded app_address there is nothing to compare a probe or a handshake against, so this guard is what makes either check possible at all rather than something that would always read as 'nothing to compare'.",
       "name": "the build's own application address is read from the built .config",
       "file": "src/mcu_updater/build.py",
       "find": "        return int(raw, 16)",

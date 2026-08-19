@@ -8,6 +8,7 @@ from mcu_updater.errors import (
     AmbiguousDfuError,
     DeviceNotFoundError,
     FlashError,
+    OffsetMismatchError,
     ToolMissingError,
     UnsupportedChipsetError,
 )
@@ -105,13 +106,14 @@ def test_device_running_klipper_gets_a_bootloader_request_first(paths, ready, fa
 
 
 # --------------------------------------------------------------------------
-# the post-hoc offset diagnostic
+# the offset checks
 #
-# flashtool has no query-only mode, and once -f is called there is no safe way
-# to act on its handshake before the write completes - see the module
-# docstring. So none of this can refuse anything; it can only tell the
-# operator, as soon as it is known, whether the board just written to will
-# come back running what was just flashed.
+# flashtool's -s/--status runs the same connect_btl() handshake as -f -
+# including the "Application Start:" line these check - but skips send/
+# verify/finish, so nothing is written. flash_katapult uses it to refuse a
+# mismatched write before -f is ever called, then checks again from what -f
+# itself reported, as a second line of defence against the board changing
+# between the two. See the module docstring.
 # --------------------------------------------------------------------------
 
 
@@ -123,6 +125,12 @@ def _write_sidecar(paths, mcu_type: str, fw: str, **fields) -> None:
 
 
 def _fake_run_streamed_once(monkeypatch, rc: int, lines: list[str]) -> None:
+    """One canned response, fed to every run_streamed call regardless of argv.
+
+    Fine when the probe and the write are expected to agree (or when only one
+    of them should ever run).
+    """
+
     def fake(cmd, *, cwd=None, reporter=None, dry_run=False, fake_delay=0.0, cancel=None):
         if reporter is not None:
             for line in lines:
@@ -132,13 +140,119 @@ def _fake_run_streamed_once(monkeypatch, rc: int, lines: list[str]) -> None:
     monkeypatch.setattr(flash_mod, "run_streamed", fake)
 
 
-def test_a_mismatched_bootloader_is_reported_after_the_write(
+def _fake_run_streamed_by_call(monkeypatch, probe=(0, []), write=(0, [])) -> list[list[str]]:
+    """A different canned response for the -s probe than for the -f write, so
+    the two can be made to disagree - and the argv of every call is recorded,
+    so a test can assert whether the write was ever attempted at all."""
+    calls: list[list[str]] = []
+
+    def fake(cmd, *, cwd=None, reporter=None, dry_run=False, fake_delay=0.0, cancel=None):
+        calls.append(list(cmd))
+        rc, lines = probe if "-s" in cmd else write
+        if reporter is not None:
+            for line in lines:
+                reporter("stdout", line)
+        return rc
+
+    monkeypatch.setattr(flash_mod, "run_streamed", fake)
+    return calls
+
+
+def test_a_mismatched_bootloader_refuses_before_writing(paths, ready, fake_root, monkeypatch):
+    ready.dry_run = False
+    make_device(fake_root / "bus", "katapult", "chipA", "S1")
+    _write_sidecar(paths, "board", "klipper", app_address=0x08004000)
+    calls = _fake_run_streamed_by_call(monkeypatch, probe=(0, ["Application Start: 0x8000"]))
+
+    with pytest.raises(OffsetMismatchError) as exc:
+        flash_katapult(paths, ready, "board", "chipA", "S1")
+
+    assert "0x8004000" in str(exc.value) and "0x8000" in str(exc.value)
+    # The probe ran; the write never did.
+    assert len(calls) == 1
+    assert "-s" in calls[0]
+
+
+def test_agreeing_addresses_proceed_to_write(paths, ready, fake_root, monkeypatch):
+    ready.dry_run = False
+    make_device(fake_root / "bus", "katapult", "chipA", "S1")
+    _write_sidecar(paths, "board", "klipper", app_address=0x08004000)
+    calls = _fake_run_streamed_by_call(
+        monkeypatch,
+        probe=(0, ["Application Start: 0x8004000"]),
+        write=(0, ["Application Start: 0x8004000"]),
+    )
+
+    events: list[tuple[str, str]] = []
+    flash_katapult(
+        paths, ready, "board", "chipA", "S1", reporter=lambda s, line: events.append((s, line))
+    )
+
+    assert not [line for stream, line in events if stream in ("error", "warn")]
+    assert len(calls) == 2  # probe, then the write
+    assert "-s" in calls[0] and "-s" not in calls[1]
+
+
+def test_an_unreadable_probe_refuses_before_writing(paths, ready, fake_root, monkeypatch):
+    """We have our own half (app_address) but flashtool's own words didn't
+    parse - the check went blind, which refuses same as a real mismatch: "a
+    check that quietly stops checking is worse than no check"."""
+    ready.dry_run = False
+    make_device(fake_root / "bus", "katapult", "chipA", "S1")
+    _write_sidecar(paths, "board", "klipper", app_address=0x08004000)
+    calls = _fake_run_streamed_by_call(monkeypatch, probe=(0, ["Erasing...", "Writing..."]))
+
+    with pytest.raises(OffsetMismatchError) as exc:
+        flash_katapult(paths, ready, "board", "chipA", "S1")
+
+    assert "could not read" in str(exc.value)
+    assert len(calls) == 1
+    assert "-s" in calls[0]
+
+
+def test_force_downgrades_the_refusal_to_a_warning_and_still_writes(
     paths, ready, fake_root, monkeypatch
 ):
     ready.dry_run = False
     make_device(fake_root / "bus", "katapult", "chipA", "S1")
     _write_sidecar(paths, "board", "klipper", app_address=0x08004000)
-    _fake_run_streamed_once(monkeypatch, 0, ["Application Start: 0x8000"])
+    calls = _fake_run_streamed_by_call(
+        monkeypatch,
+        probe=(0, ["Application Start: 0x8000"]),
+        write=(0, ["Application Start: 0x8000"]),
+    )
+
+    events: list[tuple[str, str]] = []
+    flash_katapult(
+        paths,
+        ready,
+        "board",
+        "chipA",
+        "S1",
+        reporter=lambda s, line: events.append((s, line)),
+        force=True,
+    )
+
+    warnings = [line for stream, line in events if stream == "warn"]
+    assert any("0x8004000" in line and "0x8000" in line for line in warnings)
+    assert len(calls) == 2  # forced past the refusal, so the write still ran
+    assert any("Flashed S1 successfully" in line for _, line in events)
+
+
+def test_a_board_that_changes_between_probe_and_write_is_still_caught(
+    paths, ready, fake_root, monkeypatch
+):
+    """The probe agreed, but -f's own handshake - moments later - does not:
+    the second line of defence, since the write already happened by then and
+    cannot be un-done."""
+    ready.dry_run = False
+    make_device(fake_root / "bus", "katapult", "chipA", "S1")
+    _write_sidecar(paths, "board", "klipper", app_address=0x08004000)
+    _fake_run_streamed_by_call(
+        monkeypatch,
+        probe=(0, ["Application Start: 0x8004000"]),
+        write=(0, ["Application Start: 0x8000"]),
+    )
 
     events: list[tuple[str, str]] = []
     flash_katapult(
@@ -147,32 +261,24 @@ def test_a_mismatched_bootloader_is_reported_after_the_write(
 
     errors = [line for stream, line in events if stream == "error"]
     assert any("0x8004000" in line and "0x8000" in line for line in errors)
-    # The write itself still succeeded - this is a diagnostic, not a refusal.
+    # Diagnostic only at this point - the write cannot be refused after it ran.
     assert any("Flashed S1 successfully" in line for _, line in events)
 
 
-def test_agreeing_addresses_are_not_reported(paths, ready, fake_root, monkeypatch):
+def test_an_unparseable_write_handshake_is_still_warned_about(
+    paths, ready, fake_root, monkeypatch
+):
+    """The probe agreed, but -f's own handshake - moments later - didn't parse:
+    same second-line-of-defence reasoning as the mismatch case above, just for
+    the 'the check itself went blind' half of it."""
     ready.dry_run = False
     make_device(fake_root / "bus", "katapult", "chipA", "S1")
     _write_sidecar(paths, "board", "klipper", app_address=0x08004000)
-    _fake_run_streamed_once(monkeypatch, 0, ["Application Start: 0x8004000"])
-
-    events: list[tuple[str, str]] = []
-    flash_katapult(
-        paths, ready, "board", "chipA", "S1", reporter=lambda s, line: events.append((s, line))
+    _fake_run_streamed_by_call(
+        monkeypatch,
+        probe=(0, ["Application Start: 0x8004000"]),
+        write=(0, ["Erasing...", "Writing..."]),
     )
-
-    assert not [line for stream, line in events if stream in ("error", "warn")]
-
-
-def test_an_unreadable_handshake_is_warned_about(paths, ready, fake_root, monkeypatch):
-    """We have our own half (app_address) but flashtool's own words didn't
-    parse - the check went blind, which is worth saying even though nothing
-    is provably wrong."""
-    ready.dry_run = False
-    make_device(fake_root / "bus", "katapult", "chipA", "S1")
-    _write_sidecar(paths, "board", "klipper", app_address=0x08004000)
-    _fake_run_streamed_once(monkeypatch, 0, ["Erasing...", "Writing..."])
 
     events: list[tuple[str, str]] = []
     flash_katapult(
@@ -181,6 +287,7 @@ def test_an_unreadable_handshake_is_warned_about(paths, ready, fake_root, monkey
 
     warnings = [line for stream, line in events if stream == "warn"]
     assert any("could not read" in line for line in warnings)
+    assert any("Flashed S1 successfully" in line for _, line in events)
 
 
 def test_the_minimum_width_hex_quirk_is_tolerated(paths, ready, fake_root, monkeypatch):
@@ -205,11 +312,11 @@ def test_nothing_is_reported_without_a_recorded_app_address(
     paths, ready, fake_root, monkeypatch
 ):
     """An older build, or a family that never defines the symbol - nothing of
-    ours to compare against, so not a finding."""
+    ours to compare against, so not a finding, and no probe is even attempted."""
     ready.dry_run = False
     make_device(fake_root / "bus", "katapult", "chipA", "S1")
     _write_sidecar(paths, "board", "klipper")
-    _fake_run_streamed_once(monkeypatch, 0, ["Application Start: 0x8000"])
+    calls = _fake_run_streamed_by_call(monkeypatch, write=(0, ["Application Start: 0x8000"]))
 
     events: list[tuple[str, str]] = []
     flash_katapult(
@@ -217,6 +324,8 @@ def test_nothing_is_reported_without_a_recorded_app_address(
     )
 
     assert not [line for stream, line in events if stream in ("error", "warn")]
+    assert len(calls) == 1  # the write only - no sidecar address, so no probe
+    assert "-s" not in calls[0]
 
 
 # --------------------------------------------------------------------------

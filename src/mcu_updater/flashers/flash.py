@@ -10,12 +10,16 @@ Two paths:
 
 Cancellation is deliberately *not* plumbed into the write step. Interrupting
 ``flashtool -f`` part-way through leaves a board with half a firmware image.
-Callers cancel between devices, never during one. The same reasoning rules out
-acting on anything ``-f`` prints *during* the call it is printed in: flashtool
-has no query-only mode, so by the time its handshake output says where the
-bootloader will jump to, the write it was called to do is already underway.
-``flash_katapult`` reports a mismatch there once it is known, but only after -
-see ``_report_offset_mismatch``.
+Callers cancel between devices, never during one.
+
+flashtool *does* have a safe way to ask first: ``-s``/``--status`` runs the
+same bootloader handshake as ``-f`` - including the "Application Start:" line
+this module checks - but skips the send/verify/finish steps, so nothing is
+written and the board is left exactly as it was found. ``flash_katapult`` uses
+it to refuse a mismatched write before ``-f`` is ever called
+(``_verify_offset_before_write``), then checks again from what ``-f`` itself
+reported, as a second line of defence against the board changing in between
+(``_report_offset_mismatch``).
 """
 
 from __future__ import annotations
@@ -44,6 +48,7 @@ from ..errors import (
     DeviceNotFoundError,
     DfuPermissionError,
     FlashError,
+    OffsetMismatchError,
     OperationCancelled,
     ToolMissingError,
 )
@@ -72,6 +77,7 @@ def flash_katapult(
     fw: Optional[str] = None,
     reporter: Reporter = null_reporter,
     timeout: float = REENUMERATE_TIMEOUT,
+    force: bool = False,
 ) -> None:
     """Flash one board through katapult's flashtool.py.
 
@@ -79,6 +85,9 @@ def flash_katapult(
     bootloader, this requests the bootloader first and waits for it to
     re-enumerate - flashtool's documented two-step process for devices it can't
     put into bootloader mode itself.
+
+    `force` overrides the offset checks below (downgrading a refusal to a
+    logged warning) for the case where the operator genuinely knows better.
 
     Raises on any failure; returns None on success.
     """
@@ -139,10 +148,18 @@ def flash_katapult(
                 paths, chipset, serial, KATAPULT_FW_NAME, timeout=timeout, settle=0.5
             )
 
-    # Captured as well as forwarded: flashtool has no query-only mode, and once
-    # -f is called there is no safe way to act on its handshake before the
-    # write completes (see module docstring) - so the address it reports is
-    # only ever useful to check *after* the fact, below.
+    side: dict = {}
+    if not settings.dry_run:
+        from ..build import FlashLog, git_head, read_sidecar
+
+        side = read_sidecar(paths, mcu_type, fw) or {}
+        _verify_offset_before_write(
+            paths, settings, flashtool, dev, fw_bin, mcu_type, fw, serial, side, reporter, force
+        )
+
+    # Captured as well as forwarded: used for the post-write check below, a
+    # second line of defence against the board changing between the probe
+    # above and the write here.
     transcript: list[str] = []
 
     def capture(stream: str, line: str) -> None:
@@ -172,9 +189,8 @@ def flash_katapult(
     # and "flash only the stale ones" would skip exactly the boards a patch
     # change affected.
     if not settings.dry_run:
-        from ..build import FlashLog, git_head, read_sidecar
-
-        side = read_sidecar(paths, mcu_type, fw) or {}
+        # side and the FlashLog/git_head imports came from the pre-write block
+        # above, which runs under the same `not settings.dry_run` condition.
         FlashLog(paths).record(
             serial,
             mcu_type=mcu_type,
@@ -208,6 +224,92 @@ def _parse_application_start(transcript: list[str]) -> Optional[int]:
         return None
 
 
+def _verify_offset_before_write(
+    paths: Paths,
+    settings: Settings,
+    flashtool: str,
+    dev: BusDevice,
+    fw_bin: str,
+    mcu_type: str,
+    fw: str,
+    serial: str,
+    side: dict,
+    reporter: Reporter,
+    force: bool,
+) -> None:
+    """Refuse a mismatched write before ``-f`` is ever called.
+
+    Uses flashtool's ``-s``/``--status`` probe: it runs the same
+    ``connect_btl()`` handshake as ``-f`` - including the "Application Start:"
+    line this checks - but skips send/verify/finish, so nothing is written and
+    the board is left exactly as found. Safe to act on, unlike ``-f``'s own
+    output (see module docstring).
+    """
+    app_address = side.get("app_address")
+    if app_address is None:
+        # Nothing of ours to compare against - an older build, or a tree that
+        # does not define the symbol. Skip the probe; it could not mean anything.
+        return
+
+    transcript: list[str] = []
+
+    def capture(stream: str, line: str) -> None:
+        transcript.append(line)
+        reporter(stream, line)
+
+    # -f names the real binary even though -s never sends it: flashtool checks
+    # a klipper.bin's own embedded MCU identity against what katapult reports,
+    # but only when it can find one there, and only for the actual firmware
+    # about to be written.
+    reporter("info", f"Checking {serial}'s bootloader offset before writing...")
+    rc = run_streamed(
+        [sys.executable, flashtool, "-d", dev.path, "-f", fw_bin, "-s"],
+        cwd=paths.home,
+        reporter=capture,
+        dry_run=settings.dry_run,
+        fake_delay=0.0,
+    )
+    if rc != 0:
+        raise FlashError(
+            f"flashtool.py's status check failed for {serial} (exit {rc}). Not "
+            f"attempting to write.",
+            type=mcu_type,
+            serial=serial,
+            returncode=rc,
+        )
+
+    board_address = _parse_application_start(transcript)
+    if board_address is None:
+        message = (
+            f"could not read {serial}'s own Application Start address from "
+            f"flashtool's status check, so whether it would boot the {fw} "
+            f"firmware about to be written could not be verified."
+        )
+        if force:
+            reporter("warn", f"{message} Proceeding anyway (forced).")
+        else:
+            raise OffsetMismatchError(message, type=mcu_type, serial=serial, fw=fw)
+    elif app_address != board_address:
+        message = (
+            f"{serial} ({mcu_type}) is about to be flashed with {fw} linked to "
+            f"run at {app_address:#x}, but its bootloader reports it will jump "
+            f"to {board_address:#x}. It would not come back running {fw} - "
+            f"re-derive {fw}'s bootloader offset, or check what bootloader is "
+            f"actually on this board."
+        )
+        if force:
+            reporter("warn", f"{message} Proceeding anyway (forced).")
+        else:
+            raise OffsetMismatchError(
+                message,
+                type=mcu_type,
+                serial=serial,
+                fw=fw,
+                app_address=f"{app_address:#x}",
+                board_address=f"{board_address:#x}",
+            )
+
+
 def _report_offset_mismatch(
     reporter: Reporter,
     serial: str,
@@ -216,12 +318,13 @@ def _report_offset_mismatch(
     side: dict,
     transcript: list[str],
 ) -> None:
-    """Diagnostic only - the write above has already happened either way.
-
-    flashtool has no way to check this before writing (see module docstring),
-    so this can only tell the operator, as soon as it is known, that the board
-    just written to will not come back running what was just flashed - rather
-    than leaving them to work that out from a Klipper MCU that never connects.
+    """Second line of defence, after the write - covers the board changing
+    between the probe above and the write itself, or an older caller that
+    passes force=True through the probe. The write has already happened
+    either way, so this can only tell the operator, as soon as it is known,
+    that the board just written to will not come back running what was just
+    flashed - rather than leaving them to work that out from a Klipper MCU
+    that never connects.
     """
     app_address = side.get("app_address")
     if app_address is None:

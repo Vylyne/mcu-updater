@@ -716,6 +716,71 @@ surprises:  All three line numbers matched exactly. Verified the new test
             in isolation, confirming it's load-bearing and not just
             incidentally green.
 
+### Step 4 — Cartographer: the board that did not boot        [done-with-deviation]
+commit:     83c77ba
+gate:       pytest 1133 passed/0 failed/10 skipped · ruff ok · mypy ok · line-endings ok
+            · scripts/mutation_test.py scripts/mutations/flash-offset-diagnostic.json:
+            all 5 anchors CAUGHT
+deviation:  **This step does not refuse a mismatched write. It cannot.** Confirmed
+            with Vi before implementing: flashtool.py has no query-only mode (its
+            only non-write query is for CAN UUID discovery, unrelated), and once
+            `-f` is called the write must be allowed to run to completion -
+            killing the subprocess mid-flight on a parsed handshake line is not
+            safe to attempt, regardless of exactly when erase begins relative to
+            the "Application Start:" print. So "refuse on disagreement, before
+            the write, reusing OffsetMismatchError" (this step's original text)
+            is not achievable through flashtool.py's actual CLI.
+
+            What shipped instead, by Vi's direction: build() now records
+            CONFIG_FLASH_APPLICATION_ADDRESS in the build sidecar
+            (`BuildResult.app_address`, read from the built .config as text -
+            profiles.answer_map/answer_lines/APP_ADDRESS_SYMBOL, reused rather
+            than duplicated). flash_katapult captures the -f invocation's
+            transcript, parses "Application Start: 0x..." after the write
+            completes, and - only then - compares it against the sidecar's
+            recorded address. A mismatch reports via `reporter("error", ...)`;
+            an unparseable handshake (but a recorded address to compare)
+            reports via `reporter("warn", ...)`; no recorded address at all
+            (older build, or a tree that doesn't define the symbol) reports
+            nothing, since there is nothing of ours to compare against. None of
+            this raises, blocks the batch, or affects job success/failure - the
+            write already happened either way. `OffsetMismatchError` is
+            untouched and still used, unchanged, by the existing seed-time
+            check in profiles.py.
+
+            No --force flag: with nothing being refused, there is nothing to
+            force past. Dropped rather than shipped as a dead parameter.
+
+            Also out of the original text but requested directly: katapult's
+            flashtool.py location is now configurable (`flashtool_path` in
+            [updater], via a new `find_flashtool()` mirroring
+            providers/pio.py's `find_pio()`), defaulting to the existing
+            ~/katapult/scripts/flashtool.py convention.
+
+            The batch/update-all path (flashers/flashtool.py's Flashtool
+            adapter) gets this diagnostic for free, since it calls the same
+            flash_katapult - but nothing was added to surface these
+            reporter("error"/"warn") lines anywhere beyond the job log a
+            caller already streams. Whether that's visible enough on the
+            panel is worth Vi's read of the diff, not something to guess at.
+untested:   Real flashtool.py behaviour is taken on Vi's word, not verified
+            against the actual katapult source (not present on this dev box).
+            Specifically: that -r against an already-katapult board is a
+            genuinely separate, non-destructive technique (noted for later,
+            not used here - see below) and that -f truly offers no safe
+            abort window. The regex's tolerance for the `0x{:4X}`
+            minimum-width-not-zero-padded format is tested
+            (`test_the_minimum_width_hex_quirk_is_tolerated`) but only ever
+            exercised via a fake transcript, never real flashtool.py output.
+surprises:  Mid-implementation, Vi separately raised that `-r` against a board
+            already in Katapult is a good way to confirm Katapult is
+            installed at all (it re-enumerates in that state) - explicitly
+            NOT meant to change this step's design back to a preventive
+            check, but relevant to bootloader-presence detection elsewhere
+            (Step 10's device states, or wherever "is this board running
+            Katapult" gets asked). Noted here so it isn't lost; not acted on
+            in this step.
+
 ---
 
 ## Appendix B — open items, not in scope

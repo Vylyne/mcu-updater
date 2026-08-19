@@ -886,6 +886,59 @@ action:     Step 4b added. Step 4's plumbing (sidecar `app_address`, the regex
             currently pin a diagnostic that refuses nothing and must be
             re-pointed.
 
+### Step 4b — make the offset check preventive        [done]
+commit:     a9f2cb1 (plan text itself: b943011)
+gate:       pytest 1136 passed/0 failed/10 skipped · ruff ok · mypy ok · line-endings ok
+            · scripts/mutation_test.py scripts/mutations/flash-offset-diagnostic.json:
+            all 9 anchors CAUGHT (5 pre-write, 2 post-write, 2 shared parsing/build)
+deviation:  **No `--force` on the CLI/batch path.** Point 5 said "wire it the
+            same way assert_printer_idle's force already is" - checked, and
+            assert_printer_idle is called *only* from agent/methods.py, never
+            from cli.py (the CLI never checks printer-busy state at all,
+            agent-only by existing design). Read that literally: `force` is
+            wired from agent methods.flash (reusing the same `force` value
+            already computed there for the busy gate) but not from cli.py's
+            flash_fw_cmd/update_all, which go through flashers/flashtool.py's
+            Flashtool.write() adapter and always pass force=False. A CLI or
+            update-all flash that trips this guard currently has no override.
+            Flagging this plainly rather than guessing whether it should:
+            threading force through the whole Bench/FlashTarget protocol
+            (shared by every flasher, not just Flashtool) is a bigger change
+            than this step asked for.
+
+            **The "also investigate" klipper_dict finding: real, not acted
+            on.** connect_btl's own MCU-identity check only fires when
+            _check_binary() sees a firmware file literally named
+            "klipper.bin" (flashtool.py:232-234) containing a decompressible
+            embedded dict. Our probe passes `-f fw_bin` (the real artifact
+            path) so this fires for free on any plain klipper build - but
+            never for Cartographer or any other family whose
+            FirmwareFamily.artifact_name() isn't "klipper", which is every
+            family Step 3/4 exist because of. "Turning it on is cheap" would
+            mean either renaming our own build output to satisfy an upstream
+            tool's filename sniffing (fights our own naming convention, which
+            exists so a fork keeps its parent's output name) or copying/
+            symlinking a "klipper.bin" alias just for the probe call (real
+            complexity, and only a POSIX printer host can symlink). Left
+            un-implemented; this is Vi's call, not mine to make silently.
+untested:   Real flashtool.py's -s behaviour is taken from reading the source
+            at C:\git\Public\katapult directly this time (not from memory,
+            per the Step 4 review finding) - connect_btl(), is_status_req,
+            the send/verify/finish skip, and _check_binary's filename gate
+            were all read, not assumed. Still never run against a real board:
+            no serial port, no printer. The "on the printer" verification
+            list (this file, "Verification" section, step 3) is where that
+            actually gets checked - specifically whether a second flashtool.py
+            invocation moments after the first can reopen the same serial
+            port without a settle delay this implementation does not add.
+surprises:  none - Step 4b's five-point instruction list mapped onto the code
+            cleanly. The one wrinkle was mechanical, not conceptual: the old
+            post-write-only mutation anchors and tests shared near-identical
+            code shape with the new pre-write function (same variable names,
+            same branch structure), so several `find` strings and two tests
+            needed disambiguating context or a full rewrite to keep testing
+            what they claimed to.
+
 ---
 
 ## Appendix B — open items, not in scope

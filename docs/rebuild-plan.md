@@ -987,6 +987,38 @@ limitation: **A `--dry-run` flash cannot exercise either offset check, and
             only a real flash (or explicit on-printer verification, see this
             file's "Verification" section) does.
 
+### Step 5 — `[firmware]` gains `builder` and `bootloader`        [done]
+commit:     89bc094
+gate:       pytest 1148 passed/0 failed/10 skipped · ruff ok · mypy ok · line-endings ok
+            · scripts/mutation_test.py scripts/mutations/firmware-source.json:
+            all 8 anchors CAUGHT (2 new, 1 fixed-stale, 5 pre-existing)
+deviation:  `bootloader`'s default is resolved *per-key*, not per-section - not
+            explicit in the plan text but necessary. A blanket
+            `bootloader: bool = False` dataclass default plus "katapult's
+            default gains bootloader=True" read together would mean a
+            `[firmware katapult]` section overriding only `source:` (no
+            `bootloader:` key) silently loses its bootloader status the
+            moment it's declared at all - the exact kind of footgun this
+            module's own docstring says every key is independently optional
+            to avoid. Implemented instead as: `load_from_doc` passes
+            `name == BOOTLOADER` as `parse_bool`'s default (fires only when
+            the key is truly absent), and `resolve()`'s no-section-at-all
+            fallback does the same. A configured section can still turn it
+            off explicitly (`bootloader: false`) - both directions are
+            tested (`test_overriding_one_key_on_katapult_does_not_turn_off_
+            its_bootloader_status`, `test_katapults_bootloader_status_can_
+            still_be_turned_off_explicitly`) and mutation-anchored.
+untested:   none
+surprises:  `tests/test_repo_hygiene.py::test_no_mutation_is_left_live_in_
+            the_source` caught a stale anchor immediately: changing
+            `resolve()`'s fallback line to add the `bootloader=` kwarg broke
+            `firmware-source.json`'s "an unconfigured family still resolves
+            to the convention" anchor's `find` string. Worth noting as a
+            general lesson for the steps ahead: any edit to a line an
+            existing mutation spec quotes verbatim needs the spec updated in
+            the same commit, and this hygiene test is what catches it if
+            missed - it already did, once.
+
 ---
 
 ## Appendix B — open items, not in scope

@@ -562,7 +562,7 @@ def derive_bootloader(
     paths: Paths,
     mcu_type: str,
     app_fw: str,
-    boot_fw: str = firmware.BOOTLOADER,
+    boot_fw: str = "katapult",
     *,
     families: Optional[dict[str, firmware.FirmwareFamily]] = None,
     force: bool = False,

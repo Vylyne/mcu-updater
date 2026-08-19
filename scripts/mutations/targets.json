@@ -67,7 +67,7 @@
     },
     {
       "name": "a type reports which firmware family it runs",
-      "find": "            \"firmware\": mcu.firmware,",
+      "find": "            \"firmware\": application,",
       "replace": "            \"firmware\": \"klipper\","
     },
     {

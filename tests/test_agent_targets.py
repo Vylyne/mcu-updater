@@ -578,8 +578,16 @@ def test_configure_is_offered_per_family_not_as_a_fixed_pair(paths, live_registr
     """The panel's literal `['klipper', 'katapult']` cannot grow a third."""
     with open(paths.registry_file, "w", encoding="utf-8") as fh:
         fh.write(live_registry_text)
-        fh.write("\n[mcu carto_v4]\nchipset: stm32g431xx\nfirmware: cartographer\n")
+        fh.write("\n[mcu carto_v4]\nchipset: stm32g431xx\nfirmware: cartographer, katapult\n")
         fh.write("\n[firmware cartographer]\nsource: ~/carto\nartifact: klipper\n")
+    # live_registry_text predates the firmware: key, so bttebb36 declares no
+    # bootloader under the list-based schema - add one explicitly, since this
+    # test is specifically about katapult being offered alongside klipper.
+    from mcu_updater.config import Registry
+
+    with Registry.mutate(paths, "add katapult to bttebb36") as reg:
+        mcu = reg.get("bttebb36")
+        mcu.firmwares = [*mcu.firmwares, "katapult"]
     api = Api(paths, runner=_runner())
     monkeypatch.setattr(Api, "kconfig_available", lambda self, families=None: {
         "klipper": True, "katapult": True, "cartographer": True
@@ -799,7 +807,7 @@ def test_a_type_can_name_the_firmware_it_runs_when_it_is_created(paths, live_reg
     )
 
     assert res["firmware"] == "cartographer"
-    assert api.registry().get("carto_v4").firmware == "cartographer"
+    assert api.registry().get("carto_v4").application() == "cartographer"
     assert _targets(api)["carto_v4"]["firmware"] == "cartographer"
 
 

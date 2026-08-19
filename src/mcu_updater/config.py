@@ -17,8 +17,10 @@ Per-type keys, and that is all:
     Required. Matches the chipset segment of the /dev/serial/by-id name.
 ``serials``
     One tracked board per line.
-``katapult_installed``
-    Only written when false; a board with no bootloader is the exception.
+``firmware``
+    Which families this board runs, comma-separated - an application and,
+    for a board with one, its bootloader, e.g. ``cartographer, katapult``.
+    Defaults to ``klipper``. A type with no bootloader simply omits one.
 ``profile``
     The vendor answer file this type's application config is seeded from, e.g.
     ``config.CartoV4USB``. Names a file in that firmware's own source tree, not
@@ -45,7 +47,7 @@ from collections.abc import Iterable, Iterator
 from typing import Any, Optional
 
 from . import firmware, sections
-from .cfgdoc import CfgDocument, parse_bool
+from .cfgdoc import CfgDocument
 from .errors import (
     AmbiguousSerialError,
     ConfigCorruptError,
@@ -56,7 +58,7 @@ from .errors import (
     UnknownSerialError,
     UnknownTypeError,
 )
-from .paths import FW_TARGETS, Paths
+from .paths import Paths
 
 #: The spelling this module *writes* when a type is new. Reading is
 #: `sections.read`'s job and spans `[type ...]` too - keeping a second prefix
@@ -91,17 +93,26 @@ class MakefilePatch:
 @dataclasses.dataclass
 class FwConfig:
     extra_args: str = ""
-    #: None means "not specified". Only katapult blocks carry it.
-    installed: Optional[bool] = None
     makefile_patches: list[MakefilePatch] = dataclasses.field(default_factory=list)
 
     def to_json(self) -> dict[str, Any]:
         out: dict[str, Any] = {"extra_args": self.extra_args}
-        if self.installed is not None:
-            out["installed"] = self.installed
         if self.makefile_patches:
             out["makefile_patches"] = [p.to_json() for p in self.makefile_patches]
         return out
+
+
+def _is_bootloader(fw: str, families: Optional[dict[str, Any]]) -> bool:
+    """Whether a declared family is a bootloader.
+
+    Mirrors `firmware.resolve()`'s own fallback for a family this dict has no
+    section for - "katapult" is one by convention, nothing else is - without
+    calling through it, so `McuType`'s own methods stay Paths-free like
+    `fw_order()` already is: an McuType is handed around without a Paths.
+    """
+    if families and fw in families:
+        return bool(families[fw].bootloader)
+    return fw == "katapult"
 
 
 @dataclasses.dataclass
@@ -110,13 +121,14 @@ class McuType:
     chipset: str = ""
     serials: list[str] = dataclasses.field(default_factory=list)
     fws: dict[str, FwConfig] = dataclasses.field(default_factory=dict)
-    #: Which family this board actually *runs*. A type builds several - klipper,
-    #: katapult, and any declared family - but only one of them is the
-    #: application, and that is the one whose source tree the board's reported
-    #: version should be compared against and whose binary a flash writes.
+    #: Every family this board runs - an application and, for a board with
+    #: one, its bootloader. Replaces the old single `firmware` string and the
+    #: `katapult_installed` flag together: a type with no bootloader simply
+    #: omits one from this list, rather than carrying a flag that says so.
     #:
-    #: Defaults to klipper, which is what every type meant before this existed.
-    firmware: str = firmware.DEFAULT_APPLICATION
+    #: Defaults to klipper alone, which is what every type meant before this
+    #: key existed.
+    firmwares: list[str] = dataclasses.field(default_factory=lambda: ["klipper"])
     #: Vendor answer file this type's application config is seeded from, in
     #: that firmware's own tree. Empty means the answers are the user's own,
     #: which is what every type predating profiles is.
@@ -131,23 +143,44 @@ class McuType:
         return self.fws.setdefault(fw, FwConfig())
 
     def families(self) -> list[str]:
-        """The families this type actually uses: its application, and katapult.
+        """The families this type actually uses - exactly what it declares.
 
         Distinct from `fw_order()`, which is everything it *carries*. A board
         running cartographer has klipper config keys too - they are harmless and
         unused - and listing them as "not built" is noise about a firmware
         nobody intends to build for it.
         """
-        out = [self.firmware]
-        if self.katapult_installed and firmware.BOOTLOADER not in out:
-            out.append(firmware.BOOTLOADER)
-        return out
+        return list(self.firmwares)
 
-    @property
-    def katapult_installed(self) -> bool:
-        """Absent means True - a board with no bootloader is the exception."""
-        val = self.fw("katapult").installed
-        return True if val is None else val
+    def application(self, families: Optional[dict[str, Any]] = None) -> str:
+        """The family this board actually *runs*: the first declared family
+        that is not a bootloader.
+
+        A type carries several - klipper, katapult, and any declared family -
+        but only one of them is the application, and that is the one whose
+        source tree the board's reported version is compared against and
+        whose binary a flash writes.
+
+        `families` is the parsed `[firmware ...]` sections, for a caller that
+        already has them - without it, an undeclared family's bootloader
+        status falls back to the same convention `firmware.resolve` uses.
+        """
+        for fw in self.firmwares:
+            if not _is_bootloader(fw, families):
+                return fw
+        return self.firmwares[0] if self.firmwares else "klipper"
+
+    def bootloader(self, families: Optional[dict[str, Any]] = None) -> Optional[str]:
+        """The bootloader family this type carries, if any.
+
+        None means this board has no bootloader (`katapult_installed: false`,
+        in the old spelling) - flashed some other way, or not flashed by this
+        tool at all yet.
+        """
+        for fw in self.firmwares:
+            if _is_bootloader(fw, families):
+                return fw
+        return None
 
     def fw_order(self) -> list[str]:
         """The families this type carries, built-ins first.
@@ -156,13 +189,13 @@ class McuType:
         around without a Paths, and the order only has to be *stable* - it is
         what the artifacts payload and the CLI listing are keyed by.
         """
-        first = [fw for fw in FW_TARGETS if fw in self.fws]
-        return first + sorted(fw for fw in self.fws if fw not in FW_TARGETS)
+        first = [fw for fw in firmware.BUILTIN if fw in self.fws]
+        return first + sorted(fw for fw in self.fws if fw not in firmware.BUILTIN)
 
     def to_json(self) -> dict[str, Any]:
         out: dict[str, Any] = {
             "chipset": self.chipset,
-            "firmware": self.firmware,
+            "firmwares": list(self.firmwares),
             "profile": self.profile,
         }
         for fw in self.fw_order():
@@ -259,8 +292,11 @@ class Registry:
 
         # Which families exist is itself config, and it is in this same
         # document - so read it from the doc already parsed rather than
-        # reopening the file once per registry load.
-        fw_names = firmware.names_of(firmware.load_from_doc(doc))
+        # reopening the file once per registry load. Kept whole (not just the
+        # names) so a type's declared families can be checked against their
+        # builders below.
+        families_map = firmware.load_from_doc(doc)
+        fw_names = firmware.names_of(families_map)
 
         types: dict[str, McuType] = {}
         for declared in sections.read(doc, provider=sections.KCONFIG_MAKE):
@@ -268,40 +304,54 @@ class Registry:
             mcu = McuType(name=name, chipset=(doc.get(section, "chipset") or "").strip())
             mcu.serials = doc.get_list(section, "serials")
 
-            application = (
-                doc.get(section, "firmware") or firmware.DEFAULT_APPLICATION
-            ).strip()
-            if application not in fw_names:
-                # Refused rather than defaulted. A typo here would otherwise
-                # build and flash klipper at a board that runs something else,
-                # which is exactly the mistake this key exists to prevent.
+            raw = (doc.get(section, "firmware") or "").strip()
+            declared_fws = [f.strip() for f in raw.split(",") if f.strip()] or ["klipper"]
+            for fw in declared_fws:
+                if fw not in fw_names:
+                    # Refused rather than defaulted. A typo here would otherwise
+                    # build and flash klipper at a board that runs something else,
+                    # which is exactly the mistake this key exists to prevent.
+                    raise ConfigCorruptError(
+                        f"{path}: '{name}' declares firmware '{fw}', which is not "
+                        f"a known family. Known: {', '.join(fw_names)}. Declare it with a "
+                        f"[firmware {fw}] section, or fix the spelling.",
+                        path=path,
+                        type=name,
+                        value=fw,
+                    )
+            builders = {
+                firmware.resolve(paths, fw, families_map).builder for fw in declared_fws
+            }
+            if len(builders) > 1:
+                # A type is built by exactly one provider - the seam that
+                # compiles it is chosen from its families' builder, so a type
+                # whose declared families disagree has no single answer.
                 raise ConfigCorruptError(
-                    f"{path}: '{name}' declares firmware '{application}', which is not "
-                    f"a known family. Known: {', '.join(fw_names)}. Declare it with a "
-                    f"[firmware {application}] section, or fix the spelling.",
+                    f"{path}: '{name}' declares firmware families built by "
+                    f"different tools ({', '.join(sorted(builders))}): "
+                    f"{', '.join(declared_fws)}. A type is built by exactly one "
+                    f"provider - split it into two types if it genuinely needs "
+                    f"both.",
                     path=path,
                     type=name,
-                    value=application,
+                    value=declared_fws,
                 )
-            mcu.firmware = application
+            mcu.firmwares = declared_fws
             mcu.profile = (doc.get(section, "profile") or "").strip()
             for fw in fw_names:
                 cfg = mcu.fw(fw)
                 cfg.extra_args = (doc.get(section, f"{fw}_extra_args") or "").strip()
-                for raw in doc.get_list(section, f"{fw}_makefile_patches"):
-                    patch = MakefilePatch.parse(raw)
+                for raw_patch in doc.get_list(section, f"{fw}_makefile_patches"):
+                    patch = MakefilePatch.parse(raw_patch)
                     if patch is None:
                         raise ConfigCorruptError(
-                            f"{path}: could not parse a makefile patch for '{name}': {raw!r}. "
-                            f"Expected '<file> {PATCH_SEPARATOR} <line>'.",
+                            f"{path}: could not parse a makefile patch for '{name}': "
+                            f"{raw_patch!r}. Expected '<file> {PATCH_SEPARATOR} <line>'.",
                             path=path,
                             type=name,
-                            value=raw,
+                            value=raw_patch,
                         )
                     cfg.makefile_patches.append(patch)
-            installed = doc.get(section, "katapult_installed")
-            if installed is not None:
-                mcu.fw("katapult").installed = parse_bool(installed, True)
             types[name] = mcu
 
         return cls(types, doc)
@@ -372,8 +422,8 @@ class Registry:
             doc.set(section, "chipset", mcu.chipset)
             doc.set(section, "serials", list(mcu.serials))
 
-            if mcu.firmware != firmware.DEFAULT_APPLICATION:
-                doc.set(section, "firmware", mcu.firmware)
+            if mcu.firmwares != ["klipper"]:
+                doc.set(section, "firmware", ", ".join(mcu.firmwares))
             else:
                 doc.remove_option(section, "firmware")
 
@@ -382,12 +432,9 @@ class Registry:
             else:
                 doc.remove_option(section, "profile")
 
-            # Only written when it differs from the default, to keep the file
-            # readable rather than full of restated defaults.
-            if mcu.fw("katapult").installed is False:
-                doc.set(section, "katapult_installed", "false")
-            else:
-                doc.remove_option(section, "katapult_installed")
+            # Retired: whether a bootloader is present is now just whether one
+            # is in `firmware:`. Dropped on every save rather than left stale.
+            doc.remove_option(section, "katapult_installed")
 
             for fw in fw_names:
                 cfg = mcu.fws.get(fw)
@@ -494,7 +541,7 @@ class Registry:
         klipper_args: str = "",
         katapult_args: str = "",
         katapult_installed: bool = True,
-        application: str = firmware.DEFAULT_APPLICATION,
+        application: str = "klipper",
         profile: str = "",
         overwrite: bool = False,
     ) -> McuType:
@@ -514,17 +561,17 @@ class Registry:
         validate_type_name(name)
         if name in self.types and not overwrite:
             raise DuplicateTypeError(f"MCU type '{name}' already exists.", type=name)
+        firmwares = [application]
+        if katapult_installed and "katapult" not in firmwares:
+            firmwares.append("katapult")
         mcu = McuType(
             name=name,
             chipset=chipset,
-            firmware=application,
+            firmwares=firmwares,
             profile=profile.strip(),
             serials=[],
             fws={
-                "katapult": FwConfig(
-                    extra_args=katapult_args,
-                    installed=None if katapult_installed else False,
-                ),
+                "katapult": FwConfig(extra_args=katapult_args),
                 "klipper": FwConfig(extra_args=klipper_args),
             },
         )

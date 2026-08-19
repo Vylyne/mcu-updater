@@ -325,14 +325,16 @@ class Api:
         mcu = reg.get(name)
         if versions is None:
             versions = self.mcu_info()
-        fw_head = git_head(firmware.resolve(self.paths, mcu.firmware).source_dir(self.paths))
+        families = firmware.load(self.paths)
+        application = mcu.application(families)
+        fw_head = git_head(firmware.resolve(self.paths, application, families).source_dir(self.paths))
 
         # Read once per type, not per board: it is one small file, but a ten-board
         # type would otherwise open it ten times.
         from ..build import FlashLog
 
         flashlog = FlashLog(self.paths)
-        artifact_sha = (read_sidecar(self.paths, name, mcu.firmware) or {}).get("bin_sha256")
+        artifact_sha = (read_sidecar(self.paths, name, application) or {}).get("bin_sha256")
 
         serials = []
         for serial in mcu.serials:
@@ -358,10 +360,10 @@ class Api:
             # bug that was fixed on this side and is still live in the panel,
             # where a cartographer type reads "never built" forever because the
             # only artifact anyone looks at is artifacts.klipper.
-            "firmware": mcu.firmware,
+            "firmware": application,
             "serials": serials,
             "artifacts": {fw: self.artifact(name, fw) for fw in mcu.fw_order()},
-            "katapult_installed": mcu.katapult_installed,
+            "katapult_installed": mcu.bootloader(families) is not None,
             # True when at least one board is behind the source tree. Distinct from
             # the artifact being stale: "needs rebuilding" and "needs flashing" are
             # different questions, and reporting only the first is what let a board
@@ -375,7 +377,7 @@ class Api:
                 "makefile_patches": [p.to_json() for p in cfg.makefile_patches],
             }
             if fw == "katapult":
-                block["installed"] = mcu.katapult_installed
+                block["installed"] = mcu.bootloader(families) is not None
             out[fw] = block
         return out
 
@@ -1342,7 +1344,7 @@ class Api:
         """
         value = str(args.get(key) or "").strip()
         if not value:
-            return firmware.DEFAULT_APPLICATION
+            return "klipper"  # same default an absent `firmware:` key gets
         known = self._fw_names()
         if value not in known:
             raise RpcError(
@@ -1405,6 +1407,7 @@ class Api:
             )
 
         warnings: list[str] = []
+        families = firmware.load(self.paths)
         with Registry.mutate(self.paths, f"update type {name}") as reg:
             mcu = reg.get(name)
 
@@ -1415,7 +1418,7 @@ class Api:
                     # .config, neither of which changes when the chipset does - so
                     # a binary built for the old chip would keep reporting itself
                     # as fresh. Say so rather than let it be flashed.
-                    if self.artifact(name, mcu.firmware).get("has_bin"):
+                    if self.artifact(name, mcu.application(families)).get("has_bin"):
                         warnings.append(
                             f"the built firmware for '{name}' was compiled for "
                             f"{mcu.chipset}. Rebuild before flashing - staleness "
@@ -1425,18 +1428,22 @@ class Api:
 
             if "firmware" in args:
                 application = self._require_family(args)
-                if application != mcu.firmware:
+                current = mcu.application(families)
+                if application != current:
                     # Same reasoning as a chipset change, and stronger: the
                     # artifact was built from a different source tree entirely,
                     # and nothing in the provenance record would notice.
-                    if self.artifact(name, mcu.firmware).get("has_bin"):
+                    if self.artifact(name, current).get("has_bin"):
                         warnings.append(
                             f"the built firmware for '{name}' came from "
-                            f"{mcu.firmware}. Rebuild before flashing - "
+                            f"{current}. Rebuild before flashing - "
                             f"staleness compares a tree against itself and "
                             f"cannot detect the tree being swapped."
                         )
-                    mcu.firmware = application
+                    # The application changes; whatever bootloader this type
+                    # already carried (if any) is unaffected.
+                    boot = mcu.bootloader(families)
+                    mcu.firmwares = [application] + ([boot] if boot else [])
 
             for fw in mcu.fw_order():
                 key = f"{fw}_extra_args"
@@ -1445,14 +1452,13 @@ class Api:
 
             if "katapult_installed" in args:
                 installed = bool(args.get("katapult_installed"))
-                # Only stored when false; absent means true, which keeps the file
-                # free of restated defaults.
-                mcu.fw("katapult").installed = None if installed else False
+                without_katapult = [f for f in mcu.firmwares if f != "katapult"]
+                mcu.firmwares = without_katapult + (["katapult"] if installed else [])
 
             result: dict[str, Any] = {
                 "name": name,
                 "chipset": mcu.chipset,
-                "firmware": mcu.firmware,
+                "firmware": mcu.application(families),
             }
 
         self._changed()
@@ -1676,8 +1682,9 @@ class Api:
         # serial_tracked_elsewhere, all of which the panel switches on by code.
         mcu_type = reg.resolve_serial(serial, str(name) if name else None)
         mcu = reg.get(mcu_type)
+        application = mcu.application(firmware.load(self.paths))
 
-        fw_bin = self.paths.bin_file(mcu_type, mcu.firmware)
+        fw_bin = self.paths.bin_file(mcu_type, application)
         if not os.path.exists(fw_bin):
             raise RpcError(
                 f"no built firmware for {mcu_type} at {fw_bin}. Build it first.",
@@ -1732,7 +1739,7 @@ class Api:
                     mcu.chipset,
                     serial,
                     fw_bin=fw_bin,
-                    fw=mcu.firmware,
+                    fw=application,
                     reporter=ctx.reporter,
                     force=force,
                 )
@@ -2859,6 +2866,7 @@ class Api:
         from ..build import FlashLog, git_head, read_sidecar
 
         versions = self.mcu_info()
+        families = firmware.load(self.paths)
         # Resolved per type below: a board running cartographer must be
         # compared against its own fork, not upstream klipper.
         flashlog = FlashLog(self.paths)
@@ -2868,12 +2876,13 @@ class Api:
             if only is not None and name != only:
                 continue
             mcu = reg.get(name)
-            if not os.path.exists(self.paths.bin_file(name, mcu.firmware)):
+            application = mcu.application(families)
+            if not os.path.exists(self.paths.bin_file(name, application)):
                 continue
             fw_head = git_head(
-                firmware.resolve(self.paths, mcu.firmware).source_dir(self.paths)
+                firmware.resolve(self.paths, application, families).source_dir(self.paths)
             )
-            artifact_sha = (read_sidecar(self.paths, name, mcu.firmware) or {}).get("bin_sha256")
+            artifact_sha = (read_sidecar(self.paths, name, application) or {}).get("bin_sha256")
             for serial in mcu.serials:
                 state, _ = device_state(self.paths, mcu.chipset, serial)
                 if state == STATE_OFFLINE:
@@ -2894,7 +2903,7 @@ class Api:
                             "chipset": mcu.chipset,
                             # Carried so the flash writes the family this board
                             # runs rather than assuming klipper.
-                            "fw": mcu.firmware,
+                            "fw": application,
                             "state": state,
                             "reason": info["reason"] if scope != "all" else "forced",
                         }
@@ -3690,7 +3699,7 @@ class Api:
         reg = self.registry()
         mcu = reg.get(name)
         families = firmware.load(self.paths)
-        fw = str(args.get("fw") or mcu.firmware).strip()
+        fw = str(args.get("fw") or mcu.application(families)).strip()
         if fw not in families and fw not in firmware.BUILTIN:
             raise RpcError(
                 f"'fw' must be one of {', '.join(self._fw_names())}", ERR_INVALID_PARAMS
@@ -3706,7 +3715,7 @@ class Api:
 
         return {
             "type": name,
-            "firmware": mcu.firmware,
+            "firmware": mcu.application(families),
             "fw": fw,
             "profile": mcu.profile,
             "available": [
@@ -3779,14 +3788,19 @@ class Api:
         reg = self.registry()
         mcu = reg.get(name)
         families = firmware.load(self.paths)
-        fw = str(args.get("fw") or mcu.firmware).strip()
+        fw = str(args.get("fw") or mcu.application(families)).strip()
         if fw not in families and fw not in firmware.BUILTIN:
             raise RpcError(
                 f"'fw' must be one of {', '.join(self._fw_names())}", ERR_INVALID_PARAMS
             )
 
+        # The family this type actually carries a bootloader for, if any -
+        # falling back to "katapult" only if derive is forced true on a type
+        # that declares none, which lets that fail downstream exactly as it
+        # would have before this had a name other than "katapult" to try.
+        boot_fw = mcu.bootloader(families) or "katapult"
         derive = args.get("derive")
-        derive = mcu.katapult_installed if derive is None else bool(derive)
+        derive = (mcu.bootloader(families) is not None) if derive is None else bool(derive)
         # Named before the job starts, so an unknown profile is a refusal rather
         # than a failed job - and so the confirmation can say what it will write.
         seed = profiles.find(self.paths, fw, profile, families, mcu_type=name)
@@ -3794,7 +3808,7 @@ class Api:
         # act on, not a failure it has to read out of a dead job. Two file
         # hashes and no Kconfig parse, so it is fine to ask here and again
         # inside the write, where it is the authority.
-        for family in [fw] + ([firmware.BOOTLOADER] if derive else []):
+        for family in [fw] + ([boot_fw] if derive else []):
             profiles.refuse_if_customised(self.paths, name, family, force=force)
 
         def run(ctx) -> dict[str, Any]:
@@ -3812,20 +3826,18 @@ class Api:
                 # board that should not be flashed, and reporting the application
                 # seeding as a success with a warning attached is how that gets
                 # missed. The application's config stays - it is valid on its own.
-                ctx.step(f"Deriving {firmware.BOOTLOADER} from {fw}", 1, steps)
+                ctx.step(f"Deriving {boot_fw} from {fw}", 1, steps)
                 derived = profiles.derive_bootloader(
-                    self.paths, name, fw, families=families, force=force
+                    self.paths, name, fw, boot_fw, families=families, force=force
                 )
                 for line in derived.dropped:
-                    ctx.reporter(
-                        "info", f"{firmware.BOOTLOADER} does not define {line} - dropped"
-                    )
+                    ctx.reporter("info", f"{boot_fw} does not define {line} - dropped")
                 out["derived"] = derived.to_json()
 
             # The intent goes in the hand-edited config; the verdict stays in the
             # data tree. Only for the application - katapult's is always derived,
             # so recording a second key would be restating that.
-            if fw == mcu.firmware:
+            if fw == mcu.application(families):
                 with Registry.mutate(self.paths, f"profile for {name}") as writable:
                     writable.get(name).profile = applied.profile
 
@@ -3852,7 +3864,7 @@ class Api:
         targets = [fw] if fw else list(mcu.families())
 
         forgotten = [f for f in targets if profiles.forget(self.paths, name, f)]
-        if not fw or mcu.firmware in targets:
+        if not fw or mcu.application() in targets:
             with Registry.mutate(self.paths, f"forget profile for {name}") as writable:
                 writable.get(name).profile = ""
 

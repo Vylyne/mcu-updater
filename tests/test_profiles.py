@@ -846,7 +846,7 @@ def test_a_declared_family_seeds_from_its_own_tree(tmp_path, trees):
 
     reg = Registry.load(paths)
     mcu = reg.get("carto_v4")
-    assert mcu.firmware == "cartographer"
+    assert mcu.application() == "cartographer"
     assert mcu.profile == "config.TestBoardUSB"
 
     families = firmware.load(paths)

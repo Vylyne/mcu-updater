@@ -41,20 +41,10 @@ from .paths import FW_TARGETS, Paths
 SECTION_PREFIX = "firmware"
 
 #: Always present, in this order. klipper is what a board runs and katapult is
-#: what puts it there; enough of this tool is about that specific pair -
-#: `katapult_installed`, the bootloader request, the version join - that neither
-#: can be removed by editing a config file. Declaring a family adds to these.
+#: what puts it there; enough of this tool is about that specific pair - the
+#: bootloader request, the version join - that neither can be removed by
+#: editing a config file. Declaring a family adds to these.
 BUILTIN = FW_TARGETS
-
-#: What a board runs unless its `[mcu ...]` section says otherwise. Every type
-#: predating the `firmware:` key runs klipper, so this is also what keeps those
-#: sections meaning exactly what they meant before it existed.
-DEFAULT_APPLICATION = "klipper"
-
-#: The family that puts an application on a board rather than being one. Kept
-#: separate from the application because a type needs *both*: `[mcu carto_v4]`
-#: runs cartographer and is still flashed through katapult.
-BOOTLOADER = "katapult"
 
 #: What builds a family unless its `[firmware ...]` section says otherwise.
 #: Klipper, Katapult and every fork of either use Kconfig + `make`; PlatformIO
@@ -151,7 +141,7 @@ def load_from_doc(doc: CfgDocument) -> dict[str, FirmwareFamily]:
             # katapult - not a blanket False, so overriding one key on an
             # existing [firmware katapult] section can't silently turn its
             # bootloader status off.
-            bootloader=bool(parse_bool(doc.get(section, "bootloader"), name == BOOTLOADER)),
+            bootloader=bool(parse_bool(doc.get(section, "bootloader"), name == "katapult")),
         )
     return out
 
@@ -203,4 +193,4 @@ def resolve(
     """
     if families is None:
         families = load(paths)
-    return families.get(fw) or FirmwareFamily(name=fw, bootloader=(fw == BOOTLOADER))
+    return families.get(fw) or FirmwareFamily(name=fw, bootloader=(fw == "katapult"))

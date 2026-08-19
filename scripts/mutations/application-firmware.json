@@ -1,5 +1,5 @@
 {
-  "_comment": "Which family a board actually runs. Getting this wrong writes one firmware at a board expecting another - a cartographer probe flashed with upstream klipper, or judged against a source tree it was never built from - so every step from reading the key to acting on it is guarded.",
+  "_comment": "Which families a board actually runs. Getting this wrong writes one firmware at a board expecting another - a cartographer probe flashed with upstream klipper, or judged against a source tree it was never built from - so every step from reading the key to acting on it is guarded.",
   "file": "src/mcu_updater/config.py",
   "command": [
     "python",
@@ -13,29 +13,34 @@
   ],
   "mutations": [
     {
-      "name": "a type runs the family its section names",
-      "find": "        out = [self.firmware]",
-      "replace": "        out = [\"klipper\"]"
+      "name": "families() returns exactly what a type declares",
+      "find": "        return list(self.firmwares)",
+      "replace": "        return [\"klipper\"]"
     },
     {
-      "name": "the declared firmware is kept, not discarded on load",
-      "find": "            mcu.firmware = application",
-      "replace": "            mcu.firmware = firmware.DEFAULT_APPLICATION"
+      "name": "the declared firmware list is kept, not discarded on load",
+      "find": "            mcu.firmwares = declared_fws",
+      "replace": "            mcu.firmwares = [\"klipper\"]"
     },
     {
       "name": "a family nobody declared is refused rather than accepted",
-      "find": "            if application not in fw_names:",
-      "replace": "            if False:"
+      "find": "                if fw not in fw_names:",
+      "replace": "                if False:"
     },
     {
-      "name": "a non-default firmware survives a save",
-      "find": "            if mcu.firmware != firmware.DEFAULT_APPLICATION:\n                doc.set(section, \"firmware\", mcu.firmware)",
-      "replace": "            if False:\n                doc.set(section, \"firmware\", mcu.firmware)"
+      "name": "a non-default firmware list survives a save",
+      "find": "            if mcu.firmwares != [\"klipper\"]:\n                doc.set(section, \"firmware\", \", \".join(mcu.firmwares))",
+      "replace": "            if False:\n                doc.set(section, \"firmware\", \", \".join(mcu.firmwares))"
     },
     {
-      "name": "katapult is still listed for a board that has it",
-      "find": "        if self.katapult_installed and firmware.BOOTLOADER not in out:\n            out.append(firmware.BOOTLOADER)",
-      "replace": "        if False:\n            out.append(firmware.BOOTLOADER)"
+      "name": "the application is the first declared family that is not a bootloader",
+      "find": "        for fw in self.firmwares:\n            if not _is_bootloader(fw, families):\n                return fw",
+      "replace": "        for fw in self.firmwares:\n            if False:\n                return fw"
+    },
+    {
+      "name": "the bootloader is the first declared family that is one",
+      "find": "        for fw in self.firmwares:\n            if _is_bootloader(fw, families):\n                return fw",
+      "replace": "        for fw in self.firmwares:\n            if False:\n                return fw"
     }
   ]
 }

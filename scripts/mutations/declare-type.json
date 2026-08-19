@@ -22,12 +22,12 @@
     },
     {
       "name": "swapping the source tree warns that provenance cannot see it",
-      "find": "                    if self.artifact(name, mcu.firmware).get(\"has_bin\"):\n                        warnings.append(",
+      "find": "                    if self.artifact(name, current).get(\"has_bin\"):\n                        warnings.append(",
       "replace": "                    if False:\n                        warnings.append("
     },
     {
       "name": "an edited firmware family is actually stored",
-      "find": "                    mcu.firmware = application",
+      "find": "                    mcu.firmwares = [application] + ([boot] if boot else [])",
       "replace": "                    pass"
     }
   ]

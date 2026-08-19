@@ -361,27 +361,39 @@ def test_a_relocated_tree_is_what_staleness_compares_against(paths, fake_root, m
 def test_a_type_runs_klipper_unless_it_says_otherwise(paths):
     """Every [mcu ...] section predating the key means what it always meant."""
     reg = Registry.load(paths)
-    reg.add_type("bttebb36", "stm32g0b1xx")
+    reg.add_type("bttebb36", "stm32g0b1xx", katapult_installed=False)
     reg.save(paths)
-    assert Registry.load(paths).get("bttebb36").firmware == "klipper"
+    assert Registry.load(paths).get("bttebb36").application() == "klipper"
 
 
 def test_the_default_is_not_written_back_into_the_file(paths):
-    """The file stays readable rather than filling with restated defaults."""
+    """The file stays readable rather than filling with restated defaults -
+    true when there is genuinely nothing to distinguish this type."""
     reg = Registry.load(paths)
-    reg.add_type("bttebb36", "stm32g0b1xx")
+    reg.add_type("bttebb36", "stm32g0b1xx", katapult_installed=False)
     reg.save(paths)
     assert "firmware:" not in open(paths.main_config, encoding="utf-8").read()
+
+
+def test_a_bootloader_is_recorded_explicitly_now(paths):
+    """Under the old model this was implicit (katapult_installed defaulting
+    True); the list-based schema has nothing implicit left, so add_type's own
+    default has to write it out."""
+    reg = Registry.load(paths)
+    reg.add_type("bttebb36", "stm32g0b1xx")  # katapult_installed defaults True
+    reg.save(paths)
+    assert "firmware: klipper, katapult" in open(paths.main_config, encoding="utf-8").read()
+    assert Registry.load(paths).get("bttebb36").firmwares == ["klipper", "katapult"]
 
 
 def test_a_declared_application_round_trips(paths):
     _write_firmware(paths, "cartographer", artifact="klipper")
     reg = Registry.load(paths)
     reg.add_type("carto_v4", "stm32g431xx")
-    reg.get("carto_v4").firmware = "cartographer"
+    reg.get("carto_v4").firmwares = ["cartographer", "katapult"]
     reg.save(paths)
 
-    assert Registry.load(paths).get("carto_v4").firmware == "cartographer"
+    assert Registry.load(paths).get("carto_v4").application() == "cartographer"
 
 
 def test_a_misspelt_family_is_refused_rather_than_defaulted(paths):
@@ -406,7 +418,7 @@ def test_a_type_lists_only_the_families_it_uses(paths):
     _write_firmware(paths, "cartographer", artifact="klipper")
     reg = Registry.load(paths)
     reg.add_type("carto_v4", "stm32g431xx")
-    reg.get("carto_v4").firmware = "cartographer"
+    reg.get("carto_v4").firmwares = ["cartographer", "katapult"]
     reg.save(paths)
 
     mcu = Registry.load(paths).get("carto_v4")

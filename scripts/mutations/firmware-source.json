@@ -39,18 +39,18 @@
     },
     {
       "name": "an unconfigured family still resolves to the convention",
-      "find": "    return families.get(fw) or FirmwareFamily(name=fw, bootloader=(fw == BOOTLOADER))",
+      "find": "    return families.get(fw) or FirmwareFamily(name=fw, bootloader=(fw == \"katapult\"))",
       "replace": "    return families.get(fw)"
     },
     {
       "_comment": "katapult being a bootloader by default is what lets every install predating this key mean what it always meant - on_demand's sweep exclusion and the flash-time offset checks both key off it.",
       "name": "an unconfigured katapult still resolves as a bootloader",
-      "find": "    return families.get(fw) or FirmwareFamily(name=fw, bootloader=(fw == BOOTLOADER))",
+      "find": "    return families.get(fw) or FirmwareFamily(name=fw, bootloader=(fw == \"katapult\"))",
       "replace": "    return families.get(fw) or FirmwareFamily(name=fw, bootloader=False)"
     },
     {
       "name": "overriding one key on katapult does not silently turn off its bootloader status",
-      "find": "            bootloader=bool(parse_bool(doc.get(section, \"bootloader\"), name == BOOTLOADER)),",
+      "find": "            bootloader=bool(parse_bool(doc.get(section, \"bootloader\"), name == \"katapult\")),",
       "replace": "            bootloader=bool(parse_bool(doc.get(section, \"bootloader\"), False)),"
     }
   ]

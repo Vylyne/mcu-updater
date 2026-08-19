@@ -107,7 +107,10 @@ def test_status_type_shape(api):
         "reason",
     }
     assert set(ebb["artifacts"]) == {"klipper", "katapult"}
-    assert ebb["katapult"]["installed"] is True
+    # No [firmware] key predates this key at all, so under the list-based
+    # schema (unlike the old implicit-katapult convention) this reads as no
+    # declared bootloader - see docs/rebuild-plan.md Step 6.
+    assert ebb["katapult"]["installed"] is False
 
 
 def test_status_surfaces_makefile_patches(api):
@@ -553,9 +556,9 @@ def test_type_update_touches_only_what_was_sent(api):
 
 def test_type_update_can_clear_katapult_installed(api):
     api.dispatch("fw.type.update", {"name": "bttebb36", "katapult_installed": False})
-    assert api.registry().get("bttebb36").katapult_installed is False
+    assert api.registry().get("bttebb36").bootloader() is None
     api.dispatch("fw.type.update", {"name": "bttebb36", "katapult_installed": True})
-    assert api.registry().get("bttebb36").katapult_installed is True
+    assert api.registry().get("bttebb36").bootloader() == "katapult"
 
 
 def test_type_update_warns_when_a_chipset_change_orphans_a_binary(api, paths):

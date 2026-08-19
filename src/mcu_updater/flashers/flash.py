@@ -100,10 +100,10 @@ def flash_katapult(
         )
 
     # Which family this board *runs*. Named by the caller because only it has
-    # the McuType; klipper is the default every type had before the key
-    # existed. Getting this wrong writes one firmware at a board expecting
-    # another, so it is not inferred from anything.
-    fw = fw or firmware.DEFAULT_APPLICATION
+    # the McuType; klipper is the default every type had before firmware
+    # became a declared list. Getting this wrong writes one firmware at a
+    # board expecting another, so it is not inferred from anything.
+    fw = fw or "klipper"
     if fw_bin is None:
         fw_bin = paths.bin_file(mcu_type, fw)
     if not os.path.exists(fw_bin):

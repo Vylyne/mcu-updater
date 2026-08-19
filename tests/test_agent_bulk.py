@@ -93,6 +93,20 @@ def _save_config(paths, mcu_type, fw="klipper") -> None:
         fh.write("CONFIG_MACH_STM32=y\n")
 
 
+def _add_bootloader(paths, mcu_type: str, fw: str = "katapult") -> None:
+    """Give a type an explicit bootloader.
+
+    Under the list-based schema, nothing implies a bootloader that a type does
+    not actually declare - `live_registry_text`'s sample predates that key
+    entirely, so a test exercising bootloader-specific behaviour has to add
+    one rather than rely on what used to be implicit.
+    """
+    with Registry.mutate(paths, f"add {fw} to {mcu_type}") as reg:
+        mcu = reg.get(mcu_type)
+        if fw not in mcu.firmwares:
+            mcu.firmwares = [*mcu.firmwares, fw]
+
+
 def _declare_cartographer(paths) -> None:
     """A type that runs something other than klipper, and the family it names.
 
@@ -283,6 +297,7 @@ def test_a_named_family_leaves_the_screens_alone(bulk, paths, tmp_path):
     cannot match a named `fw`. The alternative - treating a missing family as a
     wildcard - would build every screen on the way to a bootloader rebuild.
     """
+    _add_bootloader(paths, EBB)
     _save_config(paths, EBB, fw="katapult")
     _declare_display(paths, tmp_path)
 
@@ -298,6 +313,7 @@ def test_a_fleet_build_leaves_the_bootloader_alone(bulk, paths):
     bootloader being replaced. So it is built when a device is adopted, or when
     somebody names it, and never incidentally.
     """
+    _add_bootloader(paths, EBB)
     _save_config(paths, EBB)
     _save_config(paths, EBB, fw="katapult")
 

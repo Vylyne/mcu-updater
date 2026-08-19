@@ -131,25 +131,26 @@ def list_profiles(args: argparse.Namespace) -> None:
     c = ctx()
     mcu = c.registry().get(args.type)
     families = firmware.load(c.paths)
-    seeds = profiles.available(c.paths, mcu.firmware, families, mcu_type=args.type)
+    application = mcu.application(families)
+    seeds = profiles.available(c.paths, application, families, mcu_type=args.type)
     # From the verdict rather than from the registry key. The two disagree the
     # moment a config is edited or the tool is used on a type that predates
     # profiles, and this printed a `*` beside a hand-written `profile:` while the
     # line below it said "Not profile-managed".
-    applied = profiles.status(c.paths, args.type, mcu.firmware, families)
+    applied = profiles.status(c.paths, args.type, application, families)
     current = applied.profile
     if applied.reason == profiles.CUSTOMISED:
         # The config came from that profile and no longer holds it, so marking it
         # as the one in use would contradict the verdict printed underneath. Your
         # own captured answers are what is actually loaded, if they were kept.
-        own = profiles.read_custom(c.paths, args.type, mcu.firmware)
+        own = profiles.read_custom(c.paths, args.type, application)
         current = own.name if own is not None else None
     differences = profiles.distinguishing(seeds)
 
-    print(f"{args.type} runs {mcu.firmware}.")
+    print(f"{args.type} runs {application}.")
     if not seeds:
         print(
-            f"  Its tree ({firmware.resolve(c.paths, mcu.firmware, families).source_dir(c.paths)}) "
+            f"  Its tree ({firmware.resolve(c.paths, application, families).source_dir(c.paths)}) "
             f"ships no profiles.\n"
             f"  Upstream Klipper ships none by design - there is no single config for a "
             f"tree that builds\n  for two hundred boards. Vendor forks ship one per variant."
@@ -186,7 +187,8 @@ def apply_profile(args: argparse.Namespace) -> None:
     reg = c.registry()
     mcu = reg.get(args.type)
     families = firmware.load(c.paths)
-    fw = args.fw or mcu.firmware
+    fw = args.fw or mcu.application(families)
+    boot_fw = mcu.bootloader(families)
 
     applied = profiles.apply_seed(
         c.paths, args.type, fw, args.profile, families=families, force=args.force
@@ -199,13 +201,13 @@ def apply_profile(args: argparse.Namespace) -> None:
     if applied.backup:
         print(f"  Previous config kept at {applied.backup}")
 
-    if args.no_derive or not mcu.katapult_installed:
-        print(f"  {firmware.BOOTLOADER} not derived.")
+    if args.no_derive or boot_fw is None:
+        print("  no bootloader to derive.")
     else:
         derived = profiles.derive_bootloader(
-            c.paths, args.type, fw, families=families, force=args.force
+            c.paths, args.type, fw, boot_fw, families=families, force=args.force
         )
-        print(f"\nDerived {firmware.BOOTLOADER} from it:")
+        print(f"\nDerived {boot_fw} from it:")
         for line in derived.carried:
             print(f"    {line}")
         if derived.dropped:
@@ -214,11 +216,11 @@ def apply_profile(args: argparse.Namespace) -> None:
                 print(f"    {line}")
         if derived.app_address is not None:
             print(
-                f"  Verified: {firmware.BOOTLOADER} jumps to "
+                f"  Verified: {boot_fw} jumps to "
                 f"{derived.app_address:#x}, where {fw} is linked to run."
             )
 
-    if fw == mcu.firmware:
+    if fw == mcu.application(families):
         with Registry.mutate(c.paths, f"profile for {args.type}") as writable:
             writable.get(args.type).profile = applied.profile
 
@@ -410,13 +412,14 @@ def _board_targets(
     the only caller that sets it.
     """
     mcu = c.registry().get(mcu_type)
+    application = mcu.application()
     return [
         flashers.flashtool.target_for(
             {
                 "type": mcu_type,
                 "serial": serial,
                 "chipset": mcu.chipset,
-                "fw": mcu.firmware,
+                "fw": application,
                 "force": force,
             }
         )

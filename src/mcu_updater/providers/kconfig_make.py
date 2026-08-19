@@ -48,6 +48,7 @@ class KconfigMake:
         everywhere" still works and nothing rebuilds it by accident. See
         `BuildTarget.on_demand` for why that asymmetry is the right one.
         """
+        families = firmware.load(install.paths)
         out: list[BuildTarget] = []
         for name in install.registry.names():
             for family in install.registry.get(name).families():
@@ -56,7 +57,7 @@ class KconfigMake:
                         self.name,
                         name,
                         family,
-                        on_demand=(family == firmware.BOOTLOADER),
+                        on_demand=firmware.resolve(install.paths, family, families).bootloader,
                     )
                 )
         return out

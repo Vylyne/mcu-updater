@@ -7,7 +7,7 @@ import sys
 import pytest
 
 from mcu_updater.cfgdoc import CfgDocument
-from mcu_updater.config import MakefilePatch, Registry, section_name, validate_type_name
+from mcu_updater.config import MakefilePatch, McuType, Registry, section_name, validate_type_name
 from mcu_updater.errors import (
     AmbiguousSerialError,
     ConfigCorruptError,
@@ -169,12 +169,17 @@ def test_defaults_are_not_restated_in_the_file(paths):
     assert "makefile_patches" not in out
 
 
-def test_katapult_installed_false_is_written_and_read_back(paths):
+def test_katapult_installed_false_leaves_no_bootloader_in_firmwares(paths):
+    """The old katapult_installed key is retired - a bootloader is now just
+    whatever is declared in firmware:, so "not installed" means "not listed",
+    and the old key is never written."""
     reg = Registry.load(paths)
     reg.add_type("a", "rp2040", katapult_installed=False)
     reg.save(paths)
-    assert "katapult_installed: false" in _read(paths)
-    assert Registry.load(paths).get("a").katapult_installed is False
+    assert "katapult_installed" not in _read(paths)
+    mcu = Registry.load(paths).get("a")
+    assert mcu.bootloader() is None
+    assert "katapult" not in mcu.firmwares
 
 
 def test_clearing_extra_args_removes_the_key(paths):
@@ -297,9 +302,23 @@ def test_resolve_serial_with_matching_type(paths, live_registry_text):
     )
 
 
-def test_katapult_installed_defaults_to_true_when_absent(paths):
+def test_application_skips_a_bootloader_listed_first(paths):
+    """`application()` is "the first family that is not a bootloader", not
+    just "the first family" - a config that happens to list its bootloader
+    first must not be misread as running it."""
+    mcu = McuType(name="odd_order", firmwares=["katapult", "cartographer"])
+    assert mcu.application() == "cartographer"
+    assert mcu.bootloader() == "katapult"
+
+
+def test_no_firmware_key_means_klipper_alone_no_bootloader(paths):
+    """Unlike the old katapult_installed-defaults-true convention, an absent
+    firmware: key now declares only klipper - a bootloader has to be listed,
+    not assumed. See docs/rebuild-plan.md Step 6."""
     _write(paths, "[mcu a]\nchipset: x\nserials:\n")
-    assert Registry.load(paths).get("a").katapult_installed is True
+    mcu = Registry.load(paths).get("a")
+    assert mcu.firmwares == ["klipper"]
+    assert mcu.bootloader() is None
 
 
 def test_section_naming_is_stable():

@@ -28,7 +28,7 @@ import threading
 import time
 from typing import Any, Optional
 
-from .. import sections
+from .. import firmware, sections
 from ..build import Reporter, null_reporter, run_streamed, sha256_file
 from ..cfgdoc import CfgDocument
 from ..errors import BuildError, ConfigError, FlashError, SourceTreeMissingError, ToolMissingError
@@ -93,11 +93,6 @@ class PioType:
     #: watcher map, and is what a family with no `service` would set too.
     device_map: str = "knomi/devices.json"
 
-    def __post_init__(self) -> None:
-        # The env is the type, so the section name is the env unless overridden.
-        if not self.env:
-            self.env = self.name
-
     def to_json(self) -> dict:
         return {
             "name": self.name,
@@ -112,9 +107,12 @@ class PioType:
 def load(paths: Paths, default_source: str = "") -> dict[str, PioType]:
     """Read this provider's type sections from the shared config file.
 
-    Which sections those are is :mod:`~mcu_updater.sections`' business, not this
-    module's: `[type x]` with `provider: platformio`, and `[display x]` for
-    every config written before the provider became a key rather than a prefix.
+    A type is ours if the family it declares is built by `platformio` - the
+    same "provider is derived from the family's builder" rule `config.py`
+    applies. A type with no `firmware:` key at all predates that key
+    entirely, so it falls back to the old `provider: platformio` key /
+    `[display ...]` prefix :mod:`~mcu_updater.sections` still understands -
+    kept for one more step, until `pio_source` retires in Step 14.
     """
     try:
         with open(paths.main_config, encoding="utf-8") as fh:
@@ -122,9 +120,31 @@ def load(paths: Paths, default_source: str = "") -> dict[str, PioType]:
     except OSError:
         return {}
 
+    families_map = firmware.load_from_doc(doc)
+
     out: dict[str, PioType] = {}
-    for declared in sections.read(doc, provider=sections.PLATFORMIO):
+    for declared in sections.read(doc):
         name, section = declared.name, declared.section
+        raw_firmware = (doc.get(section, "firmware") or "").strip()
+        if raw_firmware:
+            first_fw = raw_firmware.split(",")[0].strip()
+            family = firmware.resolve(paths, first_fw, families_map)
+            if family.builder != "platformio":
+                continue
+            source = family.source_dir(paths)
+        else:
+            if declared.provider != sections.PLATFORMIO:
+                continue
+            source = (doc.get(section, "source") or default_source).strip()
+
+        env = (doc.get(section, "env") or "").strip()
+        if not env:
+            raise ConfigError(
+                f"'{name}' is a PlatformIO type but names no env: - the "
+                f"PlatformIO environment to build is not optional.",
+                type=name,
+            )
+
         # Absent and blank differ here, unlike every other key: an absent
         # `service:` takes the default watcher, while `service:` with nothing
         # after it is how you say this family has no watcher to pause.
@@ -132,8 +152,8 @@ def load(paths: Paths, default_source: str = "") -> dict[str, PioType]:
         device_map = doc.get(section, "device_map")
         out[name] = PioType(
             name=name,
-            env=(doc.get(section, "env") or "").strip(),
-            source=(doc.get(section, "source") or default_source).strip(),
+            env=env,
+            source=source,
             klipper_section=(doc.get(section, "klipper_section") or "knomi_serial").strip(),
             service=("knomi_serial" if watcher is None else watcher).strip(),
             device_map=(

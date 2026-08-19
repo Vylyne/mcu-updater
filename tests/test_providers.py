@@ -138,7 +138,7 @@ def test_a_display_target_carries_no_family(paths, settings, tmp_path):
     tree = tmp_path / "knomi_serial"
     (tree / ".pio" / "build" / "knomi_toolchanger").mkdir(parents=True)
     with open(paths.main_config, "a", encoding="utf-8") as fh:
-        fh.write(f"\n[display knomi_toolchanger]\nsource: {tree}\n")
+        fh.write(f"\n[display knomi_toolchanger]\nenv: knomi_toolchanger\nsource: {tree}\n")
 
     install = Install.load(paths, settings)
     targets = PlatformIO().targets(install)
@@ -152,7 +152,10 @@ def test_a_missing_source_and_a_wrong_source_read_differently(paths, settings):
     other is a path that is there and wrong. A single "not configured" would send
     somebody to edit a key that is already set."""
     with open(paths.main_config, "a", encoding="utf-8") as fh:
-        fh.write("\n[display no_source]\n\n[display bad_source]\nsource: /nope/not/here\n")
+        fh.write(
+            "\n[display no_source]\nenv: no_source\n"
+            "\n[display bad_source]\nenv: bad_source\nsource: /nope/not/here\n"
+        )
 
     install = Install.load(paths, settings)
     reasons = {
@@ -171,7 +174,7 @@ def test_the_shared_pio_source_is_applied_before_a_provider_sees_it(paths, setti
     tree.mkdir()
     settings.pio_source = str(tree)
     with open(paths.main_config, "a", encoding="utf-8") as fh:
-        fh.write("\n[display knomi]\n")
+        fh.write("\n[display knomi]\nenv: knomi\n")
 
     install = Install.load(paths, settings)
     assert install.displays["knomi"].source == str(tree)

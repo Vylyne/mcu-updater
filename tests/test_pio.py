@@ -55,7 +55,7 @@ def tree(tmp_path):
 
 @pytest.fixture
 def display(tree):
-    return pio.PioType(name="knomi_toolchanger", source=str(tree))
+    return pio.PioType(name="knomi_toolchanger", env="knomi_toolchanger", source=str(tree))
 
 
 # --------------------------------------------------------------------------
@@ -63,15 +63,17 @@ def display(tree):
 # --------------------------------------------------------------------------
 
 
-def test_the_env_is_the_type(paths):
-    """A PlatformIO env already names the board, partitions and flags, so the
-    section name is the env unless someone says otherwise."""
+def test_env_is_required_with_no_default(paths):
+    """Every PlatformIO type must now name its own env - there is no more
+    falling back to the section name, which read wrong the moment a type
+    was declared under a name that was not also a real PlatformIO env."""
     with open(paths.main_config, "w", encoding="utf-8") as fh:
         fh.write("[display knomi_toolchanger]\nsource: ~/knomi_serial\n")
 
-    found = pio.load(paths)
-    assert list(found) == ["knomi_toolchanger"]
-    assert found["knomi_toolchanger"].env == "knomi_toolchanger"
+    with pytest.raises(ConfigError) as exc:
+        pio.load(paths)
+    assert "knomi_toolchanger" in str(exc.value)
+    assert "env" in str(exc.value)
 
 
 def test_an_env_can_be_named_separately_if_they_ever_diverge(paths):
@@ -83,7 +85,10 @@ def test_an_env_can_be_named_separately_if_they_ever_diverge(paths):
 def test_a_shared_source_tree_is_the_default(paths):
     """One repo, several envs - so the tree is configured once."""
     with open(paths.main_config, "w", encoding="utf-8") as fh:
-        fh.write("[display knomi]\n[display knomi_toolchanger]\n")
+        fh.write(
+            "[display knomi]\nenv: knomi\n"
+            "[display knomi_toolchanger]\nenv: knomi_toolchanger\n"
+        )
 
     found = pio.load(paths, default_source="~/knomi_serial")
     assert {d.source for d in found.values()} == {"~/knomi_serial"}
@@ -93,8 +98,22 @@ def test_the_klipper_section_defaults_to_knomi_serial(paths):
     """A second display sharing the same klippy extra needs no config at all;
     one bringing its own module sets this."""
     with open(paths.main_config, "w", encoding="utf-8") as fh:
-        fh.write("[display knomi_toolchanger]\n")
+        fh.write("[display knomi_toolchanger]\nenv: knomi_toolchanger\n")
     assert pio.load(paths)["knomi_toolchanger"].klipper_section == "knomi_serial"
+
+
+def test_an_absent_service_key_takes_the_default_watcher(paths):
+    with open(paths.main_config, "w", encoding="utf-8") as fh:
+        fh.write("[display knomi_toolchanger]\nenv: knomi_toolchanger\n")
+    assert pio.load(paths)["knomi_toolchanger"].service == "knomi_serial"
+
+
+def test_a_blank_service_key_means_no_watcher_to_pause(paths):
+    """Present but empty is not the same as absent - it is how a type says it
+    has no watcher, not "use the default"."""
+    with open(paths.main_config, "w", encoding="utf-8") as fh:
+        fh.write("[display knomi_toolchanger]\nenv: knomi_toolchanger\nservice:\n")
+    assert pio.load(paths)["knomi_toolchanger"].service == ""
 
 
 def test_no_display_sections_is_not_an_error(paths):
@@ -108,10 +127,69 @@ def test_display_sections_do_not_disturb_the_mcu_registry(paths, live_registry_t
     from mcu_updater.config import Registry
 
     with open(paths.registry_file, "w", encoding="utf-8") as fh:
-        fh.write(live_registry_text + "\n[display knomi_toolchanger]\nsource: ~/k\n")
+        fh.write(
+            live_registry_text
+            + "\n[display knomi_toolchanger]\nenv: knomi_toolchanger\nsource: ~/k\n"
+        )
 
     assert "bttebb36" in Registry.load(paths).names()
     assert "knomi_toolchanger" in pio.load(paths)
+
+
+# --------------------------------------------------------------------------
+# the new-style shape: a type declaring a platformio-built firmware family,
+# rather than its own provider:/source: - see docs/rebuild-plan.md's target
+# schema. The provider: key and [display] prefix above stay working for one
+# more step, but this is what a type written fresh now looks like.
+# --------------------------------------------------------------------------
+
+
+def test_a_type_is_pio_when_its_declared_firmware_is_platformio_built(paths, fake_root):
+    with open(paths.main_config, "w", encoding="utf-8") as fh:
+        fh.write(
+            "[firmware knomi_serial]\nsource: ~/knomi_serial\nbuilder: platformio\n\n"
+            "[type knomi]\nchipset: esp32\nfirmware: knomi_serial\nenv: knomi\n"
+        )
+
+    found = pio.load(paths)
+    assert set(found) == {"knomi"}
+    assert found["knomi"].source == str(fake_root / "knomi_serial")
+
+
+def test_a_new_style_pio_type_is_not_picked_up_by_the_mcu_registry(paths, fake_root):
+    """A type whose only declared firmware is platformio-built belongs to
+    pio.py, not config.py - even with no explicit provider: key, which is
+    what makes it a type this document has never seen before."""
+    from mcu_updater.config import Registry
+
+    with open(paths.main_config, "w", encoding="utf-8") as fh:
+        fh.write(
+            "[firmware knomi_serial]\nsource: ~/knomi_serial\nbuilder: platformio\n\n"
+            "[type knomi]\nchipset: esp32\nfirmware: knomi_serial\nenv: knomi\n"
+        )
+
+    assert Registry.load(paths).names() == []
+    assert set(pio.load(paths)) == {"knomi"}
+
+
+def test_saving_the_registry_does_not_delete_a_new_style_pio_type(paths, fake_root):
+    """The registry's own section cleanup must not read "not one of mine" as
+    "the user deleted this" for a type it was always going to exclude."""
+    from mcu_updater.config import Registry
+
+    with open(paths.main_config, "w", encoding="utf-8") as fh:
+        fh.write(
+            "[firmware knomi_serial]\nsource: ~/knomi_serial\nbuilder: platformio\n\n"
+            "[type knomi]\nchipset: esp32\nfirmware: knomi_serial\nenv: knomi\n"
+        )
+
+    reg = Registry.load(paths)
+    reg.add_type("board", "stm32f072xb")
+    reg.save(paths)
+
+    assert "knomi" in pio.load(paths)
+    text = open(paths.main_config, encoding="utf-8").read()
+    assert "[type knomi]" in text
 
 
 # --------------------------------------------------------------------------

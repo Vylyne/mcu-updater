@@ -137,8 +137,8 @@ def test_a_new_type_is_written_in_the_new_spelling(paths):
 def test_the_pio_provider_reads_both_spellings(paths):
     with open(paths.main_config, "w", encoding="utf-8") as fh:
         fh.write(
-            "[display knomi_toolchanger]\nsource: ~/knomi-serial\n"
-            "[type second_screen]\nprovider: platformio\nsource: ~/other\n"
+            "[display knomi_toolchanger]\nenv: knomi_toolchanger\nsource: ~/knomi-serial\n"
+            "[type second_screen]\nprovider: platformio\nenv: second_screen\nsource: ~/other\n"
         )
 
     found = pio.load(paths)
@@ -150,7 +150,10 @@ def test_a_pio_type_is_not_picked_up_by_the_mcu_registry(paths):
     """They share a file and now share a prefix, so the provider key is the only
     thing keeping one reader out of the other's sections."""
     with open(paths.registry_file, "w", encoding="utf-8") as fh:
-        fh.write("[type board]\nchipset: stm32f072xb\n[type knomi]\nprovider: platformio\n")
+        fh.write(
+            "[type board]\nchipset: stm32f072xb\n"
+            "[type knomi]\nprovider: platformio\nenv: knomi\n"
+        )
 
     assert Registry.load(paths).names() == ["board"]
     assert set(pio.load(paths)) == {"knomi"}

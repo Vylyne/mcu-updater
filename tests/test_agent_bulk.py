@@ -130,7 +130,7 @@ def _declare_display(paths, tmp_path, name="knomi_toolchanger") -> str:
     tree = tmp_path / "knomi_serial"
     (tree / ".pio" / "build" / name).mkdir(parents=True, exist_ok=True)
     with open(paths.main_config, "a", encoding="utf-8") as fh:
-        fh.write(f"\n[display {name}]\nsource: {tree}\n")
+        fh.write(f"\n[display {name}]\nenv: {name}\nsource: {tree}\n")
     return str(tree)
 
 
@@ -329,7 +329,7 @@ def test_a_display_with_no_source_tree_is_skipped_but_never_silently(bulk, paths
     success is how a screen stays a month behind with nobody the wiser."""
     _save_config(paths, EBB)
     with open(paths.main_config, "a", encoding="utf-8") as fh:
-        fh.write("\n[display knomi_toolchanger]\nsource: /nope/not/here\n")
+        fh.write("\n[display knomi_toolchanger]\nenv: knomi_toolchanger\nsource: /nope/not/here\n")
 
     selection = bulk._build_targets(bulk._install(), "all")
 

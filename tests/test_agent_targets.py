@@ -48,7 +48,7 @@ def _add_display(paths, fake_root, api):
     port = fake_root / "knomi_t0"
     port.write_text("", encoding="utf-8")
     with open(paths.main_config, "a", encoding="utf-8") as fh:
-        fh.write(f"\n[display {ENV}]\nsource: {fake_root}\n")
+        fh.write(f"\n[display {ENV}]\nenv: {ENV}\nsource: {fake_root}\n")
     api._call = serve_klipper(
         display_objects({"knomi_serial t0_knomi": {"serial": str(port)}}),
         reachable=True,
@@ -126,7 +126,7 @@ def test_a_display_build_is_blocked_by_a_missing_source_tree(api, paths, fake_ro
     port = fake_root / "knomi_t0"
     port.write_text("", encoding="utf-8")
     with open(paths.main_config, "a", encoding="utf-8") as fh:
-        fh.write(f"\n[display {ENV}]\nsource: /nope/not/here\n")
+        fh.write(f"\n[display {ENV}]\nenv: {ENV}\nsource: /nope/not/here\n")
     api = Api(
         paths,
         runner=_runner(),
@@ -234,7 +234,7 @@ def test_a_screen_that_cannot_be_reached_is_offline_not_current(api, paths, fake
     """A port that does not resolve says nothing about the firmware on the far
     end, and the klippy module swallows the failure entirely."""
     with open(paths.main_config, "a", encoding="utf-8") as fh:
-        fh.write(f"\n[display {ENV}]\nsource: {fake_root}\n")
+        fh.write(f"\n[display {ENV}]\nenv: {ENV}\nsource: {fake_root}\n")
     api._call = serve_klipper(
         display_objects(
             {"knomi_serial t0_knomi": {"serial": str(fake_root / "gone")}}
@@ -256,7 +256,7 @@ def test_a_protocol_mismatch_outranks_the_version_comparison(api, paths, fake_ro
     port = fake_root / "knomi_t0"
     port.write_text("", encoding="utf-8")
     with open(paths.main_config, "a", encoding="utf-8") as fh:
-        fh.write(f"\n[display {ENV}]\nsource: {fake_root}\n")
+        fh.write(f"\n[display {ENV}]\nenv: {ENV}\nsource: {fake_root}\n")
     api._call = serve_klipper(
         display_objects(
             {"knomi_serial t0_knomi": {"serial": str(port)}},

@@ -311,6 +311,20 @@ def test_application_skips_a_bootloader_listed_first(paths):
     assert mcu.bootloader() == "katapult"
 
 
+def test_families_built_by_different_tools_are_refused(paths):
+    """A type is built by exactly one provider - there is no seam that
+    compiles half a type with make and half with pio."""
+    _write(
+        paths,
+        "[firmware knomi_serial]\nsource: ~/knomi_serial\nbuilder: platformio\n\n"
+        "[mcu odd]\nchipset: x\nfirmware: klipper, knomi_serial\nserials:\n",
+    )
+    with pytest.raises(ConfigCorruptError) as exc:
+        Registry.load(paths)
+    assert "klipper" in str(exc.value)
+    assert "knomi_serial" in str(exc.value)
+
+
 def test_no_firmware_key_means_klipper_alone_no_bootloader(paths):
     """Unlike the old katapult_installed-defaults-true convention, an absent
     firmware: key now declares only klipper - a bootloader has to be listed,

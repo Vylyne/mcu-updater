@@ -55,7 +55,7 @@ def api(paths, live_registry_text, fake_root, screens):
         fh.write(live_registry_text)
     write_settings(paths, dry_run="true", service_backend="null", enable_flashing="true")
     with open(paths.main_config, "a", encoding="utf-8") as fh:
-        fh.write(f"\n[display {ENV}]\nsource: {tree}\n")
+        fh.write(f"\n[display {ENV}]\nenv: {ENV}\nsource: {tree}\n")
 
     runner = JobRunner(
         paths,
@@ -98,7 +98,7 @@ def no_pio(monkeypatch):
 def test_flashing_displays_needs_it_enabled(paths, live_registry_text, fake_root, screens):
     write_settings(paths, dry_run="true", service_backend="null")
     with open(paths.registry_file, "a", encoding="utf-8") as fh:
-        fh.write(f"\n[display {ENV}]\nsource: {fake_root}\n")
+        fh.write(f"\n[display {ENV}]\nenv: {ENV}\nsource: {fake_root}\n")
     runner = JobRunner(paths, lambda: __import__(
         "mcu_updater.settings", fromlist=["load_settings"]
     ).load_settings(paths.settings_file))
@@ -269,7 +269,7 @@ def test_a_build_touches_no_display_and_needs_no_flash_permission(
         fh.write(live_registry_text)
     write_settings(paths, dry_run="true", service_backend="null")
     with open(paths.main_config, "a", encoding="utf-8") as fh:
-        fh.write(f"\n[display {ENV}]\nsource: {tree}\n")
+        fh.write(f"\n[display {ENV}]\nenv: {ENV}\nsource: {tree}\n")
 
     runner = JobRunner(paths, lambda: __import__(
         "mcu_updater.settings", fromlist=["load_settings"]

@@ -102,6 +102,26 @@ class FwConfig:
         return out
 
 
+def _is_platformio_only(
+    paths: Paths, doc: CfgDocument, section: str, families_map: dict[str, Any]
+) -> bool:
+    """Whether a `[type ...]` section's only declared firmware is built by
+    platformio - meaning the type belongs to `providers/pio.py`'s registry,
+    not this one. A section with no `firmware:` key at all defaults to
+    klipper (kconfig_make) and is never this.
+    """
+    raw = (doc.get(section, "firmware") or "").strip()
+    if not raw:
+        return False
+    declared_fws = [f.strip() for f in raw.split(",") if f.strip()]
+    if not declared_fws:
+        return False
+    return all(
+        firmware.resolve(paths, fw, families_map).builder == "platformio"
+        for fw in declared_fws
+    )
+
+
 def _is_bootloader(fw: str, families: Optional[dict[str, Any]]) -> bool:
     """Whether a declared family is a bootloader.
 
@@ -322,6 +342,12 @@ class Registry:
             builders = {
                 firmware.resolve(paths, fw, families_map).builder for fw in declared_fws
             }
+            if raw and builders == {"platformio"}:
+                # A type whose only declared firmware is built by platformio
+                # belongs to providers/pio.py's registry, not this one - a
+                # type with no explicit firmware: at all defaults to klipper
+                # (kconfig_make) and is unaffected. See pio.load().
+                continue
             if len(builders) > 1:
                 # A type is built by exactly one provider - the seam that
                 # compiles it is chosen from its families' builder, so a type
@@ -408,11 +434,20 @@ class Registry:
     def save(self, paths: Paths) -> None:
         """Atomic write, preserving everything the document already had."""
         doc = self._doc
-        fw_names = firmware.names_of(firmware.load_from_doc(doc))
+        families_map = firmware.load_from_doc(doc)
+        fw_names = firmware.names_of(families_map)
 
         for declared in sections.read(doc, provider=sections.KCONFIG_MAKE):
-            if declared.name not in self.types:
-                doc.remove_section(declared.section)
+            if declared.name in self.types:
+                continue
+            if _is_platformio_only(paths, doc, declared.section, families_map):
+                # Ours by provider default (no explicit provider: key) but
+                # actually a pio.py type by its declared firmware's builder -
+                # load() excludes it from self.types for the same reason.
+                # Leaving it alone here is what stops that exclusion from
+                # reading as "the user deleted this type".
+                continue
+            doc.remove_section(declared.section)
 
         for name, mcu in self.types.items():
             # Whatever spelling this type already has, so a file full of

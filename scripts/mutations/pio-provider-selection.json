@@ -1,0 +1,62 @@
+{
+  "_comment": "A type's provider is derived from its declared firmware's builder, not a provider: key - config.py and providers/pio.py each have to claim the right sections and leave the other's alone, or a type is silently built by the wrong tool, or dropped from the file entirely on the next save.",
+  "file": "src/mcu_updater/config.py",
+  "command": [
+    "python",
+    "-m",
+    "pytest",
+    "tests/test_config.py",
+    "tests/test_pio.py",
+    "tests/test_sections.py",
+    "tests/test_providers.py",
+    "-q"
+  ],
+  "mutations": [
+    {
+      "name": "families built by different tools are refused",
+      "find": "            if len(builders) > 1:",
+      "replace": "            if False:"
+    },
+    {
+      "name": "a platformio-only type is excluded from this registry",
+      "find": "            if raw and builders == {\"platformio\"}:",
+      "replace": "            if False:"
+    },
+    {
+      "name": "a platformio-only type's section survives a save",
+      "find": "            if _is_platformio_only(paths, doc, declared.section, families_map):",
+      "replace": "            if False:"
+    },
+    {
+      "name": "a type is selected by its declared firmware's builder",
+      "file": "src/mcu_updater/providers/pio.py",
+      "find": "            if family.builder != \"platformio\":",
+      "replace": "            if False:"
+    },
+    {
+      "name": "source comes from the family, not a leftover type-level key",
+      "file": "src/mcu_updater/providers/pio.py",
+      "find": "            source = family.source_dir(paths)",
+      "replace": "            source = default_source"
+    },
+    {
+      "name": "a type with no firmware: key falls back to the provider: key convention",
+      "file": "src/mcu_updater/providers/pio.py",
+      "find": "            if declared.provider != sections.PLATFORMIO:",
+      "replace": "            if False:"
+    },
+    {
+      "name": "env is required, never defaulted from the type name",
+      "file": "src/mcu_updater/providers/pio.py",
+      "find": "        if not env:",
+      "replace": "        if False:"
+    },
+    {
+      "_comment": "Absent takes the default watcher; present-but-empty means this family has no watcher to pause. Easy to flatten into a single `or` that treats both the same, which would either pause a watcher that does not exist or fail to pause one that does.",
+      "name": "an absent service: key is not the same as a blank one",
+      "file": "src/mcu_updater/providers/pio.py",
+      "find": "            service=(\"knomi_serial\" if watcher is None else watcher).strip(),",
+      "replace": "            service=(watcher or \"knomi_serial\").strip(),"
+    }
+  ]
+}

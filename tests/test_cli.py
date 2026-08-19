@@ -58,7 +58,7 @@ def pio_type(c, fake_root):
     (tree / ".pio" / "build" / ENV).mkdir(parents=True)
     (tree / "platformio.ini").write_text(f"[env:{ENV}]\n", encoding="utf-8")
     with open(c.paths.main_config, "a", encoding="utf-8") as fh:
-        fh.write(f"\n[type {ENV}]\nprovider: platformio\nsource: {tree}\nservice:\n")
+        fh.write(f"\n[type {ENV}]\nprovider: platformio\nenv: {ENV}\nsource: {tree}\nservice:\n")
     return tree
 
 
@@ -130,7 +130,7 @@ def test_update_all_names_what_it_skipped_rather_than_dropping_it(
     """A type silently passed over is the failure the Provider seam was written
     for: the fleet reports success and a board sits a month behind."""
     with open(c.paths.main_config, "a", encoding="utf-8") as fh:
-        fh.write("\n[type no_tree]\nprovider: platformio\n")
+        fh.write("\n[type no_tree]\nprovider: platformio\nenv: no_tree\n")
 
     with pytest.raises(SystemExit) as exc:
         cli.update_all(argparse.Namespace(yes=True, jobs=None))
@@ -255,7 +255,7 @@ def test_building_a_platformio_type_with_no_tree_refuses_before_the_lock(
     c, monkeypatch, capsys
 ):
     with open(c.paths.main_config, "a", encoding="utf-8") as fh:
-        fh.write("\n[type no_tree]\nprovider: platformio\n")
+        fh.write("\n[type no_tree]\nprovider: platformio\nenv: no_tree\n")
 
     with pytest.raises(SystemExit) as exc:
         cli.build_fw_cmd(

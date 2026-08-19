@@ -1168,6 +1168,48 @@ surprises:  **Breaking change #2 in as many steps, same shape as Step 6's,
             equivalent default was not (config.py's own tests mostly go
             through `Registry.add_type()`, which never relied on it).
 
+### Step 8 — providers keyed by builder        [done]
+commit:     726d3ce
+gate:       pytest 1157 passed/0 failed/10 skipped · ruff ok · mypy ok · line-endings ok
+            · scripts/mutations/provider-family-axis.json (new, 2 anchors),
+            both CAUGHT
+deviation:  **`on_demand` was already done** - Step 6's constant deletion
+            forced `providers/kconfig_make.py`'s `on_demand` to derive from
+            `FirmwareFamily.bootloader` two steps early (logged there).
+            Nothing further needed here; this step's log just confirms it.
+
+            **`BuildTarget.fw` keeps a default (`""`) rather than becoming a
+            true no-default-required field.** The plan's wording ("becomes
+            non-optional") is satisfied at the *type* level - `Optional[str]`
+            is gone - but `test_a_kconfig_target_without_a_family_raises_
+            rather_than_assuming_klipper` exists specifically to construct a
+            malformed `BuildTarget` with no `fw` and prove `KconfigMake.
+            blocked()` refuses it with a `ValueError`. Making `fw` a
+            no-default positional would move that failure from "refused by
+            the provider, as designed" to "TypeError from the dataclass
+            constructor, before the test's own logic ever runs" - a strictly
+            worse test. `_family()`'s guard moved from `is None` to a falsy
+            check so the same refusal still fires for the same reason.
+
+            **A new `PioType.firmware` field**, not named in the plan text,
+            was the only way to satisfy "PlatformIO targets have a family
+            too": `PioType` had nowhere to remember the declared `firmware:`
+            family after `load()` resolved it (Step 7's parsing used it
+            in-line to pick a builder and a source, then discarded it).
+            Populated for a new-style type, left empty for one predating the
+            key - `PlatformIO.targets()` reads `display.firmware or name`,
+            giving every target a real, non-empty `fw` either way. Also
+            added to `PioType.to_json()` (purely additive, same low-risk
+            pattern as Step 5's `FirmwareFamily.to_json()` additions).
+untested:   none beyond what was already true.
+surprises:  A genuinely flaky, pre-existing test
+            (`test_run_once_returns_when_moonraker_disconnects`) failed once
+            on a full-suite run and passed both in isolation and on an
+            immediate full-suite re-run - the same class of issue Appendix B
+            already tracks under a different test name (order/timing-
+            dependent agent-service teardown). Not this step's doing; noted
+            here only because it happened during this step's own gate run.
+
 ---
 
 ## Appendix B — open items, not in scope

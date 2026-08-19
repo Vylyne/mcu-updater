@@ -80,7 +80,8 @@ Interfaces:
 
 - Klipper checked out at `~/klipper`
 - [Katapult](https://github.com/Arksine/katapult) at `~/katapult` (for the
-  `flashtool.py` used to flash over USB/CAN)
+  `flashtool.py` used to flash over USB/CAN) — override with `flashtool_path`
+  in `[updater]` if it lives somewhere else, e.g. a fork
 - An ARM toolchain and `make`, i.e. whatever already builds Klipper for you
 - `python3-serial` — Katapult's `flashtool.py` imports it. `install.sh` offers to
   apt-install it, because without it a flash fails part-way through with Klipper
@@ -293,6 +294,15 @@ must equal the application's `FLASH_APPLICATION_ADDRESS`. Those agreeing is the
 whole of "the board boots", and they are separate answers in separate trees that
 each build and flash perfectly happily when wrong — so a disagreement is refused
 with both addresses named, rather than discovered afterwards.
+
+**That only checks our own two configs against each other** — it cannot see
+what bootloader is actually on a given board, which may be the vendor's own
+prebuilt one rather than anything built here. So flashing an application also
+compares the address it was built for against what the board's own bootloader
+reports during the write. flashtool has no way to ask beforehand without
+starting the write it would need to refuse, so this can only report a
+disagreement once it is known, immediately after — not prevent it, but say
+loudly and specifically why a board that flashed cleanly did not come back.
 
 **Nothing is locked.** A seeded `.config` is an ordinary one that `menuconfig`
 still edits; what this adds is that `status` then says `Customised` instead of

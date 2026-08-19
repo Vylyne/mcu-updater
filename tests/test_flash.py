@@ -49,6 +49,19 @@ def test_missing_flashtool_raises(paths, settings, fake_root):
     assert exc.value.data["tool"] == "flashtool.py"
 
 
+def test_flashtool_path_overrides_the_katapult_convention(paths, settings, fake_root):
+    """A fork checked out elsewhere, say - `flashtool_path` names it directly
+    rather than assuming ~/katapult/scripts/flashtool.py."""
+    (fake_root / "elsewhere" / "scripts").mkdir(parents=True)
+    (fake_root / "elsewhere" / "scripts" / "flashtool.py").write_text("", encoding="utf-8")
+    settings.flashtool_path = "~/elsewhere/scripts/flashtool.py"
+    _stage_bin(paths)
+
+    with pytest.raises(DeviceNotFoundError):
+        # Past the ToolMissingError means the configured path was found.
+        flash_katapult(paths, settings, "board", "chipA", "S1")
+
+
 def test_missing_firmware_binary_raises(paths, settings, fake_root):
     (fake_root / "katapult" / "scripts").mkdir(parents=True)
     (fake_root / "katapult" / "scripts" / "flashtool.py").write_text("", encoding="utf-8")
@@ -89,6 +102,121 @@ def test_device_running_klipper_gets_a_bootloader_request_first(paths, ready, fa
     # A dry run must still rehearse the write, not stop at the reboot request.
     assert any("-f" in toks for toks in per_cmd), "should still reach the flash step"
     assert any("Flashed S1 successfully" in line for _, line in events)
+
+
+# --------------------------------------------------------------------------
+# the post-hoc offset diagnostic
+#
+# flashtool has no query-only mode, and once -f is called there is no safe way
+# to act on its handshake before the write completes - see the module
+# docstring. So none of this can refuse anything; it can only tell the
+# operator, as soon as it is known, whether the board just written to will
+# come back running what was just flashed.
+# --------------------------------------------------------------------------
+
+
+def _write_sidecar(paths, mcu_type: str, fw: str, **fields) -> None:
+    import json
+
+    with open(paths.sidecar_file(mcu_type, fw), "w", encoding="utf-8") as fh:
+        json.dump(fields, fh)
+
+
+def _fake_run_streamed_once(monkeypatch, rc: int, lines: list[str]) -> None:
+    def fake(cmd, *, cwd=None, reporter=None, dry_run=False, fake_delay=0.0, cancel=None):
+        if reporter is not None:
+            for line in lines:
+                reporter("stdout", line)
+        return rc
+
+    monkeypatch.setattr(flash_mod, "run_streamed", fake)
+
+
+def test_a_mismatched_bootloader_is_reported_after_the_write(
+    paths, ready, fake_root, monkeypatch
+):
+    ready.dry_run = False
+    make_device(fake_root / "bus", "katapult", "chipA", "S1")
+    _write_sidecar(paths, "board", "klipper", app_address=0x08004000)
+    _fake_run_streamed_once(monkeypatch, 0, ["Application Start: 0x8000"])
+
+    events: list[tuple[str, str]] = []
+    flash_katapult(
+        paths, ready, "board", "chipA", "S1", reporter=lambda s, line: events.append((s, line))
+    )
+
+    errors = [line for stream, line in events if stream == "error"]
+    assert any("0x8004000" in line and "0x8000" in line for line in errors)
+    # The write itself still succeeded - this is a diagnostic, not a refusal.
+    assert any("Flashed S1 successfully" in line for _, line in events)
+
+
+def test_agreeing_addresses_are_not_reported(paths, ready, fake_root, monkeypatch):
+    ready.dry_run = False
+    make_device(fake_root / "bus", "katapult", "chipA", "S1")
+    _write_sidecar(paths, "board", "klipper", app_address=0x08004000)
+    _fake_run_streamed_once(monkeypatch, 0, ["Application Start: 0x8004000"])
+
+    events: list[tuple[str, str]] = []
+    flash_katapult(
+        paths, ready, "board", "chipA", "S1", reporter=lambda s, line: events.append((s, line))
+    )
+
+    assert not [line for stream, line in events if stream in ("error", "warn")]
+
+
+def test_an_unreadable_handshake_is_warned_about(paths, ready, fake_root, monkeypatch):
+    """We have our own half (app_address) but flashtool's own words didn't
+    parse - the check went blind, which is worth saying even though nothing
+    is provably wrong."""
+    ready.dry_run = False
+    make_device(fake_root / "bus", "katapult", "chipA", "S1")
+    _write_sidecar(paths, "board", "klipper", app_address=0x08004000)
+    _fake_run_streamed_once(monkeypatch, 0, ["Erasing...", "Writing..."])
+
+    events: list[tuple[str, str]] = []
+    flash_katapult(
+        paths, ready, "board", "chipA", "S1", reporter=lambda s, line: events.append((s, line))
+    )
+
+    warnings = [line for stream, line in events if stream == "warn"]
+    assert any("could not read" in line for line in warnings)
+
+
+def test_the_minimum_width_hex_quirk_is_tolerated(paths, ready, fake_root, monkeypatch):
+    """Upstream's format string is `0x{app_start_addr:4X}` - a *minimum* width,
+    not zero-padded, so a short address prints with a space after 0x rather
+    than 0x08000000-style padding. A real STM32 address never needs this, but
+    the parser must not assume it can't happen."""
+    ready.dry_run = False
+    make_device(fake_root / "bus", "katapult", "chipA", "S1")
+    _write_sidecar(paths, "board", "klipper", app_address=0x800)
+    _fake_run_streamed_once(monkeypatch, 0, ["Application Start: 0x 800"])
+
+    events: list[tuple[str, str]] = []
+    flash_katapult(
+        paths, ready, "board", "chipA", "S1", reporter=lambda s, line: events.append((s, line))
+    )
+
+    assert not [line for stream, line in events if stream in ("error", "warn")]
+
+
+def test_nothing_is_reported_without_a_recorded_app_address(
+    paths, ready, fake_root, monkeypatch
+):
+    """An older build, or a family that never defines the symbol - nothing of
+    ours to compare against, so not a finding."""
+    ready.dry_run = False
+    make_device(fake_root / "bus", "katapult", "chipA", "S1")
+    _write_sidecar(paths, "board", "klipper")
+    _fake_run_streamed_once(monkeypatch, 0, ["Application Start: 0x8000"])
+
+    events: list[tuple[str, str]] = []
+    flash_katapult(
+        paths, ready, "board", "chipA", "S1", reporter=lambda s, line: events.append((s, line))
+    )
+
+    assert not [line for stream, line in events if stream in ("error", "warn")]
 
 
 # --------------------------------------------------------------------------

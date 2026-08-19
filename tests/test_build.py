@@ -63,6 +63,34 @@ def test_dry_run_produces_a_real_stub_artifact_and_sidecar(paths, settings):
     assert "timestamp" in side
 
 
+def test_a_build_records_its_own_app_address(paths, settings):
+    """Read from the built .config, so flash time can compare it against what
+    the board's own bootloader reports without a Kconfig parse."""
+    settings.dry_run = True
+    reg = _registry(paths)
+    _write_config(paths, body="CONFIG_MACH_STM32=y\nCONFIG_FLASH_APPLICATION_ADDRESS=0x08004000\n")
+
+    result = build(paths, reg, settings, "board", "klipper")
+
+    assert result.app_address == 0x08004000
+    side = read_sidecar(paths, "board", "klipper")
+    assert side["app_address"] == 0x08004000
+
+
+def test_a_build_leaves_app_address_none_when_the_tree_defines_none(paths, settings):
+    """A bootloader build, or any tree with no such symbol - not an error, just
+    nothing to compare at flash time."""
+    settings.dry_run = True
+    reg = _registry(paths)
+    _write_config(paths)  # default body has no FLASH_APPLICATION_ADDRESS
+
+    result = build(paths, reg, settings, "board", "klipper")
+
+    assert result.app_address is None
+    side = read_sidecar(paths, "board", "klipper")
+    assert side["app_address"] is None
+
+
 def test_staleness_reports_never_built_then_clean(paths, settings):
     settings.dry_run = True
     reg = _registry(paths)

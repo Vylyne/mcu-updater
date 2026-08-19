@@ -10,7 +10,12 @@ Two paths:
 
 Cancellation is deliberately *not* plumbed into the write step. Interrupting
 ``flashtool -f`` part-way through leaves a board with half a firmware image.
-Callers cancel between devices, never during one.
+Callers cancel between devices, never during one. The same reasoning rules out
+acting on anything ``-f`` prints *during* the call it is printed in: flashtool
+has no query-only mode, so by the time its handshake output says where the
+bootloader will jump to, the write it was called to do is already underway.
+``flash_katapult`` reports a mismatch there once it is known, but only after -
+see ``_report_offset_mismatch``.
 """
 
 from __future__ import annotations
@@ -49,6 +54,13 @@ from .batch import PlainContext
 DFU_VID_PID = "0483:df11"
 
 
+def find_flashtool(paths: Paths, settings: Settings) -> str:
+    """Katapult's flashtool.py: the configured path, or the ~/katapult convention."""
+    if settings.flashtool_path:
+        return firmware.expand_home(settings.flashtool_path, paths.home)
+    return paths.flashtool
+
+
 def flash_katapult(
     paths: Paths,
     settings: Settings,
@@ -70,7 +82,7 @@ def flash_katapult(
 
     Raises on any failure; returns None on success.
     """
-    flashtool = paths.flashtool
+    flashtool = find_flashtool(paths, settings)
     if not os.path.exists(flashtool):
         raise ToolMissingError(
             f"flashtool.py not found at {flashtool}. Is katapult installed?",
@@ -127,11 +139,21 @@ def flash_katapult(
                 paths, chipset, serial, KATAPULT_FW_NAME, timeout=timeout, settle=0.5
             )
 
+    # Captured as well as forwarded: flashtool has no query-only mode, and once
+    # -f is called there is no safe way to act on its handshake before the
+    # write completes (see module docstring) - so the address it reports is
+    # only ever useful to check *after* the fact, below.
+    transcript: list[str] = []
+
+    def capture(stream: str, line: str) -> None:
+        transcript.append(line)
+        reporter(stream, line)
+
     reporter("info", f"Flashing {serial} ({mcu_type}) via {dev.path}...")
     rc = run_streamed(
         [sys.executable, flashtool, "-d", dev.path, "-f", fw_bin],
         cwd=paths.home,
-        reporter=reporter,
+        reporter=capture,
         # No cancel: see module docstring. Never interrupt a write.
         dry_run=settings.dry_run,
         fake_delay=0.0,
@@ -162,7 +184,67 @@ def flash_katapult(
             or git_head(firmware.resolve(paths, fw).source_dir(paths)),
         )
 
+        _report_offset_mismatch(reporter, serial, mcu_type, fw, side, transcript)
+
     reporter("info", f"Flashed {serial} successfully.")
+
+
+#: Katapult's own words, from flashtool.py's handshake with the bootloader:
+#: ``f"Application Start: 0x{self.app_start_addr:4X}\n"``. That format is a
+#: *minimum* width, not zero-padded, so a short address can print with a space
+#: after ``0x`` (e.g. ``0x 800``) - real STM32 addresses never need it, but the
+#: pattern tolerates it rather than assuming ``0x08000000``-style padding.
+_APP_START_RE = re.compile(r"Application Start:\s*0x\s*([0-9A-Fa-f]+)")
+
+
+def _parse_application_start(transcript: list[str]) -> Optional[int]:
+    """The board's own launch address, from flashtool's handshake output."""
+    match = _APP_START_RE.search("\n".join(transcript))
+    if match is None:
+        return None
+    try:
+        return int(match.group(1), 16)
+    except ValueError:
+        return None
+
+
+def _report_offset_mismatch(
+    reporter: Reporter,
+    serial: str,
+    mcu_type: str,
+    fw: str,
+    side: dict,
+    transcript: list[str],
+) -> None:
+    """Diagnostic only - the write above has already happened either way.
+
+    flashtool has no way to check this before writing (see module docstring),
+    so this can only tell the operator, as soon as it is known, that the board
+    just written to will not come back running what was just flashed - rather
+    than leaving them to work that out from a Klipper MCU that never connects.
+    """
+    app_address = side.get("app_address")
+    if app_address is None:
+        # Nothing of ours to compare against - an older build, or a tree that
+        # does not define the symbol. Not a finding, so not reported.
+        return
+    board_address = _parse_application_start(transcript)
+    if board_address is None:
+        reporter(
+            "warn",
+            f"could not read {serial}'s own Application Start address from "
+            f"flashtool's output, so whether it will boot the {fw} firmware "
+            f"just written could not be verified.",
+        )
+    elif app_address != board_address:
+        reporter(
+            "error",
+            f"{serial} ({mcu_type}) was just flashed with {fw} linked to run at "
+            f"{app_address:#x}, but its bootloader reports it will jump to "
+            f"{board_address:#x}. It will not come back running {fw} - "
+            f"re-derive {fw}'s bootloader offset, or check what bootloader is "
+            f"actually on this board.",
+        )
 
 
 # --------------------------------------------------------------------------

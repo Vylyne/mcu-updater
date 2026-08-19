@@ -75,6 +75,11 @@ class Settings:
     #: ~/.platformio/penv/bin/pio will not find it.
     platformio_bin: str = ""
 
+    #: Katapult's flashtool.py, if it is not at the ~/katapult/scripts/flashtool.py
+    #: convention - a fork checked out elsewhere, say. `~` expands against this
+    #: printer's home the same way a [firmware] source: does.
+    flashtool_path: str = ""
+
     @property
     def resolved_jobs(self) -> int:
         """make_jobs, or a sensible auto value if it was set to a negative."""
@@ -100,7 +105,7 @@ BOOL_FIELDS = {
 #: lists of the same thing is how one grows a field the other does not.
 _BOOL_FIELDS = BOOL_FIELDS
 _INT_FIELDS = {"make_jobs", "log_ring_size"}
-_STR_FIELDS = {"service", "service_backend", "pio_source", "platformio_bin"}
+_STR_FIELDS = {"service", "service_backend", "pio_source", "platformio_bin", "flashtool_path"}
 _BACKENDS = ("moonraker", "systemd", "null")
 
 #: Old spellings, read as the field that replaced them. A key here is not

@@ -385,6 +385,12 @@ class BuildResult:
     #: The profile whose updated answers were taken before compiling, if any.
     #: None on every build that had nothing to take, which is nearly all of them.
     reseeded: Optional[str] = None
+    #: CONFIG_FLASH_APPLICATION_ADDRESS from the built .config, numerically.
+    #: None for a bootloader build, or any tree that does not define the
+    #: symbol. Recorded so flash time can compare it against what the board's
+    #: own bootloader reports - see flashers/flash.py - without a Kconfig
+    #: parse at flash time.
+    app_address: Optional[int] = None
 
     def to_sidecar(self) -> dict[str, Any]:
         return {
@@ -394,6 +400,7 @@ class BuildResult:
             "duration": round(self.duration, 2),
             "timestamp": time.time(),
             "config_rewritten": self.config_rewritten,
+            "app_address": self.app_address,
         }
 
 
@@ -520,6 +527,27 @@ def menuconfig_tty(paths: Paths, mcu_type: str, fw: str, *, pause: bool = True) 
         stdin=sys.stdin,
         stdout=sys.stdout,
     )
+
+
+def _read_app_address(config_file: str) -> Optional[int]:
+    """CONFIG_FLASH_APPLICATION_ADDRESS from a built .config, numerically.
+
+    Read as text rather than through a Kconfig parse: by the time this runs,
+    `make` has already expanded the saved answers into a full .config, so the
+    symbol - when this tree defines one - is a concrete assignment rather than
+    something computed only inside a live kconfiglib session.
+    """
+    from . import profiles
+
+    raw = profiles.answer_map(profiles.answer_lines(config_file)).get(
+        profiles.APP_ADDRESS_SYMBOL
+    )
+    if not raw:
+        return None
+    try:
+        return int(raw, 16)
+    except ValueError:
+        return None
 
 
 def build(
@@ -682,6 +710,7 @@ def build(
         bin_sha256=sha256_file(bin_out),
         config_rewritten=rewritten,
         reseeded=reseeded,
+        app_address=_read_app_address(config_file),
     )
     try:
         with open(paths.sidecar_file(mcu_type, fw), "w", encoding="utf-8") as fh:

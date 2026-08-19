@@ -1,0 +1,41 @@
+{
+  "_comment": "The flash-time offset diagnostic. flashtool has no query-only mode and once -f is called there is no safe way to act before the write completes - see flash_katapult's module docstring - so none of this refuses anything. It only tells the operator, as soon as it is known, whether the board just written to will come back running what was just flashed. What it prevents is the silent version of that: a board that doesn't boot and nothing pointing at why.",
+  "file": "src/mcu_updater/flashers/flash.py",
+  "command": [
+    "python",
+    "-m",
+    "pytest",
+    "tests/test_flash.py",
+    "tests/test_build.py",
+    "-q"
+  ],
+  "mutations": [
+    {
+      "name": "a disagreement between the build and the board is reported",
+      "find": "    elif app_address != board_address:",
+      "replace": "    elif False:"
+    },
+    {
+      "name": "a handshake that did not parse is reported, not silently skipped",
+      "find": "    if board_address is None:",
+      "replace": "    if False:"
+    },
+    {
+      "name": "the handshake address is read numerically, not left as text",
+      "find": "        return int(match.group(1), 16)",
+      "replace": "        return match.group(1)"
+    },
+    {
+      "name": "a short address prints with a space, not zero-padding - the regex must allow for it",
+      "find": "_APP_START_RE = re.compile(r\"Application Start:\\s*0x\\s*([0-9A-Fa-f]+)\")",
+      "replace": "_APP_START_RE = re.compile(r\"Application Start: 0x([0-9A-Fa-f]+)\")"
+    },
+    {
+      "_comment": "The build-time half. Without a recorded app_address there is nothing to compare a handshake against, so this guard is what makes the diagnostic possible at all rather than something that would always read as 'nothing to report'.",
+      "name": "the build's own application address is read from the built .config",
+      "file": "src/mcu_updater/build.py",
+      "find": "        return int(raw, 16)",
+      "replace": "        return None"
+    }
+  ]
+}

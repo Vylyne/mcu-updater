@@ -244,10 +244,20 @@ def test_platformio_bin_is_read_from_the_updater_section(paths):
     assert load_settings(paths.settings_file).platformio_bin == "/opt/pio/bin/pio"
 
 
+def test_flashtool_path_is_read_from_the_updater_section(paths):
+    with open(paths.settings_file, "w", encoding="utf-8") as fh:
+        fh.write("[updater]\nflashtool_path: ~/forked-katapult/scripts/flashtool.py\n")
+    assert (
+        load_settings(paths.settings_file).flashtool_path
+        == "~/forked-katapult/scripts/flashtool.py"
+    )
+
+
 def test_pio_settings_default_to_empty(paths):
     s = load_settings(paths.settings_file)
     assert s.pio_source == ""
     assert s.platformio_bin == ""
+    assert s.flashtool_path == ""
 
 
 def test_every_settings_field_the_code_reads_actually_exists():

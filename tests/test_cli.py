@@ -58,7 +58,10 @@ def pio_type(c, fake_root):
     (tree / ".pio" / "build" / ENV).mkdir(parents=True)
     (tree / "platformio.ini").write_text(f"[env:{ENV}]\n", encoding="utf-8")
     with open(c.paths.main_config, "a", encoding="utf-8") as fh:
-        fh.write(f"\n[type {ENV}]\nprovider: platformio\nenv: {ENV}\nsource: {tree}\nservice:\n")
+        fh.write(
+            f"\n[firmware knomi_serial]\nsource: {tree}\nbuilder: platformio\n\n"
+            f"[type {ENV}]\nfirmware: knomi_serial\nenv: {ENV}\nservice:\n"
+        )
     return tree
 
 
@@ -130,7 +133,10 @@ def test_update_all_names_what_it_skipped_rather_than_dropping_it(
     """A type silently passed over is the failure the Provider seam was written
     for: the fleet reports success and a board sits a month behind."""
     with open(c.paths.main_config, "a", encoding="utf-8") as fh:
-        fh.write("\n[type no_tree]\nprovider: platformio\nenv: no_tree\n")
+        fh.write(
+            "\n[firmware no_tree_fw]\nbuilder: platformio\n\n"
+            "[type no_tree]\nfirmware: no_tree_fw\nenv: no_tree\n"
+        )
 
     with pytest.raises(SystemExit) as exc:
         cli.update_all(argparse.Namespace(yes=True, jobs=None))
@@ -138,7 +144,8 @@ def test_update_all_names_what_it_skipped_rather_than_dropping_it(
     assert exc.value.code == 1
     err = capsys.readouterr().err
     assert "SKIP no_tree" in err
-    assert "no source tree configured" in err
+    assert "not found" in err
+    assert "no_tree_fw" in err
 
 
 def test_update_all_confirmation_no_longer_claims_only_mcus(c, monkeypatch, capsys):
@@ -239,7 +246,8 @@ def test_building_a_platformio_type_needs_no_firmware_family(
     c, pio_type, monkeypatch
 ):
     """Its env already names the board, the partitions and the flags, so `-f` is
-    not merely optional there - there is no family for it to name."""
+    not merely optional there - it is meaningless, and unused regardless of
+    which family the type declares."""
     built: list[str] = []
     monkeypatch.setattr(
         "mcu_updater.providers.platformio.PlatformIO.build",
@@ -254,8 +262,15 @@ def test_building_a_platformio_type_needs_no_firmware_family(
 def test_building_a_platformio_type_with_no_tree_refuses_before_the_lock(
     c, monkeypatch, capsys
 ):
+    """`source:` lives on the `[firmware ...]` section now. Naming no `source:`
+    at all falls back to the `~/<family name>` convention, same as klipper and
+    katapult - so an unconfigured tree reads as "not found" at that path,
+    rather than "not configured" the way a genuinely empty key once did."""
     with open(c.paths.main_config, "a", encoding="utf-8") as fh:
-        fh.write("\n[type no_tree]\nprovider: platformio\nenv: no_tree\n")
+        fh.write(
+            "\n[firmware no_tree_fw]\nbuilder: platformio\n\n"
+            "[type no_tree]\nfirmware: no_tree_fw\nenv: no_tree\n"
+        )
 
     with pytest.raises(SystemExit) as exc:
         cli.build_fw_cmd(
@@ -263,7 +278,9 @@ def test_building_a_platformio_type_with_no_tree_refuses_before_the_lock(
         )
 
     assert exc.value.code == 1
-    assert "no source tree configured" in capsys.readouterr().err
+    err = capsys.readouterr().err
+    assert "not found" in err
+    assert "no_tree_fw" in err
 
 
 def test_an_empty_device_map_falls_back_to_asking_the_devices(

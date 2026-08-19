@@ -44,11 +44,15 @@ def _targets(api, kind=None):
 
 
 def _add_display(paths, fake_root, api):
-    """A `[display ...]` section plus a screen Klipper reports."""
+    """A `[type ...]` section naming a platformio-built firmware, plus a
+    screen Klipper reports."""
     port = fake_root / "knomi_t0"
     port.write_text("", encoding="utf-8")
     with open(paths.main_config, "a", encoding="utf-8") as fh:
-        fh.write(f"\n[display {ENV}]\nenv: {ENV}\nsource: {fake_root}\n")
+        fh.write(
+            f"\n[firmware knomi_serial]\nsource: {fake_root}\nbuilder: platformio\n\n"
+            f"[type {ENV}]\nfirmware: knomi_serial\nenv: {ENV}\n"
+        )
     api._call = serve_klipper(
         display_objects({"knomi_serial t0_knomi": {"serial": str(port)}}),
         reachable=True,
@@ -126,7 +130,10 @@ def test_a_display_build_is_blocked_by_a_missing_source_tree(api, paths, fake_ro
     port = fake_root / "knomi_t0"
     port.write_text("", encoding="utf-8")
     with open(paths.main_config, "a", encoding="utf-8") as fh:
-        fh.write(f"\n[display {ENV}]\nenv: {ENV}\nsource: /nope/not/here\n")
+        fh.write(
+            "\n[firmware knomi_serial]\nsource: /nope/not/here\nbuilder: platformio\n\n"
+            f"[type {ENV}]\nfirmware: knomi_serial\nenv: {ENV}\n"
+        )
     api = Api(
         paths,
         runner=_runner(),
@@ -234,7 +241,10 @@ def test_a_screen_that_cannot_be_reached_is_offline_not_current(api, paths, fake
     """A port that does not resolve says nothing about the firmware on the far
     end, and the klippy module swallows the failure entirely."""
     with open(paths.main_config, "a", encoding="utf-8") as fh:
-        fh.write(f"\n[display {ENV}]\nenv: {ENV}\nsource: {fake_root}\n")
+        fh.write(
+            f"\n[firmware knomi_serial]\nsource: {fake_root}\nbuilder: platformio\n\n"
+            f"[type {ENV}]\nfirmware: knomi_serial\nenv: {ENV}\n"
+        )
     api._call = serve_klipper(
         display_objects(
             {"knomi_serial t0_knomi": {"serial": str(fake_root / "gone")}}
@@ -256,7 +266,10 @@ def test_a_protocol_mismatch_outranks_the_version_comparison(api, paths, fake_ro
     port = fake_root / "knomi_t0"
     port.write_text("", encoding="utf-8")
     with open(paths.main_config, "a", encoding="utf-8") as fh:
-        fh.write(f"\n[display {ENV}]\nenv: {ENV}\nsource: {fake_root}\n")
+        fh.write(
+            f"\n[firmware knomi_serial]\nsource: {fake_root}\nbuilder: platformio\n\n"
+            f"[type {ENV}]\nfirmware: knomi_serial\nenv: {ENV}\n"
+        )
     api._call = serve_klipper(
         display_objects(
             {"knomi_serial t0_knomi": {"serial": str(port)}},
@@ -287,7 +300,7 @@ def test_build_names_the_family_the_type_actually_runs(paths, live_registry_text
     compiles upstream klipper into the wrong tree."""
     with open(paths.registry_file, "w", encoding="utf-8") as fh:
         fh.write(live_registry_text)
-        fh.write("\n[mcu carto_v4]\nchipset: stm32g431xx\nfirmware: cartographer\n")
+        fh.write("\n[type carto_v4]\nchipset: stm32g431xx\nfirmware: cartographer\n")
     with open(paths.main_config, "a", encoding="utf-8") as fh:
         fh.write("\n[firmware cartographer]\nsource: ~/carto\nartifact: klipper\n")
     api = Api(paths, runner=_runner())
@@ -360,7 +373,7 @@ def test_the_artifact_shown_is_the_one_this_type_would_flash(paths, live_registr
     and disable its flash button for good."""
     with open(paths.registry_file, "w", encoding="utf-8") as fh:
         fh.write(live_registry_text)
-        fh.write("\n[mcu carto_v4]\nchipset: stm32g431xx\nfirmware: cartographer\n")
+        fh.write("\n[type carto_v4]\nchipset: stm32g431xx\nfirmware: cartographer\n")
         fh.write("\n[firmware cartographer]\nsource: ~/carto\nartifact: klipper\n")
     binary = paths.bin_file("carto_v4", "cartographer")
     os.makedirs(os.path.dirname(binary), exist_ok=True)
@@ -578,7 +591,7 @@ def test_configure_is_offered_per_family_not_as_a_fixed_pair(paths, live_registr
     """The panel's literal `['klipper', 'katapult']` cannot grow a third."""
     with open(paths.registry_file, "w", encoding="utf-8") as fh:
         fh.write(live_registry_text)
-        fh.write("\n[mcu carto_v4]\nchipset: stm32g431xx\nfirmware: cartographer, katapult\n")
+        fh.write("\n[type carto_v4]\nchipset: stm32g431xx\nfirmware: cartographer, katapult\n")
         fh.write("\n[firmware cartographer]\nsource: ~/carto\nartifact: klipper\n")
     # live_registry_text predates the firmware: key, so bttebb36 declares no
     # bootloader under the list-based schema - add one explicitly, since this

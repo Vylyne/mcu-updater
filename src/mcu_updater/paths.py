@@ -81,7 +81,7 @@ class Paths:
 
     @property
     def registry_file(self) -> str:
-        """The [mcu ...] sections. Same file as `main_config`."""
+        """The [type ...] sections. Same file as `main_config`."""
         return self.main_config
 
     @property

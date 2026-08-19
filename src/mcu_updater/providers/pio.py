@@ -78,13 +78,9 @@ class PioType:
     name: str
     env: str = ""
     source: str = ""
-    #: The declared `firmware:` family, if any. Empty means this type predates
-    #: that key - an old `[display ...]`/`provider: platformio` section with
-    #: no family reference at all, still resolved by `source:`/`pio_source`.
-    #: Used as the `fw` axis providers.select() filters on; `PlatformIO.
-    #: targets()` falls back to this type's own name when it is empty, since
-    #: a PlatformIO env already names the board and stands in for its own
-    #: family in that case.
+    #: The declared `firmware:` family. Required to load at all - see
+    #: `load()` - so this is never empty for an instance it returns. Used as
+    #: the `fw` axis providers.select() filters on.
     firmware: str = ""
     #: The Klipper section prefix whose entries are displays of this type.
     #: `[knomi_serial T0_knomi]` -> `knomi_serial`. A second display with its own
@@ -116,12 +112,12 @@ class PioType:
 def load(paths: Paths, default_source: str = "") -> dict[str, PioType]:
     """Read this provider's type sections from the shared config file.
 
-    A type is ours if the family it declares is built by `platformio` - the
-    same "provider is derived from the family's builder" rule `config.py`
-    applies. A type with no `firmware:` key at all predates that key
-    entirely, so it falls back to the old `provider: platformio` key /
-    `[display ...]` prefix :mod:`~mcu_updater.sections` still understands -
-    kept for one more step, until `pio_source` retires in Step 14.
+    A type is ours if the family it declares (`firmware:`) is built by
+    `platformio` - the same "provider is derived from the family's builder"
+    rule `config.py` applies. A type predating that key is no longer
+    recognised at all; `default_source` is kept as a parameter only because
+    `Install.load` still passes `settings.pio_source` - both retire in
+    Step 14.
     """
     try:
         with open(paths.main_config, encoding="utf-8") as fh:
@@ -135,17 +131,13 @@ def load(paths: Paths, default_source: str = "") -> dict[str, PioType]:
     for declared in sections.read(doc):
         name, section = declared.name, declared.section
         raw_firmware = (doc.get(section, "firmware") or "").strip()
-        if raw_firmware:
-            first_fw = raw_firmware.split(",")[0].strip()
-            family = firmware.resolve(paths, first_fw, families_map)
-            if family.builder != "platformio":
-                continue
-            source = family.source_dir(paths)
-        else:
-            if declared.provider != sections.PLATFORMIO:
-                continue
-            first_fw = ""
-            source = (doc.get(section, "source") or default_source).strip()
+        if not raw_firmware:
+            continue
+        first_fw = raw_firmware.split(",")[0].strip()
+        family = firmware.resolve(paths, first_fw, families_map)
+        if family.builder != "platformio":
+            continue
+        source = family.source_dir(paths)
 
         env = (doc.get(section, "env") or "").strip()
         if not env:

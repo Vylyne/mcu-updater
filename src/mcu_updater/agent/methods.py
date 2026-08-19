@@ -19,7 +19,7 @@ import re
 import time
 from typing import Any, Callable, Optional
 
-from .. import API_VERSION, __version__, firmware, flashers, profiles, providers, sections
+from .. import API_VERSION, __version__, firmware, flashers, profiles, providers
 from .. import settings as settings_mod
 from ..build import read_sidecar
 from ..config import Registry
@@ -765,7 +765,7 @@ class Api:
             # Which build system owns this type. `kind` said the same thing in a
             # vocabulary that only had two words in it - and a reader switching on
             # it was re-deriving what the provider registry already knows.
-            "provider": sections.KCONFIG_MAKE,
+            "provider": providers.KconfigMake.name,
             # Deprecated alias for `provider`. A deployed panel switches on it.
             "kind": "mcu",
             "name": name,
@@ -930,7 +930,7 @@ class Api:
         )
 
         return {
-            "provider": sections.PLATFORMIO,
+            "provider": providers.PlatformIO.name,
             # Deprecated alias for `provider`. A deployed panel switches on it.
             "kind": "display",
             "name": name,
@@ -1544,9 +1544,9 @@ class Api:
         "no saved klipper config" for a screen.
         """
         if name in self.display_types():
-            return sections.PLATFORMIO
+            return providers.PlatformIO.name
         if name in self.registry().names():
-            return sections.KCONFIG_MAKE
+            return providers.KconfigMake.name
         raise RpcError(
             f"no type '{name}' is configured.",
             data={
@@ -1571,7 +1571,7 @@ class Api:
         """
         runner = self._require_runner()
         name = args.get("name")
-        if name and self._provider_of(str(name)) == sections.PLATFORMIO:
+        if name and self._provider_of(str(name)) == providers.PlatformIO.name:
             return self._pio_build(args)
 
         fw = args.get("fw")
@@ -1664,7 +1664,7 @@ class Api:
             )
 
         name = args.get("name")
-        if name and self._provider_of(str(name)) == sections.PLATFORMIO:
+        if name and self._provider_of(str(name)) == providers.PlatformIO.name:
             return self._pio_flash(args)
 
         # `id` is the uniform slot - `FlashTarget.id` is a serial for a board and

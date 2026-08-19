@@ -55,7 +55,10 @@ def api(paths, live_registry_text, fake_root, screens):
         fh.write(live_registry_text)
     write_settings(paths, dry_run="true", service_backend="null", enable_flashing="true")
     with open(paths.main_config, "a", encoding="utf-8") as fh:
-        fh.write(f"\n[display {ENV}]\nenv: {ENV}\nsource: {tree}\n")
+        fh.write(
+            f"\n[firmware knomi_serial]\nsource: {tree}\nbuilder: platformio\n\n"
+            f"[type {ENV}]\nfirmware: knomi_serial\nenv: {ENV}\n"
+        )
 
     runner = JobRunner(
         paths,
@@ -98,7 +101,10 @@ def no_pio(monkeypatch):
 def test_flashing_displays_needs_it_enabled(paths, live_registry_text, fake_root, screens):
     write_settings(paths, dry_run="true", service_backend="null")
     with open(paths.registry_file, "a", encoding="utf-8") as fh:
-        fh.write(f"\n[display {ENV}]\nenv: {ENV}\nsource: {fake_root}\n")
+        fh.write(
+            f"\n[firmware knomi_serial]\nsource: {fake_root}\nbuilder: platformio\n\n"
+            f"[type {ENV}]\nfirmware: knomi_serial\nenv: {ENV}\n"
+        )
     runner = JobRunner(paths, lambda: __import__(
         "mcu_updater.settings", fromlist=["load_settings"]
     ).load_settings(paths.settings_file))
@@ -269,7 +275,10 @@ def test_a_build_touches_no_display_and_needs_no_flash_permission(
         fh.write(live_registry_text)
     write_settings(paths, dry_run="true", service_backend="null")
     with open(paths.main_config, "a", encoding="utf-8") as fh:
-        fh.write(f"\n[display {ENV}]\nenv: {ENV}\nsource: {tree}\n")
+        fh.write(
+            f"\n[firmware knomi_serial]\nsource: {tree}\nbuilder: platformio\n\n"
+            f"[type {ENV}]\nfirmware: knomi_serial\nenv: {ENV}\n"
+        )
 
     runner = JobRunner(paths, lambda: __import__(
         "mcu_updater.settings", fromlist=["load_settings"]
@@ -400,7 +409,7 @@ def test_a_display_family_can_declare_it_has_no_watcher(api, paths, no_pio, monk
 
     with open(paths.main_config, encoding="utf-8") as fh:
         doc = CfgDocument(fh.read())
-    doc.set(f"display {ENV}", "service", "")
+    doc.set(f"type {ENV}", "service", "")
     with open(paths.main_config, "w", encoding="utf-8", newline="\n") as fh:
         fh.write(doc.render())
 

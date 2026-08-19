@@ -837,7 +837,7 @@ def test_a_declared_family_seeds_from_its_own_tree(tmp_path, trees):
         "[firmware cartographer]\n"
         "source: ~/MCU-Firmware---Based-on-Klipper\n"
         "artifact: klipper\n\n"
-        "[mcu carto_v4]\n"
+        "[type carto_v4]\n"
         "chipset: stm32g431xx\n"
         "firmware: cartographer\n"
         "profile: config.TestBoardUSB\n",

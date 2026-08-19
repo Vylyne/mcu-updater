@@ -60,10 +60,10 @@ from .errors import (
 )
 from .paths import Paths
 
-#: The spelling this module *writes* when a type is new. Reading is
-#: `sections.read`'s job and spans `[type ...]` too - keeping a second prefix
-#: constant here is what would let the two drift.
-SECTION_PREFIX = "mcu"
+#: The only spelling a type section is written or read in. Matches
+#: `sections.PREFIX` - kept as its own constant so this module does not import
+#: `sections` just to name it in a docstring or a test.
+SECTION_PREFIX = "type"
 PATCH_SEPARATOR = "->"
 
 @dataclasses.dataclass
@@ -319,7 +319,7 @@ class Registry:
         fw_names = firmware.names_of(families_map)
 
         types: dict[str, McuType] = {}
-        for declared in sections.read(doc, provider=sections.KCONFIG_MAKE):
+        for declared in sections.read(doc):
             name, section = declared.name, declared.section
             mcu = McuType(name=name, chipset=(doc.get(section, "chipset") or "").strip())
             mcu.serials = doc.get_list(section, "serials")
@@ -437,23 +437,22 @@ class Registry:
         families_map = firmware.load_from_doc(doc)
         fw_names = firmware.names_of(families_map)
 
-        for declared in sections.read(doc, provider=sections.KCONFIG_MAKE):
+        for declared in sections.read(doc):
             if declared.name in self.types:
                 continue
             if _is_platformio_only(paths, doc, declared.section, families_map):
-                # Ours by provider default (no explicit provider: key) but
-                # actually a pio.py type by its declared firmware's builder -
-                # load() excludes it from self.types for the same reason.
-                # Leaving it alone here is what stops that exclusion from
-                # reading as "the user deleted this type".
+                # Not one of ours by its declared firmware's builder - load()
+                # excludes it from self.types for the same reason. Leaving it
+                # alone here is what stops that exclusion from reading as "the
+                # user deleted this type".
                 continue
             doc.remove_section(declared.section)
 
         for name, mcu in self.types.items():
-            # Whatever spelling this type already has, so a file full of
-            # `[mcu ...]` is not rewritten into `[type ...]` by an unrelated
-            # edit. Only a type this document has never seen gets the new one.
-            section = sections.section_for(doc, name, sections.KCONFIG_MAKE)
+            # Whatever section a type already has, so an untouched config
+            # never diffs. Only a type this document has never seen gets a
+            # freshly written one.
+            section = sections.section_for(doc, name)
             doc.set(section, "chipset", mcu.chipset)
             doc.set(section, "serials", list(mcu.serials))
 

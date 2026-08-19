@@ -14,10 +14,8 @@ PlatformIO choose its own upload port.
 
 A type declaring `firmware:` (see the target schema) names a real family, and
 that family is what `fw` carries here - "rebuild knomi_serial everywhere" then
-correctly reaches it. A type predating that key has no family to name, so its
-own name stands in: a PlatformIO env already names the board, the partition
-table and the build flags, so the env *is* the type, and a `fw` filter for
-anything else still correctly leaves it alone.
+correctly reaches it. `firmware:` is required to load at all now, so every
+type this module sees has one.
 """
 
 from __future__ import annotations
@@ -57,14 +55,14 @@ def source_problem(target: pio_mod.PioType) -> Optional[str]:
 
 
 class PlatformIO:
-    """Builds one PlatformIO env: one type whose `provider:` names this."""
+    """Builds one PlatformIO env: one type whose declared family is platformio-built."""
 
     name = "platformio"
     label = "PlatformIO"
 
     def targets(self, install: Install) -> list[BuildTarget]:
         return [
-            BuildTarget(self.name, name, display.firmware or name)
+            BuildTarget(self.name, name, display.firmware)
             for name, display in install.displays.items()
         ]
 

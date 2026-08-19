@@ -20,7 +20,7 @@ import sys
 from collections.abc import Sequence
 from typing import Optional
 
-from . import __version__, firmware, flashers, profiles, providers, sections
+from . import __version__, firmware, flashers, profiles, providers
 from .build import build, menuconfig_tty, staleness
 from .config import Registry
 from .devices import (
@@ -356,9 +356,9 @@ def build_fw_cmd(args: argparse.Namespace) -> None:
     if args.type in install.displays:
         display = install.displays[args.type]
         target = providers.BuildTarget(
-            sections.PLATFORMIO, args.type, display.firmware or args.type
+            providers.PlatformIO.name, args.type, display.firmware
         )
-        provider = providers.by_name(sections.PLATFORMIO)
+        provider = providers.by_name(providers.PlatformIO.name)
         blocked = provider.blocked(install, target)
         if blocked:
             print(f"ERROR: {blocked}", file=sys.stderr)

@@ -30,20 +30,14 @@
     {
       "name": "a type is selected by its declared firmware's builder",
       "file": "src/mcu_updater/providers/pio.py",
-      "find": "            if family.builder != \"platformio\":",
-      "replace": "            if False:"
+      "find": "        if family.builder != \"platformio\":",
+      "replace": "        if False:"
     },
     {
       "name": "source comes from the family, not a leftover type-level key",
       "file": "src/mcu_updater/providers/pio.py",
-      "find": "            source = family.source_dir(paths)",
-      "replace": "            source = default_source"
-    },
-    {
-      "name": "a type with no firmware: key falls back to the provider: key convention",
-      "file": "src/mcu_updater/providers/pio.py",
-      "find": "            if declared.provider != sections.PLATFORMIO:",
-      "replace": "            if False:"
+      "find": "        source = family.source_dir(paths)",
+      "replace": "        source = default_source"
     },
     {
       "name": "env is required, never defaulted from the type name",

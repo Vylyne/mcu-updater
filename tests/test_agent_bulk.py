@@ -115,7 +115,7 @@ def _declare_cartographer(paths) -> None:
     convenience.
     """
     with open(paths.registry_file, "a", encoding="utf-8") as fh:
-        fh.write("\n[mcu carto_v4]\nchipset: stm32g431xx\nfirmware: cartographer\n")
+        fh.write("\n[type carto_v4]\nchipset: stm32g431xx\nfirmware: cartographer\n")
     with open(paths.main_config, "a", encoding="utf-8") as fh:
         fh.write("\n[firmware cartographer]\nsource: ~/carto\nartifact: klipper\n")
 
@@ -130,7 +130,10 @@ def _declare_display(paths, tmp_path, name="knomi_toolchanger") -> str:
     tree = tmp_path / "knomi_serial"
     (tree / ".pio" / "build" / name).mkdir(parents=True, exist_ok=True)
     with open(paths.main_config, "a", encoding="utf-8") as fh:
-        fh.write(f"\n[display {name}]\nenv: {name}\nsource: {tree}\n")
+        fh.write(
+            f"\n[firmware knomi_serial]\nsource: {tree}\nbuilder: platformio\n\n"
+            f"[type {name}]\nfirmware: knomi_serial\nenv: {name}\n"
+        )
     return str(tree)
 
 
@@ -281,7 +284,7 @@ def test_a_fleet_build_reaches_the_screens_too(bulk, paths, tmp_path):
 
     targets = bulk._build_targets(bulk._install(), "all").build
 
-    assert ("knomi_toolchanger", "knomi_toolchanger") in [(t.name, t.fw) for t in targets]
+    assert ("knomi_toolchanger", "knomi_serial") in [(t.name, t.fw) for t in targets]
     # And it is the PlatformIO provider that owns it, not kconfig with a blank
     # family - which is what a single loop growing a special case would produce.
     assert [t.provider for t in targets if t.name == "knomi_toolchanger"] == ["platformio"]
@@ -329,7 +332,10 @@ def test_a_display_with_no_source_tree_is_skipped_but_never_silently(bulk, paths
     success is how a screen stays a month behind with nobody the wiser."""
     _save_config(paths, EBB)
     with open(paths.main_config, "a", encoding="utf-8") as fh:
-        fh.write("\n[display knomi_toolchanger]\nenv: knomi_toolchanger\nsource: /nope/not/here\n")
+        fh.write(
+            "\n[firmware knomi_serial]\nsource: /nope/not/here\nbuilder: platformio\n\n"
+            "[type knomi_toolchanger]\nfirmware: knomi_serial\nenv: knomi_toolchanger\n"
+        )
 
     selection = bulk._build_targets(bulk._install(), "all")
 

@@ -16,9 +16,9 @@
       "replace": "        if False:"
     },
     {
-      "name": "a display's fw falls back to its own name only when it has no declared firmware",
+      "name": "a display's fw is its declared firmware family, not its own name",
       "file": "src/mcu_updater/providers/platformio.py",
-      "find": "            BuildTarget(self.name, name, display.firmware or name)",
+      "find": "            BuildTarget(self.name, name, display.firmware)",
       "replace": "            BuildTarget(self.name, name, name)"
     }
   ]

@@ -97,7 +97,7 @@ def flashable_non_klipper(paths, live_registry_text, fake_root):
     with open(paths.registry_file, "w", encoding="utf-8") as fh:
         fh.write(live_registry_text)
         fh.write(
-            "\n[mcu carto_v4]\n"
+            "\n[type carto_v4]\n"
             f"chipset: {CARTOGRAPHER_CHIPSET}\n"
             "firmware: cartographer\n"
             "serials:\n"

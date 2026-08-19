@@ -527,7 +527,7 @@ def test_seeding_a_cartographer_fork_through_the_agent(tmp_path):
         "[firmware cartographer]\n"
         "source: ~/MCU-Firmware---Based-on-Klipper\n"
         "artifact: klipper\n\n"
-        "[mcu carto_v4]\n"
+        "[type carto_v4]\n"
         "chipset: stm32g431xx\n"
         "firmware: cartographer, katapult\n",
         encoding="utf-8",

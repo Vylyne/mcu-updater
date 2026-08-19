@@ -270,7 +270,7 @@ def test_a_corrupt_registry_surfaces_as_a_typed_error(api, paths):
     actually matters is a value we cannot interpret - here a makefile patch
     missing its separator, which would otherwise silently drop a source file."""
     with open(paths.registry_file, "w", encoding="utf-8") as fh:
-        fh.write("[mcu a]\nchipset: x\nklipper_makefile_patches:\n    nonsense\n")
+        fh.write("[type a]\nchipset: x\nklipper_makefile_patches:\n    nonsense\n")
     with pytest.raises(RpcError) as exc:
         api.dispatch("fw.status")
     assert exc.value.data["code"] == "config_corrupt"
@@ -485,7 +485,7 @@ def test_a_mutation_preserves_comments_and_other_sections(api, paths, fake_root)
         out = fh.read()
     assert "# mcu-updater configuration." in out
     assert "src/Makefile -> src-y += buffer.c" in out
-    assert out.count("[mcu bttebb36]") == 1
+    assert out.count("[type bttebb36]") == 1
 
 
 # --------------------------------------------------------------------------
@@ -651,7 +651,7 @@ def test_settings_set_reports_nothing_changed_when_the_value_matches(api):
 
 
 def test_settings_set_does_not_eat_the_registry_it_shares_a_file_with(api, paths):
-    """Settings and the [mcu ...] sections live in one file, so a settings write
+    """Settings and the [type ...] sections live in one file, so a settings write
     that rewrote the file would take the whole registry with it."""
     api.dispatch("fw.settings.set", {"settings": {"enable_flashing": True}})
 

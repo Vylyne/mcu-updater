@@ -59,16 +59,22 @@ def display(tree):
 
 
 # --------------------------------------------------------------------------
-# config
+# config: a type belongs to this provider when the firmware family it
+# declares is platformio-built - there is no provider: key and no [display]
+# prefix any more. See docs/rebuild-plan.md's target schema.
 # --------------------------------------------------------------------------
+
+#: One [firmware ...] section, reused by every test below that just needs
+#: some platformio-built family to point a [type ...] section at.
+_KNOMI_SERIAL_FAMILY = "[firmware knomi_serial]\nsource: ~/knomi_serial\nbuilder: platformio\n\n"
 
 
 def test_env_is_required_with_no_default(paths):
-    """Every PlatformIO type must now name its own env - there is no more
-    falling back to the section name, which read wrong the moment a type
-    was declared under a name that was not also a real PlatformIO env."""
+    """Every PlatformIO type must name its own env - there is no falling back
+    to the section name, which read wrong the moment a type was declared
+    under a name that was not also a real PlatformIO env."""
     with open(paths.main_config, "w", encoding="utf-8") as fh:
-        fh.write("[display knomi_toolchanger]\nsource: ~/knomi_serial\n")
+        fh.write(_KNOMI_SERIAL_FAMILY + "[type knomi_toolchanger]\nfirmware: knomi_serial\n")
 
     with pytest.raises(ConfigError) as exc:
         pio.load(paths)
@@ -78,33 +84,43 @@ def test_env_is_required_with_no_default(paths):
 
 def test_an_env_can_be_named_separately_if_they_ever_diverge(paths):
     with open(paths.main_config, "w", encoding="utf-8") as fh:
-        fh.write("[display tool_screens]\nenv: knomi_toolchanger\n")
+        fh.write(
+            _KNOMI_SERIAL_FAMILY
+            + "[type tool_screens]\nfirmware: knomi_serial\nenv: knomi_toolchanger\n"
+        )
     assert pio.load(paths)["tool_screens"].env == "knomi_toolchanger"
 
 
-def test_a_shared_source_tree_is_the_default(paths):
-    """One repo, several envs - so the tree is configured once."""
+def test_a_shared_source_tree_is_the_default(paths, fake_root):
+    """One repo, several types - so the tree is configured once, on the family."""
     with open(paths.main_config, "w", encoding="utf-8") as fh:
         fh.write(
-            "[display knomi]\nenv: knomi\n"
-            "[display knomi_toolchanger]\nenv: knomi_toolchanger\n"
+            _KNOMI_SERIAL_FAMILY
+            + "[type knomi]\nfirmware: knomi_serial\nenv: knomi\n"
+            + "[type knomi_toolchanger]\nfirmware: knomi_serial\nenv: knomi_toolchanger\n"
         )
 
-    found = pio.load(paths, default_source="~/knomi_serial")
-    assert {d.source for d in found.values()} == {"~/knomi_serial"}
+    found = pio.load(paths)
+    assert {d.source for d in found.values()} == {str(fake_root / "knomi_serial")}
 
 
 def test_the_klipper_section_defaults_to_knomi_serial(paths):
-    """A second display sharing the same klippy extra needs no config at all;
+    """A second type sharing the same klippy extra needs no config at all;
     one bringing its own module sets this."""
     with open(paths.main_config, "w", encoding="utf-8") as fh:
-        fh.write("[display knomi_toolchanger]\nenv: knomi_toolchanger\n")
+        fh.write(
+            _KNOMI_SERIAL_FAMILY
+            + "[type knomi_toolchanger]\nfirmware: knomi_serial\nenv: knomi_toolchanger\n"
+        )
     assert pio.load(paths)["knomi_toolchanger"].klipper_section == "knomi_serial"
 
 
 def test_an_absent_service_key_takes_the_default_watcher(paths):
     with open(paths.main_config, "w", encoding="utf-8") as fh:
-        fh.write("[display knomi_toolchanger]\nenv: knomi_toolchanger\n")
+        fh.write(
+            _KNOMI_SERIAL_FAMILY
+            + "[type knomi_toolchanger]\nfirmware: knomi_serial\nenv: knomi_toolchanger\n"
+        )
     assert pio.load(paths)["knomi_toolchanger"].service == "knomi_serial"
 
 
@@ -112,36 +128,34 @@ def test_a_blank_service_key_means_no_watcher_to_pause(paths):
     """Present but empty is not the same as absent - it is how a type says it
     has no watcher, not "use the default"."""
     with open(paths.main_config, "w", encoding="utf-8") as fh:
-        fh.write("[display knomi_toolchanger]\nenv: knomi_toolchanger\nservice:\n")
+        fh.write(
+            _KNOMI_SERIAL_FAMILY
+            + "[type knomi_toolchanger]\nfirmware: knomi_serial\nenv: knomi_toolchanger\n"
+            + "service:\n"
+        )
     assert pio.load(paths)["knomi_toolchanger"].service == ""
 
 
-def test_no_display_sections_is_not_an_error(paths):
+def test_no_pio_type_sections_is_not_an_error(paths):
     with open(paths.main_config, "w", encoding="utf-8") as fh:
         fh.write("[updater]\ndry_run: true\n")
     assert pio.load(paths) == {}
 
 
-def test_display_sections_do_not_disturb_the_mcu_registry(paths, live_registry_text):
+def test_pio_type_sections_do_not_disturb_the_mcu_registry(paths, live_registry_text):
     """They share a file, so each has to ignore the other's sections."""
     from mcu_updater.config import Registry
 
     with open(paths.registry_file, "w", encoding="utf-8") as fh:
         fh.write(
             live_registry_text
-            + "\n[display knomi_toolchanger]\nenv: knomi_toolchanger\nsource: ~/k\n"
+            + "\n"
+            + _KNOMI_SERIAL_FAMILY
+            + "[type knomi_toolchanger]\nfirmware: knomi_serial\nenv: knomi_toolchanger\n"
         )
 
     assert "bttebb36" in Registry.load(paths).names()
     assert "knomi_toolchanger" in pio.load(paths)
-
-
-# --------------------------------------------------------------------------
-# the new-style shape: a type declaring a platformio-built firmware family,
-# rather than its own provider:/source: - see docs/rebuild-plan.md's target
-# schema. The provider: key and [display] prefix above stay working for one
-# more step, but this is what a type written fresh now looks like.
-# --------------------------------------------------------------------------
 
 
 def test_a_type_is_pio_when_its_declared_firmware_is_platformio_built(paths, fake_root):

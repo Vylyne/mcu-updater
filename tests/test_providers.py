@@ -131,23 +131,6 @@ def test_artifact_status_is_the_shared_vocabulary(install, paths, settings):
 # --------------------------------------------------------------------------
 
 
-def test_a_display_predating_firmware_stands_in_for_its_own_family(paths, settings, tmp_path):
-    """A type with no `firmware:` key has no family to name, so its own name
-    stands in - a PlatformIO env already names the board, the partitions and
-    the flags. That is still enough for a `fw` filter to exclude it from a
-    sweep for a family it does not build."""
-    tree = tmp_path / "knomi_serial"
-    (tree / ".pio" / "build" / "knomi_toolchanger").mkdir(parents=True)
-    with open(paths.main_config, "a", encoding="utf-8") as fh:
-        fh.write(f"\n[display knomi_toolchanger]\nenv: knomi_toolchanger\nsource: {tree}\n")
-
-    install = Install.load(paths, settings)
-    targets = PlatformIO().targets(install)
-
-    assert [(t.name, t.fw) for t in targets] == [("knomi_toolchanger", "knomi_toolchanger")]
-    assert PlatformIO().blocked(install, targets[0]) is None
-
-
 def test_a_display_declaring_firmware_carries_that_family(paths, settings, tmp_path):
     """The new shape: a type naming a platformio-built family reaches `fw` as
     that family, so "rebuild knomi_serial everywhere" can actually find it -
@@ -166,14 +149,18 @@ def test_a_display_declaring_firmware_carries_that_family(paths, settings, tmp_p
     assert [(t.name, t.fw) for t in targets] == [("knomi", "knomi_serial")]
 
 
-def test_a_missing_source_and_a_wrong_source_read_differently(paths, settings):
-    """Two different fixes: one is a missing `source:`/`pio_source`, the
-    other is a path that is there and wrong. A single "not configured" would send
-    somebody to edit a key that is already set."""
+def test_a_source_less_family_still_falls_back_to_its_own_name(paths, settings):
+    """`source:` lives on the `[firmware ...]` section now, not the type - so
+    an unset key is no longer "nothing configured", it is the same `~/<family
+    name>` convention klipper and katapult have always used. An explicit
+    wrong path is a different, and differently worded, failure - both are
+    "not found", but at the path each one actually names."""
     with open(paths.main_config, "a", encoding="utf-8") as fh:
         fh.write(
-            "\n[display no_source]\nenv: no_source\n"
-            "\n[display bad_source]\nenv: bad_source\nsource: /nope/not/here\n"
+            "[firmware no_source_fw]\nbuilder: platformio\n\n"
+            "[type no_source]\nfirmware: no_source_fw\nenv: no_source\n\n"
+            "[firmware bad_source_fw]\nsource: /nope/not/here\nbuilder: platformio\n\n"
+            "[type bad_source]\nfirmware: bad_source_fw\nenv: bad_source\n"
         )
 
     install = Install.load(paths, settings)
@@ -181,20 +168,33 @@ def test_a_missing_source_and_a_wrong_source_read_differently(paths, settings):
         t.name: PlatformIO().blocked(install, t) for t in PlatformIO().targets(install)
     }
 
-    assert "no source tree configured" in reasons["no_source"]
+    assert "not found" in reasons["no_source"]
+    assert paths.fw_dir("no_source_fw") in reasons["no_source"]
     assert "not found" in reasons["bad_source"]
+    assert "/nope/not/here" in reasons["bad_source"]
 
 
-def test_the_shared_pio_source_is_applied_before_a_provider_sees_it(paths, settings, tmp_path):
-    """`pio_source` is a fallback in the config layer, and `Install` resolves
-    it. A provider re-implementing that would be a second place for it to drift -
-    and it was already documented in the README before it existed."""
+def test_pio_source_is_not_yet_applied_to_a_family_with_no_source(paths, settings, tmp_path):
+    """`pio_source` used to be a fallback `Install.load()` applied before a
+    provider ever saw a type. `source:` moved onto the `[firmware ...]`
+    section this step, and nothing has reconnected `pio_source` to it yet -
+    `providers/pio.py`'s `default_source` parameter is still threaded through
+    for exactly that reason, but its body no longer reads it. A family with no
+    `source:` of its own falls back to `~/<family name>`, the same as any
+    other firmware family, not to `pio_source`.
+
+    This is a deliberate, temporary gap: retiring the old `[display ...]`
+    fallback now (rather than at Step 14, where the plan originally placed
+    it) is what left `pio_source` disconnected early. Reconnecting it - or
+    retiring the setting - belongs to Step 14 alongside the rest of
+    `default_source`'s removal.
+    """
     tree = tmp_path / "shared"
     tree.mkdir()
     settings.pio_source = str(tree)
     with open(paths.main_config, "a", encoding="utf-8") as fh:
-        fh.write("\n[display knomi]\nenv: knomi\n")
+        fh.write("[firmware knomi_serial]\nbuilder: platformio\n\n[type knomi]\nfirmware: knomi_serial\nenv: knomi\n")
 
     install = Install.load(paths, settings)
-    assert install.displays["knomi"].source == str(tree)
-    assert PlatformIO().blocked(install, BuildTarget("platformio", "knomi")) is None
+    assert install.displays["knomi"].source != str(tree)
+    assert install.displays["knomi"].source == str(paths.fw_dir("knomi_serial"))

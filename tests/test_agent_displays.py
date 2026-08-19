@@ -248,7 +248,10 @@ def test_configured_displays_appear_in_status(api, paths, fake_root, live_regist
     port = fake_root / "knomi_t0"
     port.write_text("", encoding="utf-8")
     with open(paths.main_config, "a", encoding="utf-8") as fh:
-        fh.write(f"\n[display knomi_toolchanger]\nenv: knomi_toolchanger\nsource: {fake_root}\n")
+        fh.write(
+            f"\n[firmware knomi_serial]\nsource: {fake_root}\nbuilder: platformio\n\n"
+            f"[type knomi_toolchanger]\nfirmware: knomi_serial\nenv: knomi_toolchanger\n"
+        )
 
     api._call = _moonraker({"knomi_serial t0_knomi": {"serial": str(port)}})
     entry = api.dispatch("fw.status")["displays"][0]
@@ -265,7 +268,10 @@ def test_a_screen_carries_no_identity_history(api, paths, fake_root):
     port = fake_root / "knomi_t0"
     port.write_text("", encoding="utf-8")
     with open(paths.main_config, "a", encoding="utf-8") as fh:
-        fh.write(f"\n[display knomi_toolchanger]\nenv: knomi_toolchanger\nsource: {fake_root}\n")
+        fh.write(
+            f"\n[firmware knomi_serial]\nsource: {fake_root}\nbuilder: platformio\n\n"
+            f"[type knomi_toolchanger]\nfirmware: knomi_serial\nenv: knomi_toolchanger\n"
+        )
 
     api._call = _moonraker({"knomi_serial t0_knomi": {"serial": str(port)}})
     screen = api.dispatch("fw.status")["displays"][0]["screens"][0]
@@ -281,8 +287,9 @@ def test_screens_are_matched_to_their_type_by_klipper_section(api, paths, fake_r
         (fake_root / name).write_text("", encoding="utf-8")
     with open(paths.main_config, "a", encoding="utf-8") as fh:
         fh.write(
-            f"\n[display knomi_toolchanger]\nenv: knomi_toolchanger\nsource: {fake_root}\n"
-            f"\n[display otherscreen]\nenv: otherscreen\nsource: {fake_root}\n"
+            f"\n[firmware knomi_serial]\nsource: {fake_root}\nbuilder: platformio\n\n"
+            f"[type knomi_toolchanger]\nfirmware: knomi_serial\nenv: knomi_toolchanger\n"
+            f"[type otherscreen]\nfirmware: knomi_serial\nenv: otherscreen\n"
             f"klipper_section: other_display\n"
         )
 
@@ -411,9 +418,12 @@ def test_a_port_that_resolves_is_not_the_same_as_a_screen_that_answers(api, fake
 
 
 def _with_display_type(api, paths, fake_root):
-    """display_status short-circuits with no [display] section - add one."""
+    """display_status short-circuits with no PlatformIO type - add one."""
     with open(paths.registry_file, "a", encoding="utf-8") as fh:
-        fh.write(f"\n[display knomi_toolchanger]\nenv: knomi_toolchanger\nsource: {fake_root}\n")
+        fh.write(
+            f"\n[firmware knomi_serial]\nsource: {fake_root}\nbuilder: platformio\n\n"
+            f"[type knomi_toolchanger]\nfirmware: knomi_serial\nenv: knomi_toolchanger\n"
+        )
 
 
 def test_a_protocol_mismatch_makes_the_type_need_flashing(api, paths, fake_root):
@@ -645,14 +655,17 @@ from mcu_updater.providers import pio as pio_mod  # noqa: E402
 
 
 def _declare_display(paths, env="knomi_toolchanger"):
-    """A [display ...] section. The sample registry has none, and without one
-    the watcher map has no family to belong to."""
+    """A [type ...] section naming a platformio-built firmware. The sample
+    registry has none, and without one the watcher map has no family to
+    belong to."""
     from mcu_updater.cfgdoc import CfgDocument
 
     with open(paths.main_config, encoding="utf-8") as fh:
         doc = CfgDocument(fh.read())
-    doc.set(f"display {env}", "env", env)
-    doc.set(f"display {env}", "source", "/nowhere")
+    doc.set("firmware knomi_serial", "source", "/nowhere")
+    doc.set("firmware knomi_serial", "builder", "platformio")
+    doc.set(f"type {env}", "firmware", "knomi_serial")
+    doc.set(f"type {env}", "env", env)
     with open(paths.main_config, "w", encoding="utf-8", newline="\n") as fh:
         fh.write(doc.render())
     return env

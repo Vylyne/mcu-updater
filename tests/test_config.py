@@ -57,7 +57,7 @@ def test_makefile_patches_parse_from_the_arrow_form(paths, live_registry_text):
 def test_a_patch_line_containing_an_arrow_or_colon_survives(paths):
     _write(
         paths,
-        "[mcu a]\nchipset: x\nklipper_makefile_patches:\n"
+        "[type a]\nchipset: x\nklipper_makefile_patches:\n"
         "    src/Makefile -> src-y += a->b:c.c\nserials:\n",
     )
     patch = Registry.load(paths).get("a").fw("klipper").makefile_patches[0]
@@ -68,7 +68,7 @@ def test_a_patch_line_containing_an_arrow_or_colon_survives(paths):
 def test_a_malformed_patch_is_refused_rather_than_silently_dropped(paths):
     """Silently ignoring it means a board quietly builds without its extra source
     file - which is exactly the class of bug this whole key exists to fix."""
-    _write(paths, "[mcu a]\nchipset: x\nklipper_makefile_patches:\n    nonsense\n")
+    _write(paths, "[type a]\nchipset: x\nklipper_makefile_patches:\n    nonsense\n")
     with pytest.raises(ConfigCorruptError) as exc:
         Registry.load(paths)
     assert "->" in str(exc.value)
@@ -103,7 +103,7 @@ def test_comments_survive_the_panel_adding_a_serial(paths, live_registry_text):
 def test_a_hand_written_comment_inside_a_section_survives(paths):
     _write(
         paths,
-        "[mcu a]\n# this board is fussy about its clock\nchipset: stm32f072xb\n"
+        "[type a]\n# this board is fussy about its clock\nchipset: stm32f072xb\n"
         "serials:\n    S1\n",
     )
     reg = Registry.load(paths)
@@ -116,7 +116,7 @@ def test_a_hand_written_comment_inside_a_section_survives(paths):
 
 def test_unrecognised_keys_survive(paths):
     """A key written by a newer version must not be dropped by an older one."""
-    _write(paths, "[mcu a]\nchipset: rp2040\nfuture_option: 42\nserials:\n    S1\n")
+    _write(paths, "[type a]\nchipset: rp2040\nfuture_option: 42\nserials:\n    S1\n")
     reg = Registry.load(paths)
     reg.add_serial("a", "S2")
     reg.save(paths)
@@ -131,7 +131,7 @@ def test_repeated_edits_do_not_grow_the_file(paths, live_registry_text):
         reg.save(paths)
     out = _read(paths)
     assert "\n\n\n" not in out
-    assert out.count("[mcu bttmmbv1]") == 1
+    assert out.count("[type bttmmbv1]") == 1
 
 
 def test_removing_a_type_removes_only_its_section(paths, live_registry_text):
@@ -141,7 +141,7 @@ def test_removing_a_type_removes_only_its_section(paths, live_registry_text):
     reg.save(paths)
     out = _read(paths)
     assert "bttmmbv1" not in out
-    assert "[mcu bttebb36]" in out
+    assert "[type bttebb36]" in out
     assert "# mcu-updater configuration." in out
 
 
@@ -183,7 +183,7 @@ def test_katapult_installed_false_leaves_no_bootloader_in_firmwares(paths):
 
 
 def test_clearing_extra_args_removes_the_key(paths):
-    _write(paths, "[mcu a]\nchipset: x\nklipper_extra_args: -j4\nserials:\n")
+    _write(paths, "[type a]\nchipset: x\nklipper_extra_args: -j4\nserials:\n")
     reg = Registry.load(paths)
     reg.get("a").fw("klipper").extra_args = ""
     reg.save(paths)
@@ -317,7 +317,7 @@ def test_families_built_by_different_tools_are_refused(paths):
     _write(
         paths,
         "[firmware knomi_serial]\nsource: ~/knomi_serial\nbuilder: platformio\n\n"
-        "[mcu odd]\nchipset: x\nfirmware: klipper, knomi_serial\nserials:\n",
+        "[type odd]\nchipset: x\nfirmware: klipper, knomi_serial\nserials:\n",
     )
     with pytest.raises(ConfigCorruptError) as exc:
         Registry.load(paths)
@@ -329,7 +329,7 @@ def test_no_firmware_key_means_klipper_alone_no_bootloader(paths):
     """Unlike the old katapult_installed-defaults-true convention, an absent
     firmware: key now declares only klipper - a bootloader has to be listed,
     not assumed. See docs/rebuild-plan.md Step 6."""
-    _write(paths, "[mcu a]\nchipset: x\nserials:\n")
+    _write(paths, "[type a]\nchipset: x\nserials:\n")
     mcu = Registry.load(paths).get("a")
     assert mcu.firmwares == ["klipper"]
     assert mcu.bootloader() is None
@@ -337,11 +337,11 @@ def test_no_firmware_key_means_klipper_alone_no_bootloader(paths):
 
 def test_section_naming_is_stable():
     """User-visible; changing the prefix would orphan every existing file."""
-    assert section_name("bttebb36") == "mcu bttebb36"
+    assert section_name("bttebb36") == "type bttebb36"
 
 
 def test_a_section_without_a_name_is_ignored(paths):
-    _write(paths, "[mcu]\nchipset: x\n\n[mcu real]\nchipset: y\nserials:\n")
+    _write(paths, "[type]\nchipset: x\n\n[type real]\nchipset: y\nserials:\n")
     assert Registry.load(paths).names() == ["real"]
 
 
@@ -349,8 +349,8 @@ def test_the_file_stays_valid_klipper_style_cfg(paths, live_registry_text):
     """It has to remain parseable by anything else that reads Klipper configs."""
     _write(paths, live_registry_text)
     doc = CfgDocument(live_registry_text)
-    assert doc.section_names("mcu")
-    assert doc.get("mcu sv08Mainboard", "chipset") == "stm32f103xe"
+    assert doc.section_names("type")
+    assert doc.get("type sv08Mainboard", "chipset") == "stm32f103xe"
 
 
 def test_the_pre_merge_registry_filename_is_guarded(paths):
@@ -518,7 +518,7 @@ def test_add_type_applies_the_rule_so_both_front_ends_agree(paths):
 ANNOTATED = """[updater]
 enable_flashing: true   # turned on for the panel
 
-[mcu bttebb36]
+[type bttebb36]
 chipset: stm32g0b1xx
 serials:
     # the two toolhead boards

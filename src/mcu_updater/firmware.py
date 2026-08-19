@@ -33,9 +33,9 @@ from __future__ import annotations
 
 import dataclasses
 import os
-from typing import Optional
+from typing import Any, Optional
 
-from .cfgdoc import CfgDocument
+from .cfgdoc import CfgDocument, parse_bool
 from .paths import FW_TARGETS, Paths
 
 SECTION_PREFIX = "firmware"
@@ -55,6 +55,11 @@ DEFAULT_APPLICATION = "klipper"
 #: separate from the application because a type needs *both*: `[mcu carto_v4]`
 #: runs cartographer and is still flashed through katapult.
 BOOTLOADER = "katapult"
+
+#: What builds a family unless its `[firmware ...]` section says otherwise.
+#: Klipper, Katapult and every fork of either use Kconfig + `make`; PlatformIO
+#: is the only other builder today and always names itself explicitly.
+DEFAULT_BUILDER = "kconfig_make"
 
 
 def expand_home(path: str, home: str) -> str:
@@ -82,6 +87,14 @@ class FirmwareFamily:
     #: Basename of what the build leaves in ``out/``. Empty means ``<name>``.
     #: A fork keeps its parent's output name - cartographer builds klipper.bin.
     artifact: str = ""
+    #: What builds this tree. ``kconfig_make`` for Klipper, Katapult and every
+    #: fork of either; ``platformio`` is the other one today.
+    builder: str = DEFAULT_BUILDER
+    #: A bootloader, not an application - Katapult, not Klipper or a fork of
+    #: it. Determines whether a sweep builds this family only when named
+    #: (`providers.spec.on_demand`) and, with the application, whether the two
+    #: are the pair the flash-time offset checks compare.
+    bootloader: bool = False
 
     def source_dir(self, paths: Paths) -> str:
         """The tree to run `make` in.
@@ -108,11 +121,13 @@ class FirmwareFamily:
     def kconfiglib(self, paths: Paths) -> str:
         return os.path.join(self.source_dir(paths), "lib", "kconfiglib", "kconfiglib.py")
 
-    def to_json(self) -> dict[str, str]:
+    def to_json(self) -> dict[str, Any]:
         return {
             "name": self.name,
             "source": self.source,
             "artifact": self.artifact_name(),
+            "builder": self.builder,
+            "bootloader": self.bootloader,
         }
 
 
@@ -131,6 +146,12 @@ def load_from_doc(doc: CfgDocument) -> dict[str, FirmwareFamily]:
             name=name,
             source=(doc.get(section, "source") or "").strip(),
             artifact=(doc.get(section, "artifact") or "").strip(),
+            builder=(doc.get(section, "builder") or "").strip() or DEFAULT_BUILDER,
+            # Absent means "whatever this name defaults to" - True only for
+            # katapult - not a blanket False, so overriding one key on an
+            # existing [firmware katapult] section can't silently turn its
+            # bootloader status off.
+            bootloader=bool(parse_bool(doc.get(section, "bootloader"), name == BOOTLOADER)),
         )
     return out
 
@@ -182,4 +203,4 @@ def resolve(
     """
     if families is None:
         families = load(paths)
-    return families.get(fw) or FirmwareFamily(name=fw)
+    return families.get(fw) or FirmwareFamily(name=fw, bootloader=(fw == BOOTLOADER))

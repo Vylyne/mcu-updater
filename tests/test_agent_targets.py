@@ -706,6 +706,14 @@ def test_firmware_families_says_what_exists_not_just_what_parses(api, paths):
     assert families["klipper"]["builtin"] is True
 
 
+def test_firmware_families_carries_builder_and_bootloader(api):
+    families = {f["name"]: f for f in api.dispatch("fw.status")["firmware_families"]}
+
+    assert families["klipper"]["builder"] == "kconfig_make"
+    assert families["klipper"]["bootloader"] is False
+    assert families["katapult"]["bootloader"] is True
+
+
 def test_firmware_families_keeps_the_builtins_first(api):
     """Same order the CLI has always listed and the artifacts payload carries."""
     names = [f["name"] for f in api.dispatch("fw.status")["firmware_families"]]

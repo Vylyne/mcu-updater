@@ -76,6 +76,20 @@ def test_the_artifact_defaults_to_the_family_name(paths):
     assert FirmwareFamily(name="klipper").artifact_name() == "klipper"
 
 
+def test_every_family_defaults_to_kconfig_make(paths):
+    assert firmware.resolve(paths, "klipper").builder == "kconfig_make"
+    assert firmware.resolve(paths, "invented").builder == "kconfig_make"
+
+
+def test_katapult_defaults_to_being_a_bootloader_even_unconfigured(paths):
+    assert firmware.resolve(paths, "katapult").bootloader is True
+
+
+def test_every_other_family_defaults_to_not_being_a_bootloader(paths):
+    assert firmware.resolve(paths, "klipper").bootloader is False
+    assert firmware.resolve(paths, "invented").bootloader is False
+
+
 # --------------------------------------------------------------------------
 # overriding them
 # --------------------------------------------------------------------------
@@ -138,6 +152,38 @@ def test_source_and_artifact_are_independent(paths, fake_root):
     katapult = firmware.resolve(paths, "katapult")
     assert katapult.source_dir(paths) == paths.fw_dir("katapult")
     assert katapult.built_artifact(paths).endswith("renamed.bin")
+
+
+def test_a_family_can_declare_its_builder(paths, fake_root):
+    _write_firmware(paths, "knomi_serial", builder="platformio")
+    assert firmware.resolve(paths, "knomi_serial").builder == "platformio"
+
+
+def test_a_family_can_declare_itself_a_bootloader(paths, fake_root):
+    _write_firmware(paths, "second_stage", bootloader="true")
+    assert firmware.resolve(paths, "second_stage").bootloader is True
+
+
+def test_overriding_one_key_on_katapult_does_not_turn_off_its_bootloader_status(
+    paths, fake_root
+):
+    """Every key here is independently optional. A section that only relocates
+    the source tree must not silently flip a fact as load-bearing as whether
+    this family is a bootloader - the offset checks and the on-demand build
+    sweep both key off it."""
+    _write_firmware(paths, "katapult", source=str(fake_root / "my-katapult-fork"))
+    assert firmware.resolve(paths, "katapult").bootloader is True
+
+
+def test_katapults_bootloader_status_can_still_be_turned_off_explicitly(paths, fake_root):
+    _write_firmware(paths, "katapult", bootloader="false")
+    assert firmware.resolve(paths, "katapult").bootloader is False
+
+
+def test_to_json_carries_builder_and_bootloader(paths):
+    payload = firmware.resolve(paths, "katapult").to_json()
+    assert payload["builder"] == "kconfig_make"
+    assert payload["bootloader"] is True
 
 
 def test_a_nameless_section_is_ignored_rather_than_crashing(paths):

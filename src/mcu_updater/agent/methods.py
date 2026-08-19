@@ -219,6 +219,8 @@ class Api:
                     "name": name,
                     "source": source,
                     "artifact": family.artifact_name(),
+                    "builder": family.builder,
+                    "bootloader": family.bootloader,
                     "present": os.path.isdir(source),
                     "configurable": configurable.get(name, False),
                     # Neither can be removed by editing a config file, and the

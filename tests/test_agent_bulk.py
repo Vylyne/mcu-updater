@@ -281,7 +281,7 @@ def test_a_fleet_build_reaches_the_screens_too(bulk, paths, tmp_path):
 
     targets = bulk._build_targets(bulk._install(), "all").build
 
-    assert ("knomi_toolchanger", None) in [(t.name, t.fw) for t in targets]
+    assert ("knomi_toolchanger", "knomi_toolchanger") in [(t.name, t.fw) for t in targets]
     # And it is the PlatformIO provider that owns it, not kconfig with a blank
     # family - which is what a single loop growing a special case would produce.
     assert [t.provider for t in targets if t.name == "knomi_toolchanger"] == ["platformio"]

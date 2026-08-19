@@ -92,11 +92,15 @@ class BuildTarget:
     provider: str
     #: The `[mcu <name>]` or `[display <name>]` section name.
     name: str
-    #: The firmware family, for providers that build several per target. `None`
-    #: is not "unknown": it means this provider's targets have no family axis at
-    #: all, which is why a `fw` filter correctly excludes them rather than
-    #: matching them by accident.
-    fw: Optional[str] = None
+    #: The firmware family. Every target carries one: a kconfig_make pair
+    #: names the family it builds; a PlatformIO type names its declared
+    #: `firmware:` family, or - predating that key - stands in for its own,
+    #: since a PlatformIO env already names the board, the partitions and
+    #: the flags. Empty rather than optional: a target reaching a provider
+    #: with nothing here was hand-built wrong, and each provider insists on
+    #: it explicitly (see `KconfigMake._family`) rather than silently
+    #: defaulting.
+    fw: str = ""
     #: Built when something asks for it by name, never on a sweep.
     #:
     #: Katapult is the case that needs it. It is already on the hardware doing

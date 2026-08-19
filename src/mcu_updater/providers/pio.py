@@ -78,6 +78,14 @@ class PioType:
     name: str
     env: str = ""
     source: str = ""
+    #: The declared `firmware:` family, if any. Empty means this type predates
+    #: that key - an old `[display ...]`/`provider: platformio` section with
+    #: no family reference at all, still resolved by `source:`/`pio_source`.
+    #: Used as the `fw` axis providers.select() filters on; `PlatformIO.
+    #: targets()` falls back to this type's own name when it is empty, since
+    #: a PlatformIO env already names the board and stands in for its own
+    #: family in that case.
+    firmware: str = ""
     #: The Klipper section prefix whose entries are displays of this type.
     #: `[knomi_serial T0_knomi]` -> `knomi_serial`. A second display with its own
     #: klippy module would set this differently; one sharing the module leaves it.
@@ -98,6 +106,7 @@ class PioType:
             "name": self.name,
             "env": self.env,
             "source": self.source,
+            "firmware": self.firmware,
             "klipper_section": self.klipper_section,
             "service": self.service,
             "device_map": self.device_map,
@@ -135,6 +144,7 @@ def load(paths: Paths, default_source: str = "") -> dict[str, PioType]:
         else:
             if declared.provider != sections.PLATFORMIO:
                 continue
+            first_fw = ""
             source = (doc.get(section, "source") or default_source).strip()
 
         env = (doc.get(section, "env") or "").strip()
@@ -154,6 +164,7 @@ def load(paths: Paths, default_source: str = "") -> dict[str, PioType]:
             name=name,
             env=env,
             source=source,
+            firmware=first_fw,
             klipper_section=(doc.get(section, "klipper_section") or "knomi_serial").strip(),
             service=("knomi_serial" if watcher is None else watcher).strip(),
             device_map=(

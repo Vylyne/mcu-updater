@@ -131,10 +131,11 @@ def test_artifact_status_is_the_shared_vocabulary(install, paths, settings):
 # --------------------------------------------------------------------------
 
 
-def test_a_display_target_carries_no_family(paths, settings, tmp_path):
-    """`None` is not "unknown" here - a PlatformIO env already names the board,
-    the partitions and the flags, so there is no family axis at all. That is what
-    makes a `fw` filter exclude screens rather than match them."""
+def test_a_display_predating_firmware_stands_in_for_its_own_family(paths, settings, tmp_path):
+    """A type with no `firmware:` key has no family to name, so its own name
+    stands in - a PlatformIO env already names the board, the partitions and
+    the flags. That is still enough for a `fw` filter to exclude it from a
+    sweep for a family it does not build."""
     tree = tmp_path / "knomi_serial"
     (tree / ".pio" / "build" / "knomi_toolchanger").mkdir(parents=True)
     with open(paths.main_config, "a", encoding="utf-8") as fh:
@@ -143,8 +144,26 @@ def test_a_display_target_carries_no_family(paths, settings, tmp_path):
     install = Install.load(paths, settings)
     targets = PlatformIO().targets(install)
 
-    assert [(t.name, t.fw) for t in targets] == [("knomi_toolchanger", None)]
+    assert [(t.name, t.fw) for t in targets] == [("knomi_toolchanger", "knomi_toolchanger")]
     assert PlatformIO().blocked(install, targets[0]) is None
+
+
+def test_a_display_declaring_firmware_carries_that_family(paths, settings, tmp_path):
+    """The new shape: a type naming a platformio-built family reaches `fw` as
+    that family, so "rebuild knomi_serial everywhere" can actually find it -
+    the whole reason `firmware:` exists on a type at all."""
+    tree = tmp_path / "knomi_serial"
+    (tree / ".pio" / "build" / "knomi").mkdir(parents=True)
+    with open(paths.main_config, "a", encoding="utf-8") as fh:
+        fh.write(
+            f"[firmware knomi_serial]\nsource: {tree}\nbuilder: platformio\n\n"
+            "[type knomi]\nchipset: esp32\nfirmware: knomi_serial\nenv: knomi\n"
+        )
+
+    install = Install.load(paths, settings)
+    targets = PlatformIO().targets(install)
+
+    assert [(t.name, t.fw) for t in targets] == [("knomi", "knomi_serial")]
 
 
 def test_a_missing_source_and_a_wrong_source_read_differently(paths, settings):

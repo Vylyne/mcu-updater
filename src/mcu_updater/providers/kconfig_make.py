@@ -106,12 +106,12 @@ class KconfigMake:
     def _family(target: BuildTarget) -> str:
         """The family, insisted upon rather than defaulted.
 
-        Every target this provider makes carries one. A `None` arriving here
-        means a target was hand-built for the wrong provider, and defaulting to
-        klipper would turn that into the exact silent-wrong-tree build the pair
-        shape exists to prevent.
+        Every target this provider makes carries one. An empty `fw` arriving
+        here means a target was hand-built for the wrong provider, and
+        defaulting to klipper would turn that into the exact silent-wrong-tree
+        build the pair shape exists to prevent.
         """
-        if target.fw is None:
+        if not target.fw:
             raise ValueError(
                 f"{target.name!r} reached the kconfig_make provider with no firmware "
                 f"family; every target it enumerates carries one."

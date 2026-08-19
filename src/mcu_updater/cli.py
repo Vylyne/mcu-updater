@@ -350,11 +350,14 @@ def build_fw_cmd(args: argparse.Namespace) -> None:
     c = ctx()
     install = providers.Install.load(c.paths, c.settings)
 
-    # A PlatformIO type has no family axis - its env already names the board, the
-    # partition table and the flags - so `-f` is not merely optional there, it is
-    # meaningless, and there is no menuconfig to fall back to.
+    # A PlatformIO type's own env already names the board, the partition table
+    # and the flags, so `-f` is not merely optional there, it is meaningless,
+    # and there is no menuconfig to fall back to.
     if args.type in install.displays:
-        target = providers.BuildTarget(sections.PLATFORMIO, args.type)
+        display = install.displays[args.type]
+        target = providers.BuildTarget(
+            sections.PLATFORMIO, args.type, display.firmware or args.type
+        )
         provider = providers.by_name(sections.PLATFORMIO)
         blocked = provider.blocked(install, target)
         if blocked:

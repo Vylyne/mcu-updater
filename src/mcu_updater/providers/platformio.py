@@ -12,10 +12,12 @@ Like the kconfig adapter, this decides nothing. `pio.py` keeps its body -
 including the parts with no kconfig counterpart at all, such as never letting
 PlatformIO choose its own upload port.
 
-There is no family axis: a PlatformIO env already names the board, the partition
-table and the build flags, so the env *is* the type. That is why these targets
-carry `fw: None`, and why a `fw` filter - "rebuild katapult everywhere" -
-correctly leaves them alone instead of matching one by accident.
+A type declaring `firmware:` (see the target schema) names a real family, and
+that family is what `fw` carries here - "rebuild knomi_serial everywhere" then
+correctly reaches it. A type predating that key has no family to name, so its
+own name stands in: a PlatformIO env already names the board, the partition
+table and the build flags, so the env *is* the type, and a `fw` filter for
+anything else still correctly leaves it alone.
 """
 
 from __future__ import annotations
@@ -61,7 +63,10 @@ class PlatformIO:
     label = "PlatformIO"
 
     def targets(self, install: Install) -> list[BuildTarget]:
-        return [BuildTarget(self.name, name) for name in install.displays]
+        return [
+            BuildTarget(self.name, name, display.firmware or name)
+            for name, display in install.displays.items()
+        ]
 
     def blocked(self, install: Install, target: BuildTarget) -> Optional[str]:
         """Is there a tree to build in?

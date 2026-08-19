@@ -66,8 +66,9 @@ def select(
     one type" the same operation with a filter rather than another loop. `fw`
     narrows to a single family - "rebuild katapult everywhere" - and is a filter
     over what each target already uses, never an instruction to build a family
-    something does not run. A provider with no family axis has no target that can
-    match a named `fw`, so screens correctly fall out of that filter.
+    something does not run. Every target carries a real `fw` (see
+    `BuildTarget.fw`), so a filter naming a family nothing here builds simply
+    matches nothing, the same as any other name that misses.
 
     An unnamed `fw` is a sweep, and a sweep passes over on-demand targets - the
     bootloader - rather than rebuilding what is already on the hardware doing its

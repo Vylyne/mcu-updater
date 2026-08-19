@@ -1,0 +1,25 @@
+{
+  "_comment": "BuildTarget.fw is a real family for every provider now, not Optional[str] standing in for 'no family axis'. Getting this wrong either lets a malformed target reach a build silently defaulted to klipper, or breaks the fw filter ('rebuild knomi_serial everywhere') for exactly the types Step 7 gave a real family to.",
+  "file": "src/mcu_updater/providers/kconfig_make.py",
+  "command": [
+    "python",
+    "-m",
+    "pytest",
+    "tests/test_providers.py",
+    "tests/test_agent_bulk.py",
+    "-q"
+  ],
+  "mutations": [
+    {
+      "name": "a target with no firmware family is refused, not defaulted to klipper",
+      "find": "        if not target.fw:",
+      "replace": "        if False:"
+    },
+    {
+      "name": "a display's fw falls back to its own name only when it has no declared firmware",
+      "file": "src/mcu_updater/providers/platformio.py",
+      "find": "            BuildTarget(self.name, name, display.firmware or name)",
+      "replace": "            BuildTarget(self.name, name, name)"
+    }
+  ]
+}

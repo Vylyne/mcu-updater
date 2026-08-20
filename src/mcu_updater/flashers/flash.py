@@ -36,6 +36,8 @@ from ..build import Reporter, null_reporter, run_streamed
 from ..devices import (
     KATAPULT_FW_NAME,
     KLIPPER_FW_NAME,
+    STATE_BOOTSEL,
+    STATE_DFU,
     BusDevice,
     dfu_devices,
     expected_path,
@@ -547,19 +549,17 @@ def flash_initial_bootloader(
 ) -> None:
     """Install a first bootloader on a bare board of this chipset.
 
-    The dispatch is a table in :mod:`mcu_updater.flashers` rather than a chain
-    of `startswith` here. It was two branches and a fallback, which is exactly
-    the size at which a chain still looks fine and has already stopped being
-    extensible - adding RP2040's BOOTSEL route should be one module and one row,
-    not an edit to this function.
-
-    Driven through the same `Flasher` protocol a batch uses, so a route added
-    for this path is a route a batch could take too. That is what makes the
-    table a seam rather than a lookup with extra steps.
+    Which ROM bootloader a factory-bare board of this chipset speaks is a
+    single fact about the silicon, not a lookup table: every STM32 answers DFU,
+    every RP2040 answers BOOTSEL. `flashers.select_for` is the actual dispatch -
+    driven through the same `Flasher` protocol a batch uses, so a route added
+    for this path (RP2040's BOOTSEL, still unbuilt) is a route a batch could
+    take too, with nothing here to edit when it lands.
     """
     from .. import flashers
 
-    flasher = flashers.bootstrap_for(chipset)
+    state = STATE_BOOTSEL if chipset.startswith("rp2040") else STATE_DFU
+    flasher = flashers.select_for(chipset, state)
     target = flashers.dfu_util.target_for(
         fw_bin, chipset=chipset, dfu_serial=target_serial
     )

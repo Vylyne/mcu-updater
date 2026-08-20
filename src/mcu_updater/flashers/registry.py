@@ -1,4 +1,4 @@
-"""Which flashers exist, which chipsets bootstrap through which, and how a
+"""Which flashers exist, which chipset/state pairs each can write, and how a
 batch splits around the Klipper stop.
 
 **Static, and not discovered** - for the same reason the provider registry is.
@@ -9,9 +9,7 @@ has NOPASSWD `systemctl` for Klipper. The tuple is the seam.
 
 from __future__ import annotations
 
-import dataclasses
-from typing import Optional
-
+from ..devices import STATE_BOOTSEL
 from ..errors import UnsupportedChipsetError
 from .dfu_util import DfuUtil
 from .esptool import Esptool
@@ -69,60 +67,37 @@ def by_flasher(targets: list[FlashTarget]) -> list[tuple[Flasher, list[FlashTarg
 
 
 # --------------------------------------------------------------------------
-# bootstrap: how a bare board takes its first firmware
+# selection: which flasher writes a chipset while it's in a given state
 # --------------------------------------------------------------------------
 
 
-@dataclasses.dataclass(frozen=True)
-class BootstrapRoute:
-    """The route into a chipset family that has no bootloader yet.
+def select_for(chipset: str, state: str) -> Flasher:
+    """Which flasher writes a device of this chipset while it is in this state.
 
-    Keyed by chipset prefix rather than exact name because that is how the
-    question is actually shaped: every `stm32*` part exposes the same ROM DFU
-    interface, and enumerating the two hundred Klipper supports would be a list
-    to maintain for no gain.
-    """
-
-    #: Matched with `startswith`. First match wins, so order these
-    #: most-specific-first if a prefix ever nests inside another.
-    prefix: str
-    #: Key into `FLASHERS`, or None when the route is known and not built.
-    flasher: Optional[str] = None
-    #: What to tell somebody whose board takes a route we do not drive. Only
-    #: read when `flasher` is None.
-    unavailable: str = ""
-
-
-#: A chipset with no entry here is not "unsupported hardware" - it is hardware
-#: whose first-flash route nobody has taught this tool. The distinction is in
-#: the messages: a known-but-unbuilt route says what to do by hand, and an
-#: unknown one says to flash katapult however you like and come back.
-BOOTSTRAP: tuple[BootstrapRoute, ...] = (
-    BootstrapRoute("stm32", flasher=DfuUtil.name),
-    BootstrapRoute(
-        "rp2040",
-        unavailable=(
-            "RP2040 BOOTSEL flashing isn't wired up yet - hold BOOTSEL, mount the "
-            "RPI-RP2 drive, copy the katapult .uf2 across, then use 'add-serial' "
-            "once it enumerates as Katapult."
-        ),
-    ),
-)
-
-
-def bootstrap_for(chipset: str) -> Flasher:
-    """Which flasher installs a first bootloader on this chipset.
+    A capability match against `FLASHERS` itself - each flasher's own
+    `chipsets`/`states` are the whole answer, so there is no separate table to
+    keep in step. First-time install is not special: it is a selection where
+    `state` happens to be `dfu` or `bootsel`, same as any other.
 
     Raises `UnsupportedChipsetError` either way it can fail, because both
-    answers leave the user doing the same thing - flashing katapult themselves -
+    answers leave the user doing the same thing - flashing katapult manually -
     and only the instructions differ.
     """
-    for route in BOOTSTRAP:
-        if not chipset.startswith(route.prefix):
-            continue
-        if route.flasher is None:
-            raise UnsupportedChipsetError(route.unavailable, chipset=chipset)
-        return by_name(route.flasher)
+    for f in FLASHERS:
+        if state in f.states and any(chipset.startswith(p) for p in f.chipsets):
+            return f
+    # The one route that is known but genuinely not driven yet: RP2040 has a
+    # real bootstrap path (BOOTSEL mass storage), just not one this tool
+    # speaks. This carve-out goes away once a Bootsel flasher declares
+    # `states=(STATE_BOOTSEL,)` - it is then matched by the loop above like any
+    # other route, and this branch becomes unreachable.
+    if chipset.startswith("rp2040") and state == STATE_BOOTSEL:
+        raise UnsupportedChipsetError(
+            "RP2040 BOOTSEL flashing isn't wired up yet - hold BOOTSEL, mount the "
+            "RPI-RP2 drive, copy the katapult .uf2 across, then use 'add-serial' "
+            "once it enumerates as Katapult.",
+            chipset=chipset,
+        )
     raise UnsupportedChipsetError(
         f"don't know how to perform a first-time flash for chipset '{chipset}'. "
         f"Flash katapult manually, then use 'add-serial' once it enumerates.",

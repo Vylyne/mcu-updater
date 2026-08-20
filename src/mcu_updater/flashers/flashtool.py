@@ -12,6 +12,7 @@ import contextlib
 from collections.abc import Iterator
 from typing import Any
 
+from ..devices import STATE_KATAPULT, STATE_KLIPPER
 from ..paths import REENUMERATE_TIMEOUT
 from .spec import Bench, FlashTarget
 
@@ -21,6 +22,11 @@ class Flashtool:
 
     name = "flashtool"
     label = "Katapult flashtool"
+    #: Both states a board on the Klipper bus can be in - the write itself
+    #: reboots it from one into the other, so this flasher owns both rather
+    #: than needing to be told which it is starting from.
+    chipsets: tuple[str, ...] = ("stm32", "rp2040")
+    states: tuple[str, ...] = (STATE_KLIPPER, STATE_KATAPULT)
     #: Not because the write needs it - by then the board is in Katapult and
     #: Klipper has long since let go. Because *getting* it there does: the
     #: reboot-into-bootloader request is sent over the serial port Klipper is

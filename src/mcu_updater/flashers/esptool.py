@@ -29,6 +29,7 @@ import contextlib
 from collections.abc import Iterator
 from typing import Any, Optional
 
+from ..devices import STATE_ESP_ROM
 from ..errors import FlashError, UpdaterError
 from .spec import Bench, FlashTarget
 
@@ -38,6 +39,8 @@ class Esptool:
 
     name = "esptool"
     label = "esptool (PlatformIO)"
+    chipsets: tuple[str, ...] = ("esp32",)
+    states: tuple[str, ...] = (STATE_ESP_ROM,)
     #: The klippy module holds the port open for the write itself, and
     #: pyserial's exclusive open is an advisory flock that both it and esptool
     #: take. Unlike flashtool, this one is about the write and not about

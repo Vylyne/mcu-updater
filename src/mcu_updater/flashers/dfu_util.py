@@ -17,6 +17,7 @@ import contextlib
 from collections.abc import Iterator
 from typing import Any, Optional
 
+from ..devices import STATE_DFU
 from .spec import Bench, FlashTarget
 
 
@@ -25,6 +26,8 @@ class DfuUtil:
 
     name = "dfu_util"
     label = "dfu-util"
+    chipsets: tuple[str, ...] = ("stm32",)
+    states: tuple[str, ...] = (STATE_DFU,)
     #: False, and this is the one worth watching.
     #:
     #: By the time this is called the board is already in DFU, which means

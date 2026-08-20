@@ -21,30 +21,26 @@ from .dfu_util import DfuUtil
 from .esptool import Esptool
 from .flashtool import Flashtool
 from .registry import (
-    BOOTSTRAP,
     FLASHERS,
-    BootstrapRoute,
-    bootstrap_for,
     by_flasher,
     by_name,
     group_by_stop,
+    select_for,
 )
 from .spec import Bench, Flasher, FlashTarget
 
 __all__ = [
-    "BOOTSTRAP",
     "FLASHERS",
     "Bench",
-    "BootstrapRoute",
     "DfuUtil",
     "Esptool",
     "FlashTarget",
     "Flasher",
     "Flashtool",
     "PlainContext",
-    "bootstrap_for",
     "by_flasher",
     "by_name",
     "group_by_stop",
+    "select_for",
     "write_all",
 ]

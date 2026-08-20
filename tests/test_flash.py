@@ -5,6 +5,7 @@ import os
 import pytest
 
 from mcu_updater import devices as devices_mod
+from mcu_updater import flashers
 from mcu_updater.errors import (
     AmbiguousDfuError,
     DeviceNotFoundError,
@@ -425,6 +426,45 @@ def test_an_unknown_chipset_is_reported_clearly(paths, ready):
     with pytest.raises(UnsupportedChipsetError) as exc:
         flash_initial_bootloader(paths, ready, "esp32", "x.bin")
     assert exc.value.data["chipset"] == "esp32"
+
+
+# --------------------------------------------------------------------------
+# select_for: the capability-match seam flash_initial_bootloader now goes
+# through, and the same one a batch's own flasher-per-target lookup uses.
+# --------------------------------------------------------------------------
+
+
+def test_select_for_matches_a_bare_stm32_to_dfu_util():
+    assert flashers.select_for("stm32f072xb", devices_mod.STATE_DFU).name == "dfu_util"
+
+
+def test_select_for_matches_a_tracked_board_to_flashtool_in_either_state():
+    """Flashtool owns both states on the Klipper bus - the write is what moves
+    a board from one to the other, not a precondition on which it starts in."""
+    assert flashers.select_for("stm32g431xx", devices_mod.STATE_KLIPPER).name == (
+        "flashtool"
+    )
+    assert flashers.select_for("rp2040", devices_mod.STATE_KATAPULT).name == "flashtool"
+
+
+def test_select_for_matches_a_display_to_esptool():
+    assert flashers.select_for("esp32", devices_mod.STATE_ESP_ROM).name == "esptool"
+
+
+def test_select_for_refuses_a_known_but_unbuilt_route():
+    """RP2040 has a real BOOTSEL bootstrap path - just not one any registered
+    flasher speaks yet, which is a different refusal than not knowing the
+    chipset at all."""
+    with pytest.raises(UnsupportedChipsetError) as exc:
+        flashers.select_for("rp2040", devices_mod.STATE_BOOTSEL)
+    assert ".uf2" in str(exc.value)
+
+
+def test_select_for_refuses_an_impossible_chipset_state_pair():
+    """esp32 is a real, registered chipset (Esptool writes it) - just never in
+    a `klipper` bus state, which nothing claims to answer to."""
+    with pytest.raises(UnsupportedChipsetError):
+        flashers.select_for("esp32", devices_mod.STATE_KLIPPER)
 
 
 # --------------------------------------------------------------------------

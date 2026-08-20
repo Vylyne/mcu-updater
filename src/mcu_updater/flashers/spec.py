@@ -103,6 +103,20 @@ class Flasher(Protocol):
     name: str
     #: What a human calls this tool.
     label: str
+    #: Chipset prefixes this flasher can write, matched with `startswith` - one
+    #: `stm32*` part exposes the same protocol as any other, so this is prefixes
+    #: rather than the two hundred exact names Klipper supports.
+    #:
+    #: Together with `states`, this is the whole answer `flashers.registry.
+    #: select_for` matches against - there is no separate lookup table, so a
+    #: route registering a new flasher is a route selection already knows about.
+    chipsets: tuple[str, ...]
+    #: Bus/device states (`devices.STATE_*`) this flasher answers to. A board
+    #: already running Klipper and one sitting in Katapult are both states
+    #: `Flashtool` answers to - the write goes through the bootloader either
+    #: way. A bare board in DFU is a different flasher entirely, even though
+    #: it may be the same chipset.
+    states: tuple[str, ...]
     #: Does *this flasher's own work* need Klipper down?
     #:
     #: Scoped to the write and to any state transition the flasher performs

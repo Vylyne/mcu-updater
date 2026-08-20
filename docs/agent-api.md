@@ -6,13 +6,17 @@ truth** — and `tests/test_agent_methods.py` is what stops them drifting.
 
 - Agent name: `mcu_updater` — a protocol identifier, deliberately unchanged
   when the project was renamed to `mcu-updater`; the panel matches on it.
-- `api_version`: **2**
+- `api_version`: **3**
 
   Bumped only when a field is *removed* or changes meaning; additions do not
   need one, since a panel that has never heard of a key simply does not read it.
   Version 2 removed `screens[].mac`/`flashed_at`/`moved_from`/`moved_at` and
   `targets[].extra.moved`, which went with the per-port identity tracking - see
-  "Which screen is on which port is not tracked" below.
+  "Which screen is on which port is not tracked" below. Version 3 removed
+  `fw.display.list` and `fw.display.build` (use `fw.device.list` and `fw.build`,
+  which already did the same work) and `targets[].kind` (use
+  `targets[].provider`, `"kconfig_make"` | `"platformio"`, which already said
+  the same thing).
 - Every planned capability has shipped: build, flash, bulk build/flash/update,
   registry and settings editing, Kconfig in the browser, and DFU setup of a new
   board. The flashing ones stay behind `enable_flashing`, off by default.
@@ -100,8 +104,7 @@ application error (see `data.code`), `-32603` internal.
 | `fw.build_all` | `fw?`, `scope?` | `{job_id, job, types, builds, skipped}` — builds only, touches no board |
 | `fw.flash_all` | `scope?`, `name?`, `force?` | `{job_id, job, boards, displays}` — **off by default** |
 | `fw.update_all` | `scope?`, `name?`, `force?` | `{job_id, job, types}` — **off by default** |
-| `fw.display.list` | — | `{displays, reachable, watcher}` — read-only |
-| `fw.display.build` | `name` | `{job_id, job}` — PlatformIO, touches no screen |
+| `fw.device.list` | — | `{displays, reachable, watcher}` — read-only |
 | `fw.job.get` | `job_id?`, `log_from?` | `{job, log, log_from, log_next, log_dropped}` |
 | `fw.job.cancel` | `job_id?` | `{cancelling, immediate}` |
 
@@ -335,7 +338,8 @@ than from a `[firmware ...]` family, and naming one would be a guess.
 
 ```json
 {"name": "cartographer", "source": "/home/biqu/MCU-Firmware---Based-on-Klipper",
- "artifact": "klipper", "present": true, "configurable": true, "builtin": false}
+ "artifact": "klipper", "builder": "kconfig_make", "bootloader": false,
+ "present": true, "configurable": true, "builtin": false}
 ```
 
 Every firmware family this install knows about, for a picker to offer. `present`
@@ -344,6 +348,13 @@ been cloned yet is a real state — it is what every install looks like between
 adding the section and running `git clone` — and it wants "check out the source",
 not "unknown family". `builtin` marks `klipper` and `katapult`, which cannot be
 removed by editing a config file.
+
+`builder` is `[firmware ...]`'s own `builder:` key (default `kconfig_make`) —
+how a tree compiles is a property of the tree, not of a type that happens to
+use it, so it lives here rather than on `TypeStatus` or `Target`. `bootloader`
+marks a family as `katapult`-shaped: not an application, so it is never the
+thing a build failure or a staleness check is really about, and a type omits
+it from `firmware:` entirely rather than carrying a `katapult_installed` flag.
 
 ## Jobs
 
@@ -535,8 +546,8 @@ Each provider enumerates its own targets:
 
 | Provider | A target is | `fw` |
 | --- | --- | --- |
-| `kconfig_make` | one `[mcu ...]` type × one firmware family | the family |
-| `platformio` | one `[display ...]` section | `null` — the env *is* the type |
+| `kconfig_make` | one `[type ...]` × one firmware family it names | the family |
+| `platformio` | one `[type ...]` whose firmware's builder is `platformio` | `null` — the env *is* the type |
 
 Three rules follow, and each of them was a bug first:
 
@@ -775,20 +786,24 @@ with something about dfu-util.
 ## ESP32 displays
 
 Knomis and anything else built by PlatformIO. Different enough from an MCU to be
-separate: no Kconfig, no Katapult, no chipset to reason about — **a PlatformIO
-env already names the board, its partitions and its build flags, so the env is
-the type.**
+separate: no Kconfig, no Katapult — **a PlatformIO env already names the
+board, its partitions and its build flags, so the env is the type.**
+`chipset` is still required, as it is on every type; it names no build
+behaviour here, only what flasher selection needs.
 
 ```ini
 # mcu-updater.cfg
-[updater]
-display_source: ~/knomi_serial     # one repo, shared by every env
+[firmware knomi_serial]
+source: ~/knomi_serial     # one repo, shared by every env
+builder: platformio
 
-[display knomi_toolchanger]
-# env: knomi_toolchanger           defaults to the section name
-# source: ~/knomi_serial           defaults to display_source
-# klipper_section: knomi_serial    which [<prefix> X] sections are this type's
-# service: knomi_serial            port watcher to pause while flashing
+[type knomi_toolchanger]
+chipset: esp32
+firmware: knomi_serial
+env: knomi_toolchanger            # REQUIRED - no default
+# source: ~/knomi_serial          defaults to the firmware family's source
+# klipper_section: knomi_serial   which [<prefix> X] sections are this type's
+# service: knomi_serial           port watcher to pause while flashing
 ```
 
 Adding the second screen is one more section.
@@ -825,7 +840,7 @@ A `device_id:` section still appears here before discovery finds it —
 `"present": false`, `"configured_path": null` — because a display that needs
 flashing is precisely the one this must not be blind to.
 
-### `fw.display.list`
+### `fw.device.list`
 
 ```json
 {"displays": [{"name": "t0_knomi", "section": "knomi_serial t0_knomi",
@@ -1223,8 +1238,8 @@ also *defines* is carried across; `SCANNER`, `CARTOGRAPHER_G431_ENABLE` and
 `VERSION` are dropped by that same test rather than by a hand-maintained skip
 list. Seeding only the application would leave a type whose two configs describe
 different boards, so the safe combination is the one that takes no extra
-argument. `derive: false` exists for a type with `katapult_installed: false`,
-which has nothing to derive.
+argument. `derive: false` exists for a type whose `firmware:` list omits
+`katapult`, which has nothing to derive.
 
 **One invariant is checked rather than assumed.** Katapult's
 `LAUNCH_APP_ADDRESS` is where it jumps; the application's

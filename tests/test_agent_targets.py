@@ -4,13 +4,13 @@
 panel needed a component per wire shape. `targets[]` is those two projected
 onto one shape, so one component renders both - and renders whatever comes
 next without being taught to. The two originals retired at API_VERSION 2
-(docs/rebuild-plan.md Step 14); `type_status()`/`display_status()`, the
+(docs/rebuild-plan.md Step 14); `type_status()`/`pio_status()`, the
 richer per-type computations `targets[]` is built from, did not - they still
 back `fw.type.list` and feed the projection directly.
 
 **It is a projection, not a second source of truth.** The load-bearing test in
 this file is `test_every_fact_in_the_old_keys_survives_the_projection`: if a
-fact lives in `type_status()`/`display_status()` and cannot be found here,
+fact lives in `type_status()`/`pio_status()` and cannot be found here,
 that is a bug in the projection rather than a reason to add a key.
 """
 
@@ -40,9 +40,9 @@ def api(paths, live_registry_text):
     return Api(paths)
 
 
-def _targets(api, kind=None):
+def _targets(api, provider=None):
     out = api.dispatch("fw.status")["targets"]
-    return {t["name"]: t for t in out if kind is None or t["kind"] == kind}
+    return {t["name"]: t for t in out if provider is None or t["provider"] == provider}
 
 
 def _add_display(paths, fake_root, api):
@@ -72,13 +72,10 @@ def test_an_mcu_type_projects_onto_the_shared_shape(api):
     ebb = _targets(api)["bttebb36"]
 
     assert ebb["provider"] == "kconfig_make"
-    # The old two-word discriminator, still sent for a panel that switches on it.
-    assert ebb["kind"] == "mcu"
     assert ebb["descriptor"] == "stm32g0b1xx"
     assert ebb["firmware"] == "klipper"
     assert set(ebb) == {
         "provider",
-        "kind",
         "name",
         "descriptor",
         "firmware",
@@ -106,16 +103,16 @@ def test_an_mcu_type_projects_onto_the_shared_shape(api):
 
 def test_a_display_projects_onto_the_same_shape(api, paths, fake_root):
     _add_display(paths, fake_root, api)
-    display = _targets(api, "display")[ENV]
+    display = _targets(api, "platformio")[ENV]
 
-    mcu_keys = set(_targets(api, "mcu")["bttebb36"])
+    mcu_keys = set(_targets(api, "kconfig_make")["bttebb36"])
     # The whole point: a display carries everything an MCU does, plus a bag of
     # things only a screen has. A reader that never opens `extra` renders both.
     assert set(display) == mcu_keys | {"extra"}
     assert set(display["devices"][0]) == set(
-        _targets(api, "mcu")["bttebb36"]["devices"][0]
+        _targets(api, "kconfig_make")["bttebb36"]["devices"][0]
     )
-    assert display["kind"] == "display"
+    assert display["provider"] == "platformio"
     assert display["descriptor"] == ENV
 
 
@@ -146,7 +143,7 @@ def test_a_display_build_is_blocked_by_a_missing_source_tree(api, paths, fake_ro
         ),
     )
 
-    build = _action(_targets(api, "display")[ENV], "build")
+    build = _action(_targets(api, "platformio")[ENV], "build")
 
     assert build["blocked"]["code"] == Api.BLOCKED_NO_SOURCE
     assert "not found" in build["blocked"]["message"]
@@ -156,7 +153,7 @@ def test_a_display_with_its_tree_can_be_built(api, paths, fake_root):
     """The other half: a block that never clears is a disabled button."""
     _add_display(paths, fake_root, api)
     api = Api(paths, runner=_runner(), call=api._call)
-    assert _action(_targets(api, "display")[ENV], "build")["blocked"] is None
+    assert _action(_targets(api, "platformio")[ENV], "build")["blocked"] is None
 
 
 def test_a_display_has_no_firmware_family_and_says_so(api, paths, fake_root):
@@ -166,7 +163,7 @@ def test_a_display_has_no_firmware_family_and_says_so(api, paths, fake_root):
     a cartographer type's artifact under `artifacts.klipper`.
     """
     _add_display(paths, fake_root, api)
-    assert _targets(api, "display")[ENV]["firmware"] is None
+    assert _targets(api, "platformio")[ENV]["firmware"] is None
 
 
 # --------------------------------------------------------------------------
@@ -253,7 +250,7 @@ def test_a_screen_that_cannot_be_reached_is_offline_not_current(api, paths, fake
         ),
         reachable=True,
     )
-    screen = _targets(api, "display")[ENV]["devices"][0]
+    screen = _targets(api, "platformio")[ENV]["devices"][0]
 
     assert screen["present"] is False
     assert screen["state"] == "missing"
@@ -276,7 +273,7 @@ def test_a_protocol_mismatch_outranks_the_version_comparison(api, paths, fake_ro
         ),
         reachable=True,
     )
-    screen = _targets(api, "display")[ENV]["devices"][0]
+    screen = _targets(api, "platformio")[ENV]["devices"][0]
 
     assert screen["reason"] == "protocol_mismatch"
     assert screen["needs_flash"] is True
@@ -337,7 +334,7 @@ def test_a_screen_carries_the_display_flash_call_pinned_to_its_port(
     port = _add_display(paths, fake_root, api)
     api = Api(paths, runner=_runner(), call=api._call)
 
-    device = _targets(api, "display")[ENV]["devices"][0]
+    device = _targets(api, "platformio")[ENV]["devices"][0]
     flash = _action(device, "flash")
 
     assert flash["method"] == "fw.flash"
@@ -359,7 +356,7 @@ def test_untrack_is_offered_per_board_and_never_for_a_screen(
     assert untrack["method"] == "fw.serial.remove"
     assert untrack["params"] == {"name": "OctopusMAXEZ", "serial": board["id"]}
 
-    screen = _targets(api, "display")[ENV]["devices"][0]
+    screen = _targets(api, "platformio")[ENV]["devices"][0]
     assert _action(screen, "untrack") is None
 
 
@@ -623,7 +620,7 @@ def test_configure_is_absent_where_the_source_tree_is_not_checked_out(paths, liv
 
 
 def test_every_fact_in_the_old_keys_survives_the_projection(api, paths, fake_root):
-    """`targets[]` must carry everything `type_status()`/`display_status()`
+    """`targets[]` must carry everything `type_status()`/`pio_status()`
     produce - the two richer per-type computations it is built from.
 
     Deliberately checks identity of the *facts*, not of the wording: the point
@@ -637,7 +634,7 @@ def test_every_fact_in_the_old_keys_survives_the_projection(api, paths, fake_roo
 
     reg = api.registry()
     legacy_types = [api.type_status(reg, n, api.mcu_info()) for n in reg.names()]
-    legacy_displays = api.display_status()
+    legacy_displays = api.pio_status()
     targets = {t["name"]: t for t in api.targets(reg, legacy_types, legacy_displays)}
 
     assert set(targets) == {t["name"] for t in legacy_types} | {
@@ -682,7 +679,7 @@ def test_a_printer_with_no_screens_has_no_display_targets(paths):
     carries a [type knomi] display, and this is specifically the
     no-display-configured-at-all case."""
     api = Api(paths)
-    assert _targets(api, "display") == {}
+    assert _targets(api, "platformio") == {}
 
 
 # --------------------------------------------------------------------------

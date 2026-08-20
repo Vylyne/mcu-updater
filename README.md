@@ -39,7 +39,7 @@ Flashing:
 - [x] `flashtool.py` — Katapult over USB, STM32 and RP2040
 - [x] `dfu-util` — bare STM32, first bootloader install
 - [x] `esptool` — ESP32, via PlatformIO
-- [ ] RP2040 BOOTSEL — copy a `.uf2` to the mounted volume
+- [x] RP2040 BOOTSEL — copy a `.uf2` to the mounted volume
 - [ ] CAN — `flashtool.py -i <iface> -u <uuid>`
 - [ ] Katapult deployer — replaces a bootloader; no software recovery if wrong
 
@@ -180,9 +180,20 @@ clean_before_build: true   ; leave on: a stale object mix flashes a wrong binary
 reseed_on_build: true      ; take a vendor's updated profile answers before building
 service: klipper           ; klipper-1, klipper-2... for KIAUH multi-instance
 
+# A firmware family: a source tree, how it is built, what it emits.
+[firmware klipper]
+source: ~/klipper                 ; default: ~/<name>
+builder: kconfig_make             ; default: kconfig_make
+artifact: klipper                 ; default: <name>
+
+[firmware katapult]
+source: ~/katapult
+bootloader: true                  ; a bootloader, not an application
+
 # Toolhead boards. The buffer patch is specific to this batch.
-[mcu flylllplusbuffer]
+[type flylllplusbuffer]
 chipset: stm32f072xb
+firmware: klipper, katapult
 serials:
     4C0033000957465331323720-if00
     3F0037000957465331323720-if00
@@ -190,26 +201,27 @@ klipper_makefile_patches:
     src/Makefile -> src-y += buffer.c
 ```
 
-`[mcu <name>]` is the classic spelling and still works — it's shorthand for
-`[type <name>]` with `provider: kconfig_make`, the Kconfig+`make` build system
-klipper and katapult both use. ESP32 displays are the other provider
-(`[display <name>]`, i.e. `provider: platformio` — see [ESP32
-displays](#esp32-displays)). A section keeps whatever spelling it already has;
-write `[type <name>]` yourself only if you want the spelling to say so.
+`[firmware ...]` names a build system's own tree — `builder:` lives there, not
+on the type, because how a tree compiles is a property of the tree, not of a
+board that happens to use it. `[type ...]` names a board model and lists
+which families it runs. A section for `klipper` or `katapult` is only needed
+to override their defaults; every type that lists them resolves the plain
+`~/<name>` / `kconfig_make` / `out/<name>.bin` convention with no section at
+all.
 
 Per-type keys:
 
-- **`chipset`** — required; matches the chipset segment of the by-id name.
+- **`chipset`** — required on every type, PlatformIO included. It is the sole
+  input to flasher selection.
 - **`serials`** — one tracked board per line.
-- **`firmware`** — which family this board actually runs, e.g. `cartographer`.
-  Defaults to `klipper`. See [Firmware families](#firmware-families).
-- **`katapult_installed`** — only written when `false`; a board with no
-  bootloader is the exception.
+- **`firmware`** — a **list** of the families this board actually runs, e.g.
+  `cartographer, katapult`. A type that uses no bootloader simply omits it. See
+  [Firmware families](#firmware-families).
 - **`profile`** — the vendor answer file this type's config is seeded from, e.g.
   `config.CartoV4USB`. Names a file in that firmware's *own source tree*, not
   one shipped here. See [Profiles](#profiles).
-- **`<fw>_extra_args`** — appended to the `make` command line. `<fw>` is
-  `klipper`, `katapult`, or a declared family's name.
+- **`<fw>_extra_args`** — appended to the `make` command line. `<fw>` is any
+  family named in `firmware`.
 - **`<fw>_makefile_patches`** — `<file> -> <line>`, appended to that Makefile
   *for one build only*, then reverted. This exists because Klipper's build system
   has no way to add `src-y +=` lines from the command line, and a permanent edit
@@ -243,18 +255,20 @@ artifact: klipper           ; what the build actually leaves in out/
 then point a type at it:
 
 ```ini
-[mcu carto_v4]
+[type carto_v4]
 chipset: stm32g431xx
-firmware: cartographer
+firmware: cartographer, katapult
 ```
 
-Both keys are optional, and so is the section itself — with none declared,
-every family resolves to the plain convention, which is every install
-predating this. `menuconfig -f`/`build -f` take `cartographer` exactly like
-`klipper` or `katapult`, and so do `cartographer_extra_args` /
+Both keys on `[firmware ...]` are optional, and so is the section itself —
+with none declared, every family resolves to the plain convention, which is
+every install predating this. `menuconfig -f`/`build -f` take `cartographer`
+exactly like `klipper` or `katapult`, and so do `cartographer_extra_args` /
 `cartographer_makefile_patches`. Which flasher writes the board is still
 chosen by chipset, not by family, since one firmware can need `dfu-util` on an
-STM32 board and BOOTSEL on an RP2040 one.
+STM32 board and BOOTSEL on an RP2040 one — there is no `flasher:` key
+anywhere; flashers declare which chipsets and device states they can write and
+selection is a capability match.
 
 ### Profiles
 
@@ -337,33 +351,41 @@ config is always left alone. `build --no-reseed` skips the check for one build.
 
 ### ESP32 displays
 
-Knomis and anything else PlatformIO builds, managed alongside the MCUs:
+Knomis and anything else PlatformIO builds, managed alongside the MCUs. A
+PlatformIO env already names the board, its partitions and its build flags,
+so the env *is* the type — no Kconfig, no Katapult, no chipset to derive one
+from, which is why `chipset` still has to be given by hand (`esp32`):
 
 ```ini
 # mcu-updater.cfg
-[updater]
-pio_source: ~/knomi_serial         # one repo, shared by every env (was display_source)
+[firmware knomi_serial]
+source: ~/knomi_serial      ; one repo, shared by every env
+builder: platformio
 
-[display knomi_toolchanger]        # the section name is the PlatformIO env by default
+[type knomi_toolchanger]
+chipset: esp32
+firmware: knomi_serial
+env: knomi_toolchanger      ; REQUIRED - no default, unlike everything else here
 ```
 
-`[display <name>]` is shorthand for `[type <name>]` with `provider: platformio`
-— the same aliasing `[mcu ...]` gets, see [above](#configuration). A section's
-own `source:` overrides `pio_source`, and `platformio_bin` in `[updater]`
-points at `pio` if neither the `PATH` nor `~/.platformio/penv/bin/pio` finds it.
+`env:` is required and never defaulted, deliberately: the type name is often
+wrong for it (`knomi_serial` itself ships a `knomi_i2cscan` diagnostic env
+beside the firmware one) and `platformio.ini`'s `default_envs` names what
+builds by default, not a canonical choice — so guessing either would build the
+wrong thing silently. `platformio_bin` in `[updater]` points at `pio` if
+neither the `PATH` nor `~/.platformio/penv/bin/pio` finds it.
 
 | Key | Meaning |
 | --- | --- |
-| `env` | The PlatformIO env, if it differs from the section name |
-| `source` | This display's own source tree, overriding `pio_source` |
+| `env` | The PlatformIO env to build. **Required, no default.** |
+| `source` | This display's own source tree, overriding the firmware family's |
 | `klipper_section` | The `printer.cfg` prefix its displays are declared under. Default `knomi_serial` |
 | `service` | The systemd unit watching its ports, paused while flashing. Default `knomi_serial`; blank means nothing to pause |
 | `device_map` | Where that watcher writes its id → port map, relative to `printer_data`. Default `knomi/devices.json` |
 
-Every key defaults to what a Knomi needs, so a bare `[display
-knomi_toolchanger]` is still enough for the common case — the three that
-usually change are for a second display family with its own klippy module and
-port watcher.
+Every key but `env` defaults to what a Knomi needs — the three that usually
+change are for a second display family with its own klippy module and port
+watcher.
 
 The screens themselves are not listed here — `[knomi_serial T0_knomi]` in
 `printer.cfg` already names its port, and a second copy would only be something
@@ -398,7 +420,7 @@ A few things to know:
   the error names the file, the section and the line to add.
 - **A missing screen is otherwise invisible.** The klippy module runs as a no-op
   when a port won't open, so Klipper starts happily with a blank display and no
-  error. `fw.display.list` is the only thing that says so.
+  error. `fw.device.list` is the only thing that says so.
 
 ## Layout
 

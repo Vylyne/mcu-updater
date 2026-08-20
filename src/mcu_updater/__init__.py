@@ -25,7 +25,12 @@ __version__ = "0.9.0"
 #    `extra` and not `moved`, so an absent key is a TypeError rather than a
 #    missing warning. Additions do not need a bump; removals do, which is what
 #    this number is for and what the removal should have carried at the time.
-API_VERSION = 2
+# 3: `fw.display.list` and `fw.display.build` are gone (use `fw.device.list`
+#    and `fw.build`, which already did the same work), and `targets[].kind`
+#    is gone too - `targets[].provider` ("kconfig_make" | "platformio")
+#    already said the same thing without a second vocabulary to keep in step.
+#    A panel switching on `kind` gets a KeyError, not a wrong answer.
+API_VERSION = 3
 
 AGENT_NAME = "mcu_updater"
 

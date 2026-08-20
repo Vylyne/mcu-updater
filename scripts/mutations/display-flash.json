@@ -28,7 +28,7 @@
     },
     {
       "name": "displays are projected into targets too",
-      "find": "        ] + [self._display_target(payload, allowed) for payload in displays]",
+      "find": "        ] + [self._pio_target(payload, allowed) for payload in displays]",
       "replace": "        ]"
     },
     {

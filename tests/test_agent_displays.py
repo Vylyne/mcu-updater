@@ -52,7 +52,7 @@ def test_the_displays_come_from_klippers_config(api, fake_root):
             "printer": {"kinematics": "corexy"},
         }
     )
-    res = api.dispatch("fw.display.list")
+    res = api.dispatch("fw.device.list")
 
     assert res["reachable"] is True
     assert [d["name"] for d in res["displays"]] == ["t0_knomi"]
@@ -70,7 +70,7 @@ def test_other_sections_are_ignored(api):
             "printer": {},
         }
     )
-    assert api.dispatch("fw.display.list")["displays"] == []
+    assert api.dispatch("fw.device.list")["displays"] == []
 
 
 def test_a_missing_symlink_is_reported_not_hidden(api, fake_root):
@@ -80,7 +80,7 @@ def test_a_missing_symlink_is_reported_not_hidden(api, fake_root):
     api._call = _moonraker(
         {"knomi_serial t0_knomi": {"serial": str(fake_root / "knomi_t0_gone")}}
     )
-    display = api.dispatch("fw.display.list")["displays"][0]
+    display = api.dispatch("fw.device.list")["displays"][0]
 
     assert display["present"] is False
     assert display["resolved_path"] is None
@@ -100,7 +100,7 @@ def test_a_symlink_is_resolved_to_the_real_device(api, fake_root):
         pytest.skip("symlinks need privileges on this platform")
 
     api._call = _moonraker({"knomi_serial t0_knomi": {"serial": str(link)}})
-    display = api.dispatch("fw.display.list")["displays"][0]
+    display = api.dispatch("fw.device.list")["displays"][0]
 
     assert display["present"] is True
     assert display["resolved_path"].endswith("ttyUSB0")
@@ -117,7 +117,7 @@ def test_several_displays_come_back_in_a_stable_order(api, fake_root):
         sections[f"knomi_serial {name}"] = {"serial": str(port)}
 
     api._call = _moonraker(sections)
-    names = [d["name"] for d in api.dispatch("fw.display.list")["displays"]]
+    names = [d["name"] for d in api.dispatch("fw.device.list")["displays"]]
     assert names == ["t0_knomi", "t1_knomi", "t2_knomi"]
 
 
@@ -133,7 +133,7 @@ def test_a_section_that_reports_neither_is_shown_rather_than_hidden(api):
     everything unknown is the honest answer, and the visible one.
     """
     api._call = _moonraker({"knomi_serial t0_knomi": {"heater_hotend": "extruder"}})
-    display = api.dispatch("fw.display.list")["displays"][0]
+    display = api.dispatch("fw.device.list")["displays"][0]
 
     assert display["name"] == "t0_knomi"
     assert display["configured_path"] is None
@@ -150,7 +150,7 @@ def test_a_device_id_section_appears_before_discovery_finds_it(api):
     one first. A display that still needs flashing is precisely the one this
     must not be blind to, so it belongs in the list from the start."""
     api._call = _moonraker({"knomi_serial t0_knomi": {"device_id": "19AA44"}})
-    display = api.dispatch("fw.display.list")["displays"][0]
+    display = api.dispatch("fw.device.list")["displays"][0]
 
     assert display["addressed_by"] == "device_id"
     assert display["device_id"] == "19AA44"
@@ -171,7 +171,7 @@ def test_a_device_id_section_uses_the_port_discovery_found(api, fake_root):
         {"knomi_serial t0_knomi": {"device_id": "19AA44"}},
         {"knomi_serial T0_knomi": {"port": port, "device_id": "19AA44"}},
     )
-    display = api.dispatch("fw.display.list")["displays"][0]
+    display = api.dispatch("fw.device.list")["displays"][0]
 
     assert display["addressed_by"] == "device_id"
     assert display["present"] is True
@@ -194,7 +194,7 @@ def test_a_serial_section_reports_the_path_its_config_named(api, fake_root):
         {"knomi_serial t0_knomi": {"serial": configured}},
         {"knomi_serial T0_knomi": {}},
     )
-    display = api.dispatch("fw.display.list")["displays"][0]
+    display = api.dispatch("fw.device.list")["displays"][0]
 
     assert display["addressed_by"] == "serial"
     assert display["device_id"] is None, "a serial: section names a socket"
@@ -205,7 +205,7 @@ def test_an_unreachable_klipper_says_so_rather_than_claiming_none(api):
     """"No displays configured" and "we could not ask" must not look the same -
     that conflation is what made a board 90 commits behind report up to date."""
     api._call = _moonraker({}, reachable=False)
-    res = api.dispatch("fw.display.list")
+    res = api.dispatch("fw.device.list")
 
     assert res["reachable"] is False
     assert res["displays"] == []
@@ -216,7 +216,7 @@ def test_it_works_with_no_moonraker_at_all(paths, live_registry_text):
     raising."""
     with open(paths.registry_file, "w", encoding="utf-8") as fh:
         fh.write(live_registry_text)
-    res = Api(paths).dispatch("fw.display.list")
+    res = Api(paths).dispatch("fw.device.list")
 
     assert res["reachable"] is False
     assert res["displays"] == []
@@ -224,7 +224,7 @@ def test_it_works_with_no_moonraker_at_all(paths, live_registry_text):
 
 def test_it_is_available_to_a_read_only_agent(api):
     """It reads config and stats paths. Nothing here writes."""
-    assert "fw.display.list" in api.dispatch("fw.ping")["capabilities"]
+    assert "fw.device.list" in api.dispatch("fw.ping")["capabilities"]
 
 
 # --------------------------------------------------------------------------
@@ -244,9 +244,9 @@ def test_a_printer_with_no_displays_pays_nothing(paths):
     api._call = lambda method, params, timeout: calls.append(method) or {}
 
     api.dispatch("fw.status")
-    assert api.display_status() == []
+    assert api.pio_status() == []
     assert "printer.objects.query" in calls  # for the mcu join
-    # ...but display_status short-circuited before adding its own.
+    # ...but pio_status short-circuited before adding its own.
     assert calls.count("printer.objects.query") <= 2
 
 
@@ -259,7 +259,7 @@ def test_configured_displays_appear_in_status(api, paths, fake_root, live_regist
     api._call = _moonraker({"knomi_serial t0_knomi": {"serial": str(port)}})
     # live_registry_text's own [type knomi] shares knomi_serial too, so pick
     # this test's type by name rather than assuming index 0.
-    entry = {d["env"]: d for d in api.display_status()}["knomi_toolchanger"]
+    entry = {d["env"]: d for d in api.pio_status()}["knomi_toolchanger"]
 
     assert entry["env"] == "knomi_toolchanger"
     assert [s["name"] for s in entry["screens"]] == ["t0_knomi"]
@@ -279,7 +279,7 @@ def test_a_screen_carries_no_identity_history(api, paths, fake_root):
         )
 
     api._call = _moonraker({"knomi_serial t0_knomi": {"serial": str(port)}})
-    screen = api.display_status()[0]["screens"][0]
+    screen = api.pio_status()[0]["screens"][0]
 
     assert not {"mac", "flashed_at", "moved_from", "moved_at"} & set(screen)
     assert "device_id" in screen
@@ -304,7 +304,7 @@ def test_screens_are_matched_to_their_type_by_klipper_section(api, paths, fake_r
             "other_display a": {"serial": str(fake_root / "other_a")},
         }
     )
-    by_env = {d["env"]: d for d in api.display_status()}
+    by_env = {d["env"]: d for d in api.pio_status()}
 
     assert [s["name"] for s in by_env["knomi_toolchanger"]["screens"]] == ["t0_knomi"]
     assert [s["name"] for s in by_env["otherscreen"]["screens"]] == ["a"]
@@ -341,7 +341,7 @@ def test_the_true_capitalisation_comes_from_the_printer_object(api, fake_root):
         _configured(port),
         {"knomi_serial T0_knomi": {"firmware_version": "0.4.0"}},
     )
-    screen = api.display_list({})["displays"][0]
+    screen = api.device_list({})["displays"][0]
 
     # Not "t0_knomi" - that is only what settings lowercased it to.
     assert screen["section"] == "knomi_serial T0_knomi"
@@ -355,7 +355,7 @@ def test_the_object_is_queried_by_its_real_name(api, fake_root):
 
     call = _moonraker_live(_configured(port), {"knomi_serial T0_knomi": {}})
     api._call = call
-    api.display_list({})
+    api.device_list({})
 
     asked = call.queries[0]["objects"]  # type: ignore[attr-defined]
     assert "knomi_serial T0_knomi" in asked
@@ -381,7 +381,7 @@ def test_what_the_screen_reports_reaches_the_caller(api, fake_root):
             }
         },
     )
-    screen = api.display_list({})["displays"][0]
+    screen = api.device_list({})["displays"][0]
 
     assert screen["firmware_version"] == "0.4.0"
     assert screen["device_online"] is True
@@ -398,7 +398,7 @@ def test_a_module_too_old_to_report_leaves_every_live_field_unknown(api, fake_ro
     open(port, "w").close()
 
     api._call = _moonraker_live(_configured(port), {"knomi_serial T0_knomi": {}})
-    screen = api.display_list({})["displays"][0]
+    screen = api.device_list({})["displays"][0]
 
     assert screen["present"] is True  # the port still resolves
     for field in ("connected", "device_online", "firmware_version", "protocol_match"):
@@ -415,7 +415,7 @@ def test_a_port_that_resolves_is_not_the_same_as_a_screen_that_answers(api, fake
         _configured(port),
         {"knomi_serial T0_knomi": {"connected": True, "device_online": False}},
     )
-    screen = api.display_list({})["displays"][0]
+    screen = api.device_list({})["displays"][0]
 
     assert screen["present"] is True
     assert screen["connected"] is True
@@ -423,7 +423,7 @@ def test_a_port_that_resolves_is_not_the_same_as_a_screen_that_answers(api, fake
 
 
 def _with_display_type(api, paths, fake_root):
-    """display_status short-circuits with no PlatformIO type - add one."""
+    """pio_status short-circuits with no PlatformIO type - add one."""
     with open(paths.registry_file, "a", encoding="utf-8") as fh:
         fh.write(
             f"\n[firmware knomi_serial]\nsource: {fake_root}\nbuilder: platformio\n\n"
@@ -442,7 +442,7 @@ def test_a_protocol_mismatch_makes_the_type_need_flashing(api, paths, fake_root)
         _configured(port),
         {"knomi_serial T0_knomi": {"protocol_match": False, "module_version": "0.4.0"}},
     )
-    display = api.display_status()[0]
+    display = api.pio_status()[0]
 
     assert display["needs_flash"] is True
     assert display["module_version"] == "0.4.0"
@@ -458,7 +458,7 @@ def test_an_unknown_protocol_is_not_treated_as_a_mismatch(api, paths, fake_root)
     api._call = _moonraker_live(
         _configured(port), {"knomi_serial T0_knomi": {"protocol_match": None}}
     )
-    assert api.display_status()[0]["needs_flash"] is False
+    assert api.pio_status()[0]["needs_flash"] is False
 
 
 def test_the_object_list_is_fetched_once_for_mcus_and_displays(api, fake_root):
@@ -474,9 +474,9 @@ def test_the_object_list_is_fetched_once_for_mcus_and_displays(api, fake_root):
         return inner(method, params, timeout)
 
     api._call = counting
-    api.display_list({})
+    api.device_list({})
     api._mcu_object_names()
-    api.display_list({})
+    api.device_list({})
 
     assert calls.count("printer.objects.list") == 1
 
@@ -499,7 +499,7 @@ def test_the_tool_the_screen_belongs_to_reaches_the_caller(api, fake_root):
             }
         },
     )
-    screen = api.display_list({})["displays"][0]
+    screen = api.device_list({})["displays"][0]
 
     assert screen["tool"] == 0
     assert screen["used"] is True
@@ -514,7 +514,7 @@ def test_tool_zero_is_not_confused_with_no_tool(api, fake_root):
     open(port, "w").close()
 
     api._call = _moonraker_live(_configured(port), {"knomi_serial T0_knomi": {"tool": 0}})
-    assert api.display_list({})["displays"][0]["tool"] == 0
+    assert api.device_list({})["displays"][0]["tool"] == 0
 
 
 def test_a_module_without_the_tool_fields_reports_them_as_unknown(api, fake_root):
@@ -522,7 +522,7 @@ def test_a_module_without_the_tool_fields_reports_them_as_unknown(api, fake_root
     open(port, "w").close()
 
     api._call = _moonraker_live(_configured(port), {"knomi_serial T0_knomi": {}})
-    screen = api.display_list({})["displays"][0]
+    screen = api.device_list({})["displays"][0]
 
     for field in ("tool", "used", "filament_color", "filament_type"):
         assert screen[field] is None, field
@@ -549,7 +549,7 @@ def test_a_serial_addressed_screen_still_reports_its_own_identity(api, fake_root
         _configured(port),
         {"knomi_serial T0_knomi": {"reported_id": "19aa44", "device_id": None}},
     )
-    display = api.display_list({})["displays"][0]
+    display = api.device_list({})["displays"][0]
 
     assert display["addressed_by"] == "serial"
     assert display["device_id"] is None, "printer.cfg names a socket, not a display"
@@ -565,7 +565,7 @@ def test_a_reported_id_is_lowered_because_the_docs_say_not_to_trust_the_case(
     api._call = _moonraker_live(
         _configured(port), {"knomi_serial T0_knomi": {"reported_id": "19AA44"}}
     )
-    assert api.display_list({})["displays"][0]["reported_id"] == "19aa44"
+    assert api.device_list({})["displays"][0]["reported_id"] == "19aa44"
 
 
 def test_a_screen_that_has_never_answered_reports_no_identity(api, fake_root):
@@ -575,7 +575,7 @@ def test_a_screen_that_has_never_answered_reports_no_identity(api, fake_root):
     open(port, "w").close()
 
     api._call = _moonraker_live(_configured(port), {"knomi_serial T0_knomi": {}})
-    assert api.display_list({})["displays"][0]["reported_id"] is None
+    assert api.device_list({})["displays"][0]["reported_id"] is None
 
 
 def test_a_pushed_config_is_separable_from_an_applied_one(api, fake_root):
@@ -595,7 +595,7 @@ def test_a_pushed_config_is_separable_from_an_applied_one(api, fake_root):
             }
         },
     )
-    display = api.display_list({})["displays"][0]
+    display = api.device_list({})["displays"][0]
 
     assert display["config_applied"] is False
     assert display["config_crc"] == "DEADBEEF"
@@ -617,7 +617,7 @@ def test_a_protocol_mismatch_can_say_which_way_round_it_is(api, fake_root):
             }
         },
     )
-    display = api.display_list({})["displays"][0]
+    display = api.device_list({})["displays"][0]
 
     assert display["protocol_match"] is False
     assert display["protocol_version"] == 5
@@ -632,7 +632,7 @@ def test_every_new_field_is_none_against_a_module_too_old_to_report_it(api, fake
     open(port, "w").close()
 
     api._call = _moonraker_live(_configured(port), {"knomi_serial T0_knomi": {}})
-    display = api.display_list({})["displays"][0]
+    display = api.device_list({})["displays"][0]
 
     for field in (
         "reported_id",
@@ -699,7 +699,7 @@ def test_the_map_is_read_when_klipper_cannot_answer(api, paths):
     _write_map(paths, GOOD_MAP)
     api._call = _moonraker({}, reachable=False)
 
-    res = api.display_list({})
+    res = api.device_list({})
     assert res["reachable"] is False
     assert [d["device_id"] for d in res["watcher"][env]["devices"]] == ["19aa44"]
 
@@ -715,7 +715,7 @@ def test_the_map_is_not_consulted_while_klipper_is_answering(api, paths, monkeyp
     monkeypatch.setattr("mcu_updater.service.SystemdService.is_active", boom)
     api._call = _moonraker({})
 
-    assert api.display_list({})["watcher"] is None
+    assert api.device_list({})["watcher"] is None
 
 
 def test_an_entry_carries_what_the_screen_reported(paths):
@@ -813,4 +813,4 @@ def test_the_map_file_mtime_is_reported(api, paths):
     _write_map(paths, GOOD_MAP)
     api._call = _moonraker({}, reachable=False)
 
-    assert api.display_list({})["watcher"][env]["updated"] is not None
+    assert api.device_list({})["watcher"][env]["updated"] is not None

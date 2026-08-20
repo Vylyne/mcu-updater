@@ -4,7 +4,7 @@ Files are split by *what they are*, following the `printer_data` conventions.
 
 ```
 ~/printer_data/config/mcu-updater/     # hand-edited. backed up. editable in Mainsail.
-    mcu-updater.cfg                        #   [updater] settings + one [mcu ...]/[type ...] per board
+    mcu-updater.cfg                        #   [updater] settings + one [firmware ...]/[type ...] per board
     types/bttebb36/klipper.config          #   saved menuconfig answers, per type
     types/flylllplusbuffer/klipper.config
     types/carto_v4/cartographer.custom.config  #   your own answers, kept before a reseed would overwrite them
@@ -64,8 +64,9 @@ is one file to find, one file to back up, and one file to open in Mainsail:
 enable_flashing: true
 
 # Toolhead boards. The buffer patch is specific to this batch.
-[mcu flylllplusbuffer]
+[type flylllplusbuffer]
 chipset: stm32f072xb
+firmware: klipper, katapult
 serials:
     4C0033000957465331323720-if00
     3F0037000957465331323720-if00
@@ -75,22 +76,21 @@ klipper_makefile_patches:
 
 | Key | Meaning |
 | --- | --- |
-| `chipset` | Required. Matches the chipset segment of the `/dev/serial/by-id` name. |
+| `chipset` | Required on every type, PlatformIO included. Matches the chipset segment of the `/dev/serial/by-id` name. |
 | `serials` | One tracked board per line. |
-| `firmware` | Which family this board runs, e.g. `cartographer`. Default `klipper` — see `[firmware ...]` sections, below. |
-| `katapult_installed` | Only written when `false`; a board with no bootloader is the exception. |
+| `firmware` | A **list** of the families this board runs, e.g. `cartographer, katapult`. A type with no bootloader simply omits it. See `[firmware ...]` sections, below. |
 | `profile` | The vendor answer file the config was seeded from, e.g. `config.CartoV4USB`. |
 | `<fw>_extra_args` | Appended to the `make` command line. |
 | `<fw>_makefile_patches` | `<file> -> <line>`, appended to that Makefile for one build then reverted. |
 
-`<fw>` is `klipper`, `katapult`, or a declared family's name.
+`<fw>` is any family named in `firmware:`.
 
-`[mcu <name>]` is shorthand for `[type <name>]` with `provider: kconfig_make` —
-the Kconfig+`make` build system klipper and katapult both use. ESP32 displays
-are the other provider: `[display <name>]` means `provider: platformio`. A
-section keeps whatever spelling it already has; both prefixes stay readable
-indefinitely, since they're in hand-edited files on printers nobody is
-watching.
+`builder:` lives on `[firmware ...]`, not on `[type ...]` — how a tree
+compiles is a property of the tree, not of a board that happens to use it. A
+type declaring only `[firmware ...]` sections whose builder is `platformio`
+needs no Kconfig and no Katapult; the env named by `env:` is the type. There
+is no `provider:` key on `[type ...]` — it is derived from the families the
+type names.
 
 A source tree that doesn't follow the `~/<name>` / `out/<name>.bin` convention
 — any vendor fork, e.g. Cartographer's — gets a `[firmware <name>]` section of
@@ -99,9 +99,9 @@ its own, with `source:` and `artifact:` keys. See the main
 
 The `[updater]` section holds `make_jobs`, `clean_before_build`,
 `reseed_on_build`, `service`, `service_backend`, `dry_run`, `enable_flashing`,
-`allow_flash_while_printing`, `log_ring_size`, and — for ESP32 displays —
-`pio_source` (still read as `display_source`, its old name) and
-`platformio_bin`. All optional.
+`allow_flash_while_printing`, `log_ring_size` and `platformio_bin`. All
+optional. A PlatformIO firmware family's own source tree is named on its
+`[firmware ...]` section, not in `[updater]`.
 
 **Edit the existing `[updater]` section rather than appending a second one.** A
 duplicate section is refused outright: first-wins would mean
@@ -153,6 +153,13 @@ Every path derives from one `Paths` object, so nothing is hardcoded elsewhere:
 | `MCU_UPDATER_FAKE_BUS` | `/dev/serial/by-id` |
 
 ## Coming from the old layout
+
+**Historical.** Both migrations below predate the schema-first rebuild
+(`docs/rebuild-plan.md`) and describe moves off layouts nothing still ships;
+`scripts/migrate_config.py` is what carries an install from the pre-rebuild
+`[mcu ...]`/`[display ...]`/single-`firmware`-key config into the current
+target schema. Kept for an install that never made either of these earlier
+moves.
 
 ### Per-type folders → `types/`
 

@@ -418,7 +418,7 @@ class Api:
         # the same things as these two in one shape; if it ever needs a fact
         # they do not carry, that is a missing key here, not there.
         types = [self.type_status(reg, n, versions) for n in reg.names()]
-        displays = self.display_status()
+        displays = self.pio_status()
         return {
             "bus": self.bus(reg),
             "job": current.to_dict() if current else None,
@@ -446,7 +446,7 @@ class Api:
             "targets": self.targets(reg, types, displays),
         }
 
-    def display_status(self) -> list[dict[str, Any]]:
+    def pio_status(self) -> list[dict[str, Any]]:
         """Configured display types, each with the screens Klipper expects.
 
         Rolled into fw.status so the panel paints in one call, like everything
@@ -455,11 +455,11 @@ class Api:
         """
         from ..providers import pio as pio_mod
 
-        types = self.display_types()
+        types = self.pio_types()
         if not types:
             return []
 
-        listed = self.display_list({})
+        listed = self.device_list({})
 
         out = []
         for _name, display in sorted(types.items()):
@@ -631,7 +631,7 @@ class Api:
         return [
             self._mcu_target(reg, payload, allowed, configurable, families)
             for payload in types
-        ] + [self._display_target(payload, allowed) for payload in displays]
+        ] + [self._pio_target(payload, allowed) for payload in displays]
 
     def _mcu_target(
         self,
@@ -756,8 +756,6 @@ class Api:
             # vocabulary that only had two words in it - and a reader switching on
             # it was re-deriving what the provider registry already knows.
             "provider": providers.KconfigMake.name,
-            # Deprecated alias for `provider`. A deployed panel switches on it.
-            "kind": "mcu",
             "name": name,
             "descriptor": payload["chipset"],
             "firmware": fw,
@@ -850,7 +848,7 @@ class Api:
             )
         return out
 
-    def _display_target(
+    def _pio_target(
         self, payload: dict[str, Any], allowed: set[str]
     ) -> dict[str, Any]:
         name = payload["name"]
@@ -885,7 +883,7 @@ class Api:
             )
 
         actions: list[dict[str, Any]] = []
-        if "fw.display.build" in allowed:
+        if "fw.build" in allowed:
             # PlatformIO carries its own configuration in platformio.ini, so
             # there is no menuconfig step to be missing - but there is still a
             # tree to have cloned, and that is the same kind of once-per-target
@@ -896,7 +894,7 @@ class Api:
                 {
                     "id": "build",
                     "label": "Build",
-                    "method": "fw.display.build",
+                    "method": "fw.build",
                     "params": {"name": name},
                     "blocked": (
                         None
@@ -921,8 +919,6 @@ class Api:
 
         return {
             "provider": providers.PlatformIO.name,
-            # Deprecated alias for `provider`. A deployed panel switches on it.
-            "kind": "display",
             "name": name,
             "descriptor": payload["env"],
             # Displays are built by PlatformIO from their own tree rather than
@@ -1533,7 +1529,7 @@ class Api:
         section somebody deleted, and defaulting it to kconfig would produce
         "no saved klipper config" for a screen.
         """
-        if name in self.display_types():
+        if name in self.pio_types():
             return providers.PlatformIO.name
         if name in self.registry().names():
             return providers.KconfigMake.name
@@ -1545,7 +1541,7 @@ class Api:
                 "data": {
                     "name": name,
                     "known": sorted(
-                        set(self.registry().names()) | set(self.display_types())
+                        set(self.registry().names()) | set(self.pio_types())
                     ),
                 },
             },
@@ -1949,13 +1945,6 @@ class Api:
         "fw.bus.scan": "bus_scan",
         "fw.dfu.scan": "dfu_scan",
         "fw.device.list": "device_list",
-        # Named a build system in the method rather than routing by the type's
-        # own provider. `fw.build` and `fw.flash` answer for every kind now;
-        # `fw.display.flash` retired once nothing called it (Step 14) - these
-        # two stay registered because a panel built before the routing
-        # unified is still calling them, and they are two lines each.
-        "fw.display.list": "display_list",
-        "fw.display.build": "display_build",
         "fw.artifacts": "artifacts",
         "fw.settings.get": "settings_get",
         "fw.settings.set": "settings_set",
@@ -1998,7 +1987,6 @@ class Api:
         "fw.flash_all",
         "fw.update_all",
         "fw.add_mcu.start",
-        "fw.display.build",
         # Seeding is a job for its runtime, not its danger - it writes a
         # .config and touches no hardware - but a job is a job, and a read-only
         # agent has no runner to submit one to.
@@ -2046,11 +2034,6 @@ class Api:
 
     # -- ESP32 displays -----------------------------------------------------
 
-    def display_list(self, args: dict) -> dict[str, Any]:
-        """Deprecated alias for `fw.device.list`. Kept because a deployed panel
-        calls it."""
-        return self.device_list(args)
-
     def device_list(self, args: dict) -> dict[str, Any]:
         """The devices Klipper is configured for, and whether they are there.
 
@@ -2081,7 +2064,7 @@ class Api:
         # display with its own klippy module declares a different one. Falls back
         # to knomi_serial so this still answers before any [display] section
         # exists, which is how it gets used while setting one up.
-        prefixes = {d.klipper_section for d in self.display_types().values()}
+        prefixes = {d.klipper_section for d in self.pio_types().values()}
         prefixes.discard("")
         if not prefixes:
             prefixes = {"knomi_serial"}
@@ -2261,7 +2244,7 @@ class Api:
 
         settings = self.settings()
         out: dict[str, Any] = {}
-        for name, display in self.display_types().items():
+        for name, display in self.pio_types().items():
             svc = (
                 make_controller(settings, call=self._call_for_service, name=display.service)
                 if display.service
@@ -2282,26 +2265,17 @@ class Api:
             }
         return out
 
-    def display_types(self) -> dict:
+    def pio_types(self) -> dict:
         """Configured `[display <env>]` sections."""
         from ..providers import pio as pio_mod
 
         return pio_mod.load(self.paths)
 
-    def display_build(self, args: dict) -> dict[str, Any]:
-        """Deprecated alias for `fw.build`. Kept because a deployed panel calls it.
-
-        Nothing here is display-shaped: `fw.build` routes by the type's provider,
-        so this is the same call with a name that says which build system to use
-        - which is the thing the caller should not have had to know.
-        """
-        return self._pio_build(args)
-
     def _pio_build(self, args: dict) -> dict[str, Any]:
         """Compile one PlatformIO env. Touches no hardware."""
         runner = self._require_runner()
         name = self._require_str(args, "name")
-        types = self.display_types()
+        types = self.pio_types()
         if name not in types:
             raise RpcError(
                 f"no PlatformIO type '{name}' is configured.",
@@ -2351,7 +2325,7 @@ class Api:
             )
 
         name = self._require_str(args, "name")
-        types = self.display_types()
+        types = self.pio_types()
         if name not in types:
             raise RpcError(
                 f"no PlatformIO type '{name}' is configured.",
@@ -2906,9 +2880,9 @@ class Api:
         cannot be written to. `scope: all` overrides the judgement, never the
         physics.
         """
-        known = self.display_types()
+        known = self.pio_types()
         out: list[flashers.FlashTarget] = []
-        for payload in self.display_status():
+        for payload in self.pio_status():
             if only is not None and payload["name"] != only:
                 continue
             if not payload["has_firmware"]:
@@ -3087,7 +3061,7 @@ class Api:
         and refusing a display here would be the kind filter creeping back in
         through the front door.
         """
-        if only in reg.names() or only in self.display_types():
+        if only in reg.names() or only in self.pio_types():
             return only
         reg.get(only)  # raises with the registry's own unknown_type payload
         return only

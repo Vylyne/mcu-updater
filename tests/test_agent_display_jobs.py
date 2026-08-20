@@ -282,10 +282,10 @@ def test_a_build_touches_no_display_and_needs_no_flash_permission(
     agent = Api(paths, runner=runner, call=_moonraker(screens))
 
     caps = agent.dispatch("fw.ping")["capabilities"]
-    assert "fw.display.build" in caps
+    assert "fw.build" in caps
     assert "fw.flash" not in caps
 
-    res = agent.dispatch("fw.display.build", {"name": ENV})
+    res = agent.dispatch("fw.build", {"name": ENV})
     assert runner.wait(timeout=30)
     job = runner.get(res["job_id"])
 
@@ -586,7 +586,7 @@ def _built(api, paths, fake_root) -> None:
     """An image on disk for the display env, so there is something to write."""
     from mcu_updater.providers import pio as dm
 
-    display = api.display_types()[ENV]
+    display = api.pio_types()[ENV]
     path = pathlib.Path(dm.firmware_bin(display))
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(b"\0" * 512)
@@ -648,13 +648,13 @@ def test_a_fleet_flash_writes_boards_and_screens_under_one_stop(
 # --------------------------------------------------------------------------
 # one method per operation, whichever build system owns the type
 #
-# `fw.display.build` and (formerly) `fw.display.flash` named a build system in
-# the method, so a caller had to know which kind of thing it was addressing
-# before it could pick one - which is the branching the Provider and Flasher
-# seams removed everywhere else. `fw.build` and `fw.flash` route on the type's
-# own provider. `fw.display.flash` retired once nothing called it (Step 14);
-# `fw.display.build` stays registered: a panel built before this is still
-# calling it.
+# `fw.display.build` and `fw.display.flash` used to name a build system in the
+# method, so a caller had to know which kind of thing it was addressing before
+# it could pick one - which is the branching the Provider and Flasher seams
+# removed everywhere else. `fw.build` and `fw.flash` route on the type's own
+# provider instead. Both display-specific methods are retired now that
+# nothing calls them (Step 14 for `fw.display.flash`, Step 16 for
+# `fw.display.list`/`fw.display.build`).
 # --------------------------------------------------------------------------
 
 
@@ -688,16 +688,6 @@ def test_the_uniform_id_slot_pins_one_device(api, no_pio, screens):
 
     assert job.state == "succeeded", job.error
     assert [f["port"] for f in job.result["flashed"]] == [port]
-
-
-def test_the_old_method_names_still_answer(api, no_pio):
-    """They are two lines each, and they are what a deployed panel calls."""
-    assert "displays" in api.dispatch("fw.display.list")
-    assert "displays" in api.dispatch("fw.device.list")
-
-    res = api.dispatch("fw.display.build", {"name": ENV})
-    assert api.runner.wait(timeout=30)
-    assert api.runner.get(res["job_id"]).state == "succeeded"
 
 
 def test_a_name_belonging_to_no_type_is_refused_rather_than_guessed(api, no_pio):

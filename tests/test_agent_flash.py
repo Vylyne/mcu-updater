@@ -103,8 +103,6 @@ def flashable_non_klipper(paths, live_registry_text, fake_root):
             "serials:\n"
             f"    {CARTOGRAPHER_SERIAL}\n"
         )
-    with open(paths.main_config, "a", encoding="utf-8") as fh:
-        fh.write("\n[firmware cartographer]\nsource: ~/carto\nartifact: klipper\n")
     _write_settings(paths, enable_flashing="true")
     os.makedirs(paths.artifact_dir("carto_v4"), exist_ok=True)
     with open(paths.bin_file("carto_v4", "cartographer"), "wb") as fh:
@@ -186,7 +184,7 @@ def test_an_untracked_serial_is_rejected(flashable):
 def test_a_serial_belonging_to_another_type_is_refused_outright(flashable):
     """A strong signal of a wrong selection, so it is refused rather than adopted."""
     with pytest.raises(RpcError) as exc:
-        flashable.dispatch("fw.flash", {"serial": TRACKED_SERIAL, "name": "bttmmbv1"})
+        flashable.dispatch("fw.flash", {"serial": TRACKED_SERIAL, "name": "OctopusMAXEZ"})
     assert exc.value.data["code"] == "serial_tracked_elsewhere"
 
 

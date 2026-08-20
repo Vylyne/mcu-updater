@@ -38,10 +38,16 @@ def test_loads_the_live_registry(paths, live_registry_text):
     _write(paths, live_registry_text)
     reg = Registry.load(paths)
 
-    assert reg.names() == ["bttebb36", "bttmmbv1", "flylllplusbuffer", "sv08Mainboard"]
-    assert len(reg.all_serials()) == 10
+    assert reg.names() == [
+        "OctopusMAXEZ",
+        "bttebb36",
+        "cartographer",
+        "flylllplusbuffer",
+        "hexadistrofusion",
+    ]
+    assert len(reg.all_serials()) == 12
     assert len(reg.get("flylllplusbuffer").serials) == 6
-    assert reg.get("sv08Mainboard").chipset == "stm32f103xe"
+    assert reg.get("hexadistrofusion").chipset == "stm32f072xb"
 
 
 def test_makefile_patches_parse_from_the_arrow_form(paths, live_registry_text):
@@ -131,20 +137,20 @@ def test_repeated_edits_do_not_grow_the_file(paths, live_registry_text):
     _write(paths, live_registry_text)
     for i in range(5):
         reg = Registry.load(paths)
-        reg.add_serial("bttmmbv1", f"S{i}-if00")
+        reg.add_serial("OctopusMAXEZ", f"S{i}-if00")
         reg.save(paths)
     out = _read(paths)
     assert "\n\n\n" not in out
-    assert out.count("[type bttmmbv1]") == 1
+    assert out.count("[type OctopusMAXEZ]") == 1
 
 
 def test_removing_a_type_removes_only_its_section(paths, live_registry_text):
     _write(paths, live_registry_text)
     reg = Registry.load(paths)
-    reg.remove_type("bttmmbv1")
+    reg.remove_type("OctopusMAXEZ")
     reg.save(paths)
     out = _read(paths)
-    assert "bttmmbv1" not in out
+    assert "OctopusMAXEZ" not in out
     assert "[type bttebb36]" in out
     assert "# mcu-updater configuration." in out
 
@@ -153,13 +159,13 @@ def test_a_new_type_is_appended_and_reloads(paths, live_registry_text):
     _write(paths, live_registry_text)
     reg = Registry.load(paths)
     reg.add_type("hexa", "stm32f072xb")
-    reg.add_serial("hexa", "4B0036000A53594731383520-if00")
+    reg.add_serial("hexa", "0000000000000000000000000-if00")
     reg.save(paths)
 
     again = Registry.load(paths)
     assert again.get("hexa").chipset == "stm32f072xb"
-    assert again.get("hexa").serials == ["4B0036000A53594731383520-if00"]
-    assert len(again) == 5
+    assert again.get("hexa").serials == ["0000000000000000000000000-if00"]
+    assert len(again) == 6
 
 
 def test_defaults_are_not_restated_in_the_file(paths):
@@ -245,7 +251,8 @@ def test_add_and_remove_serial_report_whether_they_acted(paths):
 def test_resolve_serial_unique_match(paths, live_registry_text):
     _write(paths, live_registry_text)
     assert (
-        Registry.load(paths).resolve_serial("36FFD9054755303923891357-if00") == "sv08Mainboard"
+        Registry.load(paths).resolve_serial("4B0036000A53594731383520-if00")
+        == "hexadistrofusion"
     )
 
 
@@ -269,15 +276,16 @@ def test_resolve_serial_ambiguous(paths):
 def test_resolve_serial_tracked_elsewhere_is_refused_not_offered(paths, live_registry_text):
     _write(paths, live_registry_text)
     with pytest.raises(SerialTrackedElsewhereError) as exc:
-        Registry.load(paths).resolve_serial("36FFD9054755303923891357-if00", "bttmmbv1")
-    assert exc.value.data["tracked_under"] == ["sv08Mainboard"]
+        Registry.load(paths).resolve_serial("4B0036000A53594731383520-if00", "OctopusMAXEZ")
+    assert exc.value.data["tracked_under"] == ["hexadistrofusion"]
 
 
 def test_resolve_serial_with_matching_type(paths, live_registry_text):
     _write(paths, live_registry_text)
     reg = Registry.load(paths)
     assert (
-        reg.resolve_serial("36FFD9054755303923891357-if00", "sv08Mainboard") == "sv08Mainboard"
+        reg.resolve_serial("4B0036000A53594731383520-if00", "hexadistrofusion")
+        == "hexadistrofusion"
     )
 
 
@@ -344,7 +352,7 @@ def test_the_file_stays_valid_klipper_style_cfg(paths, live_registry_text):
     _write(paths, live_registry_text)
     doc = CfgDocument(live_registry_text)
     assert doc.section_names("type")
-    assert doc.get("type sv08Mainboard", "chipset") == "stm32f103xe"
+    assert doc.get("type hexadistrofusion", "chipset") == "stm32f072xb"
 
 
 # --------------------------------------------------------------------------

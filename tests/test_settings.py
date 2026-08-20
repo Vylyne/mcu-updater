@@ -96,8 +96,14 @@ def test_saving_settings_keeps_the_mcu_sections_and_the_comments(paths, live_reg
     assert "src/Makefile -> src-y += buffer.c" in out
 
     reg = Registry.load(paths)
-    assert reg.names() == ["bttebb36", "bttmmbv1", "flylllplusbuffer", "sv08Mainboard"]
-    assert len(reg.all_serials()) == 10
+    assert reg.names() == [
+        "OctopusMAXEZ",
+        "bttebb36",
+        "cartographer",
+        "flylllplusbuffer",
+        "hexadistrofusion",
+    ]
+    assert len(reg.all_serials()) == 12
     assert load_settings(paths.settings_file).enable_flashing is True
 
 

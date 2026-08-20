@@ -1954,6 +1954,134 @@ surprises:  The plan's own ten-bullet table undersold how much of this step
             pattern-matching on the table's phrasing is the main finding of
             this step, more than any individual line changed.
 
+### Step 15 — sample config and fixtures            [done-with-deviation]
+commit:     (uncommitted at log time)
+gate:       pytest 1156 passed/0 failed/10 skipped · ruff ok · mypy ok · line-endings ok
+            · mutation specs touching edited files, each run individually:
+            add-mcu.json (6/6 CAUGHT), bulk-operations.json (13/13 CAUGHT),
+            dfu-pairings.json (6/6 CAUGHT - 1 stale anchor found and fixed,
+            see deviation), display-flash.json (9/9 CAUGHT), pio.json
+            (9/9 CAUGHT), provider-family-axis.json (2/2 CAUGHT)
+deviation:  **The rewritten sample already matches the target schema exactly**
+            - `scripts/migrate_config.py` against it reports "already up to
+            date, nothing to migrate", satisfying this step's own gate note
+            without a separate proof step.
+
+            **A real bug in `config.py`'s `Registry.load()` was found, not
+            fixed.** `McuType`'s per-type loop (`config.py:380`,
+            `for fw in fw_names:`) seeds an empty `FwConfig` slot for *every*
+            globally-declared `[firmware ...]` family, not just the two
+            builtins - so now that the real config declares `cartographer`
+            and `knomi_serial`, every type (including plain STM32 boards
+            with no relation to either) carries phantom "never built"
+            artifact entries for both. This leaks into `fw.artifacts`,
+            `fw.type.list`, and `type_status()` for every board in
+            production. Confirmed as a real defect (not a fixture issue) by
+            loading the live sample directly and inspecting `mcu.fws`.
+            Escalated via AskUserQuestion rather than fixed inline, since
+            Step 15 is scoped to fixtures and this is a `config.py` loader
+            defect the plan didn't ask this step to touch - **Vi chose to
+            defer it**, not fix it now. Two test assertions
+            (`test_artifacts_returns_both_firmwares`,
+            `test_status_type_shape`) now pin the current (buggy) behaviour
+            explicitly, commented as a known bug, so the leak is visible
+            rather than silently re-baselined. Belongs to a future step or a
+            standalone fix.
+
+            **`bttmmbv1`/`sv08Mainboard` (the two placeholder types the old
+            sample invented) map onto real fixture types, not 1:1 by
+            coincidence but by structural role:** `sv08Mainboard`
+            (single-serial, standalone chipset) → `hexadistrofusion`;
+            `bttmmbv1` (single-serial, standalone chipset, distinct from
+            `bttebb36`) → `OctopusMAXEZ`. Every `make_device`/serial-add call
+            site using the old pair's chipset needed its chipset updated to
+            match the real replacement (`stm32f103xe`→`stm32f072xb` for the
+            first pair, `stm32g0b1xx`→`stm32h723xx` for the second) - the
+            by-id chipset segment is load-bearing for device-to-type
+            matching, not cosmetic.
+
+            **Two `NEW_UID`/`NEW_DFU`-shaped DFU test constants
+            (`test_pairings.py`, `test_agent_dfu.py`) collided with real
+            tracked serials once the sample grew from 4 to 12 serials**,
+            since both were captured/derived from an actual BTT EBB36 serial
+            that the real config now legitimately tracks under `bttebb36`
+            from the start. Recomputed fresh UID/DFU-serial pairs by running
+            `dfu_serial_for`'s own algorithm forward (and, for the
+            "twin"/collision tests, solving it backward for a specific
+            target DFU string) rather than picking arbitrary strings - the
+            derivation has to be real for `dfu_serial_for` to accept it.
+
+            **Every test that appended its own `[firmware cartographer]` or
+            `[firmware knomi_serial]` section on top of `live_registry_text`
+            now collides**, since the real sample declares both globally.
+            `CfgDocument`/`Registry.load()` refuses a duplicate section
+            outright (`ConfigCorruptError`), but `pio.load()`/
+            `firmware.load_from_doc()` do not - they silently let the later
+            declaration win via plain dict overwrite, which is *worse* than
+            an error for a test that thinks it is exercising an override and
+            is actually running against nothing. Fixed by, in order of
+            preference: (1) drop the redundant append and rely on the
+            fixture's own family where the test doesn't care about the
+            specific `source:` value; (2) build the real source tree at
+            `paths.home/knomi_serial` / rely on the real `~/cartographer-klipper`
+            already-missing-in-tests convention, when the test needs a
+            present-or-absent tree; (3) declare a distinctly-named family
+            (`knomi_missing`, e.g.) only when the test's whole point is
+            proving behaviour for a *different* source value than the real
+            one (a deliberately-broken/nonexistent tree). Touched:
+            `test_agent_targets.py`, `test_agent_bulk.py`,
+            `test_agent_displays.py`, `test_agent_display_jobs.py`,
+            `test_pio.py`.
+
+            **Two tests asserting "no displays configured at all" broke on
+            a premise that stopped being true**: `live_registry_text` now
+            always carries `[type knomi]`, so a test built on the shared
+            `api` fixture (which loads it) could no longer represent "an
+            unconfigured host". Both (`test_agent_targets.py`'s
+            `test_a_printer_with_no_screens_has_no_display_targets`,
+            `test_agent_displays.py`'s
+            `test_a_printer_with_no_displays_pays_nothing`) switched to a
+            bare `paths` fixture and construct their own `Api` directly.
+
+            **`test_configured_displays_appear_in_status` indexed
+            `display_status()[0]`, which stopped being safe** once the real
+            `[type knomi]` and the test's own synthetic display type both
+            resolve through the shared `knomi_serial` family - two entries
+            now, not one. Fixed by looking the entry up by name instead of
+            by position.
+
+            **`test_status_fetches_the_version_map_once_not_once_per_type`'s
+            fake Moonraker call always returned `None`**, which happened to
+            never matter while the sample had no display (only one code path
+            ever asked `_all_object_names()` per status call). With a real
+            display now present, `display_status()` asks the same cache a
+            second time for a different prefix - and a `None` response
+            defeats `_all_object_names`'s TTL cache on every call, so the
+            probe fired twice instead of the once a real Moonraker response
+            would allow. Fixed the fake to return a real `{"objects": [...]}"`
+            shape (matching what Moonraker actually sends), which lets the
+            cache do its job between the two prefix lookups - the more
+            faithful fix, rather than loosening the assertion to tolerate a
+            fake that no live backend would produce. The `printer.objects.query`
+            budget also grew by one for the same reason (an MCU version
+            query, an activity probe, and now a display's own live-status
+            query are three genuinely distinct things being asked, not one
+            thing asked three times) and the comment/assert were updated to
+            say so.
+untested:   Nothing new needs real hardware - purely fixture and test-file
+            changes, no source under `src/` touched except as noted in the
+            config.py finding above (which was found, not fixed).
+surprises:  `CfgDocument`'s own duplicate-section detection
+            (`duplicate_sections`) is only ever *checked* by `Registry.load()`
+            (`config.py`) - `pio.load()`/`firmware.load_from_doc()` parse the
+            same document and silently let a later section win via dict
+            overwrite instead of raising. Worth knowing for any future
+            fixture work: a duplicate family/type section is loud from the
+            `[type ...]` side and completely silent from the PlatformIO
+            side, which is exactly backwards from where you'd expect the
+            danger (PlatformIO family/source resolution silently picking the
+            wrong tree) to be caught.
+
 ---
 
 ## Appendix B — open items, not in scope

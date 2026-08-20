@@ -5,6 +5,30 @@ session start, struck through when acted on, not deleted.
 
 ---
 
+## 2026-08-20 — Step 15 found a real config.py bug, deferred not fixed
+
+While rewriting `mcu-updater.cfg` in the target schema (Step 15,
+`docs/rebuild-plan.md`), `Registry.load()`'s per-type loop
+(`src/mcu_updater/config.py:380`, `for fw in fw_names:`) turned out to seed
+an empty `FwConfig` slot for **every** globally-declared `[firmware ...]`
+family, not just the two builtins (`klipper`, `katapult`). The real config
+now declares `[firmware cartographer]` and `[firmware knomi_serial]`, so
+every type - including plain STM32 boards with nothing to do with either -
+picks up phantom "never built" artifact entries for both. Confirmed real
+(not a fixture issue) by loading the sample directly and inspecting
+`mcu.fws`; leaks into `fw.artifacts`, `fw.type.list`, and `type_status()`
+for every board.
+
+Escalated rather than fixed inline, since it's outside Step 15's scope
+(fixture-only). **Vi's answer: note it, don't fix yet.** Two tests
+(`test_artifacts_returns_both_firmwares`, `test_status_type_shape` in
+`tests/test_agent_methods.py`) now pin the current, buggy behaviour
+explicitly and are commented as a known bug - so a future fix has a clear
+"this should go back to the narrower set" marker rather than having to
+rediscover the leak from scratch. The likely fix is narrowing
+`config.py:380`'s loop to `firmware.BUILTIN` instead of `fw_names` - see
+Step 15's Progress log entry for the full reasoning.
+
 ## 2026-08-20 — Step 16 must confirm the Mainsail fork against two Step 14 wire changes
 
 Step 14's legacy purge made two breaking changes to the agent's JSON-RPC
@@ -54,13 +78,16 @@ cannot verify from a dev box:
 Try `mcu-updater add-mcu <rp2040-type>` on a bench board (never the toolhead)
 once one is available, and update this entry once it's confirmed either way.
 
-## 2026-08-19 — Printer config to migrate
+## ~~2026-08-19 — Printer config to migrate~~
 
-The real printer config (cartographer, knomi, OctopusMAXEZ,
+~~The real printer config (cartographer, knomi, OctopusMAXEZ,
 hexadistrofusion), captured before Step 1 of `docs/rebuild-plan.md` reverted
 `mcu-updater.cfg` to its pre-`ffcc210` state. This is the input to Step 11
 (migration script) and Step 15 (sample config rewrite) — the post-migration
-schema this file should end up expressing.
+schema this file should end up expressing.~~
+
+Struck through 2026-08-20: Step 15 rewrote `mcu-updater.cfg` from this
+content in the target schema. The content is kept below for the record.
 
 ```ini
 # mcu-updater configuration.

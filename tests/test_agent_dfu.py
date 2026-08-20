@@ -224,8 +224,19 @@ def test_a_tracked_board_in_dfu_is_named(paths, live_registry_text, monkeypatch)
 
 def test_an_unrecognised_board_is_simply_unnamed(api, monkeypatch):
     """Which is what a genuinely new board looks like - useful in itself, and not
-    an error."""
-    patch_dfu(monkeypatch, stdout=ONE_BOARD)
+    an error.
+
+    Deliberately not ONE_BOARD - live_registry_text now tracks the real board
+    its DFU serial derives from (27000E000551343438333339-if00, under
+    bttebb36), so that serial is no longer "unrecognised". This is
+    TWO_BOARDS' second device, which derives from no serial any type here
+    tracks."""
+    stdout = (
+        'Found DFU: [0483:df11] ver=0200, devnum=52, cfg=1, intf=0, '
+        'path="6-1.6.6.1.4", alt=0, name="@Internal Flash /0x08000000/64*02Kg", '
+        'serial="205B33753539"\n'
+    )
+    patch_dfu(monkeypatch, stdout=stdout)
     device = api.dispatch("fw.dfu.scan")["devices"][0]
 
     assert device["tracked_by"] is None
@@ -250,7 +261,7 @@ def test_two_known_boards_mapping_to_one_dfu_serial_name_neither(
     assert dfu_serial_for(twin) == dfu_serial_for(KNOWN_UID)
 
     api.dispatch("fw.serial.add", {"name": "bttebb36", "serial": KNOWN_UID})
-    api.dispatch("fw.serial.add", {"name": "bttmmbv1", "serial": twin})
+    api.dispatch("fw.serial.add", {"name": "OctopusMAXEZ", "serial": twin})
 
     patch_dfu(monkeypatch, stdout=ONE_BOARD)
     device = api.dispatch("fw.dfu.scan")["devices"][0]

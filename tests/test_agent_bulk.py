@@ -28,8 +28,9 @@ EBB = "bttebb36"
 EBB_CHIPSET = "stm32g0b1xx"
 EBB_A = "290055001850304158373620-if00"
 EBB_B = "230048001750304158373620-if00"
-MMB = "bttmmbv1"
-MMB_SERIAL = "1F002A000A50304158373420-if00"
+MMB = "OctopusMAXEZ"
+MMB_CHIPSET = "stm32h723xx"
+MMB_SERIAL = "210008000551333231343036-if00"
 
 HEAD = "d7cea5bb1aca70849f28d0bb98ab1b96b9f6db65"
 CURRENT_VERSION = "v0.13.0-711-gd7cea5bb"
@@ -108,33 +109,33 @@ def _add_bootloader(paths, mcu_type: str, fw: str = "katapult") -> None:
 
 
 def _declare_cartographer(paths) -> None:
-    """A type that runs something other than klipper, and the family it names.
+    """A type that runs something other than klipper.
 
-    The registry refuses an undeclared family, so both halves are required -
-    which is also what makes this the realistic shape rather than a fixture
-    convenience.
+    live_registry_text already declares [firmware cartographer] - only the
+    type itself needs adding. The registry refuses an undeclared family, but
+    the family is already there.
     """
     with open(paths.registry_file, "a", encoding="utf-8") as fh:
         fh.write("\n[type carto_v4]\nchipset: stm32g431xx\nfirmware: cartographer\n")
-    with open(paths.main_config, "a", encoding="utf-8") as fh:
-        fh.write("\n[firmware cartographer]\nsource: ~/carto\nartifact: klipper\n")
 
 
-def _declare_display(paths, tmp_path, name="knomi_toolchanger") -> str:
+def _declare_display(paths, name="knomi_toolchanger") -> str:
     """A PlatformIO display with a source tree and nothing built yet.
 
-    The tree has to exist: a display with no source is *skipped* exactly as an
-    MCU type with no saved config is, so a fixture without one would test the
-    skip rather than the build.
+    live_registry_text already declares [firmware knomi_serial] (pointed at
+    ~/knomi_serial) - only the type itself needs adding, reusing that family
+    rather than declaring a second, colliding one. The tree has to exist: a
+    display with no source is *skipped* exactly as an MCU type with no saved
+    config is, so a fixture without one would test the skip rather than the
+    build. paths.home is fake_root, and live_registry_text's family resolves
+    to ~/knomi_serial - not an arbitrary tmp_path - so the tree must be built
+    there for the two to agree.
     """
-    tree = tmp_path / "knomi_serial"
-    (tree / ".pio" / "build" / name).mkdir(parents=True, exist_ok=True)
+    tree = os.path.join(paths.home, "knomi_serial")
+    os.makedirs(os.path.join(tree, ".pio", "build", name), exist_ok=True)
     with open(paths.main_config, "a", encoding="utf-8") as fh:
-        fh.write(
-            f"\n[firmware knomi_serial]\nsource: {tree}\nbuilder: platformio\n\n"
-            f"[type {name}]\nfirmware: knomi_serial\nenv: {name}\n"
-        )
-    return str(tree)
+        fh.write(f"\n[type {name}]\nchipset: esp32\nfirmware: knomi_serial\nenv: {name}\n")
+    return tree
 
 
 @pytest.fixture
@@ -280,7 +281,7 @@ def test_a_fleet_build_reaches_the_screens_too(bulk, paths, tmp_path):
     is the same silence as the cartographer skip and has the same cause.
     """
     _save_config(paths, EBB)
-    _declare_display(paths, tmp_path)
+    _declare_display(paths)
 
     targets = bulk._build_targets(bulk._install(), "all").build
 
@@ -302,7 +303,7 @@ def test_a_named_family_leaves_the_screens_alone(bulk, paths, tmp_path):
     """
     _add_bootloader(paths, EBB)
     _save_config(paths, EBB, fw="katapult")
-    _declare_display(paths, tmp_path)
+    _declare_display(paths)
 
     assert _pairs(bulk, "all", fw="katapult") == [(EBB, "katapult")]
 
@@ -333,8 +334,9 @@ def test_a_display_with_no_source_tree_is_skipped_but_never_silently(bulk, paths
     _save_config(paths, EBB)
     with open(paths.main_config, "a", encoding="utf-8") as fh:
         fh.write(
-            "\n[firmware knomi_serial]\nsource: /nope/not/here\nbuilder: platformio\n\n"
-            "[type knomi_toolchanger]\nfirmware: knomi_serial\nenv: knomi_toolchanger\n"
+            "\n[firmware knomi_missing]\nsource: /nope/not/here\nbuilder: platformio\n\n"
+            "[type knomi_toolchanger]\nchipset: esp32\nfirmware: knomi_missing\n"
+            "env: knomi_toolchanger\n"
         )
 
     selection = bulk._build_targets(bulk._install(), "all")
@@ -483,7 +485,7 @@ def test_naming_a_type_narrows_the_batch_to_it(paths, live_registry_text, fake_r
     _stage_artifact(paths, EBB)
     _stage_artifact(paths, MMB)
     make_device(fake_root / "bus", "Klipper", EBB_CHIPSET, EBB_A)
-    make_device(fake_root / "bus", "Klipper", EBB_CHIPSET, MMB_SERIAL)
+    make_device(fake_root / "bus", "Klipper", MMB_CHIPSET, MMB_SERIAL)
 
     api = Api(paths, call=_moonraker({EBB_A: OLD_VERSION, MMB_SERIAL: OLD_VERSION}))
     monkey_head(api, paths)
@@ -813,7 +815,7 @@ def test_update_all_can_be_narrowed_to_one_type(bulk, paths, fake_root):
     _save_config(paths, EBB)
     _save_config(paths, MMB)
     make_device(fake_root / "bus", "Klipper", EBB_CHIPSET, EBB_A)
-    make_device(fake_root / "bus", "Klipper", EBB_CHIPSET, MMB_SERIAL)
+    make_device(fake_root / "bus", "Klipper", MMB_CHIPSET, MMB_SERIAL)
     bulk._call = _moonraker({EBB_A: OLD_VERSION, MMB_SERIAL: OLD_VERSION})
     monkey_head(bulk, paths)
 
@@ -840,7 +842,7 @@ def test_without_a_name_it_is_still_the_whole_fleet(bulk, paths, fake_root):
     _save_config(paths, EBB)
     _save_config(paths, MMB)
     make_device(fake_root / "bus", "Klipper", EBB_CHIPSET, EBB_A)
-    make_device(fake_root / "bus", "Klipper", EBB_CHIPSET, MMB_SERIAL)
+    make_device(fake_root / "bus", "Klipper", MMB_CHIPSET, MMB_SERIAL)
     bulk._call = _moonraker({EBB_A: OLD_VERSION, MMB_SERIAL: OLD_VERSION})
     monkey_head(bulk, paths)
 

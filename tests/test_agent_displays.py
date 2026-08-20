@@ -232,10 +232,15 @@ def test_it_is_available_to_a_read_only_agent(api):
 # --------------------------------------------------------------------------
 
 
-def test_a_printer_with_no_displays_pays_nothing(api):
+def test_a_printer_with_no_displays_pays_nothing(paths):
     """Not even the configfile query - an absent feature should cost an absent
-    key, not a round trip."""
+    key, not a round trip.
+
+    Deliberately not the shared `api` fixture - live_registry_text always
+    carries a [type knomi] display, and this is specifically the
+    no-display-configured-at-all case."""
     calls = []
+    api = Api(paths)
     api._call = lambda method, params, timeout: calls.append(method) or {}
 
     api.dispatch("fw.status")
@@ -249,13 +254,12 @@ def test_configured_displays_appear_in_status(api, paths, fake_root, live_regist
     port = fake_root / "knomi_t0"
     port.write_text("", encoding="utf-8")
     with open(paths.main_config, "a", encoding="utf-8") as fh:
-        fh.write(
-            f"\n[firmware knomi_serial]\nsource: {fake_root}\nbuilder: platformio\n\n"
-            f"[type knomi_toolchanger]\nfirmware: knomi_serial\nenv: knomi_toolchanger\n"
-        )
+        fh.write("\n[type knomi_toolchanger]\nchipset: esp32\nfirmware: knomi_serial\nenv: knomi_toolchanger\n")
 
     api._call = _moonraker({"knomi_serial t0_knomi": {"serial": str(port)}})
-    entry = api.display_status()[0]
+    # live_registry_text's own [type knomi] shares knomi_serial too, so pick
+    # this test's type by name rather than assuming index 0.
+    entry = {d["env"]: d for d in api.display_status()}["knomi_toolchanger"]
 
     assert entry["env"] == "knomi_toolchanger"
     assert [s["name"] for s in entry["screens"]] == ["t0_knomi"]

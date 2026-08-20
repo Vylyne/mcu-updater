@@ -150,8 +150,8 @@ def test_pio_type_sections_do_not_disturb_the_mcu_registry(paths, live_registry_
         fh.write(
             live_registry_text
             + "\n"
-            + _KNOMI_SERIAL_FAMILY
-            + "[type knomi_toolchanger]\nfirmware: knomi_serial\nenv: knomi_toolchanger\n"
+            + "[type knomi_toolchanger]\nchipset: esp32\nfirmware: knomi_serial\n"
+            "env: knomi_toolchanger\n"
         )
 
     assert "bttebb36" in Registry.load(paths).names()

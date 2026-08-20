@@ -28,9 +28,12 @@ from mcu_updater.flashers.pairings import Pairings
 from .conftest import make_device
 
 CHIPSET = "stm32g0b1xx"
-# A real UID/DFU-serial pair, captured from a BTT EBB36.
-NEW_UID = "27000E000551343438333339-if00"
-NEW_DFU = "3941335F3434"
+# A UID/DFU-serial pair derived by the same algorithm as a real board (see
+# `dfu_serial_for`'s docstring), but not one already tracked by
+# `live_registry_text` - the whole point here is a board that has not yet
+# been adopted.
+NEW_UID = "0102030405060708090A0B0C-if00"
+NEW_DFU = "100E0C0A0807"
 
 
 @pytest.fixture
@@ -135,7 +138,7 @@ def test_a_board_with_no_pairing_is_left_alone(api, paths, fake_root):
 
 def test_an_already_tracked_board_is_untouched(api, paths, fake_root):
     tracked = "290055001850304158373620-if00"
-    Pairings(paths).record(dfu_serial_for(tracked) or "x", "bttmmbv1")
+    Pairings(paths).record(dfu_serial_for(tracked) or "x", "OctopusMAXEZ")
     _appear(fake_root, tracked)
 
     assert api.adopt_paired() == []
@@ -189,7 +192,7 @@ def test_two_boards_sharing_a_dfu_serial_adopt_neither(api, paths, fake_root):
     """The derivation sums two of the three id words, so a collision is possible.
     Adopting the wrong board under a type is how the wrong firmware gets written
     to it later - so an ambiguous match does nothing, exactly as naming does."""
-    twin = "38333339" + "05513434" + "27000E00" + "-if00"
+    twin = "090A0B0C" + "05060708" + "01020304" + "-if00"
     assert dfu_serial_for(twin) == NEW_DFU
 
     Pairings(paths).record(NEW_DFU, "bttebb36")
@@ -220,6 +223,15 @@ def test_the_flash_records_the_pairing_before_waiting(paths, live_registry_text,
     from .conftest import write_settings
     from .test_agent_dfu import ONE_BOARD
 
+    # ONE_BOARD's DFU serial is fixed ("3941335F3434"), so the pairing this
+    # test records is keyed on it - not on the module-level NEW_DFU, which
+    # deliberately does not collide with anything live_registry_text already
+    # tracks. The matching by-id UID it turns up as afterwards must be one
+    # `dfu_serial_for` actually derives back to that same DFU string, and
+    # untracked, so it is free to be adopted.
+    board_uid = "5F3341390000343400000000-if00"
+    board_dfu = "3941335F3434"
+
     with open(paths.registry_file, "w", encoding="utf-8") as fh:
         fh.write(live_registry_text)
     write_settings(paths, dry_run="true", service_backend="null", enable_flashing="true")
@@ -247,10 +259,10 @@ def test_the_flash_records_the_pairing_before_waiting(paths, live_registry_text,
         # The board never appeared, so the job found nothing...
         assert runner.get(res["job_id"]).result["candidates"] == []
         # ...and the pairing is what makes that recoverable.
-        assert Pairings(paths).type_for(NEW_DFU) == "bttebb36"
+        assert Pairings(paths).type_for(board_dfu) == "bttebb36"
 
         # It turns up two minutes later.
-        _appear(fake_root, NEW_UID)
+        _appear(fake_root, board_uid)
         assert [a["type"] for a in api.adopt_paired()] == ["bttebb36"]
     finally:
         monkeypatch.undo()

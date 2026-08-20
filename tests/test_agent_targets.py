@@ -47,14 +47,15 @@ def _targets(api, kind=None):
 
 def _add_display(paths, fake_root, api):
     """A `[type ...]` section naming a platformio-built firmware, plus a
-    screen Klipper reports."""
+    screen Klipper reports. live_registry_text already declares
+    [firmware knomi_serial] (pointed at ~/knomi_serial) - reuse it rather
+    than declaring a second, colliding one, and create the tree it points at
+    so "the source exists" is true where a test needs it to be."""
+    (fake_root / "knomi_serial").mkdir(exist_ok=True)
     port = fake_root / "knomi_t0"
     port.write_text("", encoding="utf-8")
     with open(paths.main_config, "a", encoding="utf-8") as fh:
-        fh.write(
-            f"\n[firmware knomi_serial]\nsource: {fake_root}\nbuilder: platformio\n\n"
-            f"[type {ENV}]\nfirmware: knomi_serial\nenv: {ENV}\n"
-        )
+        fh.write(f"\n[type {ENV}]\nchipset: esp32\nfirmware: knomi_serial\nenv: {ENV}\n")
     api._call = serve_klipper(
         display_objects({"knomi_serial t0_knomi": {"serial": str(port)}}),
         reachable=True,
@@ -133,14 +134,14 @@ def test_a_display_build_is_blocked_by_a_missing_source_tree(api, paths, fake_ro
     port.write_text("", encoding="utf-8")
     with open(paths.main_config, "a", encoding="utf-8") as fh:
         fh.write(
-            "\n[firmware knomi_serial]\nsource: /nope/not/here\nbuilder: platformio\n\n"
-            f"[type {ENV}]\nfirmware: knomi_serial\nenv: {ENV}\n"
+            "\n[firmware knomi_missing]\nsource: /nope/not/here\nbuilder: platformio\n\n"
+            f"[type {ENV}]\nchipset: esp32\nfirmware: knomi_missing\nenv: {ENV}\n"
         )
     api = Api(
         paths,
         runner=_runner(),
         call=serve_klipper(
-            display_objects({"knomi_serial t0_knomi": {"serial": str(port)}}),
+            display_objects({"knomi_missing t0_knomi": {"serial": str(port)}}),
             reachable=True,
         ),
     )
@@ -216,7 +217,7 @@ def test_an_unbuilt_binary_with_no_sidecar_is_not_never_built(api, paths):
 
 
 def test_an_offline_board_is_never_reported_as_up_to_date(api):
-    board = _targets(api)["bttmmbv1"]["devices"][0]
+    board = _targets(api)["OctopusMAXEZ"]["devices"][0]
 
     assert board["present"] is False
     assert board["needs_flash"] is None
@@ -227,15 +228,17 @@ def test_an_offline_board_is_never_reported_as_up_to_date(api):
 def test_a_type_whose_boards_are_all_offline_reports_unknown_not_clean(api):
     """`any()` reads None as falsey, so the old aggregate reported "nothing to
     do" about a fleet nobody could see."""
-    assert _targets(api)["bttmmbv1"]["needs_flash"] is None
+    assert _targets(api)["OctopusMAXEZ"]["needs_flash"] is None
 
 
 def test_a_type_needs_flashing_when_any_one_board_does(api, fake_root):
-    make_device(fake_root / "bus", "katapult", "stm32f103xe", "36FFD9054755303923891357-if00")
-    sv08 = _targets(api)["sv08Mainboard"]
+    make_device(
+        fake_root / "bus", "katapult", "stm32f072xb", "4B0036000A53594731383520-if00"
+    )
+    hexa = _targets(api)["hexadistrofusion"]
 
-    assert sv08["needs_flash"] is True
-    waiting = [d for d in sv08["devices"] if d["reason"] == "in_bootloader"]
+    assert hexa["needs_flash"] is True
+    waiting = [d for d in hexa["devices"] if d["reason"] == "in_bootloader"]
     assert waiting and waiting[0]["tone"] == TONE_ATTENTION
 
 
@@ -243,10 +246,7 @@ def test_a_screen_that_cannot_be_reached_is_offline_not_current(api, paths, fake
     """A port that does not resolve says nothing about the firmware on the far
     end, and the klippy module swallows the failure entirely."""
     with open(paths.main_config, "a", encoding="utf-8") as fh:
-        fh.write(
-            f"\n[firmware knomi_serial]\nsource: {fake_root}\nbuilder: platformio\n\n"
-            f"[type {ENV}]\nfirmware: knomi_serial\nenv: {ENV}\n"
-        )
+        fh.write(f"\n[type {ENV}]\nchipset: esp32\nfirmware: knomi_serial\nenv: {ENV}\n")
     api._call = serve_klipper(
         display_objects(
             {"knomi_serial t0_knomi": {"serial": str(fake_root / "gone")}}
@@ -268,10 +268,7 @@ def test_a_protocol_mismatch_outranks_the_version_comparison(api, paths, fake_ro
     port = fake_root / "knomi_t0"
     port.write_text("", encoding="utf-8")
     with open(paths.main_config, "a", encoding="utf-8") as fh:
-        fh.write(
-            f"\n[firmware knomi_serial]\nsource: {fake_root}\nbuilder: platformio\n\n"
-            f"[type {ENV}]\nfirmware: knomi_serial\nenv: {ENV}\n"
-        )
+        fh.write(f"\n[type {ENV}]\nchipset: esp32\nfirmware: knomi_serial\nenv: {ENV}\n")
     api._call = serve_klipper(
         display_objects(
             {"knomi_serial t0_knomi": {"serial": str(port)}},
@@ -303,8 +300,6 @@ def test_build_names_the_family_the_type_actually_runs(paths, live_registry_text
     with open(paths.registry_file, "w", encoding="utf-8") as fh:
         fh.write(live_registry_text)
         fh.write("\n[type carto_v4]\nchipset: stm32g431xx\nfirmware: cartographer\n")
-    with open(paths.main_config, "a", encoding="utf-8") as fh:
-        fh.write("\n[firmware cartographer]\nsource: ~/carto\nartifact: klipper\n")
     api = Api(paths, runner=_runner())
 
     carto = _targets(api)["carto_v4"]
@@ -323,11 +318,11 @@ def test_a_device_carries_its_own_flash_call(paths, live_registry_text):
     write_settings(paths, enable_flashing="true")
     api = Api(paths, runner=_runner())
 
-    device = _targets(api)["bttmmbv1"]["devices"][0]
+    device = _targets(api)["OctopusMAXEZ"]["devices"][0]
     flash = _action(device, "flash")
 
     assert flash["method"] == "fw.flash"
-    assert flash["params"] == {"name": "bttmmbv1", "serial": device["id"]}
+    assert flash["params"] == {"name": "OctopusMAXEZ", "serial": device["id"]}
     # Offline, and nothing built either - the artifact is the first thing to
     # fix, so that is what it says.
     assert flash["blocked"]["code"] == Api.BLOCKED_NO_ARTIFACT
@@ -359,10 +354,10 @@ def test_untrack_is_offered_per_board_and_never_for_a_screen(
     api = Api(paths, runner=_runner())
     _add_display(paths, fake_root, api)
 
-    board = _targets(api)["bttmmbv1"]["devices"][0]
+    board = _targets(api)["OctopusMAXEZ"]["devices"][0]
     untrack = _action(board, "untrack")
     assert untrack["method"] == "fw.serial.remove"
-    assert untrack["params"] == {"name": "bttmmbv1", "serial": board["id"]}
+    assert untrack["params"] == {"name": "OctopusMAXEZ", "serial": board["id"]}
 
     screen = _targets(api, "display")[ENV]["devices"][0]
     assert _action(screen, "untrack") is None
@@ -376,7 +371,6 @@ def test_the_artifact_shown_is_the_one_this_type_would_flash(paths, live_registr
     with open(paths.registry_file, "w", encoding="utf-8") as fh:
         fh.write(live_registry_text)
         fh.write("\n[type carto_v4]\nchipset: stm32g431xx\nfirmware: cartographer\n")
-        fh.write("\n[firmware cartographer]\nsource: ~/carto\nartifact: klipper\n")
     binary = paths.bin_file("carto_v4", "cartographer")
     os.makedirs(os.path.dirname(binary), exist_ok=True)
     with open(binary, "wb") as fh:
@@ -437,13 +431,13 @@ def test_flash_is_blocked_with_something_built_but_nothing_connected(
     with open(paths.registry_file, "w", encoding="utf-8") as fh:
         fh.write(live_registry_text)
     write_settings(paths, enable_flashing="true")
-    binary = paths.bin_file("bttmmbv1", "klipper")
+    binary = paths.bin_file("OctopusMAXEZ", "klipper")
     os.makedirs(os.path.dirname(binary), exist_ok=True)
     with open(binary, "wb") as fh:
         fh.write(b"\x00")
     api = Api(paths, runner=_runner())
 
-    target = _targets(api)["bttmmbv1"]
+    target = _targets(api)["OctopusMAXEZ"]
     assert all(d["present"] is False for d in target["devices"])
     assert _action(target, "flash")["blocked"]["code"] == Api.BLOCKED_NO_DEVICE
     # Build-and-flash has nowhere to write either, and says the same thing.
@@ -580,13 +574,13 @@ def test_build_and_flash_is_not_blocked_by_a_missing_artifact(paths, live_regist
         fh.write(live_registry_text)
     write_settings(paths, enable_flashing="true")
     make_device(
-        _bus(paths), "klipper", "stm32f103xe", "36FFD9054755303923891357-if00"
+        _bus(paths), "klipper", "stm32f072xb", "4B0036000A53594731383520-if00"
     )
     api = Api(paths, runner=_runner())
 
-    sv08 = _targets(api)["sv08Mainboard"]
-    assert _action(sv08, "flash")["blocked"]["code"] == Api.BLOCKED_NO_ARTIFACT
-    assert _action(sv08, "update")["blocked"] is None
+    hexa = _targets(api)["hexadistrofusion"]
+    assert _action(hexa, "flash")["blocked"]["code"] == Api.BLOCKED_NO_ARTIFACT
+    assert _action(hexa, "update")["blocked"] is None
 
 
 def test_configure_is_offered_per_family_not_as_a_fixed_pair(paths, live_registry_text, monkeypatch):
@@ -594,15 +588,9 @@ def test_configure_is_offered_per_family_not_as_a_fixed_pair(paths, live_registr
     with open(paths.registry_file, "w", encoding="utf-8") as fh:
         fh.write(live_registry_text)
         fh.write("\n[type carto_v4]\nchipset: stm32g431xx\nfirmware: cartographer, katapult\n")
-        fh.write("\n[firmware cartographer]\nsource: ~/carto\nartifact: klipper\n")
-    # live_registry_text predates the firmware: key, so bttebb36 declares no
-    # bootloader under the list-based schema - add one explicitly, since this
-    # test is specifically about katapult being offered alongside klipper.
-    from mcu_updater.config import Registry
-
-    with Registry.mutate(paths, "add katapult to bttebb36") as reg:
-        mcu = reg.get("bttebb36")
-        mcu.firmwares = [*mcu.firmwares, "katapult"]
+    # bttebb36 already carries klipper and katapult in live_registry_text -
+    # nothing further to add. This test is specifically about katapult being
+    # offered alongside klipper.
     api = Api(paths, runner=_runner())
     monkeypatch.setattr(Api, "kconfig_available", lambda self, families=None: {
         "klipper": True, "katapult": True, "cartographer": True
@@ -644,7 +632,7 @@ def test_every_fact_in_the_old_keys_survives_the_projection(api, paths, fake_roo
     """
     port = _add_display(paths, fake_root, api)
     make_device(
-        fake_root / "bus", "klipper", "stm32f103xe", "36FFD9054755303923891357-if00"
+        fake_root / "bus", "klipper", "stm32f072xb", "4B0036000A53594731383520-if00"
     )
 
     reg = api.registry()
@@ -687,8 +675,13 @@ def test_every_fact_in_the_old_keys_survives_the_projection(api, paths, fake_roo
     assert targets[ENV]["devices"][0]["id"] == port
 
 
-def test_a_printer_with_no_screens_has_no_display_targets(api):
-    """The whole feature costs nothing when unconfigured - not even the query."""
+def test_a_printer_with_no_screens_has_no_display_targets(paths):
+    """The whole feature costs nothing when unconfigured - not even the query.
+
+    Deliberately not the shared `api` fixture - live_registry_text always
+    carries a [type knomi] display, and this is specifically the
+    no-display-configured-at-all case."""
+    api = Api(paths)
     assert _targets(api, "display") == {}
 
 
@@ -701,13 +694,12 @@ def test_firmware_families_says_what_exists_not_just_what_parses(api, paths):
     """The panel has been using `kconfig_available`'s keys as a family list.
     That works by accident: its values mean "has a parseable Kconfig", so a
     declared family whose tree is not cloned yet reads as absent rather than as
-    present-and-not-ready."""
-    with open(paths.main_config, "a", encoding="utf-8") as fh:
-        fh.write("\n[firmware cartographer]\nsource: ~/nowhere-at-all\n")
-
+    present-and-not-ready. live_registry_text's own [firmware cartographer]
+    (~/cartographer-klipper) is exactly such a tree - fake_root never creates
+    it - so nothing further needs declaring here."""
     families = {f["name"]: f for f in api.dispatch("fw.status")["firmware_families"]}
 
-    assert set(families) == {"klipper", "katapult", "cartographer"}
+    assert set(families) == {"klipper", "katapult", "cartographer", "knomi_serial"}
     assert families["cartographer"]["present"] is False
     assert families["cartographer"]["configurable"] is False
     assert families["cartographer"]["builtin"] is False
@@ -797,8 +789,6 @@ def test_a_type_can_name_the_firmware_it_runs_when_it_is_created(paths, live_reg
     into the cfg by hand before menuconfig could be reached at all."""
     with open(paths.registry_file, "w", encoding="utf-8") as fh:
         fh.write(live_registry_text)
-    with open(paths.main_config, "a", encoding="utf-8") as fh:
-        fh.write("\n[firmware cartographer]\nsource: ~/carto\nartifact: klipper\n")
     api = Api(paths)
 
     res = api.dispatch(
@@ -837,8 +827,6 @@ def test_changing_the_firmware_warns_that_provenance_cannot_see_it(paths, live_r
     firmware with nothing to say so."""
     with open(paths.registry_file, "w", encoding="utf-8") as fh:
         fh.write(live_registry_text)
-    with open(paths.main_config, "a", encoding="utf-8") as fh:
-        fh.write("\n[firmware cartographer]\nsource: ~/carto\nartifact: klipper\n")
     binary = paths.bin_file("bttebb36", "klipper")
     os.makedirs(os.path.dirname(binary), exist_ok=True)
     with open(binary, "wb") as fh:

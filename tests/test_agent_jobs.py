@@ -220,11 +220,11 @@ def test_build_completes_and_records_its_artifact(api, paths):
 
 def test_a_second_build_while_one_runs_is_refused(api, paths):
     _stage_config(paths)
-    _stage_config(paths, "bttmmbv1")
+    _stage_config(paths, "OctopusMAXEZ")
     api.dispatch("fw.build", {"name": "bttebb36", "fw": "klipper"})
     try:
         with pytest.raises(RpcError) as exc:
-            api.dispatch("fw.build", {"name": "bttmmbv1", "fw": "klipper"})
+            api.dispatch("fw.build", {"name": "OctopusMAXEZ", "fw": "klipper"})
         assert exc.value.data["code"] == "busy"
     finally:
         api.runner.wait(timeout=30)

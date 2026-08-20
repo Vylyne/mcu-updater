@@ -260,7 +260,7 @@ class Api:
         uf2 = self.paths.uf2_file(mcu_type, fw)
         side = read_sidecar(self.paths, mcu_type, fw) or {}
 
-        from ..build import artifact_status, git_head, legacy_staleness, sha256_file
+        from ..build import artifact_status, git_head, sha256_file
 
         # Hashed once and handed to both. These two ask a different question of
         # the same file in the same breath - "is the binary current with its
@@ -270,7 +270,6 @@ class Api:
         config_sha = sha256_file(cfg)
 
         status = artifact_status(self.paths, mcu_type, fw, config_sha=config_sha)
-        stale, reason = legacy_staleness(status)
 
         return {
             "has_config": os.path.exists(cfg),
@@ -281,12 +280,11 @@ class Api:
             "has_uf2": os.path.exists(uf2),
             "built_fw_sha": side.get("fw_sha"),
             "current_fw_sha": git_head(firmware.resolve(self.paths, fw).source_dir(self.paths)),
-            "stale": stale,
-            "stale_reason": reason,
-            # The same verdict, un-collapsed. `stale_reason` reports
-            # "never_built" for a binary with no sidecar as well as for no
-            # binary at all, which is a documented API string and stays that
-            # way - so the distinction has to travel beside it, not instead.
+            # The granular verdict - never_built, config_changed,
+            # source_changed, no_provenance, or None for current. Not
+            # collapsed: distinguishing "never built" from "built but
+            # unverifiable" is exactly what the old (stale, stale_reason)
+            # pair could not carry.
             "reason": status.reason,
             "last_build_seconds": side.get("duration"),
             "last_build_at": side.get("timestamp"),
@@ -422,7 +420,6 @@ class Api:
         types = [self.type_status(reg, n, versions) for n in reg.names()]
         displays = self.display_status()
         return {
-            "types": types,
             "bus": self.bus(reg),
             "job": current.to_dict() if current else None,
             "recent": [j.to_dict() for j in self.runner.recent(10)] if self.runner else [],
@@ -443,11 +440,9 @@ class Api:
             # True while nothing here can build or flash. The panel uses
             # `capabilities` from fw.ping for per-control gating.
             "read_only": self.runner is None,
-            # ESP32 displays. Absent config means the key is simply an empty
-            # list, so a printer with no screens pays nothing for the feature.
-            "displays": displays,
-            # The two above in one shape, so a panel can render an MCU, a
-            # display and whatever comes next with a single component.
+            # types[] and displays[] said in one shape, so a panel can render
+            # an MCU, a display and whatever comes next with a single
+            # component. The two originals retired at API_VERSION 2.
             "targets": self.targets(reg, types, displays),
         }
 
@@ -481,15 +476,11 @@ class Api:
                 screens.append(
                     {
                         **entry,
-                        # current | behind | dirty | unknown. Compares the sha
-                        # baked into what the screen reports running against the
-                        # source tree's HEAD - so unlike the MCU artifact check,
-                        # this is about the device rather than a built file.
-                        "firmware_state": pio_mod.legacy_firmware_state(device),
-                        # The same verdict in the shared vocabulary, named as the
-                        # MCU rows name theirs. Both are on the wire because the
-                        # FW_* word is what the panel reads today and the reason
-                        # is what it will read once it renders one kind of row.
+                        # None (current), source_changed, device_dirty, or
+                        # unknown_version. Compares the sha baked into what the
+                        # screen reports running against the source tree's
+                        # HEAD - so unlike the MCU artifact check, this is
+                        # about the device rather than a built file.
                         "reason": device.reason,
                     }
                 )
@@ -501,15 +492,13 @@ class Api:
                     # image on disk", not staleness. PlatformIO decides whether a
                     # rebuild is needed, and it is fast when nothing changed.
                     "has_firmware": os.path.exists(pio_mod.firmware_bin(display)),
-                    # current | source_changed | dirty | never_built | unknown.
-                    # Real staleness, unlike has_firmware: fw.display.flash
-                    # uploads whatever is in .pio/build without building, so a
-                    # tree that moved since the last build writes old firmware
-                    # to every screen with nothing to say so.
-                    "artifact_state": pio_mod.legacy_artifact_state(art),
-                    # The same verdict, un-collapsed. The ART_* word above folds
-                    # foreign_build and no_provenance together, which is why this
-                    # cannot be recovered from it by the reader.
+                    # None (current), never_built, config_changed,
+                    # source_changed, built_dirty, foreign_build, or
+                    # no_provenance. Real staleness, unlike has_firmware:
+                    # flashing a display uploads whatever is in .pio/build
+                    # without building, so a tree that moved since the last
+                    # build writes old firmware to every screen with nothing
+                    # to say so.
                     "artifact_reason": art.reason,
                     # Why a build would be skipped, or None. The same answer the
                     # provider gives a fleet build, from the same function - so
@@ -528,12 +517,13 @@ class Api:
                     ),
                     # Two independent reasons to reflash, and either is enough.
                     # A protocol mismatch is the device saying it cannot talk to
-                    # this module; `behind` is it running an older commit than
-                    # the tree. Neither is inferred from the other - a screen can
-                    # be several commits old and still speak the protocol fine.
+                    # this module; `source_changed` is it running an older
+                    # commit than the tree. Neither is inferred from the other -
+                    # a screen can be several commits old and still speak the
+                    # protocol fine.
                     "needs_flash": any(
                         s.get("protocol_match") is False
-                        or s.get("firmware_state") == pio_mod.FW_BEHIND
+                        or s.get("reason") == pio_mod.SOURCE_CHANGED
                         for s in screens
                     ),
                     # What the tree would build right now, for the panel to show
@@ -883,7 +873,7 @@ class Api:
                     "actions": self._device_actions(
                         allowed,
                         flash=(
-                            "fw.display.flash",
+                            "fw.flash",
                             {"name": name, "port": screen["configured_path"]},
                         ),
                         present=screen["present"],
@@ -924,7 +914,7 @@ class Api:
                 has_artifact=bool(payload["has_firmware"]),
                 flashable=[d for d in devices if d["present"]],
                 what="display firmware",
-                flash_method="fw.display.flash",
+                flash_method="fw.flash",
                 update_method=None,
             )
         )
@@ -1959,13 +1949,13 @@ class Api:
         "fw.bus.scan": "bus_scan",
         "fw.dfu.scan": "dfu_scan",
         "fw.device.list": "device_list",
-        # The three that named a build system in the method rather than routing
-        # by the type's own provider. `fw.build` and `fw.flash` answer for every
-        # kind now; these stay registered because a panel built before that is
-        # still calling them, and they are two lines each.
+        # Named a build system in the method rather than routing by the type's
+        # own provider. `fw.build` and `fw.flash` answer for every kind now;
+        # `fw.display.flash` retired once nothing called it (Step 14) - these
+        # two stay registered because a panel built before the routing
+        # unified is still calling them, and they are two lines each.
         "fw.display.list": "display_list",
         "fw.display.build": "display_build",
-        "fw.display.flash": "display_flash",
         "fw.artifacts": "artifacts",
         "fw.settings.get": "settings_get",
         "fw.settings.set": "settings_set",
@@ -2009,7 +1999,6 @@ class Api:
         "fw.update_all",
         "fw.add_mcu.start",
         "fw.display.build",
-        "fw.display.flash",
         # Seeding is a job for its runtime, not its danger - it writes a
         # .config and touches no hardware - but a job is a job, and a read-only
         # agent has no runner to submit one to.
@@ -2025,7 +2014,6 @@ class Api:
         "fw.flash_all",
         "fw.update_all",
         "fw.add_mcu.start",
-        "fw.display.flash",
     )
 
     def available_methods(self) -> dict[str, str]:
@@ -2295,14 +2283,10 @@ class Api:
         return out
 
     def display_types(self) -> dict:
-        """Configured `[display <env>]` sections, with the shared source default."""
+        """Configured `[display <env>]` sections."""
         from ..providers import pio as pio_mod
 
-        # Attribute access, not getattr-with-a-default: `display_source` was
-        # documented in the README before it existed on Settings, and the
-        # forgiving lookup meant every display silently came back with no source
-        # tree instead of anything saying so.
-        return pio_mod.load(self.paths, default_source=self.settings().pio_source)
+        return pio_mod.load(self.paths)
 
     def display_build(self, args: dict) -> dict[str, Any]:
         """Deprecated alias for `fw.build`. Kept because a deployed panel calls it.
@@ -2341,10 +2325,6 @@ class Api:
 
         job = runner.submit("display_build", {"name": name}, run)
         return {"job_id": job.id, "job": job.to_dict()}
-
-    def display_flash(self, args: dict) -> dict[str, Any]:
-        """Deprecated alias for `fw.flash`. Kept because a deployed panel calls it."""
-        return self._pio_flash(args)
 
     def _pio_flash(self, args: dict) -> dict[str, Any]:
         """Write one PlatformIO env to the devices configured for it.
@@ -3143,7 +3123,7 @@ class Api:
 
         boards = self._boards_to_flash(reg, scope, only)
         # Read now, while Klipper can still answer - the same constraint
-        # `display_flash` has always had, and the reason this is selection
+        # `_pio_flash` has always had, and the reason this is selection
         # rather than something the batch could work out for itself.
         screens = self._screens_to_flash(scope, only)
         if not boards and not screens:

@@ -21,7 +21,7 @@ from collections.abc import Sequence
 from typing import Optional
 
 from . import __version__, firmware, flashers, profiles, providers
-from .build import build, menuconfig_tty, staleness
+from .build import artifact_status, build, menuconfig_tty
 from .config import Registry
 from .devices import (
     STATE_KATAPULT,
@@ -36,7 +36,6 @@ from .errors import (
     UpdaterError,
 )
 from .flashers.flash import adoptable_devices, flash_initial_bootloader
-from .layout import migrate_type_dirs
 from .lock import exclusive
 from .paths import FW_TARGETS, Paths
 from .service import (
@@ -48,6 +47,7 @@ from .service import (
     reconcile,
 )
 from .settings import Settings, load_settings
+from .states import NEVER_BUILT
 
 # --------------------------------------------------------------------------
 # process-wide context
@@ -281,11 +281,11 @@ def status_cmd(args: argparse.Namespace) -> None:
         # running cartographer carries klipper config keys too, and listing them
         # as "not built" is noise about firmware nobody intends to build for it.
         for fw in mcu.families():
-            stale, reason = staleness(c.paths, name, fw)
-            if reason == "never_built":
+            status = artifact_status(c.paths, name, fw)
+            if status.reason == NEVER_BUILT:
                 print(f"  {fw}: not built")
-            elif stale:
-                print(f"  {fw}: STALE ({reason})")
+            elif not status.is_current:
+                print(f"  {fw}: STALE ({status.reason})")
             else:
                 print(f"  {fw}: up to date")
 
@@ -461,7 +461,7 @@ def _pio_targets(
     """
     from .providers import pio
 
-    display = pio.load(c.paths, default_source=c.settings.pio_source)[name]
+    display = pio.load(c.paths)[name]
     found = pio.read_device_map(c.paths, display)
     if not found and allow_discovery:
         # The ports are free by now, which is the one moment this is possible.
@@ -511,7 +511,7 @@ def _ports_free(c: Context, names: Sequence[str], label: str):
     """
     from .providers import pio
 
-    displays = pio.load(c.paths, default_source=c.settings.pio_source)
+    displays = pio.load(c.paths)
     with klipper_stopped(
         c.paths, make_controller(c.settings), label, reporter=stdout_reporter
     ):
@@ -901,17 +901,10 @@ def main(argv: Optional[list[str]] = None) -> None:
     paths = Paths.from_env()
 
     try:
-        moved = migrate_type_dirs(paths)
         settings = load_settings(paths.settings_file)
     except UpdaterError as exc:
         print(f"ERROR: {exc}", file=sys.stderr)
         sys.exit(1)
-
-    if moved:
-        print(
-            f"Moved per-type config into {paths.type_root}: {', '.join(moved)}",
-            file=sys.stderr,
-        )
 
     parser = build_parser(firmware.names(paths))
 

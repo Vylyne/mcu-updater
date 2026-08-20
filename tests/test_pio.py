@@ -495,71 +495,65 @@ def test_resolve_port_survives_a_path_it_cannot_stat(monkeypatch):
 # against its source, which says nothing about what is on the board.
 # --------------------------------------------------------------------------
 
-from mcu_updater.providers.pio import (  # noqa: E402
-    FW_BEHIND,
-    FW_CURRENT,
-    FW_DIRTY,
-    FW_UNKNOWN,
-    SourceState,
-    firmware_state,
-)
+from mcu_updater.providers.pio import SourceState, device_status  # noqa: E402
+from mcu_updater.states import DEVICE_DIRTY, SOURCE_CHANGED, UNKNOWN_VERSION  # noqa: E402
 
 TREE = SourceState(head="d34db33", version="0.4.0", dirty=False, on_tag=False)
 
 
 def test_the_sha_in_the_reported_version_is_what_matches():
-    assert firmware_state("0.4.0+3.gd34db33", TREE) == FW_CURRENT
+    assert device_status("0.4.0+3.gd34db33", TREE).reason is None
 
 
 def test_an_older_commit_is_behind():
-    assert firmware_state("0.4.0+1.gbadc0de", TREE) == FW_BEHIND
+    assert device_status("0.4.0+1.gbadc0de", TREE).reason == SOURCE_CHANGED
 
 
 def test_a_tagless_build_still_carries_its_sha():
     """`0.4.0+gd34db33` - the tag does not exist yet, but the commit does."""
-    assert firmware_state("0.4.0+gd34db33", TREE) == FW_CURRENT
+    assert device_status("0.4.0+gd34db33", TREE).reason is None
 
 
 def test_short_shas_of_different_lengths_still_compare():
     """git picks the length; it grows as a repo does, and a firmware built
     months ago can carry a shorter one than HEAD reports today."""
-    assert firmware_state("0.4.0+2.gd34db3", TREE) == FW_CURRENT
-    assert firmware_state("0.4.0+2.gd34db3399", TREE) == FW_CURRENT
+    assert device_status("0.4.0+2.gd34db3", TREE).reason is None
+    assert device_status("0.4.0+2.gd34db3399", TREE).reason is None
 
 
 def test_a_dirty_build_is_never_called_current():
     """The tree it came from is not recoverable, so 'up to date' is unprovable -
     not merely unknown. Saying it matches would be a lie even when the sha does."""
-    assert firmware_state("0.4.0+3.gd34db33.dirty", TREE) == FW_DIRTY
+    assert device_status("0.4.0+3.gd34db33.dirty", TREE).reason == DEVICE_DIRTY
 
 
 def test_a_release_build_matches_a_tree_still_sitting_on_that_tag():
     """A clean tagged build reports a bare version with no sha to compare."""
     tree = SourceState(head="d34db33", version="0.4.0", dirty=False, on_tag=True)
-    assert firmware_state("0.4.0", tree) == FW_CURRENT
+    assert device_status("0.4.0", tree).reason is None
 
 
 def test_a_release_build_of_a_different_version_is_behind():
     tree = SourceState(head="d34db33", version="0.5.0", dirty=False, on_tag=True)
-    assert firmware_state("0.4.0", tree) == FW_BEHIND
+    assert device_status("0.4.0", tree).reason == SOURCE_CHANGED
 
 
 def test_a_release_build_against_a_moved_tree_is_behind():
     """Bare version, but the tree has commits past the tag - so whatever is on
     the screen predates them."""
     tree = SourceState(head="d34db33", version="0.4.0", dirty=False, on_tag=False)
-    assert firmware_state("0.4.0", tree) == FW_BEHIND
+    assert device_status("0.4.0", tree).reason == SOURCE_CHANGED
 
 
 def test_no_git_checkout_is_unknown_not_behind():
     """A wrong 'behind' sends someone to reflash a healthy display."""
-    assert firmware_state("0.4.0+3.gd34db33", SourceState()) == FW_UNKNOWN
+    assert device_status("0.4.0+3.gd34db33", SourceState()).reason == UNKNOWN_VERSION
 
 
 def test_a_screen_that_reports_no_version_is_unknown():
     """A knomi_serial older than get_status reports nothing at all."""
-    assert firmware_state(None, TREE) == FW_UNKNOWN
-    assert firmware_state("", TREE) == FW_UNKNOWN
+    assert device_status(None, TREE).reason == UNKNOWN_VERSION
+    assert device_status("", TREE).reason == UNKNOWN_VERSION
 
 
 def test_source_state_survives_a_directory_that_is_not_a_checkout(tmp_path):
@@ -573,20 +567,14 @@ def test_source_state_survives_a_directory_that_is_not_a_checkout(tmp_path):
 # --------------------------------------------------------------------------
 # is the BUILT IMAGE current
 #
-# fw.display.flash uploads whatever sits in .pio/build without building first,
-# so a source tree that has moved since the last build writes old firmware to
-# every screen of the type - silently, because the upload itself succeeds.
+# Flashing a display uploads whatever sits in .pio/build without building
+# first, so a source tree that has moved since the last build writes old
+# firmware to every screen of the type - silently, because the upload itself
+# succeeds.
 # --------------------------------------------------------------------------
 
-from mcu_updater.providers.pio import (  # noqa: E402
-    ART_CURRENT,
-    ART_DIRTY,
-    ART_FOREIGN,
-    ART_NEVER,
-    ART_STALE,
-    artifact_state,
-    record_build,
-)
+from mcu_updater.providers.pio import artifact_status, record_build  # noqa: E402
+from mcu_updater.states import BUILT_DIRTY, NEVER_BUILT, NO_PROVENANCE  # noqa: E402
 
 
 def _bin(display):
@@ -600,47 +588,47 @@ def _bin(display):
 
 
 def test_no_image_at_all_is_never_built(paths, display):
-    assert artifact_state(paths, display, TREE) == ART_NEVER
+    assert artifact_status(paths, display, TREE).reason == NEVER_BUILT
 
 
 def test_an_image_we_built_from_this_commit_is_current(paths, display):
     _bin(display)
     record_build(paths, display, TREE)
-    assert artifact_state(paths, display, TREE) == ART_CURRENT
+    assert artifact_status(paths, display, TREE).reason is None
 
 
 def test_an_image_built_before_the_tree_moved_is_stale(paths, display):
     _bin(display)
     record_build(paths, display, TREE)
     moved = SourceState(head="feedface", version="0.4.0")
-    assert artifact_state(paths, display, moved) == ART_STALE
+    assert artifact_status(paths, display, moved).reason == SOURCE_CHANGED
 
 
 def test_an_image_built_from_a_dirty_tree_cannot_claim_to_be_current(paths, display):
     _bin(display)
     record_build(paths, display, SourceState(head="d34db33", version="0.4.0", dirty=True))
-    assert artifact_state(paths, display, TREE) == ART_DIRTY
+    assert artifact_status(paths, display, TREE).reason == BUILT_DIRTY
 
 
 def test_an_image_with_no_provenance_is_unknown_not_current(paths, display):
     """Someone ran `pio run` by hand. Claiming "up to date" about a binary we
     know nothing about is worse than admitting we cannot tell."""
     _bin(display)
-    assert artifact_state(paths, display, TREE) == ART_FOREIGN
+    assert artifact_status(paths, display, TREE).reason == NO_PROVENANCE
 
 
 def test_a_rebuild_by_someone_else_invalidates_our_provenance(paths, display):
     """The sidecar would otherwise describe an image that no longer exists."""
     _bin(display)
     record_build(paths, display, TREE)
-    assert artifact_state(paths, display, TREE) == ART_CURRENT
+    assert artifact_status(paths, display, TREE).reason is None
 
     from mcu_updater.providers.pio import firmware_bin
 
     with open(firmware_bin(display), "wb") as fh:
         fh.write(b"\x00different and longer")
 
-    assert artifact_state(paths, display, TREE) == ART_FOREIGN
+    assert artifact_status(paths, display, TREE).reason == NO_PROVENANCE
 
 
 def test_a_corrupt_sidecar_is_unknown_rather_than_an_exception(paths, display):
@@ -649,13 +637,13 @@ def test_a_corrupt_sidecar_is_unknown_rather_than_an_exception(paths, display):
     os.makedirs(os.path.dirname(sidecar), exist_ok=True)
     with open(sidecar, "w", encoding="utf-8") as fh:
         fh.write("{not json")
-    assert artifact_state(paths, display, TREE) == ART_FOREIGN
+    assert artifact_status(paths, display, TREE).reason == NO_PROVENANCE
 
 
 def test_no_git_checkout_cannot_judge_the_image(paths, display):
     _bin(display)
     record_build(paths, display, TREE)
-    assert artifact_state(paths, display, SourceState()) == ART_FOREIGN
+    assert artifact_status(paths, display, SourceState()).reason == NO_PROVENANCE
 
 
 def test_the_sidecar_stays_out_of_the_users_source_tree(paths, display):

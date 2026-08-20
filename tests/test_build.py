@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from mcu_updater.build import build, read_sidecar, staleness
+from mcu_updater.build import artifact_status, build, read_sidecar
 from mcu_updater.config import Registry
 from mcu_updater.errors import ConfigNotFoundError, SourceTreeMissingError
 
@@ -91,17 +91,17 @@ def test_a_build_leaves_app_address_none_when_the_tree_defines_none(paths, setti
     assert side["app_address"] is None
 
 
-def test_staleness_reports_never_built_then_clean(paths, settings):
+def test_artifact_status_reports_never_built_then_current(paths, settings):
     settings.dry_run = True
     reg = _registry(paths)
     _write_config(paths)
 
-    assert staleness(paths, "board", "klipper") == (True, "never_built")
+    assert artifact_status(paths, "board", "klipper").reason == "never_built"
     build(paths, reg, settings, "board", "klipper")
-    assert staleness(paths, "board", "klipper") == (False, None)
+    assert artifact_status(paths, "board", "klipper").reason is None
 
 
-def test_staleness_detects_a_changed_config(paths, settings):
+def test_artifact_status_detects_a_changed_config(paths, settings):
     """Compares recorded hashes, not mtimes, so a touch doesn't lie."""
     settings.dry_run = True
     reg = _registry(paths)
@@ -109,10 +109,10 @@ def test_staleness_detects_a_changed_config(paths, settings):
     build(paths, reg, settings, "board", "klipper")
 
     _write_config(paths, body="CONFIG_MACH_STM32=y\nCONFIG_USBSERIAL=y\n")
-    assert staleness(paths, "board", "klipper") == (True, "config_changed")
+    assert artifact_status(paths, "board", "klipper").reason == "config_changed"
 
 
-def test_staleness_detects_a_changed_source_tree(paths, settings):
+def test_artifact_status_detects_a_changed_source_tree(paths, settings):
     settings.dry_run = True
     reg = _registry(paths)
     _write_config(paths)
@@ -125,13 +125,13 @@ def test_staleness_detects_a_changed_source_tree(paths, settings):
     with open(side_path, "w", encoding="utf-8") as fh:
         json.dump(side, fh)
 
-    stale, reason = staleness(paths, "board", "klipper")
+    status = artifact_status(paths, "board", "klipper")
     if side.get("fw_sha") and _has_git(paths):
-        assert (stale, reason) == (True, "source_changed")
+        assert status.reason == "source_changed"
     else:
         # No git available / not a checkout: nothing to compare against, so the
-        # build is reported clean rather than falsely stale.
-        assert stale is False
+        # build is reported current rather than falsely stale.
+        assert status.is_current
 
 
 def _has_git(paths) -> bool:
@@ -140,7 +140,9 @@ def _has_git(paths) -> bool:
     return git_head(paths.fw_dir("klipper")) is not None
 
 
-def test_missing_sidecar_means_never_built(paths, settings):
+def test_missing_sidecar_means_no_provenance(paths, settings):
+    """Distinct from never having built at all: a binary is on disk, there is
+    just nothing recorded about what produced it."""
     settings.dry_run = True
     reg = _registry(paths)
     _write_config(paths)
@@ -149,7 +151,9 @@ def test_missing_sidecar_means_never_built(paths, settings):
     import os
 
     os.unlink(paths.sidecar_file("board", "klipper"))
-    assert staleness(paths, "board", "klipper") == (True, "never_built")
+    status = artifact_status(paths, "board", "klipper")
+    assert status.reason == "no_provenance"
+    assert not status.is_current
 
 
 def test_extra_args_are_split_shell_style(paths, settings):

@@ -16,7 +16,7 @@ from __future__ import annotations
 
 import dataclasses
 import os
-from typing import Any, Optional
+from typing import Any
 
 from .cfgdoc import CfgDocument, parse_bool
 from .errors import ConfigError
@@ -65,12 +65,6 @@ class Settings:
     #: Per-job log ring buffer size, in lines.
     log_ring_size: int = 2000
 
-    #: Default PlatformIO source tree for every type that provider builds, so one
-    #: repo shared by every env is written once. A section's own `source:` wins.
-    #: Read from `display_source` too, which is what it was called when the
-    #: provider was spelled in the section name.
-    pio_source: str = ""
-
     #: PlatformIO launcher, if it is somewhere `pio` on PATH and the standard
     #: ~/.platformio/penv/bin/pio will not find it.
     platformio_bin: str = ""
@@ -105,15 +99,8 @@ BOOL_FIELDS = {
 #: lists of the same thing is how one grows a field the other does not.
 _BOOL_FIELDS = BOOL_FIELDS
 _INT_FIELDS = {"make_jobs", "log_ring_size"}
-_STR_FIELDS = {"service", "service_backend", "pio_source", "platformio_bin", "flashtool_path"}
+_STR_FIELDS = {"service", "service_backend", "platformio_bin", "flashtool_path"}
 _BACKENDS = ("moonraker", "systemd", "null")
-
-#: Old spellings, read as the field that replaced them. A key here is not
-#: deprecated - it is in hand-edited files on printers nobody is watching, and
-#: warning about a setting that works would be noise. `save_settings` drops the
-#: old key when it writes the new one, so a file is only ever rewritten by an
-#: edit the user asked for.
-_KEY_ALIASES = {"display_source": "pio_source"}
 
 
 def _read(path: str) -> CfgDocument:
@@ -151,7 +138,6 @@ def load_settings(path: str) -> Settings:
 
     for key in doc.options(SECTION):
         name = key.replace("-", "_")
-        name = _KEY_ALIASES.get(name, name)
         raw = doc.get(SECTION, key)
         if raw is None:
             continue
@@ -188,12 +174,6 @@ def save_settings(path: str, settings: Settings) -> None:
     this cannot clobber [mcu ...] sections written in the meantime.
     """
     doc = _read(path)
-    # Before writing anything: a file carrying `display_source` would otherwise
-    # come out with that *and* `pio_source`, and the next load would pick
-    # whichever `doc.options` yielded last. One key, one meaning.
-    for old, new in _KEY_ALIASES.items():
-        if doc.get(SECTION, old) is not None and new in {f.name for f in dataclasses.fields(settings)}:
-            doc.remove_option(SECTION, old)
     for field in dataclasses.fields(settings):
         value: Any = getattr(settings, field.name)
         if isinstance(value, bool):
@@ -205,19 +185,3 @@ def save_settings(path: str, settings: Settings) -> None:
     with open(tmp, "w", encoding="utf-8", newline="\n") as fh:
         fh.write(doc.render())
     os.replace(tmp, path)
-
-
-def legacy_settings_warning(paths: Any) -> Optional[str]:
-    """A stale updater.conf from before the merge is now ignored.
-
-    Not fatal - losing settings reverts to safe defaults rather than destroying
-    anything - but `enable_flashing` silently going back to false is worth saying
-    out loud rather than leaving someone to wonder why the flash buttons vanished.
-    """
-    legacy = paths.legacy_settings_file
-    if os.path.exists(legacy) and legacy != paths.main_config:
-        return (
-            f"{legacy} is no longer read: settings moved into the [updater] section "
-            f"of {paths.main_config}. Copy anything you had set across, then delete it."
-        )
-    return None

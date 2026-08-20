@@ -110,13 +110,13 @@ def test_flashing_displays_needs_it_enabled(paths, live_registry_text, fake_root
     ).load_settings(paths.settings_file))
 
     with pytest.raises(RpcError) as exc:
-        Api(paths, runner=runner, call=_moonraker(screens)).display_flash({"name": ENV})
+        Api(paths, runner=runner, call=_moonraker(screens)).flash({"name": ENV})
     assert exc.value.data["code"] == "flashing_disabled"
 
 
 def test_an_unknown_display_type_fails_before_a_job(api):
     with pytest.raises(RpcError) as exc:
-        api.dispatch("fw.display.flash", {"name": "nosuchscreen"})
+        api.dispatch("fw.flash", {"name": "nosuchscreen"})
     assert exc.value.data["code"] == "unknown_type"
     assert api.runner.current() is None
 
@@ -132,7 +132,7 @@ def test_no_reachable_screen_is_refused_rather_than_a_job_that_does_nothing(
         os.remove(section["serial"])
 
     with pytest.raises(RpcError) as exc:
-        api.dispatch("fw.display.flash", {"name": ENV})
+        api.dispatch("fw.flash", {"name": ENV})
     assert exc.value.data["code"] == "nothing_to_do"
     assert api.runner.current() is None
 
@@ -142,7 +142,7 @@ def test_a_moving_printer_blocks_a_display_flash(api, screens):
     flash - a display is not special enough to interrupt a QGL for."""
     api._call = _moonraker(screens, idle_state="Printing")
     with pytest.raises(RpcError) as exc:
-        api.dispatch("fw.display.flash", {"name": ENV})
+        api.dispatch("fw.flash", {"name": ENV})
     assert exc.value.data["code"] == "print_in_progress"
 
 
@@ -174,7 +174,7 @@ def test_the_screens_are_read_before_klipper_is_stopped(api, no_pio, monkeypatch
 
     monkeypatch.setattr(api, "device_list", watched_list)
 
-    res = api.dispatch("fw.display.flash", {"name": ENV})
+    res = api.dispatch("fw.flash", {"name": ENV})
     assert api.runner.wait(timeout=30)
     job = api.runner.get(res["job_id"])
     assert job.state == "succeeded", job.error
@@ -186,7 +186,7 @@ def test_klipper_is_stopped_once_for_the_whole_batch(api, no_pio, monkeypatch):
     svc = NullService()
     monkeypatch.setattr("mcu_updater.service.make_controller", lambda *a, **k: svc)
 
-    res = api.dispatch("fw.display.flash", {"name": ENV})
+    res = api.dispatch("fw.flash", {"name": ENV})
     assert api.runner.wait(timeout=30)
     job = api.runner.get(res["job_id"])
 
@@ -202,7 +202,7 @@ def test_klipper_is_stopped_once_for_the_whole_batch(api, no_pio, monkeypatch):
 
 def test_every_upload_names_its_port(api, no_pio):
     """The guard that stops PlatformIO choosing between identical CH340s."""
-    res = api.dispatch("fw.display.flash", {"name": ENV})
+    res = api.dispatch("fw.flash", {"name": ENV})
     assert api.runner.wait(timeout=30)
     assert api.runner.get(res["job_id"]).state == "succeeded"
 
@@ -217,7 +217,7 @@ def test_every_upload_names_its_port(api, no_pio):
 
 def test_one_screen_can_be_singled_out(api, no_pio, screens):
     port = screens["knomi_serial t0_knomi"]["serial"]
-    res = api.dispatch("fw.display.flash", {"name": ENV, "port": port})
+    res = api.dispatch("fw.flash", {"name": ENV, "port": port})
 
     assert len(res["displays"]) == 1
     assert api.runner.wait(timeout=30)
@@ -229,7 +229,7 @@ def test_a_flash_result_says_nothing_about_which_board_it_wrote(api, no_pio, scr
     it is resolved at flash time by discovery - so the result reports what was
     written and where, and keeps no history of which board lives on which port."""
     port = screens["knomi_serial t0_knomi"]["serial"]
-    res = api.dispatch("fw.display.flash", {"name": ENV, "port": port})
+    res = api.dispatch("fw.flash", {"name": ENV, "port": port})
     assert api.runner.wait(timeout=30)
     job = api.runner.get(res["job_id"])
 
@@ -251,7 +251,7 @@ def test_one_failing_screen_does_not_abandon_the_others(api, no_pio, monkeypatch
 
     monkeypatch.setattr(pio_mod, "run_streamed", selective)
 
-    res = api.dispatch("fw.display.flash", {"name": ENV})
+    res = api.dispatch("fw.flash", {"name": ENV})
     assert api.runner.wait(timeout=30)
     job = api.runner.get(res["job_id"])
 
@@ -287,7 +287,7 @@ def test_a_build_touches_no_display_and_needs_no_flash_permission(
 
     caps = agent.dispatch("fw.ping")["capabilities"]
     assert "fw.display.build" in caps
-    assert "fw.display.flash" not in caps
+    assert "fw.flash" not in caps
 
     res = agent.dispatch("fw.display.build", {"name": ENV})
     assert runner.wait(timeout=30)
@@ -337,7 +337,7 @@ def test_the_watcher_stops_inside_the_klipper_stop(api, no_pio, monkeypatch):
     _made, factory = _services(order)
     monkeypatch.setattr("mcu_updater.service.make_controller", factory)
 
-    res = api.dispatch("fw.display.flash", {"name": ENV})
+    res = api.dispatch("fw.flash", {"name": ENV})
     assert api.runner.wait(timeout=30)
     assert api.runner.get(res["job_id"]).state == "succeeded"
 
@@ -362,7 +362,7 @@ def test_the_watcher_never_touches_the_crash_journal(api, no_pio, monkeypatch):
     _made, factory = _services([])
     monkeypatch.setattr("mcu_updater.service.make_controller", factory)
 
-    res = api.dispatch("fw.display.flash", {"name": ENV})
+    res = api.dispatch("fw.flash", {"name": ENV})
     assert api.runner.wait(timeout=30)
     assert api.runner.get(res["job_id"]).state == "succeeded"
 
@@ -379,7 +379,7 @@ def test_a_watcher_that_is_not_running_is_left_alone(api, no_pio, monkeypatch):
     # Build it up front and mark it down, so the flash finds it inactive.
     factory(None, name="knomi_serial")._active = False
 
-    res = api.dispatch("fw.display.flash", {"name": ENV})
+    res = api.dispatch("fw.flash", {"name": ENV})
     assert api.runner.wait(timeout=30)
     assert api.runner.get(res["job_id"]).state == "succeeded"
 
@@ -395,7 +395,7 @@ def test_a_watcher_that_will_not_stop_does_not_abort_the_flash(api, no_pio, monk
     watcher = factory(None, name="knomi_serial")
     monkeypatch.setattr(watcher, "stop", lambda *a, **k: None)  # stays "active"
 
-    res = api.dispatch("fw.display.flash", {"name": ENV})
+    res = api.dispatch("fw.flash", {"name": ENV})
     assert api.runner.wait(timeout=30)
     job = api.runner.get(res["job_id"])
     assert job.state == "succeeded", job.error
@@ -417,7 +417,7 @@ def test_a_display_family_can_declare_it_has_no_watcher(api, paths, no_pio, monk
     _made, factory = _services(order)
     monkeypatch.setattr("mcu_updater.service.make_controller", factory)
 
-    res = api.dispatch("fw.display.flash", {"name": ENV})
+    res = api.dispatch("fw.flash", {"name": ENV})
     assert api.runner.wait(timeout=30)
     assert api.runner.get(res["job_id"]).state == "succeeded"
 
@@ -471,7 +471,7 @@ def test_a_screen_is_written_where_it_answered_not_where_it_was(
         lambda p, s, d, port, **k: ports.append(port) or {"port": port, "chip": None},
     )
 
-    res = api.dispatch("fw.display.flash", {"name": ENV, "port": screens_port(screens, "t0")})
+    res = api.dispatch("fw.flash", {"name": ENV, "port": screens_port(screens, "t0")})
     assert api.runner.wait(timeout=30)
     job = api.runner.get(res["job_id"])
     assert job.state == "succeeded", job.error
@@ -497,7 +497,7 @@ def test_a_screen_that_does_not_answer_is_not_flashed_at_its_old_port(
         lambda p, s, d, port, **k: ports.append(port) or {"port": port, "chip": None},
     )
 
-    res = api.dispatch("fw.display.flash", {"name": ENV, "port": screens_port(screens, "t0")})
+    res = api.dispatch("fw.flash", {"name": ENV, "port": screens_port(screens, "t0")})
     assert api.runner.wait(timeout=30)
     job = api.runner.get(res["job_id"])
 
@@ -529,7 +529,7 @@ def test_discovery_failing_falls_back_to_the_configured_ports(
     )
 
     want = screens_port(screens, "t0")
-    res = api.dispatch("fw.display.flash", {"name": ENV, "port": want})
+    res = api.dispatch("fw.flash", {"name": ENV, "port": want})
     assert api.runner.wait(timeout=30)
     assert api.runner.get(res["job_id"]).state == "succeeded"
     assert ports == [want]
@@ -555,7 +555,7 @@ def test_a_screen_with_no_hardware_id_is_still_flashed(
     )
 
     want = screens_port(screens, "t0")
-    res = api.dispatch("fw.display.flash", {"name": ENV, "port": want})
+    res = api.dispatch("fw.flash", {"name": ENV, "port": want})
     assert api.runner.wait(timeout=30)
     assert api.runner.get(res["job_id"]).state == "succeeded"
     assert ports == [want]
@@ -571,7 +571,7 @@ def test_a_dry_run_never_opens_a_serial_port(api, paths, no_pio, screens, monkey
     write_settings(paths, dry_run="true", enable_flashing="true", service_backend="null")
     api._call = serve_klipper(display_objects(screens, _with_ids(screens, t0_knomi="aaa111")))
 
-    res = api.dispatch("fw.display.flash", {"name": ENV})
+    res = api.dispatch("fw.flash", {"name": ENV})
     assert api.runner.wait(timeout=30)
     assert api.runner.get(res["job_id"]).state == "succeeded"
 
@@ -652,11 +652,13 @@ def test_a_fleet_flash_writes_boards_and_screens_under_one_stop(
 # --------------------------------------------------------------------------
 # one method per operation, whichever build system owns the type
 #
-# `fw.display.build` and `fw.display.flash` named a build system in the method,
-# so a caller had to know which kind of thing it was addressing before it could
-# pick one - which is the branching the Provider and Flasher seams removed
-# everywhere else. `fw.build` and `fw.flash` route on the type's own provider.
-# The old names stay registered: a panel built before this is still calling them.
+# `fw.display.build` and (formerly) `fw.display.flash` named a build system in
+# the method, so a caller had to know which kind of thing it was addressing
+# before it could pick one - which is the branching the Provider and Flasher
+# seams removed everywhere else. `fw.build` and `fw.flash` route on the type's
+# own provider. `fw.display.flash` retired once nothing called it (Step 14);
+# `fw.display.build` stays registered: a panel built before this is still
+# calling it.
 # --------------------------------------------------------------------------
 
 

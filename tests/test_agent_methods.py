@@ -74,7 +74,7 @@ def test_flashing_is_off_by_default(api):
 def test_status_paints_the_whole_panel_in_one_call(api):
     res = api.dispatch("fw.status")
     assert set(res) >= {
-        "types",
+        "targets",
         "bus",
         "job",
         "recent",
@@ -83,14 +83,14 @@ def test_status_paints_the_whole_panel_in_one_call(api):
         "printing",
         "settings",
     }
-    assert len(res["types"]) == 4
+    assert len(res["targets"]) == 4
     assert res["job"] is None  # no job runner in this phase
     assert res["recent"] == []
     assert res["read_only"] is True
 
 
 def test_status_type_shape(api):
-    types = {t["name"]: t for t in api.dispatch("fw.status")["types"]}
+    types = {t["name"]: t for t in api.dispatch("fw.type.list")["types"]}
     ebb = types["bttebb36"]
     assert ebb["chipset"] == "stm32g0b1xx"
     assert len(ebb["serials"]) == 2
@@ -115,14 +115,14 @@ def test_status_type_shape(api):
 
 
 def test_status_surfaces_makefile_patches(api):
-    types = {t["name"]: t for t in api.dispatch("fw.status")["types"]}
+    types = {t["name"]: t for t in api.dispatch("fw.type.list")["types"]}
     patches = types["flylllplusbuffer"]["klipper"]["makefile_patches"]
     assert patches == [{"file": "src/Makefile", "line": "src-y += buffer.c"}]
 
 
 def test_status_reports_device_state_from_the_bus(api, paths, fake_root):
     make_device(fake_root / "bus", "klipper", "stm32f103xe", "36FFD9054755303923891357-if00")
-    types = {t["name"]: t for t in api.dispatch("fw.status")["types"]}
+    types = {t["name"]: t for t in api.dispatch("fw.type.list")["types"]}
     serials = {s["serial"]: s for s in types["sv08Mainboard"]["serials"]}
     online = serials["36FFD9054755303923891357-if00"]
     assert online["state"] == "klipper"
@@ -133,19 +133,17 @@ def test_status_reports_device_state_from_the_bus(api, paths, fake_root):
 
 
 def test_artifact_reports_never_built_for_a_fresh_install(api):
-    types = {t["name"]: t for t in api.dispatch("fw.status")["types"]}
+    types = {t["name"]: t for t in api.dispatch("fw.type.list")["types"]}
     art = types["bttebb36"]["artifacts"]["klipper"]
     assert art["has_bin"] is False
-    assert art["stale"] is True
-    assert art["stale_reason"] == "never_built"
+    assert art["reason"] == "never_built"
     assert set(art) >= {
         "has_config",
         "has_bin",
         "has_uf2",
         "built_fw_sha",
         "current_fw_sha",
-        "stale",
-        "stale_reason",
+        "reason",
         "last_build_seconds",
     }
 
@@ -164,11 +162,10 @@ def test_artifact_goes_clean_after_a_build(api, paths, settings):
         fh.write("CONFIG_MACH_STM32=y\n")
     build(paths, Registry.load(paths), settings, "bttebb36", "klipper")
 
-    types = {t["name"]: t for t in api.dispatch("fw.status")["types"]}
+    types = {t["name"]: t for t in api.dispatch("fw.type.list")["types"]}
     art = types["bttebb36"]["artifacts"]["klipper"]
     assert art["has_bin"] is True
-    assert art["stale"] is False
-    assert art["stale_reason"] is None
+    assert art["reason"] is None
     assert art["last_build_seconds"] is not None
 
 
@@ -212,10 +209,6 @@ def test_bus_scan_is_empty_with_no_bus(api):
 # --------------------------------------------------------------------------
 # fw.type.list / fw.artifacts / fw.settings.get
 # --------------------------------------------------------------------------
-
-
-def test_type_list_matches_status_types(api):
-    assert api.dispatch("fw.type.list")["types"] == api.dispatch("fw.status")["types"]
 
 
 def test_artifacts_requires_a_name(api):
@@ -300,7 +293,7 @@ def test_a_failing_probe_does_not_break_status(paths, live_registry_text):
     res = Api(paths, call=broken).dispatch("fw.status")
     assert res["klipper_service"] is None
     assert res["printing"] is None
-    assert len(res["types"]) == 4  # the real payload still arrives
+    assert len(res["targets"]) == 4  # the real payload still arrives
 
 
 def test_service_state_and_print_state_are_parsed(paths, live_registry_text):

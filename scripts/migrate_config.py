@@ -72,7 +72,7 @@ from mcu_updater.cfgdoc import CfgDocument, parse_bool  # noqa: E402
 from mcu_updater.errors import ConfigError  # noqa: E402
 from mcu_updater.paths import Paths  # noqa: E402
 from mcu_updater.sections import TypeSection  # noqa: E402
-from mcu_updater.settings import load_settings  # noqa: E402
+from mcu_updater.settings import SECTION  # noqa: E402
 
 #: The two old section-header spellings a type could carry before `[type ...]`
 #: was the only one. See sections.py's own module docstring for the history.
@@ -186,10 +186,16 @@ def main(argv: list[str] | None = None) -> int:
     with open(path, encoding="utf-8") as fh:
         original = fh.read()
 
-    settings = load_settings(path)
     doc = CfgDocument(original)
+    # Read straight off the document, not through Settings: `pio_source` and
+    # its old `display_source` spelling are themselves retired (see
+    # docs/rebuild-plan.md Step 14), so this is the last place either is read
+    # at all - purely as input to the migration this script performs.
+    raw_pio_source = (
+        doc.get(SECTION, "pio_source") or doc.get(SECTION, "display_source") or ""
+    ).strip()
     try:
-        notes = migrate(doc, pio_source=settings.pio_source)
+        notes = migrate(doc, pio_source=raw_pio_source)
     except ConfigError as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1

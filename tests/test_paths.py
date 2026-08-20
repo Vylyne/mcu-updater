@@ -109,11 +109,6 @@ def test_source_tree_layout(tmp_path):
     p = Paths.from_env(env={"MCU_UPDATER_HOME": str(tmp_path)})
     assert p.fw_dir("klipper") == os.path.join(str(tmp_path), "klipper")
     assert p.flashtool.endswith(os.path.join("katapult", "scripts", "flashtool.py"))
-    assert p.kconfiglib("klipper").endswith(
-        os.path.join("klipper", "lib", "kconfiglib", "kconfiglib.py")
-    )
-    assert p.built_artifact("klipper") == os.path.join(str(tmp_path), "klipper", "out", "klipper.bin")
-    assert p.built_artifact("katapult", "uf2").endswith("katapult.uf2")
 
 
 def test_paths_are_frozen():

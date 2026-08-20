@@ -54,8 +54,12 @@ def test_no_config_at_all_is_the_old_behaviour(paths):
     """The whole compatibility claim, in one assertion."""
     family = firmware.resolve(paths, "klipper")
     assert family.source_dir(paths) == paths.fw_dir("klipper")
-    assert family.built_artifact(paths) == paths.built_artifact("klipper", "bin")
-    assert family.built_artifact(paths, "uf2") == paths.built_artifact("klipper", "uf2")
+    assert family.built_artifact(paths) == os.path.join(
+        paths.fw_dir("klipper"), "out", "klipper.bin"
+    )
+    assert family.built_artifact(paths, "uf2") == os.path.join(
+        paths.fw_dir("klipper"), "out", "klipper.uf2"
+    )
 
 
 def test_a_family_nobody_configured_still_resolves(paths):

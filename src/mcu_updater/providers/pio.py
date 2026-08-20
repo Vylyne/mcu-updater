@@ -36,9 +36,7 @@ from ..paths import Paths
 from ..settings import Settings
 from ..states import (
     BUILT_DIRTY,
-    CONFIG_CHANGED,
     DEVICE_DIRTY,
-    FOREIGN_BUILD,
     NEVER_BUILT,
     NO_PROVENANCE,
     SOURCE_CHANGED,
@@ -109,15 +107,13 @@ class PioType:
         }
 
 
-def load(paths: Paths, default_source: str = "") -> dict[str, PioType]:
+def load(paths: Paths) -> dict[str, PioType]:
     """Read this provider's type sections from the shared config file.
 
     A type is ours if the family it declares (`firmware:`) is built by
     `platformio` - the same "provider is derived from the family's builder"
     rule `config.py` applies. A type predating that key is no longer
-    recognised at all; `default_source` is kept as a parameter only because
-    `Install.load` still passes `settings.pio_source` - both retire in
-    Step 14.
+    recognised at all.
     """
     try:
         with open(paths.main_config, encoding="utf-8") as fh:
@@ -421,8 +417,8 @@ def _source_dir(display: PioType) -> str:
     path = os.path.expanduser(display.source)
     if not path:
         raise ConfigError(
-            f"'{display.name}' has no source tree configured. Set 'source:' in its "
-            f"section, or 'pio_source' in [updater].",
+            f"'{display.name}' has no source tree configured. Set 'source:' on its "
+            f"firmware family.",
             type=display.name,
         )
     if not os.path.isdir(path):
@@ -455,12 +451,6 @@ _FW_SHA_RE = re.compile(r"\+(?:\d+\.)?g([0-9a-f]{6,40})", re.IGNORECASE)
 #: A build from a tree with uncommitted changes. Never reproducible, so it can
 #: never be *shown* to match - saying "up to date" about one would be a lie.
 _FW_DIRTY_RE = re.compile(r"\.dirty\b", re.IGNORECASE)
-
-#: How stale a screen's firmware is relative to the source tree.
-FW_CURRENT = "current"
-FW_BEHIND = "behind"
-FW_DIRTY = "dirty"
-FW_UNKNOWN = "unknown"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -552,52 +542,14 @@ def device_status(running: Optional[str], state: SourceState) -> DeviceStatus:
     return DeviceStatus(SOURCE_CHANGED if state.version else UNKNOWN_VERSION)
 
 
-#: DeviceStatus reason -> the FW_* word this module has always reported.
-#:
-#: Deliberately *not* total, unlike the artifact adapter. FW_* has four words
-#: and no honest one for `in_bootloader`, `offline` or `artifact_changed` - a
-#: screen has no bus state to be in a bootloader, and no flash record to
-#: contradict. Inventing a word for a state this module cannot reach would be
-#: worse than the KeyError, which would at least be true.
-_LEGACY_FW_STATE = {
-    None: FW_CURRENT,
-    SOURCE_CHANGED: FW_BEHIND,
-    DEVICE_DIRTY: FW_DIRTY,
-    UNKNOWN_VERSION: FW_UNKNOWN,
-}
-
-
-def legacy_firmware_state(status: DeviceStatus) -> str:
-    """A verdict already in hand, in the FW_* words.
-
-    Split from `firmware_state` so a caller that needs both the verdict and the
-    legacy string - the agent, which now puts both on the wire - pays for the
-    comparison once.
-    """
-    return _LEGACY_FW_STATE[status.reason]
-
-
-def firmware_state(running: Optional[str], state: SourceState) -> str:
-    """`device_status()` in the FW_* words. See that function for the reasoning."""
-    return legacy_firmware_state(device_status(running, state))
-
-
 # --------------------------------------------------------------------------
 # is the BUILT IMAGE current
 #
-# Separate from firmware_state, which asks about the screens. This asks about
-# the .bin, and it earns its place because `fw.display.flash` uploads whatever
+# Separate from device_status, which asks about the screens. This asks about
+# the .bin, and it earns its place because flashing a display uploads whatever
 # is in .pio/build without building first - so a source tree that has moved
 # since the last build writes old firmware to every screen, silently.
 # --------------------------------------------------------------------------
-
-ART_CURRENT = "current"
-ART_STALE = "source_changed"
-ART_NEVER = "never_built"
-ART_DIRTY = "dirty"
-#: An image exists that we did not build, so there is no provenance for it.
-ART_FOREIGN = "unknown"
-
 
 def record_build(paths: Paths, display: PioType, state: SourceState) -> None:
     """Note which commit produced the image now sitting in .pio/build.
@@ -719,41 +671,6 @@ def artifact_status(paths: Paths, display: PioType, state: SourceState) -> Artif
     if built[:size].lower() == head[:size].lower():
         return ArtifactStatus()
     return ArtifactStatus(SOURCE_CHANGED)
-
-
-#: ArtifactStatus reason -> the ART_* word this module has always reported.
-#: Both untrustworthy reasons collapse back to a single "unknown" here; the
-#: distinction is available from `artifact_status()` for anything that wants it.
-#:
-#: Total over every artifact reason, including `config_changed`, which a
-#: PlatformIO env cannot currently produce - it has no saved .config to compare.
-#: Kept anyway: the cost is one line, and the alternative is a KeyError in front
-#: of a user the day that stops being true.
-_LEGACY_ART_STATE = {
-    None: ART_CURRENT,
-    NEVER_BUILT: ART_NEVER,
-    CONFIG_CHANGED: ART_STALE,
-    SOURCE_CHANGED: ART_STALE,
-    BUILT_DIRTY: ART_DIRTY,
-    FOREIGN_BUILD: ART_FOREIGN,
-    NO_PROVENANCE: ART_FOREIGN,
-}
-
-
-def legacy_artifact_state(status: ArtifactStatus) -> str:
-    """A verdict already in hand, in the ART_* words.
-
-    Split from `artifact_state` for the same reason as its device counterpart:
-    this mapping is *not* invertible - two reasons collapse onto `ART_FOREIGN`
-    and two more onto `ART_STALE` - so a caller wanting both must compute the
-    verdict once and adapt it, never adapt and try to reverse it.
-    """
-    return _LEGACY_ART_STATE[status.reason]
-
-
-def artifact_state(paths: Paths, display: PioType, state: SourceState) -> str:
-    """`artifact_status()` in the ART_* words. See that function for the reasoning."""
-    return legacy_artifact_state(artifact_status(paths, display, state))
 
 
 def resolve_port(port: str) -> str:

@@ -52,7 +52,6 @@ from .cfgdoc import CfgDocument
 from .errors import (
     AmbiguousSerialError,
     ConfigCorruptError,
-    ConfigError,
     DuplicateTypeError,
     InvalidTypeNameError,
     SerialTrackedElsewhereError,
@@ -294,7 +293,6 @@ class Registry:
     def load(cls, paths: Paths) -> Registry:
         path = paths.registry_file
         if not os.path.exists(path):
-            cls._refuse_if_legacy(paths)
             return cls({}, CfgDocument())
 
         try:
@@ -396,29 +394,6 @@ class Registry:
             types[name] = mcu
 
         return cls(types, doc)
-
-    @staticmethod
-    def _refuse_if_legacy(paths: Paths) -> None:
-        """A pre-0.10 install has its registry somewhere we no longer look.
-
-        Silently reporting "no MCU types configured" would be a data-loss shaped
-        surprise: the next add-type would write a fresh file while the real one
-        sat untouched in the old location.
-        """
-        legacy = next((p for p in paths.legacy_locations if os.path.exists(p)), None)
-        if legacy is None:
-            return
-        raise ConfigError(
-            f"found a registry at the old location {legacy}, but nothing at "
-            f"{paths.registry_file}.\n"
-            f"The layout moved: hand-edited config now lives under "
-            f"{paths.config_dir} and build artifacts under {paths.data_dir}.\n"
-            f"Convert the old file (see docs/layout.md) or move your .config "
-            f"files across and re-add the types - then delete {legacy}.\n"
-            f"Refusing to continue so an empty registry can't overwrite anything.",
-            legacy=legacy,
-            expected=paths.registry_file,
-        )
 
     @classmethod
     @contextlib.contextmanager

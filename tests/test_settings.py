@@ -4,12 +4,7 @@ import pytest
 
 from mcu_updater.config import Registry
 from mcu_updater.errors import ConfigError
-from mcu_updater.settings import (
-    Settings,
-    legacy_settings_warning,
-    load_settings,
-    save_settings,
-)
+from mcu_updater.settings import Settings, load_settings, save_settings
 
 
 def test_missing_file_yields_defaults(paths):
@@ -163,22 +158,6 @@ def test_a_duplicate_mcu_section_is_refused(paths):
     assert "[mcu a]" in str(exc.value)
 
 
-def test_a_leftover_updater_conf_is_reported_not_silently_ignored(paths):
-    """Settings reverting to defaults is safe, but enable_flashing going back to
-    false makes the flash buttons vanish with no explanation."""
-    assert legacy_settings_warning(paths) is None
-
-    with open(paths.legacy_settings_file, "w", encoding="utf-8") as fh:
-        fh.write("[updater]\nenable_flashing = true\n")
-
-    warning = legacy_settings_warning(paths)
-    assert warning is not None
-    assert "updater.conf" in warning
-    assert "mcu-updater.cfg" in warning
-    # and it is genuinely no longer read
-    assert load_settings(paths.settings_file).enable_flashing is False
-
-
 @pytest.mark.parametrize(
     ("jobs", "expected"),
     [(0, []), (1, ["-j1"]), (8, ["-j8"])],
@@ -190,52 +169,6 @@ def test_make_flags(jobs, expected):
 def test_negative_jobs_means_auto():
     flags = Settings(make_jobs=-1).make_flags()
     assert len(flags) == 1 and flags[0].startswith("-j")
-
-
-# --------------------------------------------------------------------------
-# display settings
-#
-# `display_source` was documented in the README and read through a
-# `getattr(settings, "display_source", "")` that no field ever satisfied - so
-# every display came back with no source tree and the error blamed the user's
-# [display] section. Both are real fields now, reached by plain attribute
-# access, so the next one that goes missing is an AttributeError.
-# --------------------------------------------------------------------------
-
-
-def test_pio_source_is_read_from_the_updater_section(paths):
-    with open(paths.settings_file, "w", encoding="utf-8") as fh:
-        fh.write("[updater]\npio_source: ~/knomi_serial\n")
-    assert load_settings(paths.settings_file).pio_source == "~/knomi_serial"
-
-
-def test_the_old_display_source_spelling_still_reads(paths):
-    """It is in hand-edited files on printers nobody is watching. Renaming the
-    field is our business; making somebody edit a working config is not."""
-    with open(paths.settings_file, "w", encoding="utf-8") as fh:
-        fh.write("[updater]\ndisplay_source: ~/knomi_serial\n")
-    assert load_settings(paths.settings_file).pio_source == "~/knomi_serial"
-
-
-def test_a_comment_after_pio_source_is_not_part_of_the_path(paths):
-    """The README writes it exactly this way."""
-    with open(paths.settings_file, "w", encoding="utf-8") as fh:
-        fh.write("[updater]\npio_source: ~/knomi_serial     # shared by every env\n")
-    assert load_settings(paths.settings_file).pio_source == "~/knomi_serial"
-
-
-def test_saving_drops_the_old_spelling_rather_than_keeping_both(paths):
-    """Both keys in one file means the next load takes whichever `doc.options`
-    happens to yield last - a setting that works until it silently does not."""
-    with open(paths.settings_file, "w", encoding="utf-8") as fh:
-        fh.write("[updater]\ndisplay_source: ~/knomi_serial\n")
-
-    s = load_settings(paths.settings_file)
-    save_settings(paths.settings_file, s)
-    text = open(paths.settings_file, encoding="utf-8").read()
-
-    assert "display_source" not in text
-    assert load_settings(paths.settings_file).pio_source == "~/knomi_serial"
 
 
 def test_platformio_bin_is_read_from_the_updater_section(paths):
@@ -255,7 +188,6 @@ def test_flashtool_path_is_read_from_the_updater_section(paths):
 
 def test_pio_settings_default_to_empty(paths):
     s = load_settings(paths.settings_file)
-    assert s.pio_source == ""
     assert s.platformio_bin == ""
     assert s.flashtool_path == ""
 
@@ -263,8 +195,7 @@ def test_pio_settings_default_to_empty(paths):
 def test_every_settings_field_the_code_reads_actually_exists():
     """A getattr-with-a-default cannot tell a missing field from an unset one.
 
-    That is how display_source shipped documented but unread. Nothing outside
-    this module should reach a setting defensively.
+    Nothing outside this module should reach a setting defensively.
     """
     import pathlib
     import re

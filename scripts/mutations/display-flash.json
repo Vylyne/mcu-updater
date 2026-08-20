@@ -27,11 +27,6 @@
       "replace": "            objects.extend(self._all_object_names())"
     },
     {
-      "name": "displays ride along in fw.status",
-      "find": "            \"displays\": displays,\n",
-      "replace": "            \"displays\": [],\n"
-    },
-    {
       "name": "displays are projected into targets too",
       "find": "        ] + [self._display_target(payload, allowed) for payload in displays]",
       "replace": "        ]"

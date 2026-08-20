@@ -96,13 +96,12 @@ application error (see `data.code`), `-32603` internal.
 | `fw.artifacts` | `name` (required) | `{klipper: Artifact, katapult: Artifact}` |
 | `fw.settings.get` | — | `{settings: Settings}` |
 | `fw.build` | `name`, `fw`, `jobs?`, `clean?`, `reseed?` | `{job_id, job}` — returns immediately |
-| `fw.flash` | `serial`, `name?`, `force?` | `{job_id, job}` — **off by default**, see below |
+| `fw.flash` | `serial\|port`, `name?`, `force?` | `{job_id, job}` — **off by default**, see below |
 | `fw.build_all` | `fw?`, `scope?` | `{job_id, job, types, builds, skipped}` — builds only, touches no board |
 | `fw.flash_all` | `scope?`, `name?`, `force?` | `{job_id, job, boards, displays}` — **off by default** |
 | `fw.update_all` | `scope?`, `name?`, `force?` | `{job_id, job, types}` — **off by default** |
 | `fw.display.list` | — | `{displays, reachable, watcher}` — read-only |
 | `fw.display.build` | `name` | `{job_id, job}` — PlatformIO, touches no screen |
-| `fw.display.flash` | `name`, `port?`, `force?` | `{job_id, job, displays}` — **off by default** |
 | `fw.job.get` | `job_id?`, `log_from?` | `{job, log, log_from, log_next, log_dropped}` |
 | `fw.job.cancel` | `job_id?` | `{cancelling, immediate}` |
 
@@ -317,9 +316,9 @@ for it first"*, unchanged, which is upstream Klipper and therefore most types.
 hand is the wrong first step and the picker is the right one.
 
 Devices carry `actions` too, because the reasons differ per device: one board of
-a type can be offline while its neighbour waits in Katapult. It is also the only
-place the difference between flashing a board (`fw.flash`) and flashing a screen
-(`fw.display.flash`) has to exist — the reader never sees it.
+a type can be offline while its neighbour waits in Katapult. `fw.flash` writes
+both kinds now — a board's action carries `serial`, a screen's carries `port` —
+so the reader never has to branch on which it is holding.
 
 `needs_flash` is tri-state at both levels, and the target's is `true` if any
 device is, `false` only if every device provably is not, and `null` otherwise.
@@ -390,6 +389,10 @@ moment later.
 | `update_all` | **Deferred**, because it may reach the flashing half. Cancelling during its build phase still waits for the current type's `make` to be killed and the loop to come round. |
 
 ### `fw.flash` — the dangerous one
+
+Writes a board. `name` resolving to a PlatformIO type routes to a display
+instead — see "Flashing a display" below, which documents that path's own
+checks; everything here is the board path.
 
 Flashing stops Klipper and writes to a board. It is therefore **not advertised
 unless it is explicitly switched on**:
@@ -906,7 +909,13 @@ Every one of these is `null` against a module too old to report it. **Absence
 means unknown, never false** — a screen answering nothing must not read as one
 with a mismatched config.
 
-### `fw.display.flash`
+### Flashing a display
+
+Reached through `fw.flash` — `name` resolving to a PlatformIO type is what
+routes there instead of the board path above, so the call is `{name, port?,
+force?}` rather than `{serial, name?, force?}`. (`fw.display.flash` was a
+separate method for this until Step 14 of docs/rebuild-plan.md retired it;
+nothing called it once `fw.flash` grew the same routing.)
 
 Two properties carry the risk, and both are enforced rather than documented.
 

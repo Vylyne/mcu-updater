@@ -1,15 +1,17 @@
 """`fw.status.targets` - MCU types and displays said in one shape.
 
-The panel needs a component per wire shape, and there are two of them saying
-overlapping things in different words. `targets[]` is those two projected onto
-one shape, so one component renders both - and renders whatever comes next
-without being taught to.
+`types[]` and `displays[]` said overlapping things in different words; the
+panel needed a component per wire shape. `targets[]` is those two projected
+onto one shape, so one component renders both - and renders whatever comes
+next without being taught to. The two originals retired at API_VERSION 2
+(docs/rebuild-plan.md Step 14); `type_status()`/`display_status()`, the
+richer per-type computations `targets[]` is built from, did not - they still
+back `fw.type.list` and feed the projection directly.
 
 **It is a projection, not a second source of truth.** The load-bearing test in
-this file is `test_every_fact_in_the_old_keys_survives_the_projection`: if a fact
-lives in `types[]` or `displays[]` and cannot be found here, that is a bug in the
-projection rather than a reason to add a key. Two wire shapes kept in step by
-hand is exactly what this exists to stop.
+this file is `test_every_fact_in_the_old_keys_survives_the_projection`: if a
+fact lives in `type_status()`/`display_status()` and cannot be found here,
+that is a bug in the projection rather than a reason to add a key.
 """
 
 from __future__ import annotations
@@ -198,16 +200,16 @@ def test_every_artifact_reason_survives_to_the_target(api, paths, monkeypatch):
 
 
 def test_an_unbuilt_binary_with_no_sidecar_is_not_never_built(api, paths):
-    """The one case the legacy string genuinely cannot express."""
+    """A binary exists but nothing was recorded about what produced it -
+    distinct from never having built at all, and the retired `stale_reason`
+    wire word could not express the difference."""
     os.makedirs(os.path.dirname(paths.bin_file("bttebb36", "klipper")), exist_ok=True)
     with open(paths.bin_file("bttebb36", "klipper"), "wb") as fh:
         fh.write(b"\x00")
 
     status = api.dispatch("fw.status")
-    legacy = {t["name"]: t for t in status["types"]}["bttebb36"]
     target = {t["name"]: t for t in status["targets"]}["bttebb36"]
 
-    assert legacy["artifacts"]["klipper"]["stale_reason"] == "never_built"
     assert target["artifact"]["reason"] == "no_provenance"
     assert target["artifact"]["state"] == "unprovable"
     assert target["artifact"]["tone"] == TONE_UNKNOWN
@@ -343,7 +345,7 @@ def test_a_screen_carries_the_display_flash_call_pinned_to_its_port(
     device = _targets(api, "display")[ENV]["devices"][0]
     flash = _action(device, "flash")
 
-    assert flash["method"] == "fw.display.flash"
+    assert flash["method"] == "fw.flash"
     assert flash["params"] == {"name": ENV, "port": port}
 
 
@@ -382,10 +384,10 @@ def test_the_artifact_shown_is_the_one_this_type_would_flash(paths, live_registr
     api = Api(paths)
 
     status = api.dispatch("fw.status")
-    legacy = {t["name"]: t for t in status["types"]}["carto_v4"]
+    legacy = api.type_status(api.registry(), "carto_v4", api.mcu_info())
     target = {t["name"]: t for t in status["targets"]}["carto_v4"]
 
-    assert legacy["artifacts"]["klipper"]["stale_reason"] == "never_built"
+    assert legacy["artifacts"]["klipper"]["reason"] == "never_built"
     assert legacy["artifacts"]["cartographer"]["has_bin"] is True
     assert target["artifact"]["reason"] == "no_provenance"
 
@@ -633,7 +635,8 @@ def test_configure_is_absent_where_the_source_tree_is_not_checked_out(paths, liv
 
 
 def test_every_fact_in_the_old_keys_survives_the_projection(api, paths, fake_root):
-    """The criterion for retiring `types[]`/`displays[]` one day.
+    """`targets[]` must carry everything `type_status()`/`display_status()`
+    produce - the two richer per-type computations it is built from.
 
     Deliberately checks identity of the *facts*, not of the wording: the point
     of the projection is that it says the same things, not that it says them the
@@ -644,14 +647,16 @@ def test_every_fact_in_the_old_keys_survives_the_projection(api, paths, fake_roo
         fake_root / "bus", "klipper", "stm32f103xe", "36FFD9054755303923891357-if00"
     )
 
-    status = api.dispatch("fw.status")
-    targets = {t["name"]: t for t in status["targets"]}
+    reg = api.registry()
+    legacy_types = [api.type_status(reg, n, api.mcu_info()) for n in reg.names()]
+    legacy_displays = api.display_status()
+    targets = {t["name"]: t for t in api.targets(reg, legacy_types, legacy_displays)}
 
-    assert set(targets) == {t["name"] for t in status["types"]} | {
-        d["name"] for d in status["displays"]
+    assert set(targets) == {t["name"] for t in legacy_types} | {
+        d["name"] for d in legacy_displays
     }
 
-    for legacy in status["types"]:
+    for legacy in legacy_types:
         target = targets[legacy["name"]]
         assert target["descriptor"] == legacy["chipset"]
         assert target["firmware"] == legacy["firmware"]
@@ -666,7 +671,7 @@ def test_every_fact_in_the_old_keys_survives_the_projection(api, paths, fake_roo
             assert device["version"] == serial["running_version"]
             assert device["name"] == serial["mcu"]
 
-    for legacy in status["displays"]:
+    for legacy in legacy_displays:
         target = targets[legacy["name"]]
         assert target["descriptor"] == legacy["env"]
         assert [d["id"] for d in target["devices"]] == [
@@ -680,24 +685,6 @@ def test_every_fact_in_the_old_keys_survives_the_projection(api, paths, fake_roo
             assert device["version"] == screen["firmware_version"]
             assert device["name"] == screen["section"]
     assert targets[ENV]["devices"][0]["id"] == port
-
-
-def test_the_legacy_keys_are_unchanged_by_the_projection_existing(api):
-    """`targets[]` is additive. A panel that has never heard of it must see
-    exactly what it saw before."""
-    ebb = {t["name"]: t for t in api.dispatch("fw.status")["types"]}["bttebb36"]
-
-    assert set(ebb["serials"][0]) == {
-        "serial",
-        "state",
-        "path",
-        "mcu",
-        "running_version",
-        "running_sha",
-        "needs_flash",
-        "reason",
-    }
-    assert ebb["artifacts"]["klipper"]["stale_reason"] == "never_built"
 
 
 def test_a_printer_with_no_screens_has_no_display_targets(api):

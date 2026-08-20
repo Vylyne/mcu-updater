@@ -1,17 +1,16 @@
-"""The shared currency vocabulary, and the four dialects it replaced.
+"""The shared currency vocabulary that replaced four dialects.
 
 Four vocabularies used to answer overlapping questions - ``stale_reason`` on the
 MCU side, ``ART_*`` and ``FW_*`` on the display side, and ``flash_state``'s own
-``reason``. They are collapsed into two questions here, one enum each.
-
-Two properties are what these tests exist to hold:
-
-**Nothing on the wire moved.** Every legacy string is still produced, from the
-same inputs, by the same public functions. The collapse is internal.
+``reason``. They are collapsed into two questions here, one enum each: Q1 (the
+built artifact) is ``ArtifactStatus``, Q2 (the device) is ``DeviceStatus``.
 
 **Information was gained, not lost.** ``ART_FOREIGN`` used to mean four
 different things spelled "unknown"; two of them are now distinguishable, and the
-MCU and display sides finally agree about what a missing sidecar means.
+MCU and display sides finally agree about what a missing sidecar means. The old
+wire words (``stale``/``stale_reason``, ``firmware_state``, ``artifact_state``)
+were retired once this vocabulary existed to say the same things - see
+docs/rebuild-plan.md's Step 14 log for that call.
 """
 
 from __future__ import annotations
@@ -23,19 +22,7 @@ import pytest
 
 from mcu_updater import build, states
 from mcu_updater.providers import pio
-from mcu_updater.providers.pio import (
-    ART_CURRENT,
-    ART_DIRTY,
-    ART_FOREIGN,
-    ART_NEVER,
-    ART_STALE,
-    FW_BEHIND,
-    FW_CURRENT,
-    FW_DIRTY,
-    FW_UNKNOWN,
-    PioType,
-    SourceState,
-)
+from mcu_updater.providers.pio import PioType, SourceState
 from mcu_updater.states import ArtifactStatus, DeviceStatus
 
 TREE = SourceState(head="d34db33", version="0.4.0", dirty=False, on_tag=False)
@@ -207,72 +194,8 @@ def test_a_device_tone_is_just_its_verdict_coloured():
 
 
 # --------------------------------------------------------------------------
-# the legacy dialects still come out unchanged
+# the display side, in the shared vocabulary
 # --------------------------------------------------------------------------
-
-
-def test_the_display_artifact_adapter_covers_every_reason():
-    """A reason with no legacy word would KeyError in front of a user."""
-    covered = set(pio._LEGACY_ART_STATE)
-    assert covered == set(states.ARTIFACT_REASONS) | {None}
-
-
-def test_every_legacy_art_word_is_still_reachable():
-    assert set(pio._LEGACY_ART_STATE.values()) == {
-        ART_CURRENT,
-        ART_NEVER,
-        ART_STALE,
-        ART_DIRTY,
-        ART_FOREIGN,
-    }
-
-
-def test_every_legacy_fw_word_is_still_reachable():
-    assert set(pio._LEGACY_FW_STATE.values()) == {
-        FW_CURRENT,
-        FW_BEHIND,
-        FW_DIRTY,
-        FW_UNKNOWN,
-    }
-
-
-def test_the_fw_adapter_covers_what_a_screen_can_actually_be():
-    """Deliberately a subset, unlike the artifact adapter. A screen has no bus
-    state to be in a bootloader and no flash record to contradict, so FW_* has
-    no honest word for those - and inventing one would be worse than the
-    KeyError, which would at least be true."""
-    assert set(pio._LEGACY_FW_STATE) == {
-        None,
-        states.SOURCE_CHANGED,
-        states.DEVICE_DIRTY,
-        states.UNKNOWN_VERSION,
-    }
-    unreachable = {
-        states.IN_BOOTLOADER,
-        states.OFFLINE,
-        states.ARTIFACT_CHANGED,
-        states.PROTOCOL_MISMATCH,
-    }
-    assert not unreachable & set(pio._LEGACY_FW_STATE)
-
-
-def test_the_mcu_staleness_words_are_the_model_words_bar_one():
-    """`stale_reason` is documented API (docs/agent-api.md). Only the missing
-    sidecar case needed translating, because the model now distinguishes it."""
-    assert build._LEGACY_STALE_REASON == {states.NO_PROVENANCE: states.NEVER_BUILT}
-
-
-@pytest.mark.parametrize(
-    ("running", "expected"),
-    [
-        ("0.4.0+3.gd34db33", FW_CURRENT),
-        ("0.4.0+1.gbadc0de", FW_BEHIND),
-        ("0.4.0+3.gd34db33.dirty", FW_DIRTY),
-        ("", FW_UNKNOWN),
-    ],
-)
-def test_firmware_state_still_speaks_fw_words(running, expected):
-    assert pio.firmware_state(running, TREE) == expected
 
 
 @pytest.mark.parametrize(
@@ -323,7 +246,6 @@ def test_an_image_that_is_not_the_one_we_recorded_cannot_be_vouched_for(paths, d
     _bin(display, b"\x00different and longer")
 
     assert pio.artifact_status(paths, display, TREE).reason == states.NO_PROVENANCE
-    assert pio.artifact_state(paths, display, TREE) == ART_FOREIGN
 
 
 def test_a_rebuild_producing_the_same_bytes_is_still_our_build(paths, display):
@@ -394,7 +316,6 @@ def test_foreign_build_is_reserved_and_nothing_claims_it_yet(paths, display):
 def test_no_record_at_all_is_the_other_kind_of_unknown(paths, display):
     _bin(display)
     assert pio.artifact_status(paths, display, TREE).reason == states.NO_PROVENANCE
-    assert pio.artifact_state(paths, display, TREE) == ART_FOREIGN
 
 
 def test_a_corrupt_record_is_absence_of_evidence_not_evidence_of_a_rebuild(paths, display):
@@ -406,28 +327,10 @@ def test_a_corrupt_record_is_absence_of_evidence_not_evidence_of_a_rebuild(paths
     assert pio.artifact_status(paths, display, TREE).reason == states.NO_PROVENANCE
 
 
-def test_the_two_unknowns_are_different_statuses_wearing_one_word(paths, display):
-    """The whole point of the split. Both still render as ART_FOREIGN, so
-    nothing on the wire moved."""
+def test_the_two_unknowns_are_genuinely_different_statuses(paths, display):
+    """The whole point of the split - two reasons that used to render as one
+    word, ``unknown``, are now distinguishable in the model itself."""
     assert states.FOREIGN_BUILD != states.NO_PROVENANCE
-    assert (
-        pio._LEGACY_ART_STATE[states.FOREIGN_BUILD]
-        == pio._LEGACY_ART_STATE[states.NO_PROVENANCE]
-        == ART_FOREIGN
-    )
-
-
-@pytest.mark.parametrize(
-    ("reason", "legacy"),
-    [
-        (states.NEVER_BUILT, ART_NEVER),
-        (states.SOURCE_CHANGED, ART_STALE),
-        (states.BUILT_DIRTY, ART_DIRTY),
-        (None, ART_CURRENT),
-    ],
-)
-def test_the_unambiguous_reasons_keep_their_own_words(reason, legacy):
-    assert pio._LEGACY_ART_STATE[reason] == legacy
 
 
 # --------------------------------------------------------------------------
@@ -447,30 +350,24 @@ def _mcu_artifact(paths, mcu_type="bttebb36", fw="klipper", sidecar=None):
 
 
 def test_a_binary_with_no_record_means_the_same_on_both_sides(paths, display):
-    """An MCU binary with no sidecar reported "never_built"; a display binary
-    with no sidecar reported "unknown". Same situation, opposite words. The
-    model now agrees, while both legacy surfaces keep their own spelling."""
+    """An MCU binary with no sidecar used to report "never_built" on the wire;
+    a display binary with no sidecar used to report "unknown". Same situation,
+    opposite legacy words - the model agrees now that both retired."""
     _mcu_artifact(paths)
     _bin(display)
 
     assert build.artifact_status(paths, "bttebb36", "klipper").reason == states.NO_PROVENANCE
     assert pio.artifact_status(paths, display, TREE).reason == states.NO_PROVENANCE
 
-    # ...and neither wire format noticed.
-    assert build.staleness(paths, "bttebb36", "klipper") == (True, "never_built")
-    assert pio.artifact_state(paths, display, TREE) == ART_FOREIGN
-
 
 def test_a_genuinely_absent_mcu_artifact_is_still_never_built(paths):
     assert build.artifact_status(paths, "bttebb36", "klipper").reason == states.NEVER_BUILT
-    assert build.staleness(paths, "bttebb36", "klipper") == (True, "never_built")
 
 
 def test_an_unprovable_mcu_artifact_reports_stale_rather_than_current(paths):
     """The only safe collapse of a four-state answer into a boolean."""
     _mcu_artifact(paths)
-    stale, _ = build.staleness(paths, "bttebb36", "klipper")
-    assert stale is True
+    assert not build.artifact_status(paths, "bttebb36", "klipper").is_current
 
 
 def test_a_matching_mcu_artifact_is_current(paths, monkeypatch):
@@ -479,7 +376,6 @@ def test_a_matching_mcu_artifact_is_current(paths, monkeypatch):
     _mcu_artifact(paths, sidecar={"fw_sha": "abc1234", "config_sha256": "cfghash"})
 
     assert build.artifact_status(paths, "bttebb36", "klipper").is_current
-    assert build.staleness(paths, "bttebb36", "klipper") == (False, None)
 
 
 @pytest.mark.parametrize(
@@ -495,4 +391,3 @@ def test_the_mcu_reasons_survive_verbatim(paths, monkeypatch, sidecar, expected)
     _mcu_artifact(paths, sidecar=sidecar)
 
     assert build.artifact_status(paths, "bttebb36", "klipper").reason == expected
-    assert build.staleness(paths, "bttebb36", "klipper") == (True, expected)

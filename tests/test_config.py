@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-import pathlib
 import sys
 
 import pytest
@@ -11,7 +10,6 @@ from mcu_updater.config import MakefilePatch, McuType, Registry, section_name, v
 from mcu_updater.errors import (
     AmbiguousSerialError,
     ConfigCorruptError,
-    ConfigError,
     DuplicateTypeError,
     InvalidTypeNameError,
     SerialTrackedElsewhereError,
@@ -210,33 +208,8 @@ def test_a_patch_added_programmatically_round_trips(paths):
     assert reloaded[0].line == "src-y += buffer.c"
 
 
-# --------------------------------------------------------------------------
-# the legacy guard
-# --------------------------------------------------------------------------
-
-
-def test_a_legacy_json_registry_is_refused_not_ignored(paths, fake_root):
-    """Reporting "no MCU types" would let the next add-type write a fresh file
-    while the real registry sat untouched in the old location."""
-    (fake_root / "mcus").mkdir(exist_ok=True)
-    (fake_root / "mcus" / "mcus.json").write_text('{"a": {}}', encoding="utf-8")
-
-    with pytest.raises(ConfigError) as exc:
-        Registry.load(paths)
-    assert "old location" in str(exc.value)
-    assert "mcu-updater.cfg" in str(exc.value)
-
-
 def test_a_fresh_install_with_no_files_at_all_is_empty(paths):
     assert len(Registry.load(paths)) == 0
-
-
-def test_the_guard_does_not_fire_once_the_new_file_exists(paths, fake_root, live_registry_text):
-    """Having both is fine - the new one wins, the old is simply ignored."""
-    (fake_root / "mcus").mkdir(exist_ok=True)
-    (fake_root / "mcus" / "mcus.json").write_text('{"a": {}}', encoding="utf-8")
-    _write(paths, live_registry_text)
-    assert len(Registry.load(paths)) == 4
 
 
 # --------------------------------------------------------------------------
@@ -372,32 +345,6 @@ def test_the_file_stays_valid_klipper_style_cfg(paths, live_registry_text):
     doc = CfgDocument(live_registry_text)
     assert doc.section_names("type")
     assert doc.get("type sv08Mainboard", "chipset") == "stm32f103xe"
-
-
-def test_the_pre_merge_registry_filename_is_guarded(paths):
-    """mcus.cfg in the right directory, before it was merged with the settings.
-    The likeliest upgrade path, and the one where silently starting empty would
-    do the most damage."""
-    old = pathlib.Path(paths.config_dir) / "mcus.cfg"
-    old.write_text("[mcu a]\nchipset: x\nserials:\n    S1\n", encoding="utf-8")
-
-    with pytest.raises(ConfigError) as exc:
-        Registry.load(paths)
-    assert "mcus.cfg" in str(exc.value)
-    assert "mcu-updater.cfg" in str(exc.value)
-
-
-def test_the_intermediate_config_dir_is_also_guarded(paths, fake_root):
-    """The config directory was renamed with the project. Someone who pulled in
-    between would otherwise have their registry silently ignored."""
-    old = fake_root / "printer_data" / "config" / "mcu-updater"
-    old.mkdir(parents=True, exist_ok=True)
-    (old / "mcus.cfg").write_text("[mcu a]\nchipset: x\n", encoding="utf-8")
-
-    with pytest.raises(ConfigError) as exc:
-        Registry.load(paths)
-    assert "mcu-updater" in str(exc.value)
-    assert "mcu-updater" in str(exc.value)
 
 
 # --------------------------------------------------------------------------

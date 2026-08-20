@@ -5,6 +5,37 @@ session start, struck through when acted on, not deleted.
 
 ---
 
+## 2026-08-20 — Step 16 must confirm the Mainsail fork against two Step 14 wire changes
+
+Step 14's legacy purge made two breaking changes to the agent's JSON-RPC
+surface, both by Vi's explicit direction (not a unilateral call) - see
+docs/rebuild-plan.md's Step 14 log for the full reasoning. Both need checking
+against the actual deployed fork (`Vylyne/mainsail`, branch `mu/stable`)
+before or during Step 16's migration work, since a fork still calling the old
+shape will break silently against the new agent, not loudly:
+
+1. **`stale`/`stale_reason` (artifact) and `firmware_state`/`artifact_state`
+   (display) are gone from the wire.** `fw.status`'s per-artifact payload now
+   carries only `reason` (the granular, un-collapsed value - `never_built`,
+   `config_changed`, `source_changed`, `no_provenance`, etc., or `null` for
+   current). If the fork reads `stale`/`stale_reason`/`firmware_state`/
+   `artifact_state` anywhere - directly, or via `types[]`/`displays[]` - those
+   reads now get `undefined`, not an error.
+2. **`fw.display.flash` no longer exists as an RPC method.** Flashing a
+   display now goes through `fw.flash` with `{name, port}` instead of
+   `{name, port}` on the old method name - same params shape, different
+   method string. `targets[]`'s per-device flash action already reflects this
+   (`method: "fw.flash"`), so anything reading actions off `targets[]` is
+   already correct; anything calling `fw.display.flash` by name directly is not.
+3. **`types[]` and `displays[]` are gone from `fw.status` entirely** (this one
+   was already scheduled - `API_VERSION` hit 2 specifically to allow it, see
+   the `targets-wire-shape` design memory). Only `targets[]` remains. Confirm
+   the fork reads `targets[]` exclusively and not either legacy key.
+
+If the fork already only reads `targets[]` and never called `fw.display.flash`
+by name, all three are no-ops on the panel side and this note can be struck
+through once confirmed - but confirm it, don't assume it.
+
 ## 2026-08-19 — Step 13 (RP2040 BOOTSEL flasher) shipped untested on hardware
 
 `src/mcu_updater/flashers/bootsel.py` is new: copies a `.uf2` onto a mounted

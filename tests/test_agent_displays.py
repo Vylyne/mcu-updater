@@ -238,7 +238,8 @@ def test_a_printer_with_no_displays_pays_nothing(api):
     calls = []
     api._call = lambda method, params, timeout: calls.append(method) or {}
 
-    assert api.dispatch("fw.status")["displays"] == []
+    api.dispatch("fw.status")
+    assert api.display_status() == []
     assert "printer.objects.query" in calls  # for the mcu join
     # ...but display_status short-circuited before adding its own.
     assert calls.count("printer.objects.query") <= 2
@@ -254,7 +255,7 @@ def test_configured_displays_appear_in_status(api, paths, fake_root, live_regist
         )
 
     api._call = _moonraker({"knomi_serial t0_knomi": {"serial": str(port)}})
-    entry = api.dispatch("fw.status")["displays"][0]
+    entry = api.display_status()[0]
 
     assert entry["env"] == "knomi_toolchanger"
     assert [s["name"] for s in entry["screens"]] == ["t0_knomi"]
@@ -274,7 +275,7 @@ def test_a_screen_carries_no_identity_history(api, paths, fake_root):
         )
 
     api._call = _moonraker({"knomi_serial t0_knomi": {"serial": str(port)}})
-    screen = api.dispatch("fw.status")["displays"][0]["screens"][0]
+    screen = api.display_status()[0]["screens"][0]
 
     assert not {"mac", "flashed_at", "moved_from", "moved_at"} & set(screen)
     assert "device_id" in screen
@@ -299,7 +300,7 @@ def test_screens_are_matched_to_their_type_by_klipper_section(api, paths, fake_r
             "other_display a": {"serial": str(fake_root / "other_a")},
         }
     )
-    by_env = {d["env"]: d for d in api.dispatch("fw.status")["displays"]}
+    by_env = {d["env"]: d for d in api.display_status()}
 
     assert [s["name"] for s in by_env["knomi_toolchanger"]["screens"]] == ["t0_knomi"]
     assert [s["name"] for s in by_env["otherscreen"]["screens"]] == ["a"]

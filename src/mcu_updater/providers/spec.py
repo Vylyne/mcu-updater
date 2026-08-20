@@ -64,8 +64,7 @@ class Install:
     settings: Settings
     #: Types this host builds with kconfig and make.
     registry: Registry
-    #: Types this host builds with PlatformIO, with `pio_source` already applied
-    #: as the default so a provider never has to know about that fallback.
+    #: Types this host builds with PlatformIO.
     displays: dict[str, pio_mod.PioType]
 
     @classmethod
@@ -74,7 +73,7 @@ class Install:
             paths=paths,
             settings=settings,
             registry=Registry.load(paths),
-            displays=pio_mod.load(paths, default_source=settings.pio_source),
+            displays=pio_mod.load(paths),
         )
 
 

@@ -39,15 +39,14 @@ def source_problem(target: pio_mod.PioType) -> Optional[str]:
     string would be the sort of duplication this package exists to remove.
 
     Absent and non-existent are separated because the fixes differ: one is a
-    missing `source:` or `pio_source:`, the other is a path that is there and
-    wrong. A single "not configured" would send somebody to edit a key that is
-    already set.
+    missing `source:`, the other is a path that is there and wrong. A single
+    "not configured" would send somebody to edit a key that is already set.
     """
     source = os.path.expanduser(target.source or "")
     if not source:
         return (
-            f"'{target.name}' has no source tree configured - set 'source:' in its "
-            f"section, or 'pio_source' in [updater]."
+            f"'{target.name}' has no source tree configured - set 'source:' on its "
+            f"firmware family."
         )
     if not os.path.isdir(source):
         return f"source directory {source} not found for '{target.name}'."

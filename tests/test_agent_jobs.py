@@ -214,8 +214,8 @@ def test_build_completes_and_records_its_artifact(api, paths):
     assert os.path.exists(job.result["bin_path"])
 
     # And the artifact is no longer stale in the next status call.
-    types = {t["name"]: t for t in api.dispatch("fw.status")["types"]}
-    assert types["bttebb36"]["artifacts"]["klipper"]["stale"] is False
+    types = {t["name"]: t for t in api.dispatch("fw.type.list")["types"]}
+    assert types["bttebb36"]["artifacts"]["klipper"]["reason"] is None
 
 
 def test_a_second_build_while_one_runs_is_refused(api, paths):

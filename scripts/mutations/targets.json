@@ -61,9 +61,9 @@
       "replace": "        if False:\n            return DeviceStatus(OFFLINE)"
     },
     {
-      "name": "the exact artifact reason survives the legacy collapse",
+      "name": "the artifact's real reason reaches the wire, not a hardcoded one",
       "find": "            \"reason\": status.reason,\n            \"last_build_seconds\": side.get(\"duration\"),",
-      "replace": "            \"reason\": reason,\n            \"last_build_seconds\": side.get(\"duration\"),"
+      "replace": "            \"reason\": None,\n            \"last_build_seconds\": side.get(\"duration\"),"
     },
     {
       "name": "a type reports which firmware family it runs",

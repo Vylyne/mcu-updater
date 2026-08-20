@@ -39,7 +39,6 @@ DEFAULT_SERIAL_BY_ID = "/dev/serial/by-id"
 #: Per-type config folders are gathered under this subdirectory of `config_dir`.
 #: They used to sit directly in it, so a printer with six board types showed six
 #: folders in Mainsail's file browser before the one file anyone edits.
-#: :func:`mcu_updater.layout.migrate_type_dirs` moves an old install across.
 TYPE_SUBDIR = "types"
 
 
@@ -96,28 +95,6 @@ class Paths:
     def settings_file(self) -> str:
         """The [updater] section. Same file as `main_config`."""
         return self.main_config
-
-    @property
-    def legacy_settings_file(self) -> str:
-        """Settings used to live here. Only used to warn, never read."""
-        return os.path.join(self.config_dir, "updater.conf")
-
-    @property
-    def legacy_locations(self) -> list[str]:
-        """Registry paths we no longer look at. Used only to refuse helpfully.
-
-        Both are dead ends rather than things to migrate from, but finding one
-        while the current file is absent means the user has data somewhere we are
-        about to ignore - and silently reporting an empty registry is how the next
-        add-type overwrites it.
-        """
-        return [
-            os.path.join(self.home, "mcus", "mcus.json"),
-            # Short-lived: the directory was renamed with the project.
-            os.path.join(self.printer_data, "config", "klipper-updater", "mcus.cfg"),
-            # Short-lived: registry and settings were merged into one file.
-            os.path.join(self.config_dir, "mcus.cfg"),
-        ]
 
     # --- runtime state ---
 
@@ -192,17 +169,6 @@ class Paths:
         """Source tree for a firmware target, e.g. ~/klipper."""
         return os.path.join(self.home, fw)
 
-    def kconfiglib(self, fw: str) -> str:
-        return os.path.join(self.fw_dir(fw), "lib", "kconfiglib", "kconfiglib.py")
-
-    def kconfig_root(self, fw: str) -> str:
-        """Path to the top-level Kconfig, relative to fw_dir (as make invokes it)."""
-        return os.path.join("src", "Kconfig")
-
-    def built_artifact(self, fw: str, ext: str = "bin") -> str:
-        """Where the source tree drops its output, e.g. ~/klipper/out/klipper.bin."""
-        return os.path.join(self.fw_dir(fw), "out", f"{fw}.{ext}")
-
     # --- per-type saved state ---
 
     @property
@@ -218,13 +184,6 @@ class Paths:
     def type_dir(self, mcu_type: str) -> str:
         """Saved menuconfig answers for one type. Backed up, editable in Mainsail."""
         return os.path.join(self.type_root, mcu_type)
-
-    def legacy_type_dir(self, mcu_type: str) -> str:
-        """Where a type's config lived before it was gathered under `types/`.
-
-        Only for migrating; nothing reads a config from here.
-        """
-        return os.path.join(self.config_dir, mcu_type)
 
     def artifact_dir(self, mcu_type: str) -> str:
         """Built firmware for one type. Regenerable, so kept out of backups."""

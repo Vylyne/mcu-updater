@@ -56,14 +56,25 @@ def test_each_override_is_honoured_independently(tmp_path):
             "MCU_UPDATER_CONFIG_DIR": str(tmp_path / "elsewhere"),
             "MCU_UPDATER_DATA_DIR": str(tmp_path / "artifacts"),
             "MCU_UPDATER_FAKE_BUS": str(tmp_path / "bus"),
+            "MCU_UPDATER_FAKE_BOOTSEL": str(tmp_path / "bootsel"),
             "MCU_UPDATER_PRINTER_DATA": str(tmp_path / "pdata"),
         }
     )
     assert p.config_dir == str(tmp_path / "elsewhere")
     assert p.data_dir == str(tmp_path / "artifacts")
     assert p.serial_by_id == str(tmp_path / "bus")
+    assert p.bootsel_root == str(tmp_path / "bootsel")
     assert p.printer_data == str(tmp_path / "pdata")
     assert p.moonraker_sock == os.path.join(str(tmp_path / "pdata"), "comms", "moonraker.sock")
+
+
+def test_bootsel_root_is_empty_by_default():
+    """Empty means "search the standard automount locations" -
+    `devices.bootsel_scan` reads absence as "no override", not as a literal
+    path. Unlike `serial_by_id`, there is no single conventional mount point
+    to default to."""
+    p = Paths.from_env(env={"MCU_UPDATER_HOME": os.path.join("/srv", "printer")})
+    assert p.bootsel_root == ""
 
 
 def test_an_explicit_home_beats_the_environment(tmp_path):

@@ -2572,7 +2572,8 @@ class Api:
             them. Not a dead end: dfu-util takes `-S/-p/-n`, so naming one is
             enough - `ready` is false only because the *caller* has not chosen.
         """
-        from ..flashers.flash import DFU_VID_PID, dfu_devices
+        from ..devices import dfu_devices
+        from ..flashers.flash import DFU_VID_PID
 
         out: dict[str, Any] = {
             "vid_pid": DFU_VID_PID,

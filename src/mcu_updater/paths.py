@@ -12,6 +12,8 @@ Env overrides (all honoured by :meth:`Paths.from_env`):
   MCU_UPDATER_DATA_DIR      relocate the artifact/state dir
   MCU_UPDATER_FAKE_BUS      replace /dev/serial/by-id (touch/rm files in it
                                 to simulate a board re-enumerating)
+  MCU_UPDATER_FAKE_BOOTSEL  replace the RPI-RP2 automount search with one
+                                exact directory to look in instead
   MCU_UPDATER_PRINTER_DATA  relocate ~/printer_data
 """
 
@@ -64,6 +66,12 @@ class Paths:
     data_dir: str
     serial_by_id: str
     printer_data: str
+    #: Empty in production: `devices.bootsel_scan` then searches the standard
+    #: automount globs itself. Set to one exact directory to replace that
+    #: search entirely - what `MCU_UPDATER_FAKE_BOOTSEL` does for tests, and
+    #: what a real deployment with a non-standard automount setup could also
+    #: use it for.
+    bootsel_root: str = ""
 
     # --- hand-edited config ---
 
@@ -295,6 +303,7 @@ class Paths:
         )
         data = e.get("MCU_UPDATER_DATA_DIR") or os.path.join(pdata, "mcu-updater")
         bus = e.get("MCU_UPDATER_FAKE_BUS") or DEFAULT_SERIAL_BY_ID
+        bootsel_root = e.get("MCU_UPDATER_FAKE_BOOTSEL") or ""
 
         return cls(
             home=resolved_home,
@@ -302,4 +311,5 @@ class Paths:
             data_dir=os.path.abspath(data),
             serial_by_id=bus,
             printer_data=pdata,
+            bootsel_root=bootsel_root,
         )

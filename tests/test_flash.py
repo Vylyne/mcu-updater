@@ -4,6 +4,7 @@ import os
 
 import pytest
 
+from mcu_updater import devices as devices_mod
 from mcu_updater.errors import (
     AmbiguousDfuError,
     DeviceNotFoundError,
@@ -467,7 +468,9 @@ def _fake_dfu_util(monkeypatch, stdout: str, stderr: str = "") -> None:
         assert os.path.basename(cmd[0]) == "dfu-util"
         return sp.CompletedProcess(cmd, 0, stdout, stderr)
 
-    monkeypatch.setattr(flash_mod.subprocess, "run", fake_run)
+    # dfu_devices() itself lives in devices.py now; flash_mod re-exports the
+    # name but no longer imports subprocess at all.
+    monkeypatch.setattr(devices_mod.subprocess, "run", fake_run)
 
 
 def test_one_board_with_three_altsettings_is_one_device(monkeypatch):

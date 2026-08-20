@@ -1403,6 +1403,92 @@ process:    No process change. The finding is a consequence of two correct
             decisions meeting (Step 6's firmware-list semantics and Step 9's
             fallback removal), not a mistake in either.
 
+### Step 10 — device states        [done-with-deviation]
+commit:     (pending)
+gate:       pytest 1159 passed/0 failed/10 skipped · ruff ok · mypy ok · line-endings ok
+            · scripts/mutations/flash-offset-diagnostic.json (10/10 CAUGHT),
+            add-mcu.json (6/6 CAUGHT), dfu-pairings.json (6/6 CAUGHT) - the
+            three specs targeting the files this step touched
+            (flashers/flash.py, agent/methods.py), each run individually per
+            the ground rule
+deviation:  **BOOTSEL has no confirmed real mount convention, so its default
+            is a documented best-effort rather than a verified fact.** The
+            plan says "needs its own scan" and "add a separate override" -
+            done - but does not say what the production default should
+            search. Nothing in this repo (install.sh, systemd units, udev
+            rules) sets up automounting for a BOOTSEL volume, and the
+            printer's actual login user is not recorded anywhere on this dev
+            box. Rather than hardcode a guess (`/media/pi` is a common wrong
+            answer - Raspberry Pi OS has not defaulted to that username since
+            Bookworm), `bootsel_scan()` globs `/media/*` and `/run/media/*`
+            (udisks2's two conventions, either desktop or headless-with-
+            udisks) so it does not depend on knowing the username. This is a
+            reasonable default, not a verified one - see `untested` below.
+
+            **`dfu_devices` moved; `list_dfu_devices` did not.** The plan
+            names only `dfu_devices` for the move ("so all bus enumeration is
+            in one module"). `list_dfu_devices` is a two-line formatter
+            (`[d["raw"] for d in dfu_devices(...)]`) that exists purely to
+            serve `wait_for_dfu`'s polling loop, which stays in flash.py as a
+            flashing workflow, not an enumeration primitive - so it stays
+            beside its only caller and imports `dfu_devices` from `..devices`
+            the same way the rest of flash.py already imports `find_device`,
+            `wait_for_device`, etc. `DFU_VID_PID` also stays: `dfu_devices`
+            itself never reads it (confirmed by re-reading the moved code,
+            not assumed) - it is only used when *writing*, in
+            `flash_dfu_stm32`'s own dfu-util invocation.
+
+            **`agent/methods.py:2575`'s import split, not re-exported.** The
+            plan does not mention this call site. `dfu_devices` is still
+            reachable as `mcu_updater.flashers.flash.dfu_devices` purely as a
+            side effect of flash.py importing the name into its own
+            namespace - not a deliberate compatibility shim - but leaving
+            methods.py importing it from there would keep pointing at what is
+            now an incidental re-export rather than the real home. Split the
+            one import line into `from ..devices import dfu_devices` +
+            `from ..flashers.flash import DFU_VID_PID` instead.
+
+            **Five tests needed their `subprocess.run` patch target moved**,
+            for the same reason: `dfu_devices`'s own `subprocess.run(["dfu-
+            util", "-l"], ...)` call now executes inside `devices.py`, not
+            `flashers/flash.py`, which no longer imports `subprocess` at all.
+            `test_agent_dfu.py::patch_dfu` (shared with
+            `test_agent_add_mcu.py`), `test_flash.py::_fake_dfu_util`, and
+            `test_pairings.py`'s one inline patch all pointed at
+            `mcu_updater.flashers.flash.subprocess.run` and were repointed at
+            `mcu_updater.devices.subprocess.run`. Confirmed rather than
+            assumed that this is safe: `subprocess` is one shared module
+            object regardless of which module imports it, so patching its
+            `.run` attribute affects every caller - the fix is about
+            patching the module actually reachable at the right dotted path,
+            not about behaviour that was ever really module-local.
+            `test_agent_dfu.py`'s top-level import also moved from
+            `from mcu_updater.flashers.flash import dfu_devices,
+            list_dfu_devices` to importing `dfu_devices` from
+            `mcu_updater.devices` directly, so the test names the function's
+            real home rather than its incidental re-export.
+untested:   **The BOOTSEL default's real mount location is unverified against
+            the actual printer**, for the reason given above - there is no
+            RP2040 to hand and no confirmed automount setup on that host.
+            Step 13 (the actual BOOTSEL flasher) already carries a ⚠️ for
+            exactly this reason; this step's contribution is the seam
+            (`Paths.bootsel_root` / `MCU_UPDATER_FAKE_BOOTSEL`), fully
+            tested off-hardware via the override, not the production glob
+            path against a real mount. If the real printer turns out not to
+            automount BOOTSEL volumes at all (quite possible on a headless
+            Pi with no desktop session), `bootsel_scan()`'s default globs
+            will just always return empty, and `MCU_UPDATER_FAKE_BOOTSEL`
+            would need to become a real `[updater]` setting rather than a
+            test-only env override - a design change to flag at Step 13, not
+            silently patch in now.
+
+            Everything else already true (POSIX-only paths, no hardware) is
+            still true; nothing new beyond BOOTSEL.
+surprises:  `dfu_devices`'s `reporter` parameter is accepted but never used in
+            its own body - true in the original code, not something this
+            move introduced. Left exactly as it was: this step is a move, not
+            a cleanup, and fixing it was not asked for.
+
 ---
 
 ## Appendix B — open items, not in scope

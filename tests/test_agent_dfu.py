@@ -11,7 +11,8 @@ from __future__ import annotations
 import pytest
 
 from mcu_updater.agent.methods import Api
-from mcu_updater.flashers.flash import dfu_devices, list_dfu_devices
+from mcu_updater.devices import dfu_devices
+from mcu_updater.flashers.flash import list_dfu_devices
 
 # One real board, as dfu-util actually prints it: three altsettings sharing a
 # devnum, path and serial. Counting lines here is what once refused every
@@ -51,7 +52,9 @@ class FakeRun:
 
 
 def patch_dfu(monkeypatch, **kwargs):
-    monkeypatch.setattr("mcu_updater.flashers.flash.subprocess.run", FakeRun(**kwargs))
+    # dfu_devices() lives in devices.py now; flash.py re-exports the name but
+    # no longer imports subprocess itself.
+    monkeypatch.setattr("mcu_updater.devices.subprocess.run", FakeRun(**kwargs))
 
 
 @pytest.fixture

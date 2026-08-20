@@ -1,6 +1,7 @@
-"""Discovering boards under ``/dev/serial/by-id``.
+"""Discovering boards, in whichever of the three shapes they enumerate as.
 
-Entries look like ``usb-<fw>_<chipset>_<serial>``, e.g.::
+**Klipper and Katapult** show up under ``/dev/serial/by-id``, entries shaped
+like ``usb-<fw>_<chipset>_<serial>``, e.g.::
 
     usb-Klipper_stm32g0b1xx_290055001850304158373620-if00
     usb-katapult_stm32f072xb_4C0033000957465331323720-if00
@@ -13,18 +14,33 @@ board enumerating as lowercase was found and then declared missing.
 
 Everything here therefore matches case-insensitively and returns the real
 on-disk path rather than a reconstructed one.
+
+**DFU** (a bare STM32's ROM bootloader) has no by-id entry at all - it is
+queried directly via ``dfu-util -l``. See :func:`dfu_devices`.
+
+**BOOTSEL** (an RP2040's ROM bootloader) has no by-id entry either, and no
+``dfu-util`` protocol - it mounts as mass storage. See :func:`bootsel_scan`.
 """
 
 from __future__ import annotations
 
 import dataclasses
+import glob
 import os
+import re
+import subprocess
 import threading
 import time
 from collections.abc import Iterable
 from typing import Optional
 
-from .errors import BootloaderTimeoutError, OperationCancelled
+from .build import Reporter, null_reporter
+from .errors import (
+    BootloaderTimeoutError,
+    DfuPermissionError,
+    OperationCancelled,
+    ToolMissingError,
+)
 from .paths import REENUMERATE_TIMEOUT, Paths
 
 _PREFIX = "usb-"
@@ -41,6 +57,17 @@ KATAPULT_FW_NAME = "katapult"
 STATE_KLIPPER = "klipper"
 STATE_KATAPULT = "katapult"
 STATE_OFFLINE = "offline"
+#: A bare STM32's ROM bootloader - no application, no Katapult, nothing on
+#: `/dev/serial/by-id` at all. Discovered via `dfu-util -l`, not `scan()`.
+STATE_DFU = "dfu"
+#: An RP2040's ROM bootloader, exposed as a mounted mass-storage volume rather
+#: than a serial device. Discovered via `bootsel_scan()`, not `scan()`.
+STATE_BOOTSEL = "bootsel"
+#: An ESP32's ROM bootloader. esptool enters and leaves it itself over the
+#: normal serial port (RTS/DTR strapping), so unlike DFU and BOOTSEL this has
+#: no bus presence of its own to scan for - the constant exists so a flasher's
+#: declared `states` can name it.
+STATE_ESP_ROM = "esp_rom"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -236,6 +263,144 @@ def dfu_serial_for(serial: str) -> Optional[str]:
     word1 = int.from_bytes(raw[4:8], "little")
     word2 = int.from_bytes(raw[8:12], "little")
     return f"{(word0 + word2) & 0xFFFFFFFF:08X}{word1 >> 16:04X}"
+
+
+# --------------------------------------------------------------------------
+# DFU (bare STM32 ROM bootloader) - a USB device, but not one that shows up
+# under /dev/serial/by-id, so it needs `dfu-util -l` rather than `scan()`.
+# --------------------------------------------------------------------------
+
+#: `Found DFU: [0483:df11] ver=0200, devnum=51, cfg=1, intf=0, path="6-1.6.6.1.3",
+#:  alt=0, name="@Internal Flash   /0x08000000/64*02Kg", serial="3941335F3434"`
+#:
+#: Matched on the VID:PID rather than the "Found DFU" prefix so a wording change
+#: in dfu-util cannot silently reduce us to seeing nothing.
+_DFU_LINE_RE = re.compile(
+    r"\[(?P<vidpid>[0-9a-fA-F]{4}:[0-9a-fA-F]{4})\]"
+    r"(?=.*\bdevnum=(?P<devnum>\d+))?"
+    r"(?=.*\bpath=\"(?P<path>[^\"]*)\")?"
+    r"(?=.*\bserial=\"(?P<serial>[^\"]*)\")?"
+)
+
+#: libusb could see the device but not claim it. Almost always a missing udev
+#: rule rather than anything the user did wrong with the boot jumper.
+_DFU_DENIED_RE = re.compile(
+    r"cannot open dfu device|LIBUSB_ERROR_ACCESS|insufficient permission|access denied",
+    re.IGNORECASE,
+)
+
+
+def dfu_devices(*, reporter: Reporter = null_reporter) -> list[dict[str, Optional[str]]]:
+    """One entry per DFU *device* from `dfu-util -l`, parsed.
+
+    Two things this must get right, both learned the hard way on real hardware:
+
+    **One board is several lines.** dfu-util prints a line per DFU altsetting, so
+    a single STM32 appears three times (alt=0/1/2) sharing one devnum, path and
+    serial. Counting lines made the ambiguity guard refuse every single-board
+    flash with "3 devices are in DFU mode".
+
+    **"Nothing listed" is not the same as "nothing attached."** Without a udev
+    rule, dfu-util prints ``Cannot open DFU device ... (LIBUSB_ERROR_ACCESS)``
+    and no ``Found DFU`` line at all - so the old code reported "no DFU device
+    detected. Hold BOOT0 and replug", sending the user to redo the one step that
+    had actually worked. That case raises now.
+
+    The fields are worth keeping rather than just the line: a DFU device has no
+    ``/dev/serial/by-id`` name, so its USB serial and bus path are the only
+    identity it has until it re-enumerates as Katapult.
+    """
+    try:
+        res = subprocess.run(
+            ["dfu-util", "-l"], capture_output=True, text=True, timeout=20
+        )
+    except FileNotFoundError as exc:
+        raise ToolMissingError(
+            "dfu-util is not installed. Try: sudo apt install dfu-util", tool="dfu-util"
+        ) from exc
+    except (OSError, subprocess.SubprocessError) as exc:
+        raise ToolMissingError(f"could not run dfu-util: {exc}", tool="dfu-util") from exc
+
+    out = (res.stdout or "") + (res.stderr or "")
+
+    # Deduplicate by whatever identifies the physical board, in decreasing order
+    # of trustworthiness. dict preserves insertion order, so the first line for
+    # each device is the one reported.
+    devices: dict[str, dict[str, Optional[str]]] = {}
+    for raw in out.splitlines():
+        line = raw.strip()
+        match = _DFU_LINE_RE.search(line)
+        if match is None:
+            continue
+        key = (
+            match.group("serial")
+            or match.group("path")
+            or match.group("devnum")
+            or line  # nothing to group on: treat the line itself as the device
+        )
+        devices.setdefault(
+            key,
+            {
+                "vidpid": match.group("vidpid"),
+                "serial": match.group("serial"),
+                "path": match.group("path"),
+                "devnum": match.group("devnum"),
+                "raw": line,
+            },
+        )
+
+    if not devices and _DFU_DENIED_RE.search(out):
+        raise DfuPermissionError(
+            "dfu-util can see a board in DFU mode but cannot open it "
+            "(LIBUSB_ERROR_ACCESS). The board and the boot jumper are fine - this "
+            "is a permissions problem. Install the udev rule (install.sh offers "
+            "to) or run the same command under sudo.",
+            output=out.strip(),
+        )
+
+    return list(devices.values())
+
+
+# --------------------------------------------------------------------------
+# BOOTSEL (RP2040 ROM bootloader) - a mounted mass-storage volume, not a bus
+# device at all, so neither `scan()` nor `dfu_devices()` can see it.
+# --------------------------------------------------------------------------
+
+#: udisks2's two automount conventions. The username segment is glob-matched
+#: rather than assumed - "pi" has not been the default login on Raspberry Pi OS
+#: since Bookworm, and this process does not otherwise know who is logged in.
+DEFAULT_BOOTSEL_ROOT_GLOBS = ("/media/*", "/run/media/*")
+
+#: The RP2040 boot ROM's own volume label.
+BOOTSEL_VOLUME_NAME = "RPI-RP2"
+
+#: Every UF2 bootloader publishes this file at the volume root. Required so an
+#: unrelated drive that happens to share the label is never mistaken for one.
+_BOOTSEL_MARKER = "INFO_UF2.TXT"
+
+
+def bootsel_scan(paths: Paths) -> list[str]:
+    """Mount path of every RPI-RP2 volume currently attached.
+
+    Unlike DFU, a BOOTSEL board is not a USB device this process can query -
+    it is a mounted filesystem, discovered the same way a human would: look
+    for the drive. `MCU_UPDATER_FAKE_BUS` cannot stand in for that, so
+    `paths.bootsel_root` is the equivalent seam: empty in production (search
+    the standard automount locations), or one exact directory to look in
+    instead - which a test points at a tmp_path, and which a real deployment
+    with a non-standard automount setup could point at the real one.
+    """
+    if paths.bootsel_root:
+        roots = [paths.bootsel_root]
+    else:
+        roots = [p for pattern in DEFAULT_BOOTSEL_ROOT_GLOBS for p in glob.glob(pattern)]
+
+    found = []
+    for root in sorted(roots):
+        candidate = os.path.join(root, BOOTSEL_VOLUME_NAME)
+        if os.path.isfile(os.path.join(candidate, _BOOTSEL_MARKER)):
+            found.append(candidate)
+    return found
 
 
 def expected_path(fw_name: str, chipset: str, serial: str) -> str:

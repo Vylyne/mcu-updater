@@ -1,11 +1,18 @@
 from __future__ import annotations
 
+import dataclasses
+
 import pytest
 
+from mcu_updater import devices as devices_mod
 from mcu_updater.devices import (
+    STATE_BOOTSEL,
+    STATE_DFU,
+    STATE_ESP_ROM,
     STATE_KATAPULT,
     STATE_KLIPPER,
     STATE_OFFLINE,
+    bootsel_scan,
     device_state,
     find_device,
     find_untracked,
@@ -243,3 +250,56 @@ def test_anything_that_is_not_a_96_bit_id_gets_no_answer():
     assert dfu_serial_for("short-if00") is None
     assert dfu_serial_for("ZZ000E000551343438333339-if00") is None
     assert dfu_serial_for("") is None
+
+
+def test_the_five_states_are_all_distinct():
+    """A collision would silently misroute flasher selection later - two bus
+    shapes reading as the same state is worse than an unfamiliar one."""
+    states = {STATE_KLIPPER, STATE_KATAPULT, STATE_OFFLINE, STATE_DFU, STATE_BOOTSEL, STATE_ESP_ROM}
+    assert len(states) == 6
+
+
+# --------------------------------------------------------------------------
+# BOOTSEL - a mounted RPI-RP2 volume, not a bus device at all
+# --------------------------------------------------------------------------
+
+
+def test_bootsel_scan_finds_a_volume_carrying_the_uf2_marker(paths, tmp_path):
+    root = tmp_path / "bootsel_root"
+    vol = root / "RPI-RP2"
+    vol.mkdir(parents=True)
+    (vol / "INFO_UF2.TXT").write_text("UF2 Bootloader v3.0\n", encoding="utf-8")
+
+    found = bootsel_scan(dataclasses.replace(paths, bootsel_root=str(root)))
+    assert found == [str(vol)]
+
+
+def test_bootsel_scan_ignores_a_same_named_drive_with_no_marker(paths, tmp_path):
+    """The label alone is not enough - an unrelated drive happening to be
+    named RPI-RP2 must not be mistaken for an RP2040 in its ROM bootloader."""
+    root = tmp_path / "bootsel_root"
+    (root / "RPI-RP2").mkdir(parents=True)
+
+    found = bootsel_scan(dataclasses.replace(paths, bootsel_root=str(root)))
+    assert found == []
+
+
+def test_bootsel_scan_is_empty_when_nothing_is_mounted(paths, tmp_path):
+    found = bootsel_scan(dataclasses.replace(paths, bootsel_root=str(tmp_path / "nothing-here")))
+    assert found == []
+
+
+def test_bootsel_scan_searches_the_automount_globs_with_no_override(paths, tmp_path, monkeypatch):
+    """No `bootsel_root` override (the production case) means searching the
+    standard udisks2 automount locations - here stood in for by a glob over a
+    fake `/media/<user>` layout, since the real paths aren't writable in a
+    test."""
+    media_user = tmp_path / "media" / "someuser"
+    vol = media_user / "RPI-RP2"
+    vol.mkdir(parents=True)
+    (vol / "INFO_UF2.TXT").write_text("", encoding="utf-8")
+    monkeypatch.setattr(
+        devices_mod, "DEFAULT_BOOTSEL_ROOT_GLOBS", (str(tmp_path / "media" / "*"),)
+    )
+
+    assert bootsel_scan(paths) == [str(vol)]

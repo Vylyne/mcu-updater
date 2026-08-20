@@ -1955,7 +1955,7 @@ surprises:  The plan's own ten-bullet table undersold how much of this step
             this step, more than any individual line changed.
 
 ### Step 15 — sample config and fixtures            [done-with-deviation]
-commit:     (uncommitted at log time)
+commit:     3b24f0b
 gate:       pytest 1156 passed/0 failed/10 skipped · ruff ok · mypy ok · line-endings ok
             · mutation specs touching edited files, each run individually:
             add-mcu.json (6/6 CAUGHT), bulk-operations.json (13/13 CAUGHT),

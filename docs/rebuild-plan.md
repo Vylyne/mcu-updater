@@ -1778,6 +1778,177 @@ surprises:  none beyond the target-shape bug above - `bootsel.py`'s shape
             to disambiguate by) followed `dfu_util.py` closely enough that no
             other design fork came up.
 
+### Step 14 — legacy purge            [done-with-deviation]
+commit:     a597e2f
+gate:       pytest 1156 passed/0 failed/10 skipped (down from 1195 - net ~39
+            fewer, all of them tests that existed solely to pin now-deleted
+            behaviour: test_layout.py's file, three test_config.py legacy-
+            guard tests, five test_settings.py pio_source/display_source/
+            legacy-conf tests, several test_states.py legacy-adapter tests,
+            one test_agent_targets.py and one test_agent_methods.py
+            back-compat test) · ruff ok · mypy ok · line-endings ok ·
+            `grep -rn "legacy" src/` returns nothing at all · every mutation
+            spec touching an edited file re-run individually: display-flash.json
+            (9/9, one stale anchor removed - see deviation), targets.json
+            (18/18, one anchor rewritten - see deviation), declare-type.json
+            (4/4), bulk-operations.json (13/13), pio.json (9/9),
+            dfu-pairings.json (6/6), profiles.json (18/18), add-mcu.json
+            (6/6), flash-offset-diagnostic.json (10/10) - all CAUGHT, none
+            STALE. config-layout.json deleted outright: its only target,
+            layout.py, no longer exists to guard.
+deviation:  **Two of the plan's ten bullets were not safe to delete as
+            written, and were put to Vi rather than guessed at.** The "legacy_"
+            prefix in this codebase means two different things, and the
+            plan's own table didn't distinguish them: some are genuinely dead
+            migration code (legacy_locations, legacy_settings_file, the JSON
+            registry guard, layout.py's whole module), and deleting those was
+            exactly as mechanical as the plan implied. Two others -
+            `legacy_staleness`/`staleness` (build.py) and
+            `legacy_firmware_state`/`legacy_artifact_state` (pio.py) - are
+            not legacy in that sense at all: they are the live functions that
+            still produce `stale_reason` (docs/agent-api.md calls it
+            "documented API") and `firmware_state`/`artifact_state`, the
+            latter of which `display_status()`'s own `needs_flash` reads back
+            internally. My own `targets-wire-shape` design memory frames
+            these as a durable rule ("legacy adapters are not invertible -
+            carry the verdict, never reverse the string"), not scheduled
+            cruft - deleting them on the plan's literal instruction would
+            have been a real, silent breaking change to documented API and
+            to `needs_flash`'s own correctness. Escalated via AskUserQuestion
+            rather than guessed either way.
+
+            **Vi's answer: retire the wire fields for real.** `stale`/
+            `stale_reason` (artifact) and `firmware_state`/`artifact_state`
+            (display) are gone from the wire entirely - not renamed, not kept
+            alongside `reason`. `fw.status`'s artifact payload now carries
+            only `reason` (the granular, un-collapsed value); the display
+            payload carries only `artifact_reason` and per-screen `reason`
+            (both already existed alongside the legacy pair, so this was
+            addition-free - see `agent/methods.py`'s `artifact()` and
+            `display_status()`). `needs_flash` was rewritten to compare
+            `s.get("reason") == pio_mod.SOURCE_CHANGED` instead of
+            `s.get("firmware_state") == pio_mod.FW_BEHIND` - same meaning,
+            granular vocabulary. `build.py` lost `_LEGACY_STALE_REASON`,
+            `legacy_staleness`, `staleness`; `pio.py` lost `_LEGACY_FW_STATE`,
+            `_LEGACY_ART_STATE`, both legacy_* functions, their now-dead
+            non-legacy wrapper twins (`firmware_state`/`artifact_state` -
+            zero production callers even before this, only test callers), and
+            every `FW_*`/`ART_*` constant. `cli.py`'s `status_cmd` - the one
+            production caller of `staleness()` - now calls `artifact_status()`
+            directly and reads `.reason`/`.is_current`, which is *more*
+            granular than before (a missing sidecar now prints its real
+            reason instead of the collapsed "never_built").
+
+            **Vi's answer on `display_flash`: migrate it now, not at Step
+            16.** `fw.display.flash` is deleted - the method, and all three
+            registry entries (`METHODS`, `JOB_METHODS`, `FLASH_METHODS`).
+            `fw.flash` already routed a PlatformIO-provider `name` to
+            `_pio_flash(args)` (confirmed before touching anything: `flash()`
+            checks `self._provider_of(name)` before ever looking at
+            `serial`), so the underlying behaviour was already redundant -
+            this is a rename of the *reachable* method, not new routing.
+            `_display_target`'s two `"fw.display.flash"` literals (the
+            per-device flash action and `_flash_actions`' `flash_method`
+            argument) both became `"fw.flash"`. `_pio_flash` itself is
+            unchanged and unmoved - only the alias that called into it is
+            gone. Left alone, deliberately: the `runner.submit("display_flash",
+            ...)` job-history label (`agent/methods.py:2419`) - an internal
+            tracking string, not part of the RPC method registry, and
+            renaming it was not what either the plan or Vi's decision asked
+            for. `docs/agent-api.md` updated narrowly, not with a full
+            Step-16-style pass: the `fw.display.flash` table row and its
+            dedicated ~140-line section are retitled "Flashing a display",
+            reached via `fw.flash` when `name` resolves to a PlatformIO type
+            - the section's actual safety content (port never inferred,
+            discovery before the stop, verification after) is unchanged,
+            since `_pio_flash`'s behaviour didn't change, only the method
+            name reaching it. `fw.flash`'s own table row and prose gained a
+            pointer to the display path and an updated param list
+            (`serial|port`). **Logged in NOTES.md for Step 16 to confirm**:
+            the deployed Mainsail fork (`Vylyne/mainsail`, `mu/stable`) needs
+            checking against both this and the wire-field retirement above -
+            if it calls `fw.display.flash` by name, or reads
+            `stale_reason`/`firmware_state`/`artifact_state` anywhere outside
+            `targets[]`, it breaks silently against this agent until updated.
+
+            **`pio_source` retirement touched four call sites, not the one
+            the plan implies.** `Settings.pio_source` and `_KEY_ALIASES =
+            {"display_source": "pio_source"}` are gone, and so is
+            `pio.load()`'s dead `default_source` parameter (confirmed dead
+            first: its body never read the argument, per Step 7/9's own
+            deferred-cleanup notes). Every caller threading `settings.
+            pio_source` into it needed the same one-line fix:
+            `providers/spec.py`'s `Install.load`, `agent/methods.py`'s
+            `display_types()`, and `cli.py` twice (`_pio_targets`,
+            `_ports_free`). `providers/pio.py`'s `_source_dir()` and
+            `providers/platformio.py`'s `source_problem()` both had a
+            "...or 'pio_source' in [updater]" clause in their no-source-tree
+            message - genuinely unreachable through config loading (a
+            family's `source_dir()` never returns empty, confirmed by
+            re-reading `firmware.py`), but `_source_dir()`'s branch is
+            directly tested via a hand-constructed `PioType(name="knomi")`
+            with no source (`test_no_source_configured_is_its_own_error`), so
+            the branch stays and only the now-dangling `pio_source` mention
+            in its message was fixed.
+
+            **`scripts/migrate_config.py` needed its own fix, separate from
+            all of the above.** It reads `pio_source`/`display_source`
+            *out of the old-schema file being migrated* as one of its
+            transform inputs - a genuinely different thing from the live
+            tool's own settings, since the value only has to survive long
+            enough to seed the new `[firmware]` section's `source:`. Its
+            `main()` called `load_settings(path).pio_source`, which broke the
+            instant the field left `Settings`. Fixed by reading the raw
+            `pio_source`/`display_source` key straight off the `CfgDocument`
+            instead (`doc.get(SECTION, "pio_source") or doc.get(SECTION,
+            "display_source")`) - the migration function's own `pio_source:
+            str` parameter was already a plain string and needed no change.
+
+            **A mutation_test.py / hand-edit race stranded two rounds of
+            `agent/methods.py` edits mid-session**, a new failure mode for
+            this ground rule rather than a repeat of Step 6's stranded-single-
+            mutation postmortem. Editing a file directly while a *separate,
+            still-running* `mutation_test.py` background process targets that
+            same file is unsafe even between distinct Edit calls: the
+            script's own mutate-run-restore cycle silently overwrote two
+            batches of hand-edits (the `fw.display.flash` -> `fw.flash`
+            renames, twice) with its captured pre-edit snapshot, with no
+            error and no signal beyond the harness's own "file changed on
+            disk since you last read it" warning. Recovered by waiting for
+            the background run to fully exit (confirmed via process list, not
+            just the tool's own completion notification, which lagged behind
+            actual process exit due to stdout buffering) before redoing the
+            edits once, cleanly. Lesson for the steps ahead, additive to the
+            existing one-spec-at-a-time rule: never hand-edit a file that a
+            currently-running mutation_test.py targets, for any reason,
+            until that run's own completion is confirmed.
+
+            **`scripts/mutations/config-layout.json` deleted outright**
+            (not repointed) - it existed purely to guard `layout.py`'s
+            migration logic, which no longer exists. `scripts/mutations/
+            display-flash.json` lost its "displays ride along in fw.status"
+            anchor for the same reason `types[]`/`displays[]` themselves are
+            gone - nothing left to mutate there. `scripts/mutations/
+            targets.json`'s "the exact artifact reason survives the legacy
+            collapse" anchor referenced a local variable (`reason`, from the
+            deleted `stale, reason = legacy_staleness(status)` line) that no
+            longer exists; repointed to a mutation that actually still means
+            something now (`"reason": status.reason` -> `"reason": None`).
+untested:   Nothing new needs real hardware - this step never touches a
+            flasher, a device scan, or anything Step 10/13's own `untested`
+            notes didn't already cover. Purely a server-side/agent-surface
+            change.
+surprises:  The plan's own ten-bullet table undersold how much of this step
+            was a genuine design decision rather than mechanical deletion -
+            roughly half the bullets (JSON registry guard, `layout.py`,
+            `legacy_settings_*`, the three dead `Paths` methods, the
+            `display_source` alias) were exactly as mechanical as "delete,
+            not deprecate" implied; the other half turned out to be live,
+            documented, or tested API surface that the "legacy_" naming
+            alone made look safe to delete. Escalating those two rather than
+            pattern-matching on the table's phrasing is the main finding of
+            this step, more than any individual line changed.
+
 ---
 
 ## Appendix B — open items, not in scope

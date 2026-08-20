@@ -1489,6 +1489,114 @@ surprises:  `dfu_devices`'s `reporter` parameter is accepted but never used in
             move introduced. Left exactly as it was: this step is a move, not
             a cleanup, and fixing it was not asked for.
 
+### Step 11 — migration script            [done-with-deviation]
+commit:     d0387f9
+gate:       pytest 1184 passed/0 failed/10 skipped · ruff ok · mypy ok · line-endings ok
+            · scripts/mutations/application-firmware.json (1 anchor
+            re-pointed, all 6 CAUGHT) · scripts/mutations/cfg-comments.json
+            (all 6 CAUGHT, none STALE) · scripts/mutations/pio-provider-
+            selection.json (all 7 CAUGHT, none STALE) - the three specs
+            targeting config.py/cfgdoc.py, each run individually per the
+            ground rule
+deviation:  **`firmware:` becoming required broke the repo-root sample
+            immediately** (all four of its types predate the key), which is
+            exactly the "before it, Vi's own config cannot load" ordering
+            problem this step's own text anticipated - just for the sample
+            instead of the real printer. Same resolution Step 9 used for the
+            same shape of problem: ran `scripts/migrate_config.py --write`
+            against `mcu-updater.cfg` in this commit rather than deferring to
+            Step 15, since the plan's own gate text already requires proving
+            the script against exactly this file ("run it against... the
+            reverted repo sample; both must produce a file that Registry.load
+            accepts"). Only `firmware: klipper, katapult` was added to each
+            of the four types - no restructuring, no [firmware] sections
+            invented, nothing Step 15's real rewrite doesn't still have to
+            do. The file's own "MID-MIGRATION" header comment is updated to
+            say so rather than left describing a staleness that no longer
+            exists.
+
+            **`CfgDocument` gained one new public method, `rename_section`.**
+            Not named in the plan text, but the `[mcu x]`/`[display x]` ->
+            `[type x]` transform needs to change a header's text in place
+            while preserving everything under it and any trailing inline
+            comment - exactly `cfgdoc.py`'s own job, and every other writer
+            in this codebase goes through its public API rather than
+            reaching into `_splice`/`Section.header` directly. Tested in
+            `tests/test_migrate_config.py` via the transform that uses it
+            (`test_mcu_and_display_headers_become_type`,
+            `test_a_header_comment_survives_the_rename`) rather than in
+            `test_cfgdoc.py` directly - it has no caller yet outside this
+            script, and `test_cfgdoc.py`'s job is the parsing/rendering
+            primitives, not every possible caller's use of them.
+
+            **A real, pre-existing `cfgdoc.py` cosmetic quirk, found and
+            deliberately not fixed.** `set()`'s new-key insertion point walks
+            backward over trailing *blank* lines only, not comment lines - so
+            adding a key to a section immediately followed by a blank line
+            then a top-level comment block (itself a preamble to the *next*
+            section, as in NOTES.md's real config: a comment describing the
+            ESP32 display sits between `[type OctopusMAXEZ]` and
+            `[type knomi]`) inserts the new key visually adjacent to the
+            *next* section's header. Verified this is cosmetic only, not a
+            correctness bug: every value still reparses under its own
+            section (checked directly against the migrated NOTES.md-shaped
+            file - `doc.get("type OctopusMAXEZ", "firmware")` and
+            `doc.get("type knomi", ...)` both come back exactly right). Not
+            fixed in `cfgdoc.py` because the right general rule is a genuine
+            judgment call with no clearly correct answer (a trailing comment
+            could just as easily be a note about the section's own last
+            option as a preamble to the next one), and `cfgdoc.py` is
+            foundational enough that changing its insertion algorithm for a
+            cosmetic gain elsewhere felt like exactly the kind of unilateral
+            call the ground rules ask to escalate rather than make silently.
+            Mitigated instead in the script's own output: the notes list (one
+            unambiguous `[section] key: value` line per change) prints
+            *before* the raw diff, so a confusing-looking diff hunk is never
+            the only account of what happened.
+
+            **The migration is not idempotent for one specific, unavoidable
+            case**, discovered by a test that initially asserted the wrong
+            thing (see `surprises`). Documented in the script's own module
+            docstring and pinned by
+            `test_a_deliberately_bootloader_less_type_is_not_safe_to_
+            migrate_twice`: once `katapult_installed: false` is consumed and
+            its key removed, there is nothing left on disk distinguishing
+            "deliberately klipper-alone" from "predates firmware: entirely,
+            apply the historical katapult_installed-defaults-true
+            convention" - both are a bare `firmware: klipper` with no
+            `katapult_installed` key. Real cartographer-shaped data
+            (`firmware: cartographer`, never had a `katapult_installed` key)
+            needs the historical default applied, which rules out gating the
+            append on "katapult_installed was ever present" as a general fix.
+            Left as a documented one-shot limitation rather than solved with
+            more machinery the plan did not ask for and the ambiguity does
+            not actually admit a clean answer to.
+untested:   The BOOTSEL default's real mount location (Step 10's own
+            `untested`, unaffected by this step) is still unverified; nothing
+            new here needs real hardware. `pio_source`'s alias
+            (`display_source`) is exercised through `load_settings()`
+            directly rather than re-tested in `test_migrate_config.py` - that
+            alias resolution is `settings.py`'s own, already-covered
+            behaviour, not something this script reimplements.
+surprises:  Writing `test_an_already_type_section_is_left_alone` (asserting
+            that `[type board]` with `firmware: klipper` and no
+            `katapult_installed` key round-trips unchanged) failed
+            immediately - and correctly. It expected an idempotency guarantee
+            the script's own docstring had claimed ("running this twice makes
+            no further changes") but does not actually hold, for the reason
+            above. Fixed by correcting the claim, not the code: the docstring
+            now says which two of the three transforms are idempotent and
+            names the one that is not, and the test was replaced with one
+            that asserts something true (a type that already carries its
+            bootloader is unaffected) plus a new test that pins the
+            known-bad-on-a-second-run behaviour explicitly, so it reads as a
+            documented limitation rather than an accidental gap the next
+            change could silently make worse. A second, unrelated test
+            (`test_with_no_path_argument_it_uses_the_configured_registry_
+            file`) failed for a duller reason - it asserted a file had been
+            written by a dry run that never passed `--write` - and was a
+            one-line test bug, not a finding about the script.
+
 ---
 
 ## Appendix B — open items, not in scope

@@ -85,6 +85,7 @@ Violating any of these produces a bug that tests will not catch.
 | **Never pip-install kconfiglib** | Klipper and Katapult each vendor their own *locally patched* copy. Their sentinels (`MENU`, `BOOL`) are different objects across trees; cross-comparing silently yields `False`. Always load from the tree being configured. |
 | **`posix_only` tests silently skip on Windows** | Every flock/signal/`/proc` assertion. A green Windows run proves nothing about locking. CI runs Linux too — trust that. |
 | **Use `scripts/mutation_test.py`, never a throwaway** | An inline mutation script once stranded a sabotaged guard on disk. `tests/test_mutation_helper.py` exists because of it. |
+| **Run `mutation_test.py` one spec at a time** | Never in parallel, and never a full sweep under a shell timeout shorter than it needs. An interrupted sweep strands a *live* mutation in the source — this happened in Step 6, in `firmware.py`, and only `test_no_mutation_is_left_live_in_the_source` caught it. After any interrupted run, read the hygiene test's output; do not settle for "the command finished". |
 | **Git Bash mangles `/FI`-style switches** into paths | Silently turns wait-for-process loops into no-ops. Use PowerShell for those. |
 | **Never interrupt a firmware write** | Cancellation is checked *between* targets, never inside one. Half an image is a brick. |
 | **Bench board only** for any flash test | Never the toolhead. Recovery from a bad flash there is a DFU hunt inside the hotend assembly. |
@@ -536,6 +537,40 @@ Transforms:
 Use `CfgDocument` (`cfgdoc.py`) so comments survive — the config carries
 per-serial board labels (`# mcu EBBT0`) that are the only record of which
 physical board is which.
+
+**Also in this step, in the same commit: `firmware:` becomes required.**
+Added by review after Step 9 — see the "Steps 5–9 — review" block in the
+Progress log for the full finding.
+
+Right now `_is_platformio_only` (`config.py:105-122`) returns `False` when a type
+declares no `firmware:` key, and says so in its own docstring: *"A section with
+no `firmware:` key at all defaults to klipper (kconfig_make)."* Step 9 retired
+the `provider:` fallback, so a section like the real printer's
+
+```ini
+[type knomi]
+provider: platformio
+```
+
+now has no recognised provider and no `firmware:`, and loads as a **kconfig_make
+klipper MCU type**. It is not a brick risk — no serials means nothing is flashed
+at it, and `blocked()` skips it for want of a saved `.config` — but the display
+**silently stops being managed** and drops out of the display list. That is the
+same shape as the `display_list` bug that once dropped `device_id:`-addressed
+screens: an updater blind to a device it is responsible for, with no error
+anywhere.
+
+- A `[type ...]` declaring no `firmware:` is **refused**, with an error naming
+  the section and pointing at this migration script.
+- Delete the klipper fallback in `_is_platformio_only`, and the docstring
+  sentence that documents it.
+- Same reasoning as `env:` in Step 7: no honest default exists, and silence
+  currently means "klipper" — the implicit behaviour this rebuild exists to
+  remove.
+- **It must land in this commit, not earlier or later.** Before the migration
+  script exists, requiring the key means Vi's own config cannot load; after it,
+  every step in between runs with the silent default still live.
+- Test: a type with no `firmware:` raises, and the error names the section.
 
 **Gate:** `GATE` + run it against the Step 1 `NOTES.md` config and against the
 reverted repo sample; both must produce a file that `Registry.load` accepts.
@@ -1332,13 +1367,49 @@ surprises:  **The 252-failure number itself was the surprise** - see
             `provider=` parameters and legacy-prefix aliasing directly, so
             every test in it was about behaviour that no longer exists.
 
+### Steps 5–9 — review                                         [1 action, 2 notes]
+reviewer:   planning session, against the diff and the current source
+verdict:    Sound. Every deviation is documented, both Step 9 design forks were
+            escalated rather than decided, and Step 6's per-key `bootloader`
+            default is a real catch — a `[firmware katapult]` section
+            overriding only `source:` would otherwise have silently lost
+            bootloader status, which would have been very hard to trace back.
+finding:    **An absent `firmware:` key silently classifies a display as a
+            klipper MCU type.** `_is_platformio_only` (`config.py:105-122`)
+            returns False with no `firmware:` key, and its docstring states
+            the default. Step 9 retired the `provider:` fallback, so
+            `[type knomi]` + `provider: platformio` — the shape in the real
+            printer config parked in NOTES.md — now loads as kconfig_make
+            klipper. Not a brick risk (no serials, and `blocked()` skips it
+            for want of a saved `.config`), but the display drops out of the
+            display list with no error anywhere. Same shape as the
+            `display_list` bug that dropped `device_id:`-addressed screens.
+action:     Step 11's spec now requires `firmware:`, to land in the same
+            commit as the migration script — before it, Vi's own config
+            cannot load; after it, the intervening steps run with the silent
+            default still live. Vi chose this timing over deferring to
+            Step 15.
+note 1:     Step 6's stranded-mutation postmortem is promoted from that
+            step's log into **Ground rules**, where the next context will
+            actually read it: one spec at a time, never under a short
+            timeout, and read the hygiene test's output after any interrupt.
+note 2:     `mcu-updater.cfg` now carries `[type ...]` headers with no
+            `firmware:` keys, so under the new semantics no type builds
+            katapult. Correct per Step 9's escalated decision and fixed at
+            Step 15 — but the shipped file documents a schema that does not
+            exist yet, so it now carries a header comment saying so. Nobody
+            should copy it as an example until Step 15 lands.
+process:    No process change. The finding is a consequence of two correct
+            decisions meeting (Step 6's firmware-list semantics and Step 9's
+            fallback removal), not a mistake in either.
+
 ---
 
 ## Appendix B — open items, not in scope
 
-- The Mainsail fork sits three commits past `v2.18.4-vylyne.14`, which was never
-  promoted to stable — so the existing Flash All / Build All fixes have not
-  reached the update manager. Needs a stable-or-beta decision before any tag.
+- ~~The Mainsail fork sits three commits past `v2.18.4-vylyne.14`~~ — **resolved
+  2026-08-19.** `v2.18.4-vylyne.19` is promoted to stable, and `build_all` /
+  `flash_all` are tested on hardware. Step 16's fork work starts from `.19`.
 - `needs_klipper_stopped` → per-type "services to stop" list. See "Do not do".
 - An unreproduced flaky teardown `RuntimeError` in
   `test_an_unknown_inbound_method_gets_an_error_not_silence`.

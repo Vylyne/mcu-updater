@@ -1404,7 +1404,7 @@ process:    No process change. The finding is a consequence of two correct
             fallback removal), not a mistake in either.
 
 ### Step 10 — device states        [done-with-deviation]
-commit:     (pending)
+commit:     1949ef4
 gate:       pytest 1159 passed/0 failed/10 skipped · ruff ok · mypy ok · line-endings ok
             · scripts/mutations/flash-offset-diagnostic.json (10/10 CAUGHT),
             add-mcu.json (6/6 CAUGHT), dfu-pairings.json (6/6 CAUGHT) - the

@@ -366,13 +366,15 @@ def test_a_type_runs_klipper_unless_it_says_otherwise(paths):
     assert Registry.load(paths).get("bttebb36").application() == "klipper"
 
 
-def test_the_default_is_not_written_back_into_the_file(paths):
-    """The file stays readable rather than filling with restated defaults -
-    true when there is genuinely nothing to distinguish this type."""
+def test_firmware_is_written_even_for_the_plain_klipper_default(paths):
+    """Unlike katapult_installed / extra_args / makefile_patches, firmware: is
+    never omitted as a restated default - load() now requires it on every
+    type (see docs/rebuild-plan.md Step 11), so save() cannot leave it
+    implicit even when there is nothing else to distinguish this type."""
     reg = Registry.load(paths)
     reg.add_type("bttebb36", "stm32g0b1xx", katapult_installed=False)
     reg.save(paths)
-    assert "firmware:" not in open(paths.main_config, encoding="utf-8").read()
+    assert "firmware: klipper" in open(paths.main_config, encoding="utf-8").read()
 
 
 def test_a_bootloader_is_recorded_explicitly_now(paths):

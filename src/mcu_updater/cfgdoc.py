@@ -328,6 +328,24 @@ class CfgDocument:
         self._splice(opt.start, opt.end, [])
         return True
 
+    def rename_section(self, old: str, new: str) -> bool:
+        """Change a section's header text in place, keeping everything under it.
+
+        Only the header line changes - options, comments and ordering are
+        untouched, because they live at line indices this never moves. Any
+        trailing text on the header line (an inline comment) survives, same
+        as everywhere else in this module.
+
+        Returns False if `old` does not exist or `new` is already taken.
+        """
+        sec = self.sections.get(old)
+        if sec is None or new in self.sections:
+            return False
+        old_line = self.lines[sec.header]
+        suffix = old_line[old_line.index("]") + 1 :]
+        self._splice(sec.header, sec.header + 1, [f"[{new}]{suffix}"])
+        return True
+
     def add_section(self, name: str) -> None:
         if name in self.sections:
             return

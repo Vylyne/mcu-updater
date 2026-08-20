@@ -107,10 +107,11 @@ def test_status_type_shape(api):
         "reason",
     }
     assert set(ebb["artifacts"]) == {"klipper", "katapult"}
-    # No [firmware] key predates this key at all, so under the list-based
-    # schema (unlike the old implicit-katapult convention) this reads as no
-    # declared bootloader - see docs/rebuild-plan.md Step 6.
-    assert ebb["katapult"]["installed"] is False
+    # The live sample declares `firmware: klipper, katapult` explicitly (step
+    # 11's migration added it) - under the list-based schema "installed" is
+    # just "is katapult in the declared list", nothing implicit any more.
+    # See docs/rebuild-plan.md Steps 6 and 11.
+    assert ebb["katapult"]["installed"] is True
 
 
 def test_status_surfaces_makefile_patches(api):

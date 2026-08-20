@@ -57,7 +57,7 @@ def test_makefile_patches_parse_from_the_arrow_form(paths, live_registry_text):
 def test_a_patch_line_containing_an_arrow_or_colon_survives(paths):
     _write(
         paths,
-        "[type a]\nchipset: x\nklipper_makefile_patches:\n"
+        "[type a]\nchipset: x\nfirmware: klipper\nklipper_makefile_patches:\n"
         "    src/Makefile -> src-y += a->b:c.c\nserials:\n",
     )
     patch = Registry.load(paths).get("a").fw("klipper").makefile_patches[0]
@@ -68,7 +68,10 @@ def test_a_patch_line_containing_an_arrow_or_colon_survives(paths):
 def test_a_malformed_patch_is_refused_rather_than_silently_dropped(paths):
     """Silently ignoring it means a board quietly builds without its extra source
     file - which is exactly the class of bug this whole key exists to fix."""
-    _write(paths, "[type a]\nchipset: x\nklipper_makefile_patches:\n    nonsense\n")
+    _write(
+        paths,
+        "[type a]\nchipset: x\nfirmware: klipper\nklipper_makefile_patches:\n    nonsense\n",
+    )
     with pytest.raises(ConfigCorruptError) as exc:
         Registry.load(paths)
     assert "->" in str(exc.value)
@@ -104,7 +107,7 @@ def test_a_hand_written_comment_inside_a_section_survives(paths):
     _write(
         paths,
         "[type a]\n# this board is fussy about its clock\nchipset: stm32f072xb\n"
-        "serials:\n    S1\n",
+        "firmware: klipper\nserials:\n    S1\n",
     )
     reg = Registry.load(paths)
     reg.add_serial("a", "S2")
@@ -116,7 +119,10 @@ def test_a_hand_written_comment_inside_a_section_survives(paths):
 
 def test_unrecognised_keys_survive(paths):
     """A key written by a newer version must not be dropped by an older one."""
-    _write(paths, "[type a]\nchipset: rp2040\nfuture_option: 42\nserials:\n    S1\n")
+    _write(
+        paths,
+        "[type a]\nchipset: rp2040\nfirmware: klipper\nfuture_option: 42\nserials:\n    S1\n",
+    )
     reg = Registry.load(paths)
     reg.add_serial("a", "S2")
     reg.save(paths)
@@ -183,7 +189,7 @@ def test_katapult_installed_false_leaves_no_bootloader_in_firmwares(paths):
 
 
 def test_clearing_extra_args_removes_the_key(paths):
-    _write(paths, "[type a]\nchipset: x\nklipper_extra_args: -j4\nserials:\n")
+    _write(paths, "[type a]\nchipset: x\nfirmware: klipper\nklipper_extra_args: -j4\nserials:\n")
     reg = Registry.load(paths)
     reg.get("a").fw("klipper").extra_args = ""
     reg.save(paths)
@@ -325,11 +331,23 @@ def test_families_built_by_different_tools_are_refused(paths):
     assert "knomi_serial" in str(exc.value)
 
 
-def test_no_firmware_key_means_klipper_alone_no_bootloader(paths):
-    """Unlike the old katapult_installed-defaults-true convention, an absent
-    firmware: key now declares only klipper - a bootloader has to be listed,
-    not assumed. See docs/rebuild-plan.md Step 6."""
+def test_a_type_with_no_firmware_key_is_refused(paths):
+    """Step 9 retired the provider: fallback, so an absent firmware: key had
+    nothing left to mean - silence used to read as klipper (plus katapult,
+    under the even older katapult_installed-defaults-true convention), which
+    is exactly the implicit behaviour this rebuild exists to remove. See
+    docs/rebuild-plan.md Step 11."""
     _write(paths, "[type a]\nchipset: x\nserials:\n")
+    with pytest.raises(ConfigCorruptError) as exc:
+        Registry.load(paths)
+    assert "a" in str(exc.value)
+    assert "firmware" in str(exc.value)
+
+
+def test_firmware_klipper_alone_means_no_bootloader(paths):
+    """A single declared family with nothing else listed carries no
+    bootloader - the list says exactly what it says, nothing is assumed."""
+    _write(paths, "[type a]\nchipset: x\nfirmware: klipper\nserials:\n")
     mcu = Registry.load(paths).get("a")
     assert mcu.firmwares == ["klipper"]
     assert mcu.bootloader() is None
@@ -341,7 +359,10 @@ def test_section_naming_is_stable():
 
 
 def test_a_section_without_a_name_is_ignored(paths):
-    _write(paths, "[type]\nchipset: x\n\n[type real]\nchipset: y\nserials:\n")
+    _write(
+        paths,
+        "[type]\nchipset: x\n\n[type real]\nchipset: y\nfirmware: klipper\nserials:\n",
+    )
     assert Registry.load(paths).names() == ["real"]
 
 
@@ -520,6 +541,7 @@ enable_flashing: true   # turned on for the panel
 
 [type bttebb36]
 chipset: stm32g0b1xx
+firmware: klipper
 serials:
     # the two toolhead boards
     230048001750304158373620-if00  #mcu EBBT0

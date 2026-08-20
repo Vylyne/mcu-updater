@@ -18,9 +18,10 @@ Per-type keys, and that is all:
 ``serials``
     One tracked board per line.
 ``firmware``
-    Which families this board runs, comma-separated - an application and,
-    for a board with one, its bootloader, e.g. ``cartographer, katapult``.
-    Defaults to ``klipper``. A type with no bootloader simply omits one.
+    Required. Which families this board runs, comma-separated - an
+    application and, for a board with one, its bootloader, e.g.
+    ``cartographer, katapult``. A type with no bootloader simply omits one.
+    ``scripts/migrate_config.py`` adds this key to a file predating it.
 ``profile``
     The vendor answer file this type's application config is seeded from, e.g.
     ``config.CartoV4USB``. Names a file in that firmware's own source tree, not
@@ -107,11 +108,12 @@ def _is_platformio_only(
 ) -> bool:
     """Whether a `[type ...]` section's only declared firmware is built by
     platformio - meaning the type belongs to `providers/pio.py`'s registry,
-    not this one. A section with no `firmware:` key at all defaults to
-    klipper (kconfig_make) and is never this.
+    not this one.
     """
     raw = (doc.get(section, "firmware") or "").strip()
     if not raw:
+        # Vacuously false, not "defaults to klipper" - load() refuses a
+        # section with no firmware: key before this is ever reachable for one.
         return False
     declared_fws = [f.strip() for f in raw.split(",") if f.strip()]
     if not declared_fws:
@@ -325,7 +327,20 @@ class Registry:
             mcu.serials = doc.get_list(section, "serials")
 
             raw = (doc.get(section, "firmware") or "").strip()
-            declared_fws = [f.strip() for f in raw.split(",") if f.strip()] or ["klipper"]
+            declared_fws = [f.strip() for f in raw.split(",") if f.strip()]
+            if not declared_fws:
+                # Refused, not defaulted to klipper - silence used to mean
+                # klipper (kconfig_make), which is exactly the implicit
+                # behaviour this key exists to remove. See docs/rebuild-plan.md
+                # Step 11.
+                raise ConfigCorruptError(
+                    f"{path}: '{name}' declares no firmware: key. Every type "
+                    f"must name at least one firmware family it runs, e.g. "
+                    f"'firmware: klipper'. Run scripts/migrate_config.py to add "
+                    f"it automatically.",
+                    path=path,
+                    type=name,
+                )
             for fw in declared_fws:
                 if fw not in fw_names:
                     # Refused rather than defaulted. A typo here would otherwise
@@ -456,10 +471,10 @@ class Registry:
             doc.set(section, "chipset", mcu.chipset)
             doc.set(section, "serials", list(mcu.serials))
 
-            if mcu.firmwares != ["klipper"]:
-                doc.set(section, "firmware", ", ".join(mcu.firmwares))
-            else:
-                doc.remove_option(section, "firmware")
+            # Always written, never omitted as a restated default: load() now
+            # refuses a type with no firmware: key at all, so save() cannot
+            # leave it implicit even for the plain-klipper case.
+            doc.set(section, "firmware", ", ".join(mcu.firmwares))
 
             if mcu.profile.strip():
                 doc.set(section, "profile", mcu.profile.strip())

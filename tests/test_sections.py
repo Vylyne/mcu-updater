@@ -9,9 +9,12 @@ declared `firmware:` family names, not by anything this module reads.
 
 from __future__ import annotations
 
+import pytest
+
 from mcu_updater import sections
 from mcu_updater.cfgdoc import CfgDocument
 from mcu_updater.config import Registry
+from mcu_updater.errors import ConfigCorruptError
 from mcu_updater.providers import pio
 
 # --------------------------------------------------------------------------
@@ -70,7 +73,7 @@ def test_a_name_this_document_has_never_seen_gets_a_fresh_section():
 
 def test_a_registry_round_trips_without_changing_the_file(paths):
     with open(paths.registry_file, "w", encoding="utf-8") as fh:
-        fh.write("[type board]\nchipset: stm32f072xb\nserials:\n")
+        fh.write("[type board]\nchipset: stm32f072xb\nfirmware: klipper\nserials:\n")
 
     reg = Registry.load(paths)
     assert "board" in reg.names()
@@ -105,7 +108,7 @@ def test_a_pio_type_is_not_picked_up_by_the_mcu_registry(paths):
     with open(paths.registry_file, "w", encoding="utf-8") as fh:
         fh.write(
             "[firmware knomi_serial]\nsource: ~/knomi-serial\nbuilder: platformio\n\n"
-            "[type board]\nchipset: stm32f072xb\n"
+            "[type board]\nchipset: stm32f072xb\nfirmware: klipper\n"
             "[type knomi]\nfirmware: knomi_serial\nenv: knomi\n"
         )
 
@@ -113,12 +116,18 @@ def test_a_pio_type_is_not_picked_up_by_the_mcu_registry(paths):
     assert set(pio.load(paths)) == {"knomi"}
 
 
-def test_a_type_predating_firmware_is_no_longer_recognised_as_pio(paths):
-    """The old provider:/prefix fallback is fully retired as of this step -
-    a type with no firmware: key is a kconfig_make type by default, full
-    stop, whatever it used to be."""
+def test_a_type_predating_firmware_is_refused_not_defaulted(paths):
+    """The old provider:/prefix fallback is fully retired as of step 9, and
+    firmware: became required in step 11 - a type carrying the old
+    'provider: platformio' key but no firmware: is not silently a
+    kconfig_make type any more, it is refused. pio.load() still just skips
+    it (its own firmware:-required check predates this one, from step 7),
+    so only the MCU registry's refusal is new here."""
     with open(paths.main_config, "w", encoding="utf-8") as fh:
         fh.write("[type knomi]\nprovider: platformio\nenv: knomi\n")
 
     assert pio.load(paths) == {}
-    assert Registry.load(paths).names() == ["knomi"]
+    with pytest.raises(ConfigCorruptError) as exc:
+        Registry.load(paths)
+    assert "knomi" in str(exc.value)
+    assert "firmware" in str(exc.value)

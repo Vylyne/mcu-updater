@@ -28,9 +28,10 @@
       "replace": "                if False:"
     },
     {
-      "name": "a non-default firmware list survives a save",
-      "find": "            if mcu.firmwares != [\"klipper\"]:\n                doc.set(section, \"firmware\", \", \".join(mcu.firmwares))",
-      "replace": "            if False:\n                doc.set(section, \"firmware\", \", \".join(mcu.firmwares))"
+      "_comment": "load() now refuses a type with no firmware: key at all (step 11), so save() cannot leave it implicit even for the plain-klipper case any more - it is always written, never omitted as a restated default.",
+      "name": "the declared firmware list is always written back on save",
+      "find": "            doc.set(section, \"firmware\", \", \".join(mcu.firmwares))",
+      "replace": "            pass"
     },
     {
       "name": "the application is the first declared family that is not a bootloader",

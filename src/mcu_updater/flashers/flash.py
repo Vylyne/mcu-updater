@@ -544,6 +544,7 @@ def flash_initial_bootloader(
     chipset: str,
     fw_bin: str,
     *,
+    uf2_bin: Optional[str] = None,
     reporter: Reporter = null_reporter,
     target_serial: Optional[str] = None,
 ) -> None:
@@ -553,21 +554,38 @@ def flash_initial_bootloader(
     single fact about the silicon, not a lookup table: every STM32 answers DFU,
     every RP2040 answers BOOTSEL. `flashers.select_for` is the actual dispatch -
     driven through the same `Flasher` protocol a batch uses, so a route added
-    for this path (RP2040's BOOTSEL, still unbuilt) is a route a batch could
-    take too, with nothing here to edit when it lands.
+    for this path is a route a batch could take too, with nothing here to edit
+    when it lands.
+
+    `uf2_bin` is separate from `fw_bin`: BOOTSEL mass storage only accepts a
+    `.uf2` - a `.bin` copied there is silently ignored - and a build only
+    produces one when the tree does. DFU never looks at it; a caller flashing
+    an STM32 can leave it unset.
     """
     from .. import flashers
 
     state = STATE_BOOTSEL if chipset.startswith("rp2040") else STATE_DFU
     flasher = flashers.select_for(chipset, state)
-    target = flashers.dfu_util.target_for(
-        fw_bin, chipset=chipset, dfu_serial=target_serial
-    )
+
+    if state == STATE_BOOTSEL:
+        if uf2_bin is None:
+            raise FlashError(
+                f"no .uf2 was built for {chipset}. BOOTSEL mass storage ignores "
+                f"a .bin - build again once the tree produces one.",
+                chipset=chipset,
+            )
+        target = flashers.bootsel.target_for(uf2_bin, chipset=chipset)
+    else:
+        target = flashers.dfu_util.target_for(
+            fw_bin, chipset=chipset, dfu_serial=target_serial
+        )
+
     bench = flashers.Bench(
         paths=paths,
         settings=settings,
-        # Nothing on this path touches a service: the board is in DFU, not on
-        # the Klipper bus, which is what `needs_klipper_stopped: False` says.
+        # Nothing on this path touches a service: the board is in its ROM
+        # bootloader (DFU or BOOTSEL), not on the Klipper bus, which is what
+        # both flashers' `needs_klipper_stopped: False` says.
         controller=_no_services,
     )
     with flasher.prepared(bench, [target], PlainContext(reporter)) as session:

@@ -17,6 +17,7 @@ of it.
 from __future__ import annotations
 
 from .batch import PlainContext, write_all
+from .bootsel import Bootsel
 from .dfu_util import DfuUtil
 from .esptool import Esptool
 from .flashtool import Flashtool
@@ -32,6 +33,7 @@ from .spec import Bench, Flasher, FlashTarget
 __all__ = [
     "FLASHERS",
     "Bench",
+    "Bootsel",
     "DfuUtil",
     "Esptool",
     "FlashTarget",

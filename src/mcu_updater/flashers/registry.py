@@ -9,8 +9,8 @@ has NOPASSWD `systemctl` for Klipper. The tuple is the seam.
 
 from __future__ import annotations
 
-from ..devices import STATE_BOOTSEL
 from ..errors import UnsupportedChipsetError
+from .bootsel import Bootsel
 from .dfu_util import DfuUtil
 from .esptool import Esptool
 from .flashtool import Flashtool
@@ -18,7 +18,7 @@ from .spec import Flasher, FlashTarget
 
 #: Every flasher. Order is not a batch order - a batch keeps the order its
 #: selection produced - so this is just the set.
-FLASHERS: tuple[Flasher, ...] = (Flashtool(), Esptool(), DfuUtil())
+FLASHERS: tuple[Flasher, ...] = (Flashtool(), Esptool(), DfuUtil(), Bootsel())
 
 _BY_NAME: dict[str, Flasher] = {f.name: f for f in FLASHERS}
 
@@ -79,25 +79,13 @@ def select_for(chipset: str, state: str) -> Flasher:
     keep in step. First-time install is not special: it is a selection where
     `state` happens to be `dfu` or `bootsel`, same as any other.
 
-    Raises `UnsupportedChipsetError` either way it can fail, because both
-    answers leave the user doing the same thing - flashing katapult manually -
-    and only the instructions differ.
+    Raises `UnsupportedChipsetError` when nothing registered answers to this
+    chipset/state pair - the user's only recourse is to flash katapult
+    manually, then use 'add-serial' once it enumerates.
     """
     for f in FLASHERS:
         if state in f.states and any(chipset.startswith(p) for p in f.chipsets):
             return f
-    # The one route that is known but genuinely not driven yet: RP2040 has a
-    # real bootstrap path (BOOTSEL mass storage), just not one this tool
-    # speaks. This carve-out goes away once a Bootsel flasher declares
-    # `states=(STATE_BOOTSEL,)` - it is then matched by the loop above like any
-    # other route, and this branch becomes unreachable.
-    if chipset.startswith("rp2040") and state == STATE_BOOTSEL:
-        raise UnsupportedChipsetError(
-            "RP2040 BOOTSEL flashing isn't wired up yet - hold BOOTSEL, mount the "
-            "RPI-RP2 drive, copy the katapult .uf2 across, then use 'add-serial' "
-            "once it enumerates as Katapult.",
-            chipset=chipset,
-        )
     raise UnsupportedChipsetError(
         f"don't know how to perform a first-time flash for chipset '{chipset}'. "
         f"Flash katapult manually, then use 'add-serial' once it enumerates.",

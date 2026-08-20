@@ -5,6 +5,24 @@ session start, struck through when acted on, not deleted.
 
 ---
 
+## 2026-08-19 — Step 13 (RP2040 BOOTSEL flasher) shipped untested on hardware
+
+`src/mcu_updater/flashers/bootsel.py` is new: copies a `.uf2` onto a mounted
+`RPI-RP2` volume, the same first-time-bootstrap role `dfu_util.py` plays for
+STM32. Fully exercised off-hardware (`paths.bootsel_root` / a fake mount), but
+**never against a real RP2040** - there is none to hand. Two things this
+cannot verify from a dev box:
+
+- Whether the board actually automounts as `RPI-RP2` at all on the printer's
+  host, and if so, under which of the two globs `bootsel_scan()` searches
+  (`/media/*`, `/run/media/*`) - see Step 10's own `untested` note, unchanged
+  by this step.
+- Whether a plain `shutil.copy2` onto that mount is sufficient, or whether the
+  real bootloader wants the file flushed/synced before it reads it back.
+
+Try `mcu-updater add-mcu <rp2040-type>` on a bench board (never the toolhead)
+once one is available, and update this entry once it's confirmed either way.
+
 ## 2026-08-19 — Printer config to migrate
 
 The real printer config (cartographer, knomi, OctopusMAXEZ,

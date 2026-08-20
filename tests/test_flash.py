@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import dataclasses
 import os
 
 import pytest
@@ -414,11 +415,30 @@ def test_stm32_dispatches_to_dfu(paths, ready, monkeypatch):
     assert called == {"yes": True}
 
 
-def test_rp2040_is_explicitly_unsupported_for_now(paths, ready):
-    """Not silently broken: BOOTSEL mass storage ignores a .bin, so this needs
-    the .uf2 path wiring up before it can work at all."""
-    with pytest.raises(UnsupportedChipsetError) as exc:
-        flash_initial_bootloader(paths, ready, "rp2040", "x.bin")
+def test_rp2040_dispatches_to_bootsel_when_a_uf2_was_built(paths, settings, tmp_path):
+    """Also the regression test for the target-shape bug this step fixed:
+    `flash_initial_bootloader` used to build a DfuUtil-shaped target for every
+    chipset, so handing one to Bootsel would `KeyError` on
+    `target.detail["uf2_file"]` rather than copy anything."""
+    root = tmp_path / "bootsel_root"
+    vol = root / "RPI-RP2"
+    vol.mkdir(parents=True)
+    (vol / "INFO_UF2.TXT").write_text("", encoding="utf-8")
+    rp_paths = dataclasses.replace(paths, bootsel_root=str(root))
+
+    uf2 = tmp_path / "katapult.uf2"
+    uf2.write_bytes(b"\0" * 8)
+
+    flash_initial_bootloader(rp_paths, settings, "rp2040", "unused.bin", uf2_bin=str(uf2))
+
+    assert (vol / "katapult.uf2").read_bytes() == b"\0" * 8
+
+
+def test_rp2040_refuses_with_no_uf2_built(paths, settings):
+    """A .bin copied to BOOTSEL mass storage is silently ignored - refusing
+    outright is better than a write that appears to succeed and does nothing."""
+    with pytest.raises(FlashError) as exc:
+        flash_initial_bootloader(paths, settings, "rp2040", "x.bin")
     assert ".uf2" in str(exc.value)
 
 
@@ -451,13 +471,8 @@ def test_select_for_matches_a_display_to_esptool():
     assert flashers.select_for("esp32", devices_mod.STATE_ESP_ROM).name == "esptool"
 
 
-def test_select_for_refuses_a_known_but_unbuilt_route():
-    """RP2040 has a real BOOTSEL bootstrap path - just not one any registered
-    flasher speaks yet, which is a different refusal than not knowing the
-    chipset at all."""
-    with pytest.raises(UnsupportedChipsetError) as exc:
-        flashers.select_for("rp2040", devices_mod.STATE_BOOTSEL)
-    assert ".uf2" in str(exc.value)
+def test_select_for_matches_a_bare_rp2040_to_bootsel():
+    assert flashers.select_for("rp2040", devices_mod.STATE_BOOTSEL).name == "bootsel"
 
 
 def test_select_for_refuses_an_impossible_chipset_state_pair():
@@ -465,6 +480,98 @@ def test_select_for_refuses_an_impossible_chipset_state_pair():
     a `klipper` bus state, which nothing claims to answer to."""
     with pytest.raises(UnsupportedChipsetError):
         flashers.select_for("esp32", devices_mod.STATE_KLIPPER)
+
+
+# --------------------------------------------------------------------------
+# Bootsel: RP2040 BOOTSEL mass storage - a plain file copy, not a protocol.
+# NOTE: exercised only against a fake mount (paths.bootsel_root). Not verified
+# against a real RP2040 - see NOTES.md.
+# --------------------------------------------------------------------------
+
+
+def _mounted_volume(tmp_path, name: str = "bootsel_root"):
+    root = tmp_path / name
+    vol = root / "RPI-RP2"
+    vol.mkdir(parents=True)
+    (vol / "INFO_UF2.TXT").write_text("", encoding="utf-8")
+    return root, vol
+
+
+def test_bootsel_copies_the_uf2_to_the_mounted_volume(paths, settings, tmp_path):
+    root, vol = _mounted_volume(tmp_path)
+    rp_paths = dataclasses.replace(paths, bootsel_root=str(root))
+
+    uf2 = tmp_path / "build" / "katapult.uf2"
+    uf2.parent.mkdir()
+    uf2.write_bytes(b"\x01" * 32)
+
+    bench = flashers.Bench(paths=rp_paths, settings=settings, controller=lambda name=None: None)
+    target = flashers.bootsel.target_for(str(uf2), chipset="rp2040")
+    result = flashers.Bootsel().write(bench, None, target, flashers.PlainContext(lambda *a: None))
+
+    assert (vol / "katapult.uf2").read_bytes() == b"\x01" * 32
+    assert result["mount"] == str(vol)
+
+
+def test_bootsel_dry_run_copies_nothing(paths, settings, tmp_path):
+    root, vol = _mounted_volume(tmp_path)
+    rp_paths = dataclasses.replace(paths, bootsel_root=str(root))
+    settings.dry_run = True
+
+    uf2 = tmp_path / "katapult.uf2"
+    uf2.write_bytes(b"\0")
+
+    events: list = []
+    bench = flashers.Bench(paths=rp_paths, settings=settings, controller=lambda name=None: None)
+    target = flashers.bootsel.target_for(str(uf2), chipset="rp2040")
+    result = flashers.Bootsel().write(
+        bench, None, target, flashers.PlainContext(lambda *a: events.append(a))
+    )
+
+    assert result == {"mount": None}
+    assert not (vol / "katapult.uf2").exists()
+    assert any("dry-run" in line for _level, line in events)
+
+
+def test_bootsel_refuses_a_missing_uf2(paths, settings, tmp_path):
+    bench = flashers.Bench(paths=paths, settings=settings, controller=lambda name=None: None)
+    target = flashers.bootsel.target_for(str(tmp_path / "nope.uf2"), chipset="rp2040")
+
+    with pytest.raises(FlashError):
+        flashers.Bootsel().write(bench, None, target, flashers.PlainContext(lambda *a: None))
+
+
+def test_bootsel_refuses_when_no_volume_is_mounted(paths, settings, tmp_path):
+    rp_paths = dataclasses.replace(paths, bootsel_root=str(tmp_path / "nothing-here"))
+    uf2 = tmp_path / "katapult.uf2"
+    uf2.write_bytes(b"\0")
+
+    bench = flashers.Bench(paths=rp_paths, settings=settings, controller=lambda name=None: None)
+    target = flashers.bootsel.target_for(str(uf2), chipset="rp2040")
+
+    with pytest.raises(DeviceNotFoundError):
+        flashers.Bootsel().write(bench, None, target, flashers.PlainContext(lambda *a: None))
+
+
+def test_bootsel_refuses_more_than_one_mounted_volume(paths, settings, tmp_path, monkeypatch):
+    """No id to disambiguate with at all, unlike DFU's optional serial - so
+    more than one RPI-RP2 volume at once is refused outright, same reasoning
+    as `AmbiguousDfuError`."""
+    media = tmp_path / "media"
+    for user in ("alice", "bob"):
+        vol = media / user / "RPI-RP2"
+        vol.mkdir(parents=True)
+        (vol / "INFO_UF2.TXT").write_text("", encoding="utf-8")
+    monkeypatch.setattr(devices_mod, "DEFAULT_BOOTSEL_ROOT_GLOBS", (str(media / "*"),))
+
+    uf2 = tmp_path / "katapult.uf2"
+    uf2.write_bytes(b"\0")
+    bench = flashers.Bench(paths=paths, settings=settings, controller=lambda name=None: None)
+    target = flashers.bootsel.target_for(str(uf2), chipset="rp2040")
+
+    with pytest.raises(FlashError) as exc:
+        flashers.Bootsel().write(bench, None, target, flashers.PlainContext(lambda *a: None))
+    assert len(exc.value.data["mounts"]) == 2
 
 
 # --------------------------------------------------------------------------

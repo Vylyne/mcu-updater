@@ -727,7 +727,12 @@ def add_mcu(args: argparse.Namespace) -> None:
             d.serial for d in find_untracked(c.paths, reg.all_serials())
         }
         flash_initial_bootloader(
-            c.paths, c.settings, chipset, result.bin_path, reporter=stdout_reporter
+            c.paths,
+            c.settings,
+            chipset,
+            result.bin_path,
+            uf2_bin=result.uf2_path,
+            reporter=stdout_reporter,
         )
 
         print("Waiting for the device to enumerate as Katapult...")

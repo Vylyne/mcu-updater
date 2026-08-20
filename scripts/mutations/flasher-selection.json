@@ -1,5 +1,5 @@
 {
-  "_comment": "select_for is a capability match, not a lookup - if either half of the match (chipset prefix, state membership) stops being checked, a flasher could be handed a device it never declared it can write. The RP2040-BOOTSEL carve-out is the one case that's supposed to refuse even though the chipset is recognised; losing that silently turns a clear 'not wired up yet' into either a wrong flasher or a wrong error.",
+  "_comment": "select_for is a capability match, not a lookup - if either half of the match (chipset prefix, state membership) stops being checked, a flasher could be handed a device it never declared it can write. This used to pin a third anchor on the RP2040-BOOTSEL carve-out (a known-but-unbuilt route that refused even though the chipset was recognised); Step 13 registered a real Bootsel flasher, so that branch is gone and rp2040+bootsel is now just another entry the loop below has to get right, same as every other route.",
   "file": "src/mcu_updater/flashers/registry.py",
   "command": [
     "python",
@@ -18,11 +18,6 @@
       "name": "chipset has to match one of this flasher's own prefixes",
       "find": "        if state in f.states and any(chipset.startswith(p) for p in f.chipsets):",
       "replace": "        if state in f.states:"
-    },
-    {
-      "name": "a known-but-unbuilt route (RP2040 BOOTSEL) still refuses",
-      "find": "    if chipset.startswith(\"rp2040\") and state == STATE_BOOTSEL:",
-      "replace": "    if False:"
     }
   ]
 }

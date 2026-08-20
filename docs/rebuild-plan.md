@@ -1597,6 +1597,107 @@ surprises:  Writing `test_an_already_type_section_is_left_alone` (asserting
             written by a dry run that never passed `--write` - and was a
             one-line test bug, not a finding about the script.
 
+### (unplanned) — scripts/migrate_config.py was missing its executable bit
+commit:     8118080
+gate:       pytest 1183 passed/1 failed/10 skipped before, 1189/0/10 after (see
+            Step 12's own numbers - a few more tests landed in between) · ruff
+            ok · mypy ok · line-endings ok
+deviation:  Not a numbered step. `test_every_script_with_a_shebang_is_executable`
+            was red on session start, blocking Step 12's own gate from ever
+            reading clean: `scripts/migrate_config.py` (added in Step 11,
+            commit d0387f9) carries a `#!/usr/bin/env python3` shebang but was
+            committed at mode 100644, unlike every sibling script in
+            `scripts/`. Step 11's own gate log claims 0 failed - plausible
+            explanation is the file was created with a plain write on this
+            Windows dev box and `git add`ed without the exec bit ever being
+            set, and this hygiene test either didn't yet exist at that point in
+            the session or wasn't re-run after the add. Fixed mechanically
+            with `git update-index --chmod=+x` in its own commit rather than
+            folded into Step 12, since it has nothing to do with the flasher
+            seam and batching it would have muddied both diffs.
+untested:   none
+surprises:  none - single-line mode-bit fix, gate green immediately after.
+
+### Step 12 — flasher capability seam        [done-with-deviation]
+commit:     6232a36
+gate:       pytest 1189 passed/0 failed/10 skipped · ruff ok · mypy ok ·
+            line-endings ok · scripts/mutations/flasher-selection.json (new, 3
+            anchors) all CAUGHT · scripts/mutations/bulk-operations.json (13),
+            display-flash.json (10), flash-offset-diagnostic.json (10) - the
+            three pre-existing specs touching files this step edited -
+            individually re-run, all CAUGHT/none STALE
+deviation:  **Only the third of the three "unrelated ways" is actually
+            collapsed into `select_for`.** The plan's opening paragraph names
+            three call sites - `cli.py:405`/`methods.py:69`'s hardcoded
+            `flashtool.target_for`, `methods.py:1667`'s
+            `provider == PlatformIO` branch to `_pio_flash`, and
+            `registry.py:113`'s `bootstrap_for` chipset-prefix table - but the
+            step's own concrete instructions (the `chipsets`/`states` table,
+            `select_for` replacing `bootstrap_for()`/`BOOTSTRAP`, the two
+            error messages, `needs_klipper_stopped` unchanged) only ever
+            describe replacing the third one. Left the other two as they are:
+            both are genuinely unambiguous today, not three-way choices - a
+            tracked board is always written by `Flashtool` regardless of
+            whether it is currently sitting as `klipper` or `katapult`
+            (`Flashtool.states` declares both, because the write is what moves
+            it between them, not a precondition on which it starts in), and a
+            PlatformIO display is always written by `Esptool`. Routing either
+            through `select_for(chipset, state)` today would be decorative -
+            same flasher, every time - and would require inventing a "what
+            state is this device in right now" input neither caller currently
+            has or needs, since `flash_katapult` handles the
+            klipper<->katapult transition internally rather than being told
+            which side it starts from. Not reopened without something actually
+            needing the extra generality, same reasoning Step 8 gave for not
+            over-generalising `BuildTarget.fw`.
+
+            **`flash_initial_bootloader` needed a `chipset -> state` pick that
+            `select_for` itself cannot make.** `select_for(chipset, state)`
+            takes `state` as a caller-supplied argument by design - it is a
+            capability match, not a router - but the bootstrap caller only
+            ever has a bare `chipset` string to start from. Which ROM
+            bootloader a *factory-bare* board of a given chipset family
+            answers is a fact about the silicon (every STM32 speaks DFU, every
+            RP2040 speaks BOOTSEL), not something `select_for` could infer from
+            the registered flashers - `Esptool` declaring `chipsets=("esp32",)`
+            for entirely unrelated (application-write) reasons would otherwise
+            make an ESP32 look like a "recognised, not-yet-built" bootstrap
+            route rather than the "never had one" it actually is. Resolved
+            with the smallest possible fix, inline in `flash_initial_bootloader`:
+            `state = STATE_BOOTSEL if chipset.startswith("rp2040") else
+            STATE_DFU`. Two cases, so this is not the "chain of `startswith`"
+            the old code's docstring warned about extending - it is Step 13's
+            eventual third case (still none today) that would make it one, and
+            that is exactly the point where this should become a real table
+            instead.
+
+            **mypy needed explicit `tuple[str, ...]` annotations on every
+            concrete flasher's `chipsets`/`states`.** A bare `chipsets =
+            ("stm32", "rp2040")` infers as `tuple[str, str]`, which fails
+            `Flasher` Protocol conformance against the
+            `tuple[str, ...]`-typed slot (Protocol attribute matching is
+            invariant, unlike a return type). `needs_klipper_stopped = True`
+            never had this problem since `bool` has no arity to narrow.
+untested:   none beyond what was already true (POSIX-only paths, no hardware).
+            `select_for` and the `chipsets`/`states` declarations are pure
+            selection logic, fully exercised off-hardware; nothing here
+            changes what Step 13 still needs a real RP2040 to verify.
+surprises:  None of the two "left alone" call sites' behaviour changed, and
+            neither did any message: tracing `select_for`'s final shape (a
+            two-branch match with one RP2040-specific carve-out and one
+            generic fallback, no separate "is this chipset known at all"
+            tracking) against an ESP32 bootstrap request lands on the exact
+            same "don't know how to perform a first-time flash for chipset
+            'esp32'" message as the old `BOOTSTRAP` table gave it - the
+            `Esptool`-declares-esp32 ambiguity considered above never actually
+            reaches the shipped code, because `flash_initial_bootloader` only
+            ever asks `select_for` for `state=dfu` on a non-RP2040 chipset, and
+            nothing declares `states=(dfu,)` for `esp32`. Worth recording
+            because an earlier design draft *did* derive "known chipset" by
+            scanning every registered flasher's `chipsets` regardless of
+            state, which would have silently reclassified ESP32 from "unknown"
+            to "known but unbuilt" - caught before it shipped, not after.
+
 ---
 
 ## Appendix B — open items, not in scope

@@ -516,6 +516,70 @@ next:       Step 16b, the Mainsail fork migration (7 files, in-budget per
             shape. Then Step 17 (split `agent/methods.py`), purely
             mechanical, done last.
 
+### Step 16b — the Mainsail fork migration            [done]
+commit:     `Vylyne/mainsail` `mu/stable` b16dadb8 (fork repo, not this one)
+gate:       `npx eslint src` clean · `npx vitest run` 108 passed/0 failed ·
+            `npx prettier --check` clean on the scoped paths · `npx vite
+            build` succeeded (last, per Ground rules)
+deviation:  **Found and fixed a real bug beyond the plan's named 7-file
+            table, on Vi's go-ahead when asked.** `methods.py:409-447`
+            (`status()`) computes `types`/`displays` only to feed
+            `targets()` - the dict it returns never includes them, and its
+            own comment says so ("The two originals retired at
+            API_VERSION 2"). The fork's `mutations.ts` `setStatus` was
+            still doing `state.types = payload.types ?? []` /
+            `state.displays = payload.displays ?? []` regardless, so both
+            have been silently `[]` since API_VERSION 2 shipped - not
+            something this session broke. Two real consumers were reading
+            that dead state: `FirmwareUpdaterPanelTarget.vue`'s
+            `screenFor()` (the screen-detail popover: tool, filament,
+            protocol_match) and its `mcuType` getter (feeds
+            `FirmwareUpdaterPanelTypeDialog`'s chipset/firmware/extra_args/
+            makefile_patches/katapult_installed fields). Fixed by adding
+            `refreshDetail` (`actions.ts`), which fetches `fw.type.list`
+            and `fw.device.list` and commits new `setTypes`/`setDisplays`
+            mutations, dispatched after every `setStatus` (both from
+            `onStatus` and the `state` event handler). **Sequential, not
+            `Promise.all`** - `request`'s retry timer and `loading` flag
+            live in one module-level slot every other call site already
+            treats as single-flight; two requests racing would have one's
+            timeout handling stomp the other's.
+            Also renamed `isKconfig`'s `kind` fallback away (getters.ts),
+            dropped `FwTarget.kind` from `types.ts`, fixed the two
+            remaining `${target.kind}:${target.name}` list keys
+            (`FirmwareUpdaterPanel.vue`, `BulkDialog.vue`) to
+            `${target.provider}:...`, and `canBuildDisplay`/
+            `canFlashDisplay` (getters.ts) to plain `fw.build`/`fw.flash`
+            checks - none of this was in the plan's table but all of it
+            follows directly from `kind` and `fw.display.*` actually being
+            gone from api_version 3, not just deprecated.
+untested:   Not run against a live printer/agent - `npx vitest run` and
+            `npx vite build` are what a dev box can verify. The panel
+            itself (screen popover, type-edit dialog, bulk dialogs) needs
+            a browser against a running agent - Vi's to do, per Ground
+            rules ("anything requires flashing real hardware... every
+            on-printer step is Vi's to run"; verifying the fixed
+            popover/dialog isn't a flash but is still a live-agent check).
+surprises:  `vite-plugin-checker` (the thing `npx vite build` runs as its
+            TypeScript pass) is configured `typescript: { buildMode: false
+            }` with no `vueTsc: true` - it only checks bare `.ts` files,
+            not `.vue` `<script>` blocks. Found because
+            `FirmwareUpdaterPanelTypeDialog.vue` reads `mcuType.firmware`
+            (line 81, 86, 253) but `FwType` (`types.ts`) declares no
+            `firmware` field at all, and `npx vite build` reported no
+            error for it. This is a real latent bug - `TypeStatus.firmware`
+            is a documented `fw.type.list` field (`docs/agent-api.md`
+            "TypeStatus") that `FwType` never picked up - but it predates
+            this step, is invisible to every gate this repo or the fork
+            run today, and is unrelated to anything the plan named here.
+            **Not fixed - flagged only**, per Vi's direction when asked
+            (third finding-beyond-scope this step surfaced; the first two
+            were addressed, this one was explicitly left for later since
+            chasing every latent `.vue` typing gap is unbounded once the
+            build cannot catch them). Add `vueTsc: true` to
+            `vite.config.ts`'s `checker()` options before trusting `npx
+            vite build` to catch `.vue` script-block errors again.
+
 ---
 
 ## Appendix B — open items, not in scope

@@ -31,20 +31,25 @@ git switch -c mu/stable upstream/master
 
 ## The delta
 
-**9 files added, 4 edited, zero deletions.** Keeping it that shape is the whole
-strategy — don't grow the edited list.
+**17 files added, 4 edited, zero deletions.** Keeping *the edited list* at four
+is the whole strategy.
+
+**The budget is on edited files only.** Added files are fork-only: upstream
+never touches them, so they cost nothing at rebase time and are not budgeted.
+Growing the added list is how the panel gets features; growing the *edited* list
+is what makes a rebase expensive. Do not decline work because it touches many
+added files — count only the four below.
 
 Added:
 
 ```
 .github/workflows/mu-ci.yml                                       (fork-only)
 src/components/panels/Machine/FirmwareUpdaterPanel.vue
-src/components/panels/Machine/FirmwareUpdaterPanel/FirmwareUpdaterPanelType.vue
-src/components/panels/Machine/FirmwareUpdaterPanel/FirmwareUpdaterPanelUntracked.vue
+src/components/panels/Machine/FirmwareUpdaterPanel/*.vue          (10 files)
 src/store/server/fwUpdater/{index,actions,mutations,getters,types}.ts
 ```
 
-Edited — this is the entire rebase surface:
+Edited — this is the entire rebase surface, and the only list with a budget:
 
 | File | Change |
 | --- | --- |

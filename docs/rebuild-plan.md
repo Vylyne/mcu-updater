@@ -1698,6 +1698,86 @@ surprises:  None of the two "left alone" call sites' behaviour changed, and
             state, which would have silently reclassified ESP32 from "unknown"
             to "known but unbuilt" - caught before it shipped, not after.
 
+### Step 13 — RP2040 BOOTSEL flasher            [done-with-deviation]
+commit:     8a9ce09
+gate:       pytest 1195 passed/0 failed/10 skipped · ruff ok · mypy ok ·
+            line-endings ok · scripts/mutations/flasher-selection.json (2
+            anchors, down from 3 - see deviation) both CAUGHT ·
+            scripts/mutations/flash-offset-diagnostic.json (10 anchors, the
+            other spec whose `command` runs test_flash.py) all CAUGHT/none
+            STALE
+deviation:  **`flash_initial_bootloader` had a target-shape bug that
+            registering Bootsel alone would have shipped, not fixed.** The
+            plan's text for this step is two sentences - new module, removes
+            the "not wired up yet" message - but that message lived in
+            `select_for`, one layer below the actual caller. Regardless of
+            which chipset was asked for, `flash_initial_bootloader`
+            unconditionally built a `dfu_util.target_for(...)` target (`detail
+            = {"fw_bin", "dfu_serial", "chipset"}`) and hands it to whatever
+            `select_for` returns. Once Bootsel is registered, `select_for`
+            correctly returns it for `rp2040` + `STATE_BOOTSEL` - and then
+            `Bootsel.write` reads `target.detail["uf2_file"]` against a target
+            that only ever had `fw_bin`: a `KeyError`, not a flash. Fixed by
+            branching on `state` in `flash_initial_bootloader` itself and
+            building the target the selected flasher actually declared
+            (`bootsel.target_for` vs `dfu_util.target_for`); added a new
+            keyword-only `uf2_bin: Optional[str] = None` parameter alongside
+            the existing `fw_bin`, since BOOTSEL mass storage needs a `.uf2`
+            and DFU needs the `.bin`, and a caller flashing STM32 has no
+            reason to know that. `test_rp2040_dispatches_to_bootsel_when_a_
+            uf2_was_built` is written specifically to catch this shape of bug
+            again - it fails with the old unconditional-`dfu_util.target_for`
+            code if that fix is reverted in isolation.
+
+            **`cli.py`'s `add_mcu` - the one real caller with a
+            chipset-varying value - needed the same one-line fix**, passing
+            `uf2_bin=result.uf2_path` through (previously only ever passed
+            `result.bin_path`, silently unusable for RP2040 even once
+            Bootsel existed). No dedicated test added for this call site
+            specifically: `add_mcu` has no test coverage in `tests/test_cli.py`
+            at all today - not something this step introduced or is
+            positioned to close, since exercising it end-to-end means mocking
+            the interactive menuconfig build, not just the flasher dispatch.
+            The dispatch logic this step actually changed is fully covered by
+            calling `flash_initial_bootloader` directly in `test_flash.py`.
+
+            **The agent's own add-mcu RPC (`agent/methods.py`, ~line 2672) is
+            deliberately left refusing every non-STM32 chipset**, unchanged.
+            Its comment already named BOOTSEL as the reason ("a different
+            mechanism entirely"), and that remains true: the refusal guards a
+            DFU-shaped scan/pairing flow (`dfu_scan`, `dfu_serial` matching
+            against `AmbiguousDfuError`, `Pairings`) with no BOOTSEL
+            equivalent - BOOTSEL has no per-device identity to scan for and no
+            bus presence at all, just a mounted volume. Wiring RP2040 through
+            the panel is a new RPC and a new picker, not "a flasher module",
+            and is not what this step's text asks for. Recorded so the gap
+            reads as a boundary, not an oversight.
+
+            **`scripts/mutations/flasher-selection.json` lost its third
+            anchor.** It pinned exactly the branch this step deletes ("a
+            known-but-unbuilt route (RP2040 BOOTSEL) still refuses") - the
+            branch's own comment already said as much ("This carve-out goes
+            away once a Bootsel flasher declares states=(STATE_BOOTSEL,)").
+            Removed rather than repointed, since there is no replacement
+            behaviour at that call site to pin - a real Bootsel flasher now
+            answers instead, and losing *that* is exactly what the spec's
+            remaining two anchors (the loop's own chipset/state match) already
+            guard.
+untested:   **Never run against a real RP2040 - no board to hand.** Two things
+            specifically: whether the board actually automounts as `RPI-RP2`
+            on the printer's host at all, and under which of `bootsel_scan`'s
+            two globs (Step 10's own gap, unchanged here); and whether a plain
+            `shutil.copy2` onto that mount is sufficient for the ROM
+            bootloader to pick the image up, or whether it wants a flush/sync
+            first. Fully exercised off-hardware via `paths.bootsel_root`
+            (copy succeeds; missing file, no mount, and >1 mount all refuse
+            correctly; dry-run touches nothing). Logged in NOTES.md per this
+            step's own instruction, not claimed via a passing test.
+surprises:  none beyond the target-shape bug above - `bootsel.py`'s shape
+            (Protocol members, `target_for`, an ambiguity refusal with no id
+            to disambiguate by) followed `dfu_util.py` closely enough that no
+            other design fork came up.
+
 ---
 
 ## Appendix B — open items, not in scope

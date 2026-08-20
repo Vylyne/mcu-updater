@@ -5,6 +5,96 @@ session start, struck through when acted on, not deleted.
 
 ---
 
+## 2026-08-20 — Step 16 fork survey: all three flagged wire breaks are real, live code
+
+Confirmed by reading `Vylyne/mainsail`'s `mu/stable` checkout at
+`C:\git\github\mainsail` (currently at `80f09150`) directly — none of this was
+assumed. This is a **survey only, no fork code touched**, per Vi's answer when
+asked how to scope Step 16's fork migration (full migration vs. survey vs.
+RPC-only fix → **survey and report only**).
+
+**All three items the Step-14 note (below) asked Step 16 to confirm are real,
+not no-ops.** The fork still reads the pre-Step-14 wire shape in several
+places. Scope is wider than the fork's documented 4-edited-file budget
+(`docs/mainsail-fork.md`) — this is real migration work for a dedicated
+session, not a quick patch.
+
+**1. `fw.display.flash` — still called by name, will get `-32601` from the new agent.**
+`src/store/server/fwUpdater/actions.ts:297`, action `flashDisplay`, calls
+`method: 'fw.display.flash'` directly. This is the one item that hard-fails
+(not silently degrades) against the current agent — Step 14 deleted the
+method and its three registry entries outright. Fix is mechanical: change the
+method string to `'fw.flash'` (same `{name, port}` params, confirmed
+unchanged). Two more references to the string exist and are lower-priority:
+`getters.ts:166`'s `canFlashDisplay` falls back to checking capability
+`'fw.display.flash'` (harmless — it's an `||` with `'fw.flash'` first, but the
+capability will never again be advertised so the fallback is dead); `types.ts:328`
+has an explanatory comment naming it (cosmetic only).
+
+**2. `types[]`/`displays[]` — still populated from `fw.status`, will silently go empty.**
+`mutations.ts:48` (`state.types = payload.types ?? []`) and `:61`
+(`state.displays = payload.displays ?? []`) read two keys Step 14 removed from
+`fw.status` entirely. Not a hard failure — `?? []` means both silently
+degrade to empty arrays, which is worse than an error because it reads as "no
+boards, no screens" rather than "wrong". Everything downstream that reads
+`state.types` / `getters['server/fwUpdater/types']` / `state.displays` /
+`getters.displays` goes dark with it:
+
+- `getters.ts:26` `types` getter, `:154` `dfuCapableTypes` (filters for DFU-capable
+  STM32 boards — **this feeds the add-mcu flow**, so a real regression, not
+  cosmetic), `:156` `displays` getter, `:171` `missingScreens`
+- `FirmwareUpdaterPanel.vue:298` (`get types()`)
+- `FirmwareUpdaterPanel/FirmwareUpdaterPanelUntracked.vue:119,146` (`get types()`,
+  `typesFor()` — used to label untracked bus devices with candidate types)
+- `FirmwareUpdaterPanel/FirmwareUpdaterPanelAddMcuDialog.vue:184,189` (`get types()`,
+  used to build the type-picker dropdown — **breaks first-time MCU setup's type
+  selector**)
+- `FirmwareUpdaterPanel/FirmwareUpdaterPanelTypeDialog.vue:209` (type-name list for
+  the add/edit-type dialog), `:256` (`this.mcuType?.katapult_installed` — see #3)
+- `FirmwareUpdaterPanel/FirmwareUpdaterPanelTarget.vue:617,640` (`state.displays.find(...)`,
+  `state.types.find(...)` — looks up the matching legacy record for a given
+  target row)
+
+Fix is a real migration, not a rename: everything above needs to be re-derived
+from `targets[]` (already the projection `docs/rebuild-plan.md`'s "Target
+schema" describes — see the `targets-wire-shape` design memory) instead of the
+two legacy arrays. `FwType`/`FwDisplayType` (`types.ts:57-71`, `:319-344`) may
+end up unneeded entirely once every consumer moves to `FwTarget`.
+
+**3. Legacy per-field names (`stale`/`stale_reason`, `firmware_state`,
+`artifact_state`, `katapult_installed`) — still declared and read.**
+`types.ts` still declares `FwArtifact.stale`/`stale_reason` (:24-25),
+`FwDisplayScreen.firmware_state` (:381), `FwDisplayType.artifact_state` (:332),
+and `FwType.katapult_installed` (:60) — all gone from the wire per Step 14.
+Live reads, not just declarations:
+
+- `FirmwareUpdaterPanelTarget.vue:597` — `screen.firmware_state` in a tooltip/label
+- `FirmwareUpdaterPanelTypeDialog.vue:256,274,283` — `mcuType?.katapult_installed`
+  seeds a form checkbox and is sent back in `fw.type.add`/`fw.type.update`
+  params. **Check this one against the agent side specifically**: Step 6's log
+  says `add_type()`/`fw.type.update` deliberately *kept* `katapult_installed`
+  as an input-side compatibility parameter (translated internally to the new
+  list), so this particular read may still work on the way in — but the value
+  it reads it *from* (`mcuType.katapult_installed`, sourced from the now-empty
+  `types[]`) will always be `undefined ?? true`, i.e. the checkbox always
+  defaults true regardless of the real type. Needs re-sourcing from `targets[]`
+  or a family-list check either way.
+- `getters.staleCount`/`unprovableCount` (`getters.ts:100,102`) already read
+  `t.artifact.state` (the new `FwArtifactState` on `FwTarget`, not the legacy
+  `FwArtifact.stale`) — these two are already correct and need no change,
+  noted so they aren't mistaken for part of the same bug.
+
+**Net scope for the real fix**: `types.ts`, `getters.ts`, `mutations.ts`, and
+four `.vue` files (`FirmwareUpdaterPanel.vue`, `.../FirmwareUpdaterPanelTarget.vue`,
+`.../FirmwareUpdaterPanelTypeDialog.vue`, `.../FirmwareUpdaterPanelUntracked.vue`,
+`.../FirmwareUpdaterPanelAddMcuDialog.vue` — five, not four) plus `actions.ts`'s
+one-line method-name fix. This is bigger than the fork's own "4-file edit
+budget" note in `docs/mainsail-fork.md` describes for the *original* delta —
+expected, since that budget was about the rebase surface for new features, not
+a wire-contract migration. Worth a dedicated session with its own gates
+(`npm run test:unit`, then `npx vite build` last, per this project's own
+Windows gotchas) rather than folding into whatever session picks this up next.
+
 ## 2026-08-20 — Step 15 found a real config.py bug, deferred not fixed
 
 While rewriting `mcu-updater.cfg` in the target schema (Step 15,

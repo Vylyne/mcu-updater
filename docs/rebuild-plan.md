@@ -2082,6 +2082,43 @@ surprises:  `CfgDocument`'s own duplicate-section detection
             danger (PlatformIO family/source resolution silently picking the
             wrong tree) to be caught.
 
+### Step 16 — docs and the Mainsail fork            [in progress — fork survey done, fork migration not started]
+commit:     8d6585e (docs fix only; the survey itself produced no code diff)
+gate:       GATE unaffected (survey touched only NOTES.md) · pytest 1156
+            passed/0 failed/10 skipped · ruff ok · mypy ok · line-endings ok
+deviation:  **Scoped down to a survey, on Vi's direction, before any fork
+            code was touched.** Reading the fork (`Vylyne/mainsail`,
+            `mu/stable`, checked out at `C:\git\github\mainsail`, currently
+            `80f09150`) confirmed all three items NOTES.md's Step-16 entry
+            asked this step to check are real, live code, not no-ops: the
+            fork still calls `fw.display.flash` by name
+            (`actions.ts:297`), still populates `state.types`/`state.displays`
+            from `fw.status` (`mutations.ts:48,61`, gone from the wire),
+            and still declares/reads the retired per-field names
+            (`stale`/`stale_reason`, `firmware_state`, `artifact_state`,
+            `katapult_installed` — `types.ts`). Full call-site map (line
+            numbers, which getters/components break, which is a hard
+            `-32601` failure vs. a silent empty-array degrade) written to
+            NOTES.md's 2026-08-20 "Step 16 fork survey" entry rather than
+            here, since it's fork-repo detail this file doesn't otherwise
+            carry. Asked Vi to choose between full migration now / survey
+            only / RPC-only fix, given the real scope (5 `.vue` files + 3
+            store files, past the fork's documented 4-file edit budget,
+            which is a different kind of change than what that budget was
+            written for) - **Vi chose survey only**. `docs/agent-api.md`'s
+            own doc updates (bump api_version, document `firmwares` as a
+            list, drop removed keys, `Family` wire type) and the README
+            Configuration section are not yet done either - this step is
+            not closed, only its most dangerous unknown (does the fork
+            silently break) is now answered instead of assumed.
+untested:   The fork's actual runtime behaviour against the current agent is
+            still unverified - this was a source read, not `npm run
+            test:unit` or a live panel session. Nothing here needed
+            hardware.
+surprises:  none - matched NOTES.md's own framing exactly ("confirm it,
+            don't assume it"); the survey confirmed the worst case
+            (all three) rather than the best case (fork already clean).
+
 ---
 
 ## Appendix B — open items, not in scope

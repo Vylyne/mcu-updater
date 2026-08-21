@@ -76,6 +76,7 @@ Keep them.
 ---
 
 ## Scope discipline
+
 Only read files I explicitly name or point to. Do not read additional files to "get context," "understand the project," or "see how things connect" unless I ask you to.
 If you think reading more files would help, ask first. One sentence: "Want me to also read X?" Wait for my answer.
 This applies to every task in this project. No exceptions for "just checking" or "quick look."
@@ -85,7 +86,7 @@ This applies to every task in this project. No exceptions for "just checking" or
 Violating any of these produces a bug that tests will not catch.
 
 | Rule | Why |
-|---|---|
+| --- | --- |
 | **LF line endings everywhere**, repo and working tree | Ships to a Linux printer; a `\r` in a shebang becomes `bad interpreter: python3^M`. `.gitattributes` pins it. Run `python scripts/check_line_endings.py` before every commit. |
 | **stdlib only** — never add a dependency | `pyproject.toml` `dependencies = []` is deliberate. The agent talks to Moonraker over a unix socket with nothing but stdlib. |
 | **Python 3.11 is the floor** | Bumped from 3.9 on 2026-08-21; both printers run Trixie's 3.13. `X \| Y` and `match` are fine now, and annotations are PEP 604 throughout — do not reintroduce `Optional[X]`, ruff will reject it. **Keep `from __future__ import annotations`**: it is still load-bearing, because `config.py` returns `MakefilePatch \| None` from a method inside that class and the name is unbound at def time without it. |
@@ -315,7 +316,7 @@ Re-read the whole document against `McuType.to_json()` and the live method
 payloads.**
 
 | Location | Documents | Reality |
-|---|---|---|
+| --- | --- | --- |
 | `:162` | `"firmware": "klipper"` | `firmwares: [...]` since Step 6 |
 | `:163` | `"katapult_installed": true` | deleted in Step 6 |
 | `:165` | `"installed": true` on the katapult block | removed from `FwConfig` |
@@ -364,7 +365,7 @@ hardcoded to `klipper`, and for any type whose application is not klipper those
 resolve to `undefined`:
 
 | Line | Reads | For cartographer |
-|---|---|---|
+| --- | --- | --- |
 | `:213` | `mcuType?.artifacts?.klipper?.has_bin` | always `false` — no `klipper` key |
 | `:217` | `mcuType?.klipper?.makefile_patches` | always empty |
 | `:254` | `mcuType?.klipper?.extra_args` | always blank |
@@ -400,7 +401,6 @@ Every file here is fork-**added**, so this spends **no rebase budget** — see
 scoped paths · `npx vite build` **last**. Add a vitest case that a non-klipper
 type surfaces `hasBinary === true` when its own artifact exists — the assertion
 that would have caught this.
-
 
 ### Step 21 — close the `.vue` type-checking gap
 
@@ -466,7 +466,7 @@ third is not committed." That was true when discovery meant `/dev/serial/by-id`
 plus `dfu-util -l`. It is not true now. There are **six**:
 
 | Source | Lives in | Returns |
-|---|---|---|
+| --- | --- | --- |
 | `/dev/serial/by-id` scan | `devices.py:134` | `BusDevice` |
 | `dfu-util -l` | `devices.py:292` | `list[dict[str, str \| None]]` |
 | `RPI-RP2` mount | `devices.py:381` | `list[str]` |
@@ -820,6 +820,7 @@ Rules for the log:
 - Do not edit earlier blocks to make them look tidier. The sequence is evidence.
 
 ### Step 16 — docs and the Mainsail fork            [in progress — fork survey done, fork migration not started]
+
 commit:     8d6585e (docs fix only; the survey itself produced no code diff)
 gate:       GATE unaffected (survey touched only NOTES.md) · pytest 1156
             passed/0 failed/10 skipped · ruff ok · mypy ok · line-endings ok
@@ -858,6 +859,7 @@ surprises:  none - matched NOTES.md's own framing exactly ("confirm it,
             (all three) rather than the best case (fork already clean).
 
 ### Steps 10–16 — review                                       [2 corrections]
+
 reviewer:   planning session, against the diff, the fork at
             C:\git\github\mainsail, and docs/mainsail-fork.md
 verdict:    Steps 10-15 sound. Step 16's survey was the right *shape* - confirm
@@ -906,6 +908,7 @@ process:    Worth keeping: both findings came from checking a document's claim
             a stated fact, verify the fact first.
 
 ### Step 16a — the mcu-updater side: wire fold, api_version, docs   [done]
+
 commit:     (pending)
 gate:       pytest 1155 passed/0 failed/10 skipped (1 fewer than the prior
             log entry's 1156: `test_the_old_method_names_still_answer` was
@@ -958,6 +961,7 @@ next:       Step 16b, the Mainsail fork migration (7 files, in-budget per
             mechanical, done last.
 
 ### Step 16b — the Mainsail fork migration            [done]
+
 commit:     `Vylyne/mainsail` `mu/stable` b16dadb8 (fork repo, not this one)
 gate:       `npx eslint src` clean · `npx vitest run` 108 passed/0 failed ·
             `npx prettier --check` clean on the scoped paths · `npx vite
@@ -1022,6 +1026,7 @@ surprises:  `vite-plugin-checker` (the thing `npx vite build` runs as its
             vite build` to catch `.vue` script-block errors again.
 
 ### Step 17 — split `agent/methods.py`            [done]
+
 commit:     3605a62
 gate:       pytest 1155 passed/0 failed/10 skipped (unchanged from Step 16a) ·
             ruff ok · mypy ok · line-endings ok · all 6 affected mutation
@@ -1103,6 +1108,7 @@ next:       This closes the six-step run started at Step 16. Nothing else is
             queued in this file.
 
 ### Steps 16–17 — review                                    [1 live bug, 3 findings]
+
 reviewer:   planning session, against the diff, the fork at
             C:\git\github\mainsail, and a full gate run
 gate:       verified independently — pytest 1155 passed/0 failed/10 skipped ·
@@ -1153,6 +1159,7 @@ process:    Fourth review running where a step was declined, redesigned or
             panel that currently corrupts a type on save.
 
 ### Step 18 — narrow the phantom `FwConfig` slots            [done]
+
 commit:     726f31c
 gate:       pytest 1155 passed/0 failed/10 skipped (unchanged) · ruff ok ·
             mypy ok (49 files) · line-endings ok · no mutation spec targets
@@ -1202,6 +1209,7 @@ next:       Step 19 (make `docs/agent-api.md` true), ordered before Step 20's
             fork fix per the Steps 16-17 review.
 
 ### Step 19 — make `docs/agent-api.md` true            [done]
+
 commit:     5c46df7
 gate:       line-endings ok · no code touched, so no pytest/ruff/mypy run ·
             spot-checked against a live `Api` (four calls: `fw.ping`,
@@ -1269,6 +1277,7 @@ surprises:  **A self-contradiction inside the doc itself**, found on the full
 next:       Step 20, the fork fix against this now-corrected contract.
 
 ### Step 20 premise — correction                          [caught before any code]
+
 raised by:  the implementing context, which paused rather than proceeding
 reviewer:   planning session; confirmed by pulling a live `type_status()`
             payload, not by re-reading source
@@ -1310,6 +1319,7 @@ process:    Fifth instance of a step being redesigned on a stated fact, and the
             Where the two disagree, the doc wins and this file gets corrected.
 
 ### Step 20 — fix the fork against the corrected contract            [done]
+
 commit:     `Vylyne/mainsail` `mu/stable` 13cb4d81 (fork repo, not this one)
 gate:       `npx eslint src tests` clean · `npx vitest run` 111 passed/0
             failed (108 prior + 3 new) · `npx prettier --check` clean on the
@@ -1393,6 +1403,7 @@ next:       Step 21 (close the `.vue` type-checking gap), then Step 22
             (on-printer verification, Vi only, gated behind this step).
 
 ### Step 21 — close the `.vue` type-checking gap            [blocked]
+
 commit:     none - no code changed, nothing survived the investigation
 gate:       n/a - blocked before any CI or fork change was made
 deviation:  n/a - blocked
@@ -1470,6 +1481,7 @@ next:       Step 22 (on-printer verification, Vi only). The `.vue`
             today's finding changes what that entry should say.
 
 ### Step 23 — `discovery/spec.py` + `discovery/registry.py`, nothing moved            [done]
+
 commit:     d1a4e9d
 gate:       pytest 1162 passed/0 failed/10 skipped (7 more than Step 21's
             1155 - the new discovery test file) · ruff ok · mypy ok
@@ -1498,6 +1510,7 @@ next:       Step 24 (move the three bus sources behind the seam -
             as a thin re-export).
 
 ### Step 24 — move the three bus sources behind the seam            [done]
+
 commit:     0c2bb9e
 gate:       pytest 1162 passed/0 failed/10 skipped (unchanged from Step 23) ·
             ruff ok · mypy ok (55 files, up from 52) · line-endings ok ·
@@ -1561,6 +1574,7 @@ next:       Step 25 (move the two knomi sources out of `providers/pio.py` -
             `discovery/listen.py`, `discovery/watcher.py`).
 
 ### Step 25 — move the two knomi sources out of `providers/pio.py`            [done]
+
 commit:     7fd9da6
 gate:       pytest 1162 passed/0 failed/10 skipped (unchanged from Step 24) ·
             ruff ok · mypy ok (57 files, up from 55) · line-endings ok ·

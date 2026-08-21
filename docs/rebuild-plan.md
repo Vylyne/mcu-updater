@@ -1560,6 +1560,104 @@ surprises:  `targets.json`'s "configure is offered only for the families this
 next:       Step 25 (move the two knomi sources out of `providers/pio.py` -
             `discovery/listen.py`, `discovery/watcher.py`).
 
+### Step 25 — move the two knomi sources out of `providers/pio.py`            [done]
+commit:     7fd9da6
+gate:       pytest 1162 passed/0 failed/10 skipped (unchanged from Step 24) ·
+            ruff ok · mypy ok (57 files, up from 55) · line-endings ok ·
+            `scripts/mutations/pio.json` and `pio-provider-selection.json`
+            re-run standalone, one at a time: `pio.json` 11 guards all
+            CAUGHT (9 before this step - see deviation), all 7 of
+            `pio-provider-selection.json` unaffected and still CAUGHT ·
+            `states.json` re-run too since its command names `test_pio.py`
+            (mutates `states.py`, not this step's files) - 10 guards, all
+            CAUGHT
+deviation:  **`_source_dir` moved into `discovery/listen.py` (renamed
+            `source_dir`, no longer private) rather than staying in
+            `providers/pio.py`.** Not named in the plan's own text, which only
+            called out `WatcherDevice`/`discover`/`read_device_map`/etc. by
+            name. `discover()` needs it and `build()`/`upload()` (staying in
+            `pio.py`) also need it, and `pio.py`'s re-export shim does `from
+            ..discovery.listen import discover as discover` - so keeping
+            `_source_dir` in `pio.py` and having `listen.py` import it back
+            would be a hard cycle (`pio` -> `listen` -> `pio`). Resolved the
+            same way Step 24 already resolved an identical shape for
+            `dfu_selector`: the helper moved to the lower layer
+            (`discovery/listen.py`), and `pio.py`'s `build()`/`upload()` import
+            it back under its old private name (`from ..discovery.listen
+            import source_dir as _source_dir`) so neither function's body
+            changed at all.
+
+            **The "no port" / "lowered id" pair in `pio.json` needed splitting
+            into two mutations each, one per destination file, not just a
+            `"file"` repoint.** Both guards were already duplicated verbatim in
+            the original `pio.py` - once in `read_device_map` (watcher-bound)
+            and once in `_parse_discovered` (listen-bound) - and
+            `mutation_test.py`'s `str.replace(needle, replace, 1)` only ever
+            mutates the *first* match in a file, so before this step the
+            watcher copy was the only one ever actually exercised; the listen
+            copy's identical guard was untested and the spec's 9-guard count
+            never caught it. Splitting the two files apart made this
+            unfixable by a single repoint - each file now has exactly one
+            occurrence - so both mutations were duplicated per destination
+            instead (11 guards total, up from 9). Net effect: a previously
+            silent gap (the listen-pass copy of both guards) is now covered,
+            found only because the split forced the ambiguity into the open
+            rather than because it was gone looking for.
+
+            **`WatcherDevice`/`discover`/`read_device_map`/`device_map_path`/
+            `DEVICE_MAP_VERSION` are re-exported from `pio.py` via `as`-suffixed
+            imports** (`from ..discovery.watcher import X as X`), the same shim
+            shape `devices.py` already uses for the three bus sources - kept
+            every call site in `cli.py`, `flashers/esptool.py`, and every test
+            that patches `mcu_updater.providers.pio.discover`/`.upload` by name
+            working with zero changes, since those patch the *function binding
+            on the module*, not an internal the function reads from its own
+            namespace.
+untested:   none - this step touches no hardware path, and the mutation specs
+            that do reach discovery/flash code were re-run standalone against
+            the moved source, one at a time per Ground rules.
+surprises:  **The `shutil.which`/`run_streamed` monkeypatches in
+            `test_pio.py`'s discover tests had to move their patch target, not
+            just their import path.** `discover()` calls `shutil.which(...)`
+            and `run_streamed(...)` from its own module's global namespace now
+            (`discovery.listen.shutil`, `discovery.listen.run_streamed`), so a
+            test that still patched `mcu_updater.providers.pio.shutil.which`
+            would silently stop reaching the real function - the same
+            shared-object lesson Step 24's own log already recorded for
+            `bootsel_scan` and `dfu_devices`, hit again here in the test suite
+            rather than the source. All patch targets in the new
+            `test_discovery_listen.py` point at `mcu_updater.discovery.listen.*`
+            accordingly. By contrast, `test_agent_display_jobs.py`'s
+            `monkeypatch.setattr("mcu_updater.providers.pio.discover", ...)`
+            needed no change at all: that replaces the whole function binding
+            on `pio`, which `flashers/esptool.py` still looks up by attribute
+            access (`pio_mod.discover(...)`) at call time - a different shape
+            of patch than the internal-dependency case above, and the shim
+            preserves it for free.
+
+            **A first attempt at splitting `test_pio.py`'s tail orphaned one
+            assertion line.** The file's last test
+            (`test_the_helper_runs_against_the_configured_source_tree`) had a
+            trailing `assert calls[0][-2] == ...` one blank-line gap below its
+            last `monkeypatch`/`discover()` call that an initial read of the
+            file's tail (a windowed read that stopped one line short of EOF)
+            missed copying into the new test file. Caught immediately by the
+            gate - `NameError: name 'calls' is not defined` in what was left
+            behind in `test_pio.py` - not by inspection; fixed by moving the
+            line to its correct new home in `test_discovery_listen.py` before
+            re-running the suite.
+
+            `tests/test_repo_hygiene.py:215`'s docstring named `displays.discover`
+            (a name from a pre-Step-16 era, already stale before this step -
+            the module it named was renamed to `providers/pio.py` well before
+            Step 25) - updated to `discovery.listen.discover`, the plan's own
+            predicted "will need its path updated," though the fix was to a
+            docstring only; the test's assertions never touched the module
+            path at all.
+next:       Step 26 (`discovery.confirm()`; `port_for` becomes a caller) - the
+            payoff step. Steps 23-25 are all vocabulary-and-move; nothing yet
+            reads a `Sighting`/`Confidence` in production code.
+
 ---
 
 ## Appendix B — open items, not in scope

@@ -952,7 +952,7 @@ process:    Worth keeping: both findings came from checking a document's claim
 
 ### Step 16a — the mcu-updater side: wire fold, api_version, docs   [done]
 
-commit:     (pending)
+commit:     ebec15f
 gate:       pytest 1155 passed/0 failed/10 skipped (1 fewer than the prior
             log entry's 1156: `test_the_old_method_names_still_answer` was
             deleted, see deviation) · ruff ok · mypy ok · line-endings ok ·
@@ -1898,7 +1898,7 @@ next:       Step 27 (extend confirm to `flashtool`) — needs the printer for
 
 ### Step 27 — extend confirm to `flashtool`            [done]
 
-commit:     (pending)
+commit:     8f000bc
 gate:       pytest 1167 passed/0 failed/10 skipped (5 more than Step 26's
             1162 - two new `Byid.sight()` cases plus a `by_name("byid")` case
             in `test_discovery_spec.py`, one `FlashLog` confidence case in
@@ -2026,7 +2026,7 @@ next:       Step 27 is closed. Step 28 follows.
 
 ### Step 28 — `confidence` on the wire            [done]
 
-commit:     (pending)
+commit:     eeb9d49
 gate:       pytest 1167 passed/0 failed/10 skipped (unchanged from Step 27 -
             two existing tests updated for the new key, no new test added)
             · ruff ok · mypy ok · line-endings ok · floor venv (3.11.15)

@@ -1,6 +1,6 @@
 {
   "_comment": "Guards on adopting a late board. This edits the registry unasked, so each one is about never adopting the WRONG thing.",
-  "file": "src/mcu_updater/agent/methods.py",
+  "file": "src/mcu_updater/agent/methods/flash.py",
   "command": [
     "python",
     "-m",
@@ -37,7 +37,7 @@
     },
     {
       "name": "the pairing is recorded BEFORE the re-enumeration wait",
-      "find": "            if target:\n                from ..flashers.pairings import Pairings\n\n                Pairings(self.paths).record(target, name)\n",
+      "find": "            if target:\n                from ...flashers.pairings import Pairings\n\n                Pairings(self.paths).record(target, name)\n",
       "replace": ""
     }
   ]

@@ -580,6 +580,87 @@ surprises:  `vite-plugin-checker` (the thing `npx vite build` runs as its
             `vite.config.ts`'s `checker()` options before trusting `npx
             vite build` to catch `.vue` script-block errors again.
 
+### Step 17 — split `agent/methods.py`            [done]
+commit:     (pending)
+gate:       pytest 1155 passed/0 failed/10 skipped (unchanged from Step 16a) ·
+            ruff ok · mypy ok · line-endings ok · all 6 affected mutation
+            specs re-run standalone, every guard still CAUGHT (52 guards
+            total: targets.json 18, bulk-operations.json 13, display-flash.json
+            9, add-mcu.json 6, dfu-pairings.json 6, declare-type.json 4)
+deviation:  **Added a seventh file, `agent/methods/_api.py`, beyond the plan's
+            named six.** Not a surface file - it holds `_Api`, a
+            `TYPE_CHECKING`-only `Protocol` describing every attribute and
+            method one mixin calls on `self` that a *different* mixin defines
+            (`self.paths`, `self.registry()`, `self._require_str`, ...). Splitting
+            one class into six mixins composed only in `__init__.py`'s `Api`
+            means no single mixin file has anything to type-check `self.foo`
+            against on its own - mypy reported 176 `has no attribute` errors
+            across all six files before this existed. `_Base` (`_Api` under
+            `TYPE_CHECKING`, else plain `object`) is what each mixin actually
+            inherits, so runtime MRO is unchanged - still exactly the six
+            mixins, composed once in `Api`. Confirmed with Vi before adding it
+            (asked: extra file vs. folding job-lifecycle methods into flash.py
+            vs. a suppression comment; **Vi chose the extra file**, named
+            `_api.py` on Vi's suggestion since it holds the `Api` surface's
+            shape). One more deviation inside that same fix:
+            `BuildMixin._kconfig_sessions` needed an explicit
+            `Optional[Any]` class-level annotation beside the Protocol's -
+            assigning `self._kconfig_sessions` inside `_sessions()` made mypy
+            treat `BuildMixin` as the attribute's owner and infer its type
+            from that assignment alone, circular against the `if ... is None:`
+            guard reading it first (`has-type` error). The real, lazy
+            initialisation (`None` until first use) still happens once, in
+            `StatusMixin.__init__`, as before.
+
+            **job_get/job_cancel and the klippy-ready/idle-probe helpers
+            stayed in `status.py`, not a new `jobs.py`.** Raised as a
+            boundary question (they are generic `JobRunner` accessors used by
+            both build and flash jobs, not obviously either surface) -
+            **Vi's answer: they belong on `status.py`** alongside the other
+            Moonraker-probe helpers (`_probe`, `_printer_activity`,
+            `_klippy_state`) and the RPC-surface bookkeeping already there
+            (`dispatch`, `available_methods`, `METHODS`/`JOB_METHODS`/
+            `FLASH_METHODS`). Kept the plan's six named surface files exactly
+            as written - no `jobs.py`.
+
+            Every module-level helper the old file carried before `class Api:`
+            (`PROBE_TIMEOUT`, `_mtime`, `_size`, `_FW_SHA_RE`, `MCU_NAMES_TTL`,
+            `_running_sha`, `_serial_from_path`, `serialize_device`,
+            `_board_target`, `_screen_json`) turned out to be used by exactly
+            one target file each - verified by grep, not assumed - so each
+            landed as a plain module-level function in its one consumer
+            (`status.py` for all but `_board_target`/`_screen_json`, which are
+            `bulk.py`'s). None needed to live in `_api.py` or `__init__.py`.
+
+            Six mutation specs named `src/mcu_updater/agent/methods.py` as
+            their target `"file"` and went stale the moment the old file was
+            deleted (`test_no_mutation_is_left_live_in_the_source` catches
+            this class of drift by design - see that test's own docstring).
+            Repointed each at its methods now actually live in:
+            `targets.json` → `status.py`, `declare-type.json` → `registry.py`,
+            `bulk-operations.json` → `bulk.py`, `dfu-pairings.json` and
+            `add-mcu.json` → `flash.py`. `display-flash.json` splits across
+            two files (`_pio_flash` in `flash.py`, `_object_names_for`/
+            `targets()` in `status.py`), so two of its nine mutations carry a
+            per-mutation `"file"` override instead of matching the spec's
+            default. `dfu-pairings.json` also had to bump one `find`/`replace`
+            string's own embedded import line (`from ..flashers.pairings
+            import Pairings` → `from ...flashers.pairings import Pairings`) -
+            every relative import in the moved code gained one `.` levels
+            deep, `agent/methods.py` → `agent/methods/<file>.py`, and a spec
+            matching exact source text has to track that.
+untested:   none - this step touches no hardware path, and the mutation specs
+            (which do reach flash/DFU/add-mcu code) were re-run against the
+            moved source directly, standalone, one at a time per Ground rules.
+surprises:  `scripts/check_line_endings.py` and `git ls-files -s` (the tests in
+            `test_repo_hygiene.py`) stayed green throughout, including through
+            two rounds of `ruff --fix`, which the plan's docstring for
+            `test_no_working_tree_file_has_crlf_endings` singles out by name as
+            the exact failure mode a prior scripted rewrite hit on this file -
+            worth the explicit check given the history, and it held.
+next:       This closes the six-step run started at Step 16. Nothing else is
+            queued in this file.
+
 ---
 
 ## Appendix B — open items, not in scope

@@ -1,6 +1,6 @@
 {
   "_comment": "Guards that must stay load-bearing. Run: ./scripts/mutation_test.py scripts/mutations/bulk-operations.json  --  one behaviour area, three files: the agent submits and batches, the provider package selects.",
-  "file": "src/mcu_updater/agent/methods.py",
+  "file": "src/mcu_updater/agent/methods/bulk.py",
   "command": [
     "python",
     "-m",

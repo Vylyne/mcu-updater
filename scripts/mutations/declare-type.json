@@ -1,6 +1,6 @@
 {
   "_comment": "Declaring a board model before its hardware exists. A type describes a model, not a board on the bus - and naming the wrong firmware family for one is silent, because an undeclared family resolves to the conventional ~/<name> and simply builds nothing.",
-  "file": "src/mcu_updater/agent/methods.py",
+  "file": "src/mcu_updater/agent/methods/registry.py",
   "command": [
     "python",
     "-m",

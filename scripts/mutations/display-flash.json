@@ -1,6 +1,6 @@
 {
   "_comment": "Display flash gates. One behaviour area, two files: the agent decides whether a flash may start, and the esptool flasher decides where each screen is written.",
-  "file": "src/mcu_updater/agent/methods.py",
+  "file": "src/mcu_updater/agent/methods/flash.py",
   "command": [
     "python",
     "-m",
@@ -23,11 +23,13 @@
     },
     {
       "name": "screens are matched by their type's own section prefix",
+      "file": "src/mcu_updater/agent/methods/status.py",
       "find": "            objects.extend(self._object_names_for(prefix))",
       "replace": "            objects.extend(self._all_object_names())"
     },
     {
       "name": "displays are projected into targets too",
+      "file": "src/mcu_updater/agent/methods/status.py",
       "find": "        ] + [self._pio_target(payload, allowed) for payload in displays]",
       "replace": "        ]"
     },

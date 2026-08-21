@@ -1,6 +1,6 @@
 {
   "_comment": "fw.status.targets - the one shape both MCU types and displays project onto. These guards are about the projection telling the truth: a lost tri-state, a hardcoded family, or a missing precondition all render as a confident button that does the wrong thing.",
-  "file": "src/mcu_updater/agent/methods.py",
+  "file": "src/mcu_updater/agent/methods/status.py",
   "command": [
     "python",
     "-m",

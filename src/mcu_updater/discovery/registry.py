@@ -5,19 +5,21 @@ This process holds the exclusive lock and writes firmware to boards; importing
 whatever `.py` landed in a directory is privilege escalation, not a plugin
 system. The tuple is the seam.
 
-Empty for now. The three bus sources (`byid.py`, `dfu.py`, `bootsel.py`) and
-the two knomi sources (`listen.py`, `watcher.py`) all now live in this
-package, but none of them implement `discovery.spec.Source` yet - that wiring,
-and `SOURCES` actually gaining entries, is a later step.
+The two knomi sources (`knomi_serial/listen.py`, `knomi_serial/watcher.py`)
+implement `discovery.spec.Source` as of Step 26. The three bus sources
+(`byid.py`, `dfu.py`, `bootsel.py`) still do not - that wiring is Step 27's,
+alongside `esptool.port_for`'s board-side counterpart in `flash_katapult`.
 """
 
 from __future__ import annotations
 
+from .knomi_serial.listen import Listen
+from .knomi_serial.watcher import Watcher
 from .spec import Source
 
-#: Every discovery source. Order is not meaningful yet - it will become
-#: "which source answers first" once more than one exists.
-SOURCES: tuple[Source, ...] = ()
+#: Every discovery source. Order matters for `confirm()`'s tie-breaking: the
+#: live answer is listed before the remembered one.
+SOURCES: tuple[Source, ...] = (Listen(), Watcher())
 
 _BY_NAME: dict[str, Source] = {s.name: s for s in SOURCES}
 

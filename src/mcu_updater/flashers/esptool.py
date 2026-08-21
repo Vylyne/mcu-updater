@@ -26,6 +26,7 @@ guessing at the shape of the second caller.
 from __future__ import annotations
 
 import contextlib
+import dataclasses
 from collections.abc import Iterator
 from typing import Any
 
@@ -116,6 +117,53 @@ class Esptool:
         which is the only thing the MCU wait is protecting against."""
 
 
+@dataclasses.dataclass(frozen=True)
+class _Answered:
+    """One `discovery.Sighting`, in the shape `port_for` already reads.
+
+    `port_for` was written against `providers.pio.WatcherDevice` and reads
+    `.port` - kept exactly as it is, per this step's own rule, rather than
+    switched onto `Sighting.address` under a different name.
+    """
+
+    port: str
+
+
+def _sightings_by_family(bench: Bench, ctx: Any) -> dict[str, dict[str, _Answered]]:
+    """One `discovery.confirm()` sweep per batch, cached on `ctx`, grouped back
+    into per-family maps.
+
+    `discover()` below is called once per display family - a single listen
+    pass already covers every configured family's ports at once, so
+    re-sweeping per family would multiply the six seconds by the number of
+    families in the batch. `confirm()`'s sources scan every configured family
+    in one pass regardless of who asks, so the sweep itself only needs to
+    happen once; this caches that on `ctx`, which lives for exactly one
+    `prepared()`/`write()` batch, so it needs no cache key and cannot leak
+    between batches.
+
+    Grouped by `detail["family"]` - `Sighting` carries no family field of its
+    own (`detail` is deliberately a source's private payload, not a second
+    identity scheme), so `Listen`/`Watcher` stash it there for exactly this.
+    """
+    cached = getattr(ctx, "_esptool_sightings_by_family", None)
+    if cached is not None:
+        return cached
+
+    from ..discovery.confirm import confirm
+    from ..discovery.registry import SOURCES
+
+    result: dict[str, dict[str, _Answered]] = {}
+    for sighting, _confidence in confirm(bench, sources=SOURCES).values():
+        family = sighting.detail.get("family")
+        if not isinstance(family, str):
+            continue
+        result.setdefault(family, {})[sighting.id] = _Answered(port=sighting.address)
+
+    ctx._esptool_sightings_by_family = result
+    return result
+
+
 def discover(bench: Bench, display: Any, ctx: Any) -> dict[str, Any]:
     """Ask every screen of one family which it is, now that the ports are free.
 
@@ -127,15 +175,11 @@ def discover(bench: Bench, display: Any, ctx: Any) -> dict[str, Any]:
     Skipped entirely on a dry run: it opens real serial ports, and a rehearsal
     that touches hardware is not a rehearsal.
     """
-    from ..providers import pio as pio_mod
-
     if bench.settings.dry_run:
         ctx.reporter("info", "[dry-run] would ask the displays which they are")
         return {}
     try:
-        return pio_mod.discover(
-            bench.paths, bench.settings, display, reporter=ctx.reporter
-        )
+        return _sightings_by_family(bench, ctx).get(display.name, {})
     except UpdaterError as exc:
         ctx.reporter(
             "warn",

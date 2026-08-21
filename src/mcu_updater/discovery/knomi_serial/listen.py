@@ -26,10 +26,12 @@ import shutil
 from typing import TYPE_CHECKING
 
 from ...build import Reporter, null_reporter, run_streamed
-from ...errors import ConfigError, SourceTreeMissingError, ToolMissingError
+from ...errors import ConfigError, SourceTreeMissingError, ToolMissingError, UpdaterError
+from ..spec import STATE_KLIPPER, Sighting
 from .watcher import WatcherDevice
 
 if TYPE_CHECKING:
+    from ...flashers.spec import Bench
     from ...paths import Paths
     from ...providers.pio import PioType
     from ...settings import Settings
@@ -185,3 +187,61 @@ def _parse_discovered(payload: str) -> dict[str, WatcherDevice]:
             present=True,
         )
     return out
+
+
+def _as_sighting(display: PioType, device: WatcherDevice) -> Sighting:
+    return Sighting(
+        id=device.device_id,
+        address=device.port,
+        # A display that answered is running its application, not sitting in
+        # a bootloader - STATE_KLIPPER directly, per Step 23's bootloader-
+        # predicate rule. `device.firmware_version` is a *version string*
+        # ("1.2.3"), not a firmware family name, so it cannot be fed to
+        # `state_for_firmware` - that only works by accident, falling through
+        # to the same default this states explicitly.
+        state=STATE_KLIPPER,
+        source=Listen.name,
+        # `family` is what a caller needing per-family grouping (esptool's
+        # discover(), which is called once per family) matches on - Sighting
+        # itself carries no family field by design.
+        detail={
+            "fw": device.firmware_version,
+            "var": device.build_variant,
+            "family": display.name,
+        },
+    )
+
+
+class Listen:
+    """The broadcast listen pass, as a `discovery.spec.Source`.
+
+    Scans every configured display family, not just the ones a caller happens
+    to be flashing - the same breadth `discovery.byid.scan` gives the bus
+    sources. A screen that answers is `ANSWERED`: it spoke, just now, with the
+    ports free to ask it directly, which is the strongest confidence this
+    package has.
+    """
+
+    name = "listen"
+    label = "knomi broadcast listen"
+    #: A display source only ever reports "it answered, running its
+    #: application" - it has no bootloader state of its own to report.
+    states: tuple[str, ...] = (STATE_KLIPPER,)
+    #: Opens real serial ports and fights Klipper and the watcher for them if
+    #: either still holds one - see the module docstring.
+    needs_ports_free = True
+
+    def sight(self, bench: Bench) -> list[Sighting]:
+        from ...providers.pio import load as load_pio_types
+
+        out: list[Sighting] = []
+        for display in load_pio_types(bench.paths).values():
+            try:
+                found = discover(bench.paths, bench.settings, display)
+            except UpdaterError:
+                # Never fatal - see discover()'s own docstring. A family this
+                # source cannot ask is simply absent from the result, the same
+                # as a by-id scan finding nothing on the bus.
+                continue
+            out.extend(_as_sighting(display, device) for device in found.values())
+        return out

@@ -141,14 +141,14 @@ def test_a_confidence_is_frozen():
 
 
 # --------------------------------------------------------------------------
-# the registry - empty by construction
+# the registry
 # --------------------------------------------------------------------------
 
 
-def test_no_sources_are_registered_yet():
-    """Step 23 ships vocabulary only. The bus and knomi sources move behind
-    this seam in later steps."""
-    assert SOURCES == ()
+def test_the_two_knomi_sources_are_registered():
+    """Step 26 wires listen/watcher behind this seam. The three bus sources
+    (byid, dfu, bootsel) still are not - that is Step 27's."""
+    assert [s.name for s in SOURCES] == ["listen", "watcher"]
 
 
 def test_by_name_refuses_an_unknown_source():

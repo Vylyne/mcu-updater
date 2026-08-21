@@ -444,6 +444,21 @@ def _found(**by_id):
     }
 
 
+def _discover_only_for(name, **by_id):
+    """A `discover()` stand-in scoped to one display family, the way the real
+    thing is - it is asked once per configured family, including ones this
+    test's fixture registry declares but never touches (the sample `[type
+    knomi]` alongside the fixture's own `[type knomi_toolchanger]`), and must
+    answer nothing for a family it was not told to."""
+
+    def fake(paths, settings, display, *a, **k):
+        if display.name != name:
+            return {}
+        return _found(**by_id)
+
+    return fake
+
+
 def _with_ids(screens, **ids):
     """The live get_status half, giving each section a reported id."""
     return {f"knomi_serial {name}": {"reported_id": i} for name, i in ids.items()}
@@ -457,7 +472,8 @@ def test_a_screen_is_written_where_it_answered_not_where_it_was(
     moved_to = str(fake_root / "ttyUSB9")
     write_settings(paths, dry_run="false", enable_flashing="true", service_backend="null")
     monkeypatch.setattr(
-        "mcu_updater.providers.pio.discover", lambda *a, **k: _found(aaa111=moved_to)
+        "mcu_updater.discovery.knomi_serial.listen.discover",
+        _discover_only_for(ENV, aaa111=moved_to),
     )
     api._call = serve_klipper(display_objects(screens, _with_ids(screens, t0_knomi="aaa111")))
 
@@ -482,8 +498,8 @@ def test_a_screen_that_does_not_answer_is_not_flashed_at_its_old_port(
     there - and its old path now names whatever is on that path."""
     write_settings(paths, dry_run="false", enable_flashing="true", service_backend="null")
     monkeypatch.setattr(
-        "mcu_updater.providers.pio.discover",
-        lambda *a, **k: _found(somebodyelse=str(fake_root / "ttyUSB9")),
+        "mcu_updater.discovery.knomi_serial.listen.discover",
+        _discover_only_for(ENV, somebodyelse=str(fake_root / "ttyUSB9")),
     )
     api._call = serve_klipper(display_objects(screens, _with_ids(screens, t0_knomi="aaa111")))
 
@@ -515,7 +531,7 @@ def test_discovery_failing_falls_back_to_the_configured_ports(
         raise ToolMissingError("pyserial is not installed", tool="discover")
 
     write_settings(paths, dry_run="false", enable_flashing="true", service_backend="null")
-    monkeypatch.setattr("mcu_updater.providers.pio.discover", boom)
+    monkeypatch.setattr("mcu_updater.discovery.knomi_serial.listen.discover", boom)
     api._call = serve_klipper(display_objects(screens, _with_ids(screens, t0_knomi="aaa111")))
 
     ports: list[str] = []
@@ -539,8 +555,8 @@ def test_a_screen_with_no_hardware_id_is_still_flashed(
     ability to flash."""
     write_settings(paths, dry_run="false", enable_flashing="true", service_backend="null")
     monkeypatch.setattr(
-        "mcu_updater.providers.pio.discover",
-        lambda *a, **k: _found(somebodyelse=str(fake_root / "ttyUSB9")),
+        "mcu_updater.discovery.knomi_serial.listen.discover",
+        _discover_only_for(ENV, somebodyelse=str(fake_root / "ttyUSB9")),
     )
     api._call = serve_klipper(display_objects(screens))  # no live fields at all
 
@@ -563,7 +579,7 @@ def test_a_dry_run_never_opens_a_serial_port(api, paths, no_pio, screens, monkey
     def boom(*a, **k):
         raise AssertionError("opened serial ports during a dry run")
 
-    monkeypatch.setattr("mcu_updater.providers.pio.discover", boom)
+    monkeypatch.setattr("mcu_updater.discovery.knomi_serial.listen.discover", boom)
     write_settings(paths, dry_run="true", enable_flashing="true", service_backend="null")
     api._call = serve_klipper(display_objects(screens, _with_ids(screens, t0_knomi="aaa111")))
 

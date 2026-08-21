@@ -18,7 +18,10 @@ import json
 import os
 from typing import TYPE_CHECKING, Any
 
+from ..spec import STATE_KLIPPER, Sighting
+
 if TYPE_CHECKING:
+    from ...flashers.spec import Bench
     from ...paths import Paths
     from ...providers.pio import PioType
 
@@ -114,3 +117,54 @@ def read_device_map(paths: Paths, display: PioType) -> dict[str, WatcherDevice]:
             present=os.path.exists(str(port)),
         )
     return out
+
+
+def _as_sighting(display: PioType, device: WatcherDevice) -> Sighting:
+    return Sighting(
+        id=device.device_id,
+        address=device.port,
+        # See listen.py's _as_sighting for why this is not derived from
+        # device.firmware_version - the same reasoning applies here.
+        state=STATE_KLIPPER,
+        source=Watcher.name,
+        # `family` is what a caller needing per-family grouping (esptool's
+        # discover(), which is called once per family) matches on - Sighting
+        # itself carries no family field by design.
+        detail={
+            "fw": device.firmware_version,
+            "var": device.build_variant,
+            "family": display.name,
+        },
+    )
+
+
+class Watcher:
+    """The watcher's `devices.json` map, as a `discovery.spec.Source`.
+
+    Written by something else, describing where a display *was* the last time
+    the watcher itself saw it - never where it is now. `present` here is only
+    "does the port node still exist", not "did it answer", so every sighting
+    this source produces is `REMEMBERED` rather than `ANSWERED`: true until
+    proven otherwise, which is weaker than it sounds.
+    """
+
+    name = "watcher"
+    label = "knomi device map"
+    #: A display source only ever reports "it answered, running its
+    #: application" - it has no bootloader state of its own to report.
+    states: tuple[str, ...] = (STATE_KLIPPER,)
+    #: Reads a file something else wrote; nothing here touches a port.
+    needs_ports_free = False
+
+    def sight(self, bench: Bench) -> list[Sighting]:
+        from ...providers.pio import load as load_pio_types
+
+        out: list[Sighting] = []
+        for display in load_pio_types(bench.paths).values():
+            found = read_device_map(bench.paths, display)
+            out.extend(
+                _as_sighting(display, device)
+                for device in found.values()
+                if device.present
+            )
+        return out

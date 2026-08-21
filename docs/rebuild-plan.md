@@ -2012,9 +2012,20 @@ deviation:  **Confirmed via research (an Explore agent, cross-checked directly
 untested:   none remaining. The on-printer checks (Verification section,
             steps 1-5) were deferred to Vi at commit time, per Ground rules
             and the Handoff section - every on-printer step is hers to run,
-            bench board only, never the toolhead. Vi ran them on 2026-08-21
-            and reported "looks good on printer" - no further detail recorded
-            here than that; not independently re-verified by this session.
+            bench board only, never the toolhead. Vi ran them on hestia on
+            2026-08-21: `updatefw build --fw cartographer --type cartographer`
+            then `updatefw flash --type cartographer` against the real
+            Cartographer board. Transcript shows `device_for`'s sighting
+            found it running Klipper, requested the bootloader, katapult
+            re-enumerated, the pre-write and write-time offset checks both
+            reported `Application Start: 0x8002000` (agreeing), the write and
+            verify completed (SHA `227AD62F...`), and klipper restarted
+            successfully. Confirmed further by reading
+            `~/printer_data/mcu-updater/.flashed.json` on the printer
+            afterward - the board's record carries
+            `"confidence": "unique_bus_id"`, proving the `Byid` sighting's
+            confidence reached `FlashLog.record` on a real flash, not just in
+            the mocked `test_flash.py` case.
 surprises:  A stray orphaned assertion line
             (`assert "-s" in calls[0] and "-s" not in calls[1]`) appeared
             immediately after the new confidence test was written, referring

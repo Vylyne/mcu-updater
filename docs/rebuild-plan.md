@@ -581,7 +581,7 @@ surprises:  `vite-plugin-checker` (the thing `npx vite build` runs as its
             vite build` to catch `.vue` script-block errors again.
 
 ### Step 17 — split `agent/methods.py`            [done]
-commit:     (pending)
+commit:     3605a62
 gate:       pytest 1155 passed/0 failed/10 skipped (unchanged from Step 16a) ·
             ruff ok · mypy ok · line-endings ok · all 6 affected mutation
             specs re-run standalone, every guard still CAUGHT (52 guards

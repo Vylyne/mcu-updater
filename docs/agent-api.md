@@ -10,7 +10,9 @@ truth** — and `tests/test_agent_methods.py` is what stops them drifting.
 
   Bumped only when a field is *removed* or changes meaning; additions do not
   need one, since a panel that has never heard of a key simply does not read it.
-  Version 2 removed `screens[].mac`/`flashed_at`/`moved_from`/`moved_at` and
+  Version 2 removed `fw.status`'s top-level `types` and `displays` (use
+  `fw.type.list` and `fw.device.list`, which `targets[]` is projected from), and
+  `screens[].mac`/`flashed_at`/`moved_from`/`moved_at` and
   `targets[].extra.moved`, which went with the per-port identity tracking - see
   "Which screen is on which port is not tracked" below. Version 3 removed
   `fw.display.list` and `fw.display.build` (use `fw.device.list` and `fw.build`,
@@ -207,6 +209,16 @@ on-disk path, never a reconstructed one. `mcu`, `running_version` and
 identification, not from the bus scan. `needs_flash`/`reason` per serial use the
 same `DeviceStatus` vocabulary as a `Target` device entry, below.
 
+`running_sha` can also be `null` on a board that is online and reports a
+version - not only offline. Some trees stamp a hand-maintained literal instead
+of a git describe (Cartographer's `CONFIG_VERSION`, e.g. `"CARTOGRAPHER
+6.2.0"`), which carries no commit at all, so there is nothing for the `g<hex>`
+pattern to find. `reason` then falls to a comparison against what the build
+stamped rather than the source tree: `"version_only"` (amber, `needs_flash:
+null`) when the stamp matches but no believable flash record backs it,
+`"source_changed"` when it does not match, or the ordinary green/`null` verdict
+once a record does back it.
+
 `confidence` is a `discovery.spec.Confidence.reason` string (`"unique_bus_id"`,
 `"answered"`, ...), or `null`. It is this tool's own record of how the board's
 identity was last confirmed *at flash time* - not a live discovery answer, which
@@ -216,8 +228,17 @@ field alone: never flashed by this tool, or a stale record discarded because the
 board's running commit no longer matches what was recorded (`FlashLog.entry_for`).
 Distinct from `present`/`state`, which are a live bus read - a board can be
 `present: true` and `confidence: null` when it answers the bus but this tool has
-never confirmed it by writing to it. Screens carry no `confidence`: nothing
-records one for a display flash today.
+never confirmed it by writing to it.
+
+**Screens carry one too, and it is usually the stronger of the two.** A display
+flash asks each screen directly once the ports are free, so a confirmed write
+records `"answered"` - where a board typically records `"unique_bus_id"`, ranked
+equal but derived from the kernel's name for it rather than from the device
+speaking. A screen's `null` has the same two meanings plus a third: a `serial:`
+section whose klippy module reports no hardware id has nothing to file a record
+under, and its record is skipped rather than being keyed by a port. Records are
+keyed by the eFuse id precisely so they follow the screen into another socket -
+see "Which screen is on which port is not tracked" below.
 
 ### `Artifact`
 
@@ -373,6 +394,12 @@ so the reader never has to branch on which it is holding.
 device is, `false` only if every device provably is not, and `null` otherwise.
 `any()` would read "cannot tell" as "nothing to do" and report a fleet nobody
 can see as up to date.
+
+`confidence` is populated for both kinds, from the same record and in the same
+vocabulary - a screen that answered the listen pass at its last flash reads
+`"answered"`, exactly as a board reads `"unique_bus_id"`. It was a hard-coded
+`null` on displays until the write path stopped discarding the `Confidence` it
+already computed.
 
 A display carries one extra key, `extra`, holding the facts only a screen has
 (`module_version`, `source_version`, `source_dirty`, `klipper_section`,

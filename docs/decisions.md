@@ -44,6 +44,38 @@ patch is applied, so the tree is briefly dirty and
 `v0.13.0-712-g6d43f8b3-dirty-...` is the correct output. It must not be
 suppressed, because it must not read as out of date.
 
+### Do not synthesize a sha into Cartographer's `CONFIG_VERSION`
+
+Cartographer's fork patches Klipper's `buildcommands.py` to stamp
+`CONFIG_VERSION` (a literal from the `.config`) instead of `build_version()`'s
+git describe. The describe is still computed, just discarded — so `mcu_version`
+carries no commit at all, and `_running_sha` (`agent/methods/status.py`)
+correctly returns `None`.
+
+Since `read_config_version()` returns the string verbatim, appending the fork's
+HEAD before `make` — `CARTOGRAPHER 6.2.0-gd34db33` — would work: `_FW_SHA_RE`
+would match it and the whole existing sha-comparison path would run unchanged.
+Rejected anyway, because the cost lands on things that matter more than the
+convenience:
+
+- A synthesized value in the saved `.config` differs from the vendor seed, so
+  `profiles.status` reports `customised` permanently — destroying the one
+  signal that means "the user edited this".
+- It moves `config_sha256` on every commit of the fork, so `artifact_status`
+  reports `CONFIG_CHANGED` forever.
+- Avoiding both means injecting it outside the saved config, which makes our
+  builds unreproducible by the vendor's own instructions.
+- It does not even remove the need for the sha-less path: a board on the
+  official prebuilt binary still reports a bare string, so `states.VERSION_ONLY`
+  has to exist regardless. Synthesizing a sha would only move *our own* boards
+  onto the good path, at that cost, for no boards we don't already control.
+
+So the sha is gone, and putting one back costs more than it buys. A cartographer
+is instead judged by comparing `CONFIG_VERSION` itself against what the built
+`.config` carries (`profiles.stamped_version`), backed by our own flash record
+the same way the sha path already is — see `states.VERSION_ONLY` and
+`FlashLog.entry_for`'s version-based discard clause.
+
 ### Do not reintroduce per-port board tracking
 
 Removed deliberately in `9ebbaef`. This is an updater, not an asset tracker —

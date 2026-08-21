@@ -1,0 +1,25 @@
+{
+  "_comment": "A Cartographer's CONFIG_VERSION carries no commit, so FlashLog.entry_for's version-based discard clause is the only thing that can invalidate a stale record when there is no running_sha to check against. Dropping it would let a board hand-flashed outside this tool keep a record that still looks believable - a silent wrong answer.",
+  "file": "src/mcu_updater/build.py",
+  "command": [
+    "python",
+    "-m",
+    "pytest",
+    "tests/test_flash.py",
+    "tests/test_agent_methods.py",
+    "tests/test_build.py",
+    "-q"
+  ],
+  "mutations": [
+    {
+      "name": "the sha-less discard clause runs when there is no running commit",
+      "find": "        elif not running_sha and version:",
+      "replace": "        elif False:"
+    },
+    {
+      "name": "a disagreeing recorded version is not ignored",
+      "find": "                if recorded_version != version:\n                    return None",
+      "replace": "                if False:\n                    return None"
+    }
+  ]
+}

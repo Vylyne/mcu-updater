@@ -28,11 +28,19 @@ from __future__ import annotations
 import contextlib
 import dataclasses
 from collections.abc import Iterator
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from ..devices import STATE_ESP_ROM
 from ..errors import FlashError, UpdaterError
 from .spec import Bench, FlashTarget
+
+if TYPE_CHECKING:
+    # Annotation only. `discovery.spec` imports from this package, so a runtime
+    # import here closes a cycle - and `from __future__ import annotations`
+    # means nothing needs the symbol at run time. The sweep that produces these
+    # is already imported lazily inside `_sightings_by_family` for the same
+    # reason.
+    from ..discovery.spec import Confidence
 
 
 class Esptool:
@@ -96,7 +104,9 @@ class Esptool:
         display = target.detail["display"]
         screen = target.detail["screen"]
 
-        port, problem = port_for(screen, (session or {}).get(display.name) or {}, ctx)
+        port, confidence, problem = port_for(
+            screen, (session or {}).get(display.name) or {}, ctx
+        )
         if problem is not None:
             # Raised rather than collected, because a batch records a failure by
             # catching one. The check itself is unchanged: a screen that stayed
@@ -109,12 +119,64 @@ class Esptool:
             bench.paths, bench.settings, display, port, reporter=ctx.reporter
         )
 
+        _record(bench, display, screen, confidence)
+
         return {"name": screen["name"], "port": port, **result}
 
     def settled(self, bench: Bench, target: FlashTarget, ctx: Any) -> None:
         """Nothing to wait for. A screen is not on the Klipper bus, so there is
         no device node whose absence would bring Klipper up in an error state -
         which is the only thing the MCU wait is protecting against."""
+
+
+def _record(
+    bench: Bench, display: Any, screen: dict, confidence: Confidence | None
+) -> None:
+    """Note which image this screen now holds, and how it was identified.
+
+    The display half of the ledger `flash.flash_katapult` has always kept for a
+    board. Without it a screen's `confidence` on the wire is a literal null, so
+    the strongest identification this tool performs - asking the screen itself,
+    with the ports free - leaves no trace and reads as "we cannot vouch for
+    this".
+
+    Three ways to record nothing, all of them correct:
+
+    * **A dry run.** Nothing was written, so nothing is true afterwards. Same
+      guard, for the same reason, as the board path's.
+    * **A screen with no hardware id.** There is no durable name to file it
+      under, and the port is not one - see `build.display_key`.
+    * **An unwritable log.** `FlashLog.record` swallows it: a lost record is not
+      worth failing a flash that already succeeded.
+
+    `confidence` is passed through rather than assumed. It is None whenever the
+    port was a remembered one, and recording `answered` for a write we could not
+    confirm would be the one lie this whole field exists to prevent.
+    """
+    if bench.settings.dry_run:
+        return
+
+    ident = (screen.get("device_id") or screen.get("reported_id") or "").lower()
+    if not ident:
+        return
+
+    from ..build import FlashLog, display_key
+    from ..providers import pio as pio_mod
+
+    # The build already hashed the image and noted its commit; re-deriving them
+    # here would be a second answer to a question with a recorded one.
+    side = pio_mod.read_sidecar(bench.paths, display) or {}
+    FlashLog(bench.paths).record(
+        display_key(ident),
+        mcu_type=display.name,
+        fw=display.env,
+        bin_sha256=side.get("bin_sha256"),
+        # The display sidecar calls the tree commit `sha`; the flash log calls
+        # it `fw_sha`. One rename at the boundary, rather than teaching either
+        # side the other's vocabulary.
+        fw_sha=side.get("sha"),
+        confidence=confidence.reason if confidence is not None else None,
+    )
 
 
 @dataclasses.dataclass(frozen=True)
@@ -124,9 +186,18 @@ class _Answered:
     `port_for` was written against `providers.pio.WatcherDevice` and reads
     `.port` - kept exactly as it is, per this step's own rule, rather than
     switched onto `Sighting.address` under a different name.
+
+    `confidence` is the `Confidence` that came with the sighting, carried
+    whole rather than reduced to its reason: which source answered is a fact
+    about the sweep, and by the time `port_for` runs the sweep is over. Kept as
+    the object because that is what `flash.device_for` hands back for a board,
+    and because `tone`/`safe_to_write` are derived from the reason rather than
+    stored beside it - reducing to a string here would mean rebuilding it to
+    ask anything but "which reason". A `Listen` sighting is `ANSWERED`.
     """
 
     port: str
+    confidence: Confidence | None = None
 
 
 def _sightings_by_family(bench: Bench, ctx: Any) -> dict[str, dict[str, _Answered]]:
@@ -154,11 +225,13 @@ def _sightings_by_family(bench: Bench, ctx: Any) -> dict[str, dict[str, _Answere
     from ..discovery.registry import SOURCES
 
     result: dict[str, dict[str, _Answered]] = {}
-    for sighting, _confidence in confirm(bench, sources=SOURCES).values():
+    for sighting, confidence in confirm(bench, sources=SOURCES).values():
         family = sighting.detail.get("family")
         if not isinstance(family, str):
             continue
-        result.setdefault(family, {})[sighting.id] = _Answered(port=sighting.address)
+        result.setdefault(family, {})[sighting.id] = _Answered(
+            port=sighting.address, confidence=confidence
+        )
 
     ctx._esptool_sightings_by_family = result
     return result
@@ -191,17 +264,23 @@ def discover(bench: Bench, display: Any, ctx: Any) -> dict[str, Any]:
 
 def port_for(
     screen: dict, discovered: dict[str, Any], ctx: Any
-) -> tuple[str, str | None]:
-    """Where to write this screen, and why not if there is no answer.
+) -> tuple[str, Confidence | None, str | None]:
+    """Where to write this screen, how sure we are, and why not if no answer.
+
+    `(port, confidence, refusal reason)` - the same three-tuple
+    `flash.device_for` returns for a board, which was written to match this
+    function and now matches it in shape as well as in spirit. `confidence` is
+    None when nothing confirmed the identity and the port is a remembered one.
 
     Three cases, and the middle one is the point:
 
     * **Nothing was discovered at all** - no pyserial, no source tree, or a dry
       run. Fall back to the configured path, which is what every flash did
-      before this. No worse than it was.
+      before this. No worse than it was, and confirmed by nothing, so None.
     * **This screen answered** - write to the port it answered on, not the one
       it used to be on. If those differ it moved, and saying so is the only
-      warning anybody would ever get.
+      warning anybody would ever get. This is the case that carries a real
+      confidence: the screen was asked directly, with the ports free.
     * **Others answered and this one did not** - it is not there. The ports were
       free and every other screen spoke, so a silent write to its old path would
       be a write to whatever is on that path now.
@@ -215,7 +294,7 @@ def port_for(
     """
     configured = screen["configured_path"]
     if not discovered:
-        return configured, None
+        return configured, None, None
 
     ident = (screen.get("device_id") or screen.get("reported_id") or "").lower()
     if not ident:
@@ -225,11 +304,11 @@ def port_for(
             f"{configured} cannot be confirmed as the one meant. Writing to the "
             f"configured port.",
         )
-        return configured, None
+        return configured, None, None
 
     found = discovered.get(ident)
     if found is None:
-        return configured, (
+        return configured, None, (
             "did not answer when asked which displays are present, so its "
             "port cannot be confirmed. Writing to the port it used to be on "
             "could write to a different screen."
@@ -241,7 +320,7 @@ def port_for(
             f"{screen['name']} ({ident}) answered on {found.port}, not "
             f"{configured} - it has moved. Writing to where it actually is.",
         )
-    return found.port, None
+    return found.port, found.confidence, None
 
 
 def target_for(display: Any, screen: dict) -> FlashTarget:

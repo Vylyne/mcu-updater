@@ -589,6 +589,212 @@ def test_a_dry_run_never_opens_a_serial_port(api, paths, no_pio, screens, monkey
 
 
 # --------------------------------------------------------------------------
+# recording how a screen was identified
+#
+# A display flash already resolves identity the strongest way this tool has -
+# the screen is asked directly, with the ports free. That answer used to be
+# discarded before `port_for` returned, so `confidence` on the wire was a
+# literal null and a fully confirmed write looked like an unvouched-for one.
+# --------------------------------------------------------------------------
+
+
+def _flashlog(paths) -> dict:
+    from mcu_updater.build import FlashLog
+
+    return FlashLog(paths).all()
+
+
+def _no_upload(monkeypatch) -> list[str]:
+    """Capture the ports written to, without running PlatformIO."""
+    ports: list[str] = []
+    monkeypatch.setattr(
+        "mcu_updater.providers.pio.upload",
+        lambda p, s, d, port, **k: ports.append(port) or {"port": port, "chip": None},
+    )
+    return ports
+
+
+def _flash_one(api, screens, which="t0"):
+    res = api.dispatch("fw.flash", {"name": ENV, "port": screens_port(screens, which)})
+    assert api.runner.wait(timeout=30)
+    return api.runner.get(res["job_id"])
+
+
+def test_a_confirmed_screen_records_how_it_was_identified(
+    api, paths, no_pio, screens, monkeypatch, fake_root
+):
+    """The screen answered on the free ports, which is `answered` - the
+    strongest reason in the vocabulary, and the whole point of doing discovery
+    inside the Klipper stop rather than trusting a remembered path."""
+    write_settings(paths, dry_run="false", enable_flashing="true", service_backend="null")
+    monkeypatch.setattr(
+        "mcu_updater.discovery.knomi_serial.listen.discover",
+        _discover_only_for(ENV, aaa111=screens_port(screens, "t0")),
+    )
+    api._call = serve_klipper(display_objects(screens, _with_ids(screens, t0_knomi="aaa111")))
+    _no_upload(monkeypatch)
+
+    assert _flash_one(api, screens).state == "succeeded"
+
+    assert _flashlog(paths)["display:aaa111"]["confidence"] == "answered"
+
+
+def test_the_record_is_keyed_by_hardware_id_and_never_by_port(
+    api, paths, no_pio, screens, monkeypatch, fake_root
+):
+    """docs/decisions.md rules out per-port tracking. The eFuse id follows the
+    screen into any socket; the port it happened to sit on does not, and a
+    record keyed by one would be the remembered path this scheme replaced -
+    which is why the screen that *moved* is the case asserted here."""
+    moved_to = str(fake_root / "ttyUSB9")
+    write_settings(paths, dry_run="false", enable_flashing="true", service_backend="null")
+    monkeypatch.setattr(
+        "mcu_updater.discovery.knomi_serial.listen.discover",
+        _discover_only_for(ENV, aaa111=moved_to),
+    )
+    api._call = serve_klipper(display_objects(screens, _with_ids(screens, t0_knomi="aaa111")))
+    _no_upload(monkeypatch)
+
+    assert _flash_one(api, screens).state == "succeeded"
+
+    keys = list(_flashlog(paths))
+    assert keys == ["display:aaa111"]
+    assert moved_to not in keys and screens_port(screens, "t0") not in keys
+
+
+def test_a_write_to_a_remembered_port_records_no_confidence(
+    api, paths, no_pio, screens, monkeypatch
+):
+    """Discovery could not run, so the port came from what Klipper said before
+    it stopped. The write is still allowed - that is what every flash did before
+    discovery existed - but claiming it was confirmed would be the one lie this
+    field exists to prevent."""
+    from mcu_updater.errors import ToolMissingError
+
+    def boom(*a, **k):
+        raise ToolMissingError("pyserial is not installed", tool="discover")
+
+    write_settings(paths, dry_run="false", enable_flashing="true", service_backend="null")
+    monkeypatch.setattr("mcu_updater.discovery.knomi_serial.listen.discover", boom)
+    api._call = serve_klipper(display_objects(screens, _with_ids(screens, t0_knomi="aaa111")))
+    _no_upload(monkeypatch)
+
+    assert _flash_one(api, screens).state == "succeeded"
+
+    assert _flashlog(paths)["display:aaa111"]["confidence"] is None
+
+
+def test_a_screen_with_no_hardware_id_is_recorded_nowhere(
+    api, paths, no_pio, screens, monkeypatch, fake_root
+):
+    """No durable name to file it under, and the port is not one. The flash
+    still happens - `test_a_screen_with_no_hardware_id_is_still_flashed` -
+    it simply leaves no record rather than a port-keyed one."""
+    write_settings(paths, dry_run="false", enable_flashing="true", service_backend="null")
+    monkeypatch.setattr(
+        "mcu_updater.discovery.knomi_serial.listen.discover",
+        _discover_only_for(ENV, somebodyelse=str(fake_root / "ttyUSB9")),
+    )
+    api._call = serve_klipper(display_objects(screens))  # no live fields at all
+    ports = _no_upload(monkeypatch)
+
+    assert _flash_one(api, screens).state == "succeeded"
+
+    assert ports == [screens_port(screens, "t0")], "still flashed"
+    assert _flashlog(paths) == {}
+
+
+def test_a_dry_run_records_nothing(api, paths, no_pio, screens, monkeypatch):
+    """Nothing was written, so nothing is true afterwards. The same guard the
+    board path has, for the same reason."""
+    monkeypatch.setattr(
+        "mcu_updater.discovery.knomi_serial.listen.discover",
+        _discover_only_for(ENV, aaa111=screens_port(screens, "t0")),
+    )
+    write_settings(paths, dry_run="true", enable_flashing="true", service_backend="null")
+    api._call = serve_klipper(display_objects(screens, _with_ids(screens, t0_knomi="aaa111")))
+
+    assert _flash_one(api, screens).state == "succeeded"
+
+    assert _flashlog(paths) == {}
+
+
+# --------------------------------------------------------------------------
+# and it reaches the wire
+# --------------------------------------------------------------------------
+
+
+def _record(paths, ident="aaa111", *, fw_sha=None, confidence="answered") -> None:
+    from mcu_updater.build import FlashLog, display_key
+
+    FlashLog(paths).record(
+        display_key(ident),
+        mcu_type=ENV,
+        fw=ENV,
+        bin_sha256=None,
+        fw_sha=fw_sha,
+        confidence=confidence,
+    )
+
+
+def _screen_device(api, name="t0_knomi") -> dict:
+    for target in api.status({})["targets"]:
+        for device in target["devices"]:
+            if (device.get("name") or "").endswith(name):
+                return device
+    raise AssertionError(f"no device row for {name}")
+
+
+def test_a_recorded_confidence_reaches_the_status_payload(api, paths, screens):
+    """The round trip the whole change is for: a display device row carries the
+    same `confidence` slot an MCU row does, from a real record rather than a
+    literal null."""
+    _record(paths)
+    api._call = serve_klipper(display_objects(screens, _with_ids(screens, t0_knomi="aaa111")))
+
+    assert _screen_device(api)["confidence"] == "answered"
+
+
+def test_a_screen_we_never_wrote_to_carries_no_confidence(api, paths, screens):
+    """Absence of a record is not evidence of anything, and must not read as
+    one - the same rule `needs_flash` already enforces."""
+    api._call = serve_klipper(display_objects(screens, _with_ids(screens, t0_knomi="aaa111")))
+
+    assert _screen_device(api)["confidence"] is None
+
+
+def test_a_record_the_screen_disagrees_with_is_discarded(api, paths, screens):
+    """Something else has written to that screen since, so our note about how we
+    identified it is no longer evidence of anything. The display half of
+    `FlashLog.entry_for`'s rule, which is what stops this field reporting a
+    stale answer with a straight face."""
+    _record(paths, fw_sha="deadbee")
+    api._call = serve_klipper(
+        display_objects(
+            screens,
+            {"knomi_serial t0_knomi": {"reported_id": "aaa111",
+                                       "firmware_version": "0.5.0+3.gcafef00"}},
+        )
+    )
+
+    assert _screen_device(api)["confidence"] is None
+
+
+def test_a_record_the_screen_agrees_with_survives(api, paths, screens):
+    """The counterpart, so the test above cannot pass by discarding everything."""
+    _record(paths, fw_sha="cafef00")
+    api._call = serve_klipper(
+        display_objects(
+            screens,
+            {"knomi_serial t0_knomi": {"reported_id": "aaa111",
+                                       "firmware_version": "0.5.0+3.gcafef00"}},
+        )
+    )
+
+    assert _screen_device(api)["confidence"] == "answered"
+
+
+# --------------------------------------------------------------------------
 # a fleet flash reaches the screens
 #
 # The complaint this whole restructure came from: "Flash All does not include

@@ -125,6 +125,11 @@ BASE_TAG = "# base:"
 #: Where the application was linked to run, in the application's tree.
 APP_ADDRESS_SYMBOL = "FLASH_APPLICATION_ADDRESS"
 
+#: The version string a board stamps into its own firmware. Cartographer's fork
+#: defines it; upstream Klipper and Katapult do not, which is what keeps this
+#: whole path scoped to the trees that need it.
+VERSION_SYMBOL = "VERSION"
+
 #: Where the bootloader jumps, in the bootloader's tree. Same name on every
 #: architecture Katapult supports (stm32, rp2040, lpc176x), which is what makes
 #: the agreement check architecture-independent.
@@ -855,6 +860,26 @@ def overrides(
         for sym in sorted(set(before) | set(after))
         if before.get(sym) != after.get(sym)
     ]
+
+
+def stamped_version(config_file: str) -> str | None:
+    """CONFIG_VERSION from a built .config, unquoted, or None.
+
+    Mirrors the Cartographer fork's own ``read_config_version()`` exactly: the
+    *first* ``CONFIG_VERSION=`` line, a matched pair of quotes stripped and
+    nothing else touched - no whitespace collapsing, no case folding. A tidied
+    string compared against an untidied stamp would report a mismatch that
+    isn't one.
+
+    :func:`answer_map` takes the *last* line for a duplicated symbol, where the
+    fork takes the first; identical for every config that exists today, but
+    this reads the first anyway so the two cannot silently drift apart.
+    """
+    for line in answer_lines(config_file):
+        parsed = parse_answer(line)
+        if parsed is not None and parsed[0] == VERSION_SYMBOL:
+            return _unquote(parsed[1])
+    return None
 
 
 def _unquote(value: str) -> str:

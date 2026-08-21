@@ -49,7 +49,7 @@
       "name": "a screen is written where it answered, not where it was",
       "file": "src/mcu_updater/flashers/esptool.py",
       "find": "    if found.port != configured:",
-      "replace": "    return configured, None\n    if found.port != configured:"
+      "replace": "    return configured, None, None\n    if found.port != configured:"
     },
     {
       "name": "a screen that did not answer is not flashed at its old port",
@@ -62,6 +62,42 @@
       "file": "src/mcu_updater/flashers/esptool.py",
       "find": "    if bench.settings.dry_run:\n        ctx.reporter(\"info\", \"[dry-run] would ask the displays which they are\")\n        return {}",
       "replace": "    if False:\n        ctx.reporter(\"info\", \"[dry-run] would ask the displays which they are\")\n        return {}"
+    },
+    {
+      "name": "a confirmed write records how the screen was identified",
+      "file": "src/mcu_updater/flashers/esptool.py",
+      "find": "        _record(bench, display, screen, confidence)\n",
+      "replace": ""
+    },
+    {
+      "name": "a dry run records nothing",
+      "file": "src/mcu_updater/flashers/esptool.py",
+      "find": "    if bench.settings.dry_run:\n        return\n\n    ident =",
+      "replace": "    if False:\n        return\n\n    ident ="
+    },
+    {
+      "name": "a screen with no hardware id is recorded nowhere",
+      "file": "src/mcu_updater/flashers/esptool.py",
+      "find": "    ident = (screen.get(\"device_id\") or screen.get(\"reported_id\") or \"\").lower()\n    if not ident:\n        return",
+      "replace": "    ident = (screen.get(\"device_id\") or screen.get(\"reported_id\") or \"\").lower()\n    if False:\n        return"
+    },
+    {
+      "name": "an unconfirmed write is not recorded as confirmed",
+      "file": "src/mcu_updater/flashers/esptool.py",
+      "find": "        confidence=confidence.reason if confidence is not None else None,",
+      "replace": "        confidence=\"answered\","
+    },
+    {
+      "name": "a record the screen disagrees with is discarded",
+      "file": "src/mcu_updater/agent/methods/status.py",
+      "find": "        record = flashlog.entry_for(\n            display_key(ident), pio_mod.running_sha(entry.get(\"firmware_version\"))\n        )",
+      "replace": "        record = flashlog.entry_for(display_key(ident), None)"
+    },
+    {
+      "name": "a recorded confidence reaches the wire",
+      "file": "src/mcu_updater/agent/methods/status.py",
+      "find": "                    \"confidence\": screen.get(\"confidence\"),",
+      "replace": "                    \"confidence\": None,"
     }
   ]
 }

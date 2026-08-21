@@ -823,6 +823,51 @@ def test_answer_lines_are_read_both_ways_round(line, expected):
 
 
 # --------------------------------------------------------------------------
+# stamped_version - what a Cartographer board reports back
+# --------------------------------------------------------------------------
+
+
+def test_stamped_version_reads_the_existing_fixture_seed():
+    assert (
+        profiles.stamped_version(str(PROFILE_TREE / "config.TestBoardUSB"))
+        == "TESTFW 6.2.0"
+    )
+
+
+def test_stamped_version_is_none_for_a_tree_that_defines_no_such_symbol(tmp_path):
+    """The upstream-Klipper case every existing test depends on: no VERSION
+    symbol, no CONFIG_VERSION line, nothing to report."""
+    config = tmp_path / ".config"
+    config.write_text("CONFIG_MACH_STM32=y\nCONFIG_USBSERIAL=y\n", encoding="utf-8")
+    assert profiles.stamped_version(str(config)) is None
+
+
+def test_stamped_version_is_none_for_a_missing_file(tmp_path):
+    assert profiles.stamped_version(str(tmp_path / "nope" / ".config")) is None
+
+
+def test_stamped_version_preserves_doubled_internal_whitespace(tmp_path):
+    """The fork's own reader does not collapse whitespace, so neither may this
+    one - comparing a tidied string against an untidied stamp would report a
+    mismatch that isn't one."""
+    config = tmp_path / ".config"
+    config.write_text('CONFIG_VERSION="CARTOGRAPHER  6.2.0"\n', encoding="utf-8")
+    assert profiles.stamped_version(str(config)) == "CARTOGRAPHER  6.2.0"
+
+
+def test_stamped_version_takes_the_first_line_like_the_fork_does(tmp_path):
+    """`answer_map` takes the last of a duplicated symbol; the fork's own
+    `read_config_version()` takes the first. Identical for every real config,
+    but pinned so the two paths cannot silently drift apart."""
+    config = tmp_path / ".config"
+    config.write_text(
+        'CONFIG_VERSION="FIRST 1.0"\nCONFIG_VERSION="SECOND 2.0"\n',
+        encoding="utf-8",
+    )
+    assert profiles.stamped_version(str(config)) == "FIRST 1.0"
+
+
+# --------------------------------------------------------------------------
 # a vendor fork, which is the case this exists for
 # --------------------------------------------------------------------------
 

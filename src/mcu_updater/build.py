@@ -391,6 +391,12 @@ class BuildResult:
     #: own bootloader reports - see flashers/flash.py - without a Kconfig
     #: parse at flash time.
     app_address: int | None = None
+    #: CONFIG_VERSION from the built .config, verbatim. None for a tree that
+    #: defines no such symbol - upstream Klipper and Katapult. Where a tree does
+    #: define it (Cartographer's fork), this is a hand-maintained literal rather
+    #: than a git describe, so it corroborates a release rather than a commit -
+    #: see states.VERSION_ONLY.
+    version: str | None = None
 
     def to_sidecar(self) -> dict[str, Any]:
         return {
@@ -401,6 +407,7 @@ class BuildResult:
             "timestamp": time.time(),
             "config_rewritten": self.config_rewritten,
             "app_address": self.app_address,
+            "version": self.version,
         }
 
 
@@ -677,6 +684,7 @@ def build(
         config_rewritten=rewritten,
         reseeded=reseeded,
         app_address=_read_app_address(config_file),
+        version=profiles.stamped_version(config_file),
     )
     try:
         with open(paths.sidecar_file(mcu_type, fw), "w", encoding="utf-8") as fh:
@@ -690,6 +698,26 @@ def build(
 # --------------------------------------------------------------------------
 # flash provenance
 # --------------------------------------------------------------------------
+
+
+def display_key(ident: str) -> str:
+    """A display's flash-log key, from its hardware id.
+
+    Prefixed because the log is one flat dict and these are two identity
+    namespaces: a board is keyed by its `/dev/serial/by-id` serial, a screen by
+    the six hex characters of its eFuse MAC. They cannot collide in practice,
+    but sharing a keyspace unprefixed leaves nothing in the file saying which
+    kind of name a key is.
+
+    **Never a port.** `docs/decisions.md` rules out per-port tracking, and the
+    hardware id is exactly what made dropping it safe - it follows the screen
+    into any socket. A screen with no id gets no record at all rather than one
+    keyed by where it happened to be.
+
+    Lowercased on the way in: the id is emitted lowercase at both ends, but the
+    vendor's own docs say not to depend on that.
+    """
+    return f"display:{ident.lower()}"
 
 
 class FlashLog:
@@ -710,6 +738,10 @@ class FlashLog:
     leaves an entry that disagrees with the board's running commit, and
     :meth:`entry_for` discards it rather than reporting a stale answer with a
     straight face.
+
+    Screens live here too, under :func:`display_key` rather than a serial, for
+    the same reason and with the same discard rule - what a screen reports
+    running is compared against the tree commit we recorded writing to it.
     """
 
     def __init__(self, paths: Paths) -> None:
@@ -728,12 +760,24 @@ class FlashLog:
         losing this degrades the answer to "unknown", which is survivable."""
         return self._read()
 
-    def entry_for(self, serial: str, running_sha: str | None) -> dict[str, Any] | None:
+    def entry_for(
+        self,
+        serial: str,
+        running_sha: str | None,
+        *,
+        version: str | None = None,
+    ) -> dict[str, Any] | None:
         """Our record for a serial, if it is still believable.
 
         Discarded when the board's running commit disagrees with what we recorded
         flashing: something else has written to that board since, so our note about
         which binary it holds is no longer evidence of anything.
+
+        `version` is the second, weaker half of that same check, for boards
+        whose stamp carries no commit at all (Cartographer's `CONFIG_VERSION`).
+        It only runs where the sha clause could not: with no `running_sha` to
+        compare, a recorded version that disagrees with what the device now
+        reports is exactly as stale a record as a disagreeing sha would be.
         """
         entry = self._read().get(serial)
         if not isinstance(entry, dict):
@@ -742,6 +786,11 @@ class FlashLog:
         if running_sha and isinstance(recorded, str) and recorded:
             if not recorded.startswith(running_sha):
                 return None
+        elif not running_sha and version:
+            recorded_version = entry.get("version")
+            if isinstance(recorded_version, str) and recorded_version:
+                if recorded_version != version:
+                    return None
         return entry
 
     def record(
@@ -753,6 +802,7 @@ class FlashLog:
         bin_sha256: str | None,
         fw_sha: str | None,
         confidence: str | None = None,
+        version: str | None = None,
     ) -> None:
         """Note a completed flash. Never raises - a lost record is not worth
         failing a flash that already succeeded.
@@ -763,6 +813,9 @@ class FlashLog:
         strings like every other field here. Optional so a manually-built
         record, or a caller with no confirmed sighting to report, isn't forced
         to invent one.
+
+        `version` is the built CONFIG_VERSION, beside `fw_sha`, for
+        :meth:`entry_for` to fall back on when a board's stamp carries no sha.
         """
         data = self._read()
         data[serial] = {
@@ -771,6 +824,7 @@ class FlashLog:
             "bin_sha256": bin_sha256,
             "fw_sha": fw_sha,
             "confidence": confidence,
+            "version": version,
             "at": time.time(),
         }
         try:

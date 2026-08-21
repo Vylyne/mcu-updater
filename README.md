@@ -98,9 +98,11 @@ of it. What is still open:
 - **Reproduce and fix the flaky teardown `RuntimeError`** in
   `test_an_unknown_inbound_method_gets_an_error_not_silence`.
 - **Revisit whether the API still needs an MCU/display distinction at all.**
-  Unscoped. Raised while putting `confidence` on the wire, where a display
-  device carries a literal `null` because the `Confidence` its flash already
-  computes is discarded before `esptool.port_for` returns.
+  Unscoped. Raised while putting `confidence` on the wire. The concrete half is
+  done — a display flash now records the `Confidence` it computes, keyed by
+  eFuse id, and `targets[].devices[].confidence` reads it — so what remains is
+  the broader question of whether `fw.device.list` and the split `boards`/
+  `displays` keys on `fw.flash_all` still earn their separation.
 
 ## Requirements
 
@@ -314,6 +316,11 @@ The other 131 — `USBSERIAL`, `CANSERIAL`, `FLASH_APPLICATION_ADDRESS`,
 `CLOCK_FREQ`, every `WANT_*` — are computed from those seven. The CAN build adds
 exactly one answer (`STM32_CANBUS_PA11_PA12`); the "lite" build adds exactly one
 more (`FOR_K1`, which means Creality K1, not "feature-reduced").
+
+`CONFIG_VERSION` is read back out of the built `.config` after `make`, and it
+is what a Cartographer board is judged against at `fw.status` time — the fork
+stamps that literal string onto the board instead of a git describe, so there
+is no commit in it to compare against the source tree.
 
 ```bash
 updatefw.py profiles -t carto_v4

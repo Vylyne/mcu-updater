@@ -1290,6 +1290,111 @@ def test_an_unparseable_version_is_unknown(api):
     assert state["reason"] == "unknown_version"
 
 
+# --------------------------------------------------------------------------
+# cartographer: a board that stamps a literal instead of a git describe
+#
+# CONFIG_VERSION carries no commit, so `_running_sha` returns None and the
+# ordinary sha comparison cannot run at all - the verdict falls to comparing
+# the stamp itself against what the build produced. See states.VERSION_ONLY.
+# --------------------------------------------------------------------------
+
+CARTO_STAMP = {"A-if00": {"version": "CARTOGRAPHER 6.2.0", "mcu": "mcu"}}
+
+
+def test_a_stamped_version_with_nothing_built_is_unknown(api):
+    """Today's answer, unchanged: no built .config to compare the stamp
+    against, so this is exactly the old bail-out."""
+    state = api.flash_state("A-if00", CARTO_STAMP, HEAD, state="klipper")
+    assert state["needs_flash"] is None
+    assert state["reason"] == "unknown_version"
+
+
+def test_a_differing_stamp_is_source_changed(api):
+    """CARTOGRAPHER 6.2.0 on the board, CARTOGRAPHER v4 6.2.0 out of the
+    build - genuinely not our binary."""
+    state = api.flash_state(
+        "A-if00", CARTO_STAMP, HEAD, state="klipper", built_version="CARTOGRAPHER v4 6.2.0"
+    )
+    assert state["needs_flash"] is True
+    assert state["reason"] == "source_changed"
+
+
+def test_a_matching_stamp_with_no_record_is_version_only(api):
+    """The new, honest amber: the release is recognised and the binary is
+    not - distinct from unknown_version, which means nothing was recognised
+    at all."""
+    state = api.flash_state(
+        "A-if00", CARTO_STAMP, HEAD, state="klipper", built_version="CARTOGRAPHER 6.2.0"
+    )
+    assert state["needs_flash"] is None
+    assert state["reason"] == "version_only"
+
+
+def test_a_matching_stamp_backed_by_a_record_is_up_to_date(api, paths):
+    from mcu_updater.build import FlashLog
+
+    log = FlashLog(paths)
+    log.record(
+        "A-if00",
+        mcu_type="cartographer",
+        fw="klipper",
+        bin_sha256="aa" * 32,
+        fw_sha=None,
+        version="CARTOGRAPHER 6.2.0",
+    )
+
+    state = api.flash_state(
+        "A-if00",
+        CARTO_STAMP,
+        HEAD,
+        state="klipper",
+        artifact_sha="aa" * 32,
+        flashlog=log,
+        built_version="CARTOGRAPHER 6.2.0",
+    )
+    assert state["needs_flash"] is False
+    assert state["reason"] is None
+
+
+def test_a_matching_stamp_with_a_stale_binary_is_artifact_changed(api, paths):
+    """Same release, different build - only the record can see it, exactly as
+    on the sha path."""
+    from mcu_updater.build import FlashLog
+
+    log = FlashLog(paths)
+    log.record(
+        "A-if00",
+        mcu_type="cartographer",
+        fw="klipper",
+        bin_sha256="old" + "0" * 61,
+        fw_sha=None,
+        version="CARTOGRAPHER 6.2.0",
+    )
+
+    state = api.flash_state(
+        "A-if00",
+        CARTO_STAMP,
+        HEAD,
+        state="klipper",
+        artifact_sha="new" + "0" * 61,
+        flashlog=log,
+        built_version="CARTOGRAPHER 6.2.0",
+    )
+    assert state["needs_flash"] is True
+    assert state["reason"] == "artifact_changed"
+
+
+def test_a_klipper_type_with_no_version_symbol_is_unaffected(api):
+    """The regression guard: upstream Klipper reports a real git describe, so
+    this must take the ordinary sha path exactly as before, whatever
+    built_version happens to be (it is always None for a tree with no VERSION
+    symbol, but a stray value must not derail a board that has a real sha)."""
+    info = {"A-if00": {"version": "v0.13.0-711-gd7cea5bb", "mcu": "mcu"}}
+    state = api.flash_state("A-if00", info, HEAD, state="klipper", built_version=None)
+    assert state["needs_flash"] is False
+    assert state["reason"] is None
+
+
 def test_a_flash_writes_a_record(paths, live_registry_text):
     """End to end: after a dry-run flash the board's binary is on file, so the next
     rebuild can tell that board is behind."""

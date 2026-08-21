@@ -63,6 +63,7 @@ DEVICE_VERDICTS = {
     states.DEVICE_DIRTY: None,
     states.OFFLINE: None,
     states.UNKNOWN_VERSION: None,
+    states.VERSION_ONLY: None,
 }
 
 
@@ -173,7 +174,12 @@ def test_nothing_we_cannot_vouch_for_is_painted_green():
     up to date is how somebody ships a print on firmware from before the fix."""
     for reason in (states.BUILT_DIRTY, states.FOREIGN_BUILD, states.NO_PROVENANCE):
         assert ArtifactStatus(reason).tone == states.TONE_UNKNOWN
-    for reason in (states.DEVICE_DIRTY, states.OFFLINE, states.UNKNOWN_VERSION):
+    for reason in (
+        states.DEVICE_DIRTY,
+        states.OFFLINE,
+        states.UNKNOWN_VERSION,
+        states.VERSION_ONLY,
+    ):
         assert DeviceStatus(reason).tone == states.TONE_UNKNOWN
 
 

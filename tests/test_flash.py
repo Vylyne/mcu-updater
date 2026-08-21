@@ -252,6 +252,56 @@ def test_a_real_flash_records_unique_bus_id_confidence(paths, ready, fake_root, 
     assert record["confidence"] == "unique_bus_id"
 
 
+def test_a_real_flash_records_the_sidecars_stamped_version(paths, ready, fake_root, monkeypatch):
+    """Cartographer's CONFIG_VERSION carries no commit, so this is what
+    `FlashLog.entry_for` has to fall back on for a board like this - see the
+    discard test in test_build.py's counterpart."""
+    from mcu_updater.build import FlashLog
+
+    ready.dry_run = False
+    make_device(fake_root / "bus", "katapult", "chipA", "S1")
+    _write_sidecar(
+        paths, "board", "klipper", app_address=0x08004000, version="CARTOGRAPHER 6.2.0"
+    )
+    _fake_run_streamed_by_call(
+        monkeypatch,
+        probe=(0, ["Application Start: 0x8004000"]),
+        write=(0, ["Application Start: 0x8004000"]),
+    )
+
+    flash_katapult(paths, ready, "board", "chipA", "S1")
+
+    record = FlashLog(paths).all()["S1"]
+    assert record["version"] == "CARTOGRAPHER 6.2.0"
+
+
+def test_a_version_only_record_is_discarded_when_the_stamp_disagrees(paths):
+    """The safety half of the sha-less path. With no running commit to check, a
+    disagreeing recorded version invalidates the record exactly as a
+    disagreeing sha would on a normal board - it must not be left standing
+    just because there was nothing to contradict it on the sha side."""
+    from mcu_updater.build import FlashLog
+
+    log = FlashLog(paths)
+    log.record(
+        "S1",
+        mcu_type="cartographer",
+        fw="klipper",
+        bin_sha256="aa" * 32,
+        fw_sha=None,
+        version="CARTOGRAPHER 6.2.0",
+    )
+
+    assert log.entry_for("S1", None, version="CARTOGRAPHER 6.2.0") is not None
+    assert log.entry_for("S1", None, version="CARTOGRAPHER 6.1.0") is None, (
+        "a differing stamp invalidates it even though fw_sha would have passed - "
+        "there is no running sha here to check"
+    )
+    # No reported version to check against: the record stands, since we have
+    # nothing contradicting it.
+    assert log.entry_for("S1", None, version=None) is not None
+
+
 def test_an_unreadable_probe_refuses_before_writing(paths, ready, fake_root, monkeypatch):
     """We have our own half (app_address) but flashtool's own words didn't
     parse - the check went blind, which refuses same as a real mismatch: "a
@@ -796,3 +846,30 @@ def test_a_download_that_succeeds_then_fails_unrecognisably_still_raises(
     )
     with pytest.raises(FlashError):
         flash_dfu_stm32(paths, ready, str(paths.bin_file("board", "klipper")))
+
+
+def test_the_board_and_screen_lookups_answer_in_the_same_shape():
+    """`device_for`'s docstring says it was written "in the shape
+    `esptool.port_for` already uses for displays". That claim is only worth
+    anything while it stays true, and nothing else checks it - the two are
+    called from different flashers and could drift apart silently, which is
+    exactly how a display ended up reporting a literal null confidence while a
+    board reported a real one.
+
+    Both answer `(where, confidence, refusal reason)`, and both report a refusal
+    rather than raising.
+    """
+    import inspect
+
+    from mcu_updater.flashers.esptool import port_for
+    from mcu_updater.flashers.flash import device_for
+
+    def shape(fn):
+        ret = inspect.signature(fn).return_annotation
+        return [part.strip() for part in ret[len("tuple[") : -1].split(",")]
+
+    board, screen = shape(device_for), shape(port_for)
+    assert len(board) == len(screen) == 3
+    # Slot 1 differs by kind - a BusDevice against a port string - but the two
+    # that carry the verdict must not.
+    assert board[1:] == screen[1:] == ["Confidence | None", "str | None"]

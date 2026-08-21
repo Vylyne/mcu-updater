@@ -247,6 +247,7 @@ def flash_katapult(
             fw_sha=side.get("fw_sha")
             or git_head(firmware.resolve(paths, fw).source_dir(paths)),
             confidence=confidence.reason if confidence is not None else None,
+            version=side.get("version"),
         )
 
         _report_offset_mismatch(reporter, serial, mcu_type, fw, side, transcript)

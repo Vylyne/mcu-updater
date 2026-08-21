@@ -91,6 +91,40 @@ def test_a_build_leaves_app_address_none_when_the_tree_defines_none(paths, setti
     assert side["app_address"] is None
 
 
+def test_a_build_records_its_stamped_version(paths, settings):
+    """Read from the built .config, mirroring app_address exactly - so flash
+    time can compare a Cartographer's CONFIG_VERSION against what it stamps,
+    without a Kconfig parse."""
+    settings.dry_run = True
+    reg = _registry(paths)
+    _write_config(
+        paths, body='CONFIG_MACH_STM32=y\nCONFIG_VERSION="CARTOGRAPHER 6.2.0"\n'
+    )
+
+    result = build(paths, reg, settings, "board", "klipper")
+
+    assert result.version == "CARTOGRAPHER 6.2.0"
+    side = read_sidecar(paths, "board", "klipper")
+    assert side["version"] == "CARTOGRAPHER 6.2.0"
+
+
+def test_a_build_leaves_version_none_when_the_tree_defines_no_such_symbol(paths, settings):
+    """The regression guard: upstream Klipper and Katapult define no VERSION
+    symbol, so this must stay None - not an error, and the rest of the
+    sidecar shape and verdict must be exactly what they were before this
+    field existed."""
+    settings.dry_run = True
+    reg = _registry(paths)
+    _write_config(paths)  # default body has no CONFIG_VERSION
+
+    result = build(paths, reg, settings, "board", "klipper")
+
+    assert result.version is None
+    side = read_sidecar(paths, "board", "klipper")
+    assert side["version"] is None
+    assert artifact_status(paths, "board", "klipper").is_current
+
+
 def test_artifact_status_reports_never_built_then_current(paths, settings):
     settings.dry_run = True
     reg = _registry(paths)

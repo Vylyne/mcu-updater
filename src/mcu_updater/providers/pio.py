@@ -264,6 +264,19 @@ def source_state(source: str) -> SourceState:
     return SourceState(head=head, version=version, dirty=dirty, on_tag=on_tag)
 
 
+def running_sha(running: str | None) -> str | None:
+    """The git short sha inside what a screen reports running, if it carries one.
+
+    Public because two callers need it and must not disagree: `device_status`
+    below, deciding whether the screen is behind the tree, and the agent, asking
+    the flash log whether our record of writing to this screen is still
+    believable. A screen sitting exactly on a version tag reports no sha at all,
+    which is None here rather than an error - see `_FW_SHA_RE`.
+    """
+    match = _FW_SHA_RE.search(running or "")
+    return match.group(1) if match else None
+
+
 def device_status(running: str | None, state: SourceState) -> DeviceStatus:
     """Compare what a screen reports running against what the tree would build.
 
@@ -285,10 +298,10 @@ def device_status(running: str | None, state: SourceState) -> DeviceStatus:
         # being behind either, hence a None verdict rather than True.
         return DeviceStatus(DEVICE_DIRTY)
 
-    match = _FW_SHA_RE.search(running)
-    if match:
+    built_sha = running_sha(running)
+    if built_sha:
         # Short shas can differ in length between builds; compare on the shorter.
-        built, head = match.group(1).lower(), state.head.lower()
+        built, head = built_sha.lower(), state.head.lower()
         size = min(len(built), len(head))
         return DeviceStatus() if built[:size] == head[:size] else DeviceStatus(SOURCE_CHANGED)
 
@@ -384,6 +397,23 @@ def _is_our_image(record: dict, path: str, stat: os.stat_result) -> bool:
     return sha256_file(path) == recorded
 
 
+def read_sidecar(paths: Paths, display: PioType) -> dict | None:
+    """This env's build record, or None when there isn't a usable one.
+
+    The display counterpart of `build.read_sidecar`, and read by the same two
+    kinds of caller: `artifact_status` asking whether the image is current, and
+    the esptool flasher noting which image a screen was just given. Degrades to
+    None on every failure - a missing, unreadable or non-dict record all mean
+    "no provenance", and telling them apart would not change any answer.
+    """
+    try:
+        with open(paths.display_sidecar(display.env), encoding="utf-8") as fh:
+            record = json.load(fh)
+    except (OSError, ValueError):
+        return None
+    return record if isinstance(record, dict) else None
+
+
 def artifact_status(paths: Paths, display: PioType, state: SourceState) -> ArtifactStatus:
     """Does the built image match the source tree?
 
@@ -410,12 +440,8 @@ def artifact_status(paths: Paths, display: PioType, state: SourceState) -> Artif
     except OSError:
         return ArtifactStatus(NEVER_BUILT)
 
-    try:
-        with open(paths.display_sidecar(display.env), encoding="utf-8") as fh:
-            record = json.load(fh)
-    except (OSError, ValueError):
-        return ArtifactStatus(NO_PROVENANCE)
-    if not isinstance(record, dict):
+    record = read_sidecar(paths, display)
+    if record is None:
         return ArtifactStatus(NO_PROVENANCE)
 
     if not _is_our_image(record, path, stat):

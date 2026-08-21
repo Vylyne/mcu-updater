@@ -185,6 +185,14 @@ OFFLINE = "offline"
 #: Reachable, but said nothing we can compare - no version, or no tree to
 #: compare against.
 UNKNOWN_VERSION = "unknown_version"
+#: The device reports the version string our build stamps, but nothing
+#: corroborates that we produced what is on it. CONFIG_VERSION (Cartographer's
+#: fork, and anything else that stamps a hand-maintained literal instead of a
+#: git describe) is identical in anyone's build of that release, and it does
+#: not move when the tree does - so the release is recognised and the binary
+#: is not. Amber, and it resolves to `None` (up to date) on the first flash
+#: through this tool, once our own record backs the match.
+VERSION_ONLY = "version_only"
 
 _NEEDS_FLASH: dict[str | None, bool | None] = {
     None: False,
@@ -195,6 +203,7 @@ _NEEDS_FLASH: dict[str | None, bool | None] = {
     DEVICE_DIRTY: None,
     OFFLINE: None,
     UNKNOWN_VERSION: None,
+    VERSION_ONLY: None,
 }
 
 DEVICE_REASONS = tuple(r for r in _NEEDS_FLASH if r is not None)
@@ -216,6 +225,7 @@ _DEVICE_LABEL: dict[str | None, str] = {
     DEVICE_DIRTY: "Unverified build",
     OFFLINE: "Not connected",
     UNKNOWN_VERSION: "Version unknown",
+    VERSION_ONLY: "Version matches, build unverified",
 }
 
 

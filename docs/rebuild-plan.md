@@ -1129,6 +1129,83 @@ surprises:  The label text ("Klipper extra args") on the now-generic
 next:       Step 21 (close the `.vue` type-checking gap), then Step 22
             (on-printer verification, Vi only, gated behind this step).
 
+### Step 21 — close the `.vue` type-checking gap            [blocked]
+commit:     none - no code changed, nothing survived the investigation
+gate:       n/a - blocked before any CI or fork change was made
+deviation:  n/a - blocked
+untested:   n/a - blocked
+surprises:  **`vue-tsc` cannot check this tree at all, at any version, for a
+            structural reason the plan's own warning undersold.** The plan
+            named a version trap ("may not handle 2.7 at all... expect to pin
+            a version, and possibly to set `vueCompilerOptions.target: 2.7`")
+            as the risk to confirm before treating this as a one-liner. The
+            actual finding is narrower and harder: no version works, because
+            the incompatibility is with **decorator-based class components**
+            (`vue-class-component`/`vue-property-decorator`), not with the
+            Vue 2.7 vs 3 target setting.
+
+            Installed `vue-tsc` locally (`npm install vue-tsc --no-save`,
+            not persisted) rather than via bare `npx`, since a bare `npx
+            vue-tsc --version` failed outright
+            (`ERR_PACKAGE_PATH_NOT_EXPORTED` on `typescript/lib/tsc`) - it
+            fetches an isolated `typescript` peer that doesn't match this
+            project's `typescript@6.0.3`. Once installed as a real
+            dependency it resolved the project's own TypeScript correctly.
+
+            **Newest available version (3.3.10, the only major compatible
+            with `typescript@6.0.3`)**: `npx vue-tsc --noEmit` produces 6307
+            `error TS2339` across the tree, every one shaped
+            `Property '<x>' does not exist on type 'Vue3Instance<...>'`.
+            Tested `vueCompilerOptions.target` explicitly at both `2.7` and
+            `3` via an override tsconfig (`extends` the real one, deleted
+            after testing, never committed) - **identical error count both
+            times**, and confirmed directly via
+            `@vue/language-core/lib/compilerOptions.js`'s
+            `CompilerOptionsResolver` that the override was actually being
+            read. The `target` knob changes template-directive nuances, not
+            whether class-component properties are visible on `this` at all
+            - `@vue/language-core` infers a component's public type from a
+            `defineComponent(...)`-shaped export, which a `@Component class
+            X extends Vue` decorator export never produces, regardless of
+            target. Checked the exact file Step 20 fixed
+            (`FirmwareUpdaterPanelTypeDialog.vue`) specifically: every
+            single template-bound property - `editing`, `chipset`,
+            `mcuType`, `hasBinary`, all of it - is flagged. A real regression
+            there would be error #6308 among 6307 identical-looking false
+            positives - undetectable, and the checker could never pass
+            cleanly on this tree's current, correct code either way.
+
+            **Old, Vue-2.7-era version (1.8.27, contemporaneous with
+            `vue-class-component`'s peak usage)**: crashes outright against
+            `typescript@6.0.3` -
+            `Search string not found: "/supportedTSExtensions = .*(?=;)/"`.
+            That version patches TypeScript's internals via a regex replace
+            against `tsc`'s compiled source, and the pattern it looks for no
+            longer exists in this TypeScript version. So the two failure
+            modes bracket the whole option space: new `vue-tsc` runs but is
+            structurally blind to this tree's component pattern; old
+            `vue-tsc` understood that pattern but cannot load against this
+            TypeScript version at all.
+
+            All test artifacts removed before stopping - `vue-tsc` and
+            `vue-tsc@1.8.27` were installed with `--no-save` (never touched
+            `package.json`/`package-lock.json`, confirmed via `git status`
+            after each), and the scratch override tsconfig was deleted.
+            Fork tree is exactly as Step 20 left it.
+
+            Per the plan's own instruction ("if vue-tsc cannot run usefully
+            against this Vue 2 / class-component tree, say so and stop; do
+            not spend the upstream-file budget as a fallback without
+            asking"), reported this finding rather than picking a fallback.
+            **Vi's call: log as blocked, move to Step 22.** `vite.config.ts`,
+            `package.json` and `tsconfig.json` remain untouched - rebase
+            surface stays at 4 edited files.
+next:       Step 22 (on-printer verification, Vi only). The `.vue`
+            type-checking gap stays open; `docs/backlog.md` already records
+            the upstream half of this (raising it with `mainsail-crew/mainsail`)
+            per this step's own spec - not reopened here, since nothing about
+            today's finding changes what that entry should say.
+
 ---
 
 ## Appendix B — open items, not in scope

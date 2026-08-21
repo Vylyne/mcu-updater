@@ -454,6 +454,207 @@ shipped untested. Whether the board automounts as `RPI-RP2` under either glob
 `bootsel_scan()` searches, and whether `shutil.copy2` alone suffices or the mount
 needs a sync. See `NOTES.md`, 2026-08-19.
 
+### Steps 23–28 — the discovery surface (the Inventory axis)
+
+**Not queued behind Step 22.** That is a hardware gate, not a code step. Steps
+23–26 are dev-box work and can start immediately; 27 needs a bench board; 28 is
+the only one that touches the fork.
+
+**Why now.** `providers/spec.py:28-31` and `flashers/spec.py:33-38` each defer
+this axis in near-identical words — "there are two implementations of it and the
+third is not committed." That was true when discovery meant `/dev/serial/by-id`
+plus `dfu-util -l`. It is not true now. There are **six**:
+
+| Source | Lives in | Returns |
+|---|---|---|
+| `/dev/serial/by-id` scan | `devices.py:134` | `BusDevice` |
+| `dfu-util -l` | `devices.py:292` | `list[dict[str, str \| None]]` |
+| `RPI-RP2` mount | `devices.py:381` | `list[str]` |
+| knomi listen pass | `providers/pio.py:297` | `WatcherDevice` |
+| watcher `devices.json` | `providers/pio.py:214` | `WatcherDevice` |
+| Klipper `printer.objects.query` | `agent/methods/status.py:1376` | dict payload |
+
+Three return types for one question, and every caller adapts. The seam's own
+stated criterion for readiness is met on its own terms.
+
+⚠️ **Read this before writing any of these steps.** The knomi pre-flash
+re-discovery **already exists, already works, and is already mutation-pinned** —
+`scripts/mutations/display-flash.json` carries "identity is verified once the
+ports are free" and "a screen that did not answer is not flashed at its old
+port". These steps are **not adding a missing guard**. They un-weld a working one
+from `flashers/esptool.py` so `flashtool`, the CLI and the agent can reach it and
+be held to it. A step read as *new* safety invites a redesign of a guard that is
+correct today. Move it; do not improve it.
+
+**The problem it solves, precisely.** A CH340K reports no USB serial at all, so
+several identical displays collapse onto indistinguishable by-id names. The only
+durable identity a screen has is the six hex characters it broadcasts itself, so
+its port must be re-resolved **after Klipper and the watcher are stopped** —
+the only moment the ports are free and identity can be *resolved* rather than
+*remembered*. Every other source describes where a display *was*.
+
+### Step 23 — `discovery/spec.py` + `discovery/registry.py`, nothing moved
+
+New package `src/mcu_updater/discovery/`. Vocabulary and Protocol only; no
+implementations, no importers. Green by construction.
+
+- **`Sighting`** — frozen dataclass: `id` (durable identity: by-id serial, DFU
+  serial, knomi device id; `""` when the source cannot give one), `address` (what
+  you hand a tool), `state`, `source`, `detail`. Modelled on `FlashTarget`
+  (`flashers/spec.py:70`): a key plus an envelope, `to_json()` dropping `detail`.
+- **Reuse `devices.STATE_*` verbatim** for `state`. A parallel vocabulary for the
+  same facts is a second thing to keep in step, which is the failure
+  `states.py` exists to have already fixed once.
+- **`Confidence`** — built the way `states.py` is, and for the same reason: **the
+  reason is the fact**, with `tone`/`label`/`safe_to_write` derived rather than
+  stored, so an inconsistent pair cannot be constructed at all. Reasons:
+  `ANSWERED` (it spoke, just now, ports free), `UNIQUE_BUS_ID` (kernel names it
+  with a die-derived serial), `REMEMBERED` (a map or config written earlier by
+  something else), `POSITIONAL` (only topology identifies it), `UNCONFIRMED`
+  (something is at this address; nothing vouches for what).
+- `safe_to_write` is **tri-state and never `True` on absent evidence** — the rule
+  `DeviceStatus.needs_flash` (`states.py:244`) already enforces, for the same
+  reason: absence of evidence is not evidence.
+- **`Source` Protocol**, mirroring `Flasher`: `name`, `label`, `states`,
+  `needs_ports_free`, `sight(bench) -> list[Sighting]`.
+- **Reuse `flashers.spec.Bench`** (`flashers/spec.py:53`) rather than a second
+  host object. It already carries `paths`, `settings` and the `controller`
+  factory, which is exactly what a source needs.
+- `SOURCES = ()`. **Static, never `pkgutil`** — see "Do not do".
+- Tests mirror `tests/test_states.py`: every reason has a tone and a label, an
+  unknown reason raises, `safe_to_write` is never `True` on absent evidence.
+
+**Gate:** `GATE`. Nothing imports the package yet, so the suite count should rise
+and nothing else move.
+
+### Step 24 — move the three bus sources behind the seam
+
+`discovery/byid.py`, `discovery/dfu.py`, `discovery/bootsel.py`, out of
+`devices.py`. Looks risky — five importers — and is mechanical.
+
+- **`devices.py` keeps every public name as a thin re-export.** No call site
+  changes in `flashers/flash.py`, `flashers/esptool.py`, `agent/methods/status.py`,
+  the CLI or the TUI.
+- **`tests/test_devices.py` must pass untouched.** That is this step's real gate.
+  A test that needed editing means the move was not a move.
+- `dfu.py` takes `flash.dfu_selector` with it — the preference order it encodes
+  (serial ▸ path ▸ devnum) is a fact about how well each field survives a
+  replug, which is a discovery fact, not a flashing one.
+- `dfu_serial_for` (`devices.py:232`) goes to `dfu.py` too. It is the only thing
+  connecting a DFU serial to a board you know about.
+
+**Gate:** `GATE`. The diff should be almost entirely moves.
+
+### Step 25 — move the two knomi sources out of `providers/pio.py`
+
+`discovery/listen.py` (the broadcast listen) and `discovery/watcher.py` (the
+`devices.json` map). `providers/pio.py` keeps its build-and-write half —
+`build`, `upload`, `artifact_status`, `source_state`, `resolve_port`,
+`firmware_bin` — and loses discovery entirely.
+
+- `WatcherDevice` becomes a `Sighting` with `detail={"fw": ..., "var": ...}`.
+  `present` maps to `Confidence`: `ANSWERED` from the listen pass, `REMEMBERED`
+  from the map.
+- ⚠️ **`DEVICE_MAP_VERSION = 1` and the `devices.json` shape are somebody else's
+  contract** (`providers/pio.py:176`). Read that schema; never write a new one.
+  A file announcing another version stays ignored rather than guessed at — a
+  half-understood port is a write to the wrong display.
+- `listen.py` sets `needs_ports_free = True` and **`sight()` raises** when called
+  outside a stop. Not a warning. The listen pass costs six seconds and opens real
+  serial ports; a hint would eventually land it on the `fw.status` poll path,
+  where it would fight Klipper for the port every few seconds.
+- Keep `_DISCOVER_MARKER` and the `DISCOVER_PYTHON_CANDIDATES` reasoning intact —
+  the marker exists so a stray deprecation warning on stdout cannot be mistaken
+  for the answer, and the interpreter choice is about which `python3` has apt's
+  `python3-serial`.
+- Discovery tests split out of `tests/test_pio.py` (785 lines) into
+  `tests/test_discovery_listen.py` / `test_discovery_watcher.py`.
+- `tests/test_repo_hygiene.py:215`
+  (`test_pyserial_is_declared_because_discovery_shells_out_for_it`) will need its
+  path updated. It is the only hygiene test that names this code.
+
+**Gate:** `GATE`.
+
+### Step 26 — `discovery.confirm()`; `port_for` becomes a caller
+
+The payoff step, and the one that makes the pre-flash check reusable.
+
+- `confirm(bench, targets, *, sources)` runs **inside** the Klipper stop, after
+  watchers are paused, and returns a `Confidence` per target. That ordering is
+  the knomi_serial docs' own — Klipper holds the port, the watcher contends for
+  it, discovery needs both gone.
+- `esptool.port_for` (`flashers/esptool.py:148`) **keeps its three cases and its
+  exact warning wording** and reduces to a caller. The *policy* — a device that
+  stayed silent while its siblings answered is not there — moves into the seam as
+  a rule about `Confidence`.
+- The fourth case stays too: a screen with no id at all falls back rather than
+  failing. Failing it would take flashing away from installs that have it today,
+  to punish them for what their klippy module does not say.
+- **Behaviour-preserving.** `scripts/mutations/display-flash.json` must stay green
+  **with no edits**, then gains anchors for the generalised guard. Run it **one
+  spec at a time**; see Ground rules.
+- Dry run still skips discovery entirely. A rehearsal that opens real serial ports
+  is not a rehearsal.
+
+**Gate:** `GATE`, then
+`python scripts/mutation_test.py scripts/mutations/display-flash.json` —
+unedited, and green.
+
+### Step 27 — extend confirm to `flashtool` ⚠️ behaviour change
+
+An MCU gets the same confirmed-at-write-time ledger a screen has.
+
+- The two `find_device` calls inside the stop, at the top of
+  `flash.flash_katapult`, become a `UNIQUE_BUS_ID` sighting. **Cited by name, not
+  line: this function is churning.** As of 2026-08-21 the second call dropped its
+  `KLIPPER_FW_NAME` constraint, because chipset+serial already identify a board
+  uniquely and a Cartographer probe enumerates under its own family name. That
+  change is this step's premise arriving early — identity is the serial, not the
+  firmware name — so read what is there before assuming this bullet describes it.
+- A board whose by-id entry vanished between selection and write is **refused
+  with a reason** rather than raising `DeviceNotFoundError` from inside
+  `flash_katapult`. Same outcome, a better-shaped one — and the batch already
+  records a failure by catching one.
+- The flash record (`FlashLog.record`) gains `confidence`.
+- ⚠️ **Do not fold this into Step 26.** 26 is behaviour-preserving and 27 is not;
+  batching them means a hardware regression has two candidate causes.
+- ⚠️ **Needs the printer. Bench board only** — never the toolhead.
+
+**Gate:** `GATE`, plus `scripts/mutations/targets.json` and
+`flasher-selection.json`, one at a time. Then the on-printer checks below.
+
+### Step 28 — `confidence` on the wire ⚠️ contract change — DEFERRED
+
+Recorded so it is not rediscovered; **deliberately not scheduled.**
+
+- `fw.status` / `fw.device.list` carry `confidence` per device, so the panel can
+  distinguish "confirmed" from "remembered" instead of rendering `present` as
+  though it answered the question. `device_list`'s own comment
+  (`agent/methods/status.py:1510`) already says `present` is "necessary but
+  nowhere near sufficient" — the panel does not know that.
+- Bumps `api_version` → a fork edit → **and a `FW_SUPPORTED_API_VERSION` bump in
+  `store/server/fwUpdater/actions.ts`**. That constant was missed once already
+  and shipped a panel that never fetched status at all; see `NOTES.md`,
+  2026-08-21.
+- **Deferred because it is the only step here that spends fork budget**, and
+  23–27 are useful without it. Take it only when something in the UI actually
+  needs to show the distinction.
+
+### Steps 23–28 — do not
+
+- **Do not fold `scripts/usb_topology.py` into the package.** It is a human
+  diagnostic with its own argparse CLI and no caller in `src/`. Moving it makes
+  the package look complete while adding the one source nothing consumes.
+- **Do not build `discovery/topology.py`.** Name the slot if it helps; leave it
+  empty. That is where CAN identity would live, and "Do not do" says no.
+- **Do not rename `needs_klipper_stopped`** to match `needs_ports_free`. "Do not
+  do" is explicit: the rename lands with the per-type service list or not at all.
+- **Do not give `Confidence` a fourth degree of certainty.** Three tones,
+  tri-state `safe_to_write`, as `states.py` has. A "probably" bucket is one more
+  thing for two call sites to disagree about.
+- **Do not move the cancellation boundary.** It stays between targets in
+  `flashers/batch.py:100`. Half an image is a brick.
+
 ---
 
 ## Verification
@@ -516,6 +717,8 @@ Firmware and boards:
 - [x] Vendor profile seeding, custom profiles, drift detection
 - [x] Flash-time bootloader offset check
 - [x] Board tracking by `/dev/serial/by-id` serial
+- [x] Displays re-identified at flash time, once the ports are free
+- [ ] Discovery surface — one vocabulary for where a device is and how sure we are
 - [ ] CAN device discovery (needs `canbus_uuid` from printer.cfg)
 
 Interfaces:
@@ -1217,3 +1420,10 @@ next:       Step 22 (on-printer verification, Vi only). The `.vue`
   `test_an_unknown_inbound_method_gets_an_error_not_silence`.
 - ~~Phantom `FwConfig` slots for every globally declared family.~~ — **pulled into scope 2026-08-20 as Step 18**, because `fw_order()` feeds
   `artifacts`, which Steps 19–20 must document and re-declare.
+- ~~The Inventory axis, deferred by both `spec.py` files.~~ — **pulled into scope
+  2026-08-21 as Steps 23–28.** The deferral's own criterion ("two
+  implementations, and the third is not committed") no longer holds: there are
+  six. Step 28 is written down but stays deferred — it is the only one that
+  spends fork budget.
+- `discovery/topology.py` — the sysfs USB tree as a `Source`, which is where CAN
+  identity would land. Blocked by "Do not do", not by the seam.

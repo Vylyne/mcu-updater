@@ -521,7 +521,7 @@ implementations, no importers. Green by construction.
   read as one thing only: **are we in the bootloader or not?** It is a predicate,
   not a family.
 
-  ```
+  ```python
   fw in KATAPULT_NAMES  ->  STATE_KATAPULT   # in the bootloader
   anything else         ->  STATE_KLIPPER    # running an application
   not on the bus        ->  STATE_OFFLINE

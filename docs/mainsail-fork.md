@@ -42,7 +42,7 @@ added files — count only the four below.
 
 Added:
 
-```
+```bash
 .github/workflows/mu-ci.yml                                       (fork-only)
 src/components/panels/Machine/FirmwareUpdaterPanel.vue
 src/components/panels/Machine/FirmwareUpdaterPanel/*.vue          (10 files)
@@ -86,7 +86,7 @@ git rebase upstream/master        # routine, on each upstream release
 
 Then re-run the gates (below) and tag a release as
 
-    v<one patch ABOVE the upstream you rebased onto>-vylyne.<n>
+`v<one patch ABOVE the upstream you rebased onto>-vylyne.<n>`
 
 so upstream v2.18.2 gives `v2.18.3-vylyne.1`, then `-vylyne.2`, `-vylyne.10`, and
 so on without limit. Provenance is obvious in Mainsail's Update Manager panel,

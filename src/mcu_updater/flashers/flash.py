@@ -39,6 +39,7 @@ from ..devices import (
     STATE_DFU,
     BusDevice,
     dfu_devices,
+    dfu_selector,
     expected_path,
     find_device,
     wait_for_device,
@@ -420,24 +421,6 @@ def wait_for_dfu(
         if time.monotonic() >= deadline:
             return []
         time.sleep(poll)
-
-
-def dfu_selector(device: dict) -> list[str]:
-    """dfu-util arguments pinning a write to one physical board.
-
-    Preference order is by how well each field survives: the STM32 USB serial is
-    derived from the die's unique ID and is stable across replugs, the bus path
-    only holds while the board stays in the same port, and devnum changes every
-    time it enumerates. All three beat targeting the VID:PID alone, which picks
-    whichever board answers first.
-    """
-    if device.get("serial"):
-        return ["-S", str(device["serial"])]
-    if device.get("path"):
-        return ["-p", str(device["path"])]
-    if device.get("devnum"):
-        return ["-n", str(device["devnum"])]
-    return []
 
 
 def flash_dfu_stm32(

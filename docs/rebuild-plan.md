@@ -517,11 +517,41 @@ implementations, no importers. Green by construction.
   firmware name wearing a state's clothes, and `7bbf152` removed the last place
   it was doing identity work — dropping the hardcoded klipper filter from
   `flash_katapult`'s lookup so a Cartographer could be found at all.
-  **Decide here what a sighting reports for a fork**: a fork running its
-  application is in `STATE_KLIPPER` as far as any flasher cares — that is what
-  the state is *for* — and the family name it enumerates under travels in
-  `detail`, where it stays available without steering dispatch. See Step 27's
-  `select_for` trap for what happens if this is left as it is.
+  **The rule, decided.** Once chipset+serial have matched, the firmware name is
+  read as one thing only: **are we in the bootloader or not?** It is a predicate,
+  not a family.
+
+  ```
+  fw in KATAPULT_NAMES  ->  STATE_KATAPULT   # in the bootloader
+  anything else         ->  STATE_KLIPPER    # running an application
+  not on the bus        ->  STATE_OFFLINE
+  ```
+
+  That **inverts today's default**, and the inversion is the point.
+  `BusDevice.state` currently allowlists klipper, allowlists katapult, and falls
+  through to `self.fw.lower()` — so every unrecognised name becomes its own
+  unmatched state string. Defaulting to "running an application" instead means
+  Cartographer stops being a case to handle, and so does the next fork nobody has
+  written yet. `KLIPPER_NAMES` is then no longer load-bearing for state at all.
+  The family name it enumerates under travels in `detail`, available without
+  steering dispatch.
+
+  ⚠️ **`STATE_KLIPPER` then means "running an application", not "running
+  Klipper".** Do not rename it — the constant is what every flasher's `states`
+  tuple already matches on, and per "Do not do"'s `needs_klipper_stopped`
+  precedent a rename lands with the thing that makes it true or not at all.
+  Document the meaning where it is defined.
+
+- ⚠️ **Do not apply that inversion to `is_mcu` / `find_untracked`.** It is only
+  sound *after* identity has matched — a tracked board is known to be ours, so
+  the sole open question is bootloader-or-not. An **untracked** candidate has no
+  identity to match against, and there the firmware name is the only evidence a
+  parsed by-id entry is a board at all. `is_mcu` (`devices.py:96`) must keep its
+  allowlist: a CH340 enumerates as `usb-1a86_USB_Serial-if00` and parses into a
+  perfectly well-formed `BusDevice`, so an inverted default would put a Knomi
+  display in the adoptable list, one tap from being tracked and having Klipper
+  built and flashed at it. Two questions, two rules — the docstring there already
+  explains why, and it stays true.
 - **`Confidence`** — built the way `states.py` is, and for the same reason: **the
   reason is the fact**, with `tone`/`label`/`safe_to_write` derived rather than
   stored, so an inconsistent pair cannot be constructed at all. Reasons:
@@ -632,12 +662,16 @@ An MCU gets the same confirmed-at-write-time ledger a screen has.
   production caller of `select_for` is `flash_initial_bootloader`
   (`flashers/flash.py:580`), which computes its own state and never passes an
   observed one.
-  This step is what arms it. The moment a batch picks a flasher from a *sighted*
-  state rather than a computed one, a Cartographer matches nothing and
+  This step is what would arm it. The moment a batch picks a flasher from a
+  *sighted* state rather than a computed one, a Cartographer matches nothing and
   `select_for` raises `UnsupportedChipsetError` telling the operator to flash
   katapult by hand — the same class of failure `7bbf152` fixed in the lookup,
-  one layer up in the dispatch. Decide the identity/state split (Step 23) before
-  wiring sightings into `select_for`, not after.
+  one layer up in the dispatch.
+  **Step 23's bootloader-predicate rule is what disarms it**, and it must be in
+  place first: under that rule a Cartographer running its application sights as
+  `STATE_KLIPPER`, which `Flashtool` already declares, and no fork is ever a
+  case again. If Step 23 shipped without it, do not wire sightings into
+  `select_for` — go back and finish Step 23.
 - A board whose by-id entry vanished between selection and write is **refused
   with a reason** rather than raising `DeviceNotFoundError` from inside
   `flash_katapult`. Same outcome, a better-shaped one — and the batch already

@@ -584,13 +584,13 @@ Each provider enumerates its own targets:
 
 Three rules follow, and each of them was a bug first:
 
-* **A type builds the families it runs, not klipper.** Applying one family to
+- **A type builds the families it runs, not klipper.** Applying one family to
   every type meant a `firmware: cartographer` board had no klipper `.config`, was
   dropped, and the batch reported success having never built it.
-* **`fw` filters; it never forces.** "Rebuild katapult everywhere" narrows the
+- **`fw` filters; it never forces.** "Rebuild katapult everywhere" narrows the
   sweep to targets that already use that family. A display has no family, so it
   is correctly left alone rather than matched by a missing value.
-* **A sweep leaves katapult alone.** The bootloader is built when a device is
+- **A sweep leaves katapult alone.** The bootloader is built when a device is
   adopted or when `fw` names it — never incidentally. It is already on the
   hardware doing its one job, a fleet flash never writes it, and a CAN board is
   reachable only *through* the bootloader that would be replaced.

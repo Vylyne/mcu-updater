@@ -784,7 +784,7 @@ floor) and Windows.
 **Guard-level**, per the project's own rule (README, "Checking that a guard is
 load-bearing"):
 
-```
+```shell
 python scripts/mutation_test.py scripts/mutations/targets.json
 ```
 
@@ -857,7 +857,7 @@ review surface — a reviewer reads this before reading the diff.
 
 Template:
 
-```
+```shell
 ### Step N — <title>            [done | done-with-deviation | blocked]
 commit:     <sha>
 gate:       pytest <passed>/<failed> · ruff ok · mypy ok · line-endings ok

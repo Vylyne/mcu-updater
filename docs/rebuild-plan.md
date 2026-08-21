@@ -1497,6 +1497,69 @@ next:       Step 24 (move the three bus sources behind the seam -
             out of `devices.py`, with `devices.py` keeping every public name
             as a thin re-export).
 
+### Step 24 — move the three bus sources behind the seam            [done]
+commit:     0c2bb9e
+gate:       pytest 1162 passed/0 failed/10 skipped (unchanged from Step 23) ·
+            ruff ok · mypy ok (55 files, up from 52) · line-endings ok ·
+            `tests/test_devices.py` passed with zero edits, as specced ·
+            mutation specs re-run standalone, one at a time:
+            `flash-offset-diagnostic.json` (10 guards, all CAUGHT),
+            `dfu-pairings.json` (6, all CAUGHT), `add-mcu.json` (6, all
+            CAUGHT), `display-flash.json` (9, all CAUGHT),
+            `flasher-selection.json` (2, all CAUGHT), `targets.json` (17
+            CAUGHT, 1 pre-existing SURVIVED - confirmed unrelated, see
+            surprises)
+deviation:  **`bootsel_scan`'s automount-glob lookup reads through the
+            `devices` shim at call time, not a plain module-level constant in
+            `discovery/bootsel.py`.** Two tests neither this step nor Step 23
+            named (`tests/test_devices.py`'s
+            `test_bootsel_scan_searches_the_automount_globs_with_no_override`
+            and `tests/test_flash.py`'s
+            `test_bootsel_refuses_more_than_one_mounted_volume`) both do
+            `monkeypatch.setattr(devices_mod, "DEFAULT_BOOTSEL_ROOT_GLOBS",
+            ...)` and expect the real scan to honour it. A plain `from
+            .discovery.bootsel import DEFAULT_BOOTSEL_ROOT_GLOBS` re-export is
+            a value copy at import time - patching the copy on `devices`
+            would not reach the tuple `bootsel_scan` actually reads from its
+            own module globals. Since Step 24's own text makes
+            `tests/test_devices.py` passing **untouched** the step's real
+            gate, `bootsel_scan` does a deferred `from .. import devices`
+            inside the function body (mirrors the existing lazy-import
+            pattern in `agent/events.py:311`, not a new idiom) and reads
+            `devices.DEFAULT_BOOTSEL_ROOT_GLOBS` rather than its own
+            module-level name. The module-level constant in
+            `discovery/bootsel.py` still exists (production code with no
+            override still uses it, since nothing has patched `devices` in
+            that path) but is no longer what the patched tests observe.
+            `subprocess` needed the same shared-object treatment for
+            `dfu_devices`: `devices.py` now does a plain `import subprocess`
+            so `monkeypatch.setattr(devices_mod.subprocess, "run", ...)`
+            (`tests/test_flash.py:655`) mutates the one singleton module
+            object both `devices.py` and `discovery/dfu.py` import, which
+            needed no special handling beyond the import itself since
+            `subprocess.run` patching is attribute mutation on a shared
+            object, not a name rebind.
+
+            **`dfu_selector` moved out of `flashers/flash.py` into
+            `discovery/dfu.py`, as specced, but this required an explicit
+            check that nothing tests it by its old module path** -
+            `tests/test_agent_dfu.py` imports it as `from
+            mcu_updater.flashers.flash import dfu_selector`, which keeps
+            working because `flash.py` now imports the name from `..devices`
+            (the same pattern `dfu_devices` already used) rather than
+            defining it.
+untested:   none - this step touches no hardware path, and the mutation specs
+            that do reach flash/DFU/BOOTSEL code were re-run standalone
+            against the moved source, one at a time per Ground rules.
+surprises:  `targets.json`'s "configure is offered only for the families this
+            type uses" guard SURVIVED both before and after this step's
+            changes - confirmed by stashing this step's diff and re-running
+            the spec against unmodified `main` (identical result: 177
+            passed, 1 skipped, same SURVIVED line). Pre-existing, not
+            introduced here; not this step's to fix.
+next:       Step 25 (move the two knomi sources out of `providers/pio.py` -
+            `discovery/listen.py`, `discovery/watcher.py`).
+
 ---
 
 ## Appendix B — open items, not in scope

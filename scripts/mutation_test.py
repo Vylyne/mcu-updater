@@ -128,6 +128,23 @@ def mutated(path: str, find: str, replace: str) -> Iterator[None]:
             )
 
 
+def resolve_interpreter(command: list[str]) -> list[str]:
+    """Point a leading bare `python` at *this* interpreter.
+
+    A spec says `python` because that is what it reads like. Resolving it
+    through PATH means the mutation run can silently use a different
+    interpreter than the harness - and on Windows it does: a uv venv's
+    `python.exe` is a trampoline, and re-exec through it lands on the base
+    interpreter with none of the venv's site-packages, so the baseline fails
+    with "No module named pytest" while the identical command passes in the
+    shell. A harness whose answer depends on how it was invoked is worse than
+    no harness, given what these results are used to justify.
+    """
+    if command and command[0] in ("python", "python3"):
+        return [sys.executable, *command[1:]]
+    return list(command)
+
+
 def run_once(command: list[str], cwd: str | None) -> tuple[int, str]:
     """Run the test command, tolerating any bytes it emits.
 
@@ -135,7 +152,7 @@ def run_once(command: list[str], cwd: str | None) -> tuple[int, str]:
     cp1252 and chokes on a UTF-8 tick from vitest or pytest. Decoding here, with
     replacement, means the runner's output can never crash the harness.
     """
-    proc = subprocess.run(command, capture_output=True, cwd=cwd)
+    proc = subprocess.run(resolve_interpreter(command), capture_output=True, cwd=cwd)
     output = (proc.stdout + proc.stderr).decode("utf-8", errors="replace")
     return proc.returncode, output
 

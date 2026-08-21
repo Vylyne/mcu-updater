@@ -1911,7 +1911,7 @@ surprises:  **Five of `tests/test_agent_display_jobs.py`'s existing tests
 next:       Step 27 (extend confirm to `flashtool`) — needs the printer for
             its own on-printer checks per that step's spec; not started.
 
-### Step 27 — extend confirm to `flashtool`            [done-with-deviation, on-printer checks pending]
+### Step 27 — extend confirm to `flashtool`            [done]
 
 commit:     (pending)
 gate:       pytest 1167 passed/0 failed/10 skipped (5 more than Step 26's
@@ -2009,15 +2009,12 @@ deviation:  **Confirmed via research (an Explore agent, cross-checked directly
             `FlashLog(` and `.record(` call site first - exactly one
             production call site constructs a record, so exactly one call
             site needed the new keyword.
-untested:   **The on-printer checks in the shared Verification section (the
-            same section Steps 24-26 deferred, not a Step-27-specific
-            subsection - confirmed by grep before assuming otherwise) are
-            not run.** Per Ground rules and the Handoff section, every
-            on-printer step is Vi's to run - bench board only, never the
-            toolhead. This includes confirming a real by-id sighting reaches
-            `flash_katapult` against a real Katapult board, and the offset
-            checks against real flashtool output, beyond what the mocked
-            `run_streamed` tests in `test_flash.py` can cover.
+untested:   none remaining. The on-printer checks (Verification section,
+            steps 1-5) were deferred to Vi at commit time, per Ground rules
+            and the Handoff section - every on-printer step is hers to run,
+            bench board only, never the toolhead. Vi ran them on 2026-08-21
+            and reported "looks good on printer" - no further detail recorded
+            here than that; not independently re-verified by this session.
 surprises:  A stray orphaned assertion line
             (`assert "-s" in calls[0] and "-s" not in calls[1]`) appeared
             immediately after the new confidence test was written, referring
@@ -2027,10 +2024,9 @@ surprises:  A stray orphaned assertion line
             chased further since removing it made the suite green and
             correct. The same class of gate-catches-a-copy-paste-seam issue
             Step 25's own log recorded once already for a different file.
-next:       Vi to run the on-printer checks (Verification section, steps 1-5)
-            on the bench board, then close this step. Step 28 stays
-            deliberately deferred (spends fork budget; nothing in the UI
-            needs the distinction yet).
+next:       Step 27 is closed. Step 28 stays deliberately deferred (spends
+            fork budget; nothing in the UI needs the distinction yet). No
+            further step is queued in this file.
 
 ---
 

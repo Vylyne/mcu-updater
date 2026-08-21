@@ -37,14 +37,22 @@ Violating any of these produces a bug that tests will not catch.
 
 ## Gate
 
-Run before every commit:
+Run before every commit, **in the 3.9 venv**. A green run on the system
+interpreter proves nothing about the floor: a 3.10+ stdlib API passes there and
+fails on the printer. `Path.write_text(newline=)` reached CI that way.
 
 ```bash
+source .venv/Scripts/activate   # 3.9; the system python is not
 python -m pytest -q
 python -m ruff check src tests scripts
 python -m mypy src
 python scripts/check_line_endings.py
 ```
+
+Shell state does not survive between agent tool calls, so an agent must either
+chain the activation into the same command or call `.venv/Scripts/python.exe`
+directly — activating in one call and running the gate in the next silently
+gets the system interpreter back.
 
 ## Extending providers or flashers
 

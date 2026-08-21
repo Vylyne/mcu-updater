@@ -108,6 +108,41 @@ def test_device_running_klipper_gets_a_bootloader_request_first(paths, ready, fa
     assert any("Flashed S1 successfully" in line for _, line in events)
 
 
+def test_a_fork_that_renames_its_usb_descriptor_is_still_found(paths, ready, fake_root):
+    """A board running a non-klipper family must still be flashable.
+
+    The cartographer probe enumerates as
+    `usb-Cartographer_stm32g431xx_<serial>-if00` - its own family name, not
+    klipper's. The bootloader-request lookup was hardcoded to katapult and
+    klipper, so a board sitting on the bus was reported as "no device found
+    ... Is it plugged in?" - while `updatefw status` showed it present, because
+    every other lookup site passes no family at all and matches anything.
+
+    Found on hardware 2026-08-21, on the one board in the fleet that is a
+    renamed klipper fork.
+    """
+    make_device(fake_root / "bus", "Cartographer", "chipA", "S1")
+    os.makedirs(paths.artifact_dir("board"), exist_ok=True)
+    with open(paths.bin_file("board", "cartographer"), "wb") as fh:
+        fh.write(bytes(16))
+
+    events: list[tuple[str, str]] = []
+    flash_katapult(
+        paths,
+        ready,
+        "board",
+        "chipA",
+        "S1",
+        fw="cartographer",
+        reporter=lambda s, line: events.append((s, line)),
+    )
+    per_cmd = [cmd_tokens(c) for c in _cmds(events)]
+    assert any("-r" in toks for toks in per_cmd), "should request the bootloader"
+    assert any("-f" in toks for toks in per_cmd), "should still reach the flash step"
+    # The board names itself; the log should not claim it is running Klipper.
+    assert any("Cartographer" in line for _, line in events)
+
+
 # --------------------------------------------------------------------------
 # the offset checks
 #

@@ -35,7 +35,6 @@ from .. import firmware
 from ..build import Reporter, null_reporter, run_streamed
 from ..devices import (
     KATAPULT_FW_NAME,
-    KLIPPER_FW_NAME,
     STATE_BOOTSEL,
     STATE_DFU,
     BusDevice,
@@ -117,17 +116,30 @@ def flash_katapult(
 
     dev = find_device(paths, chipset, serial, fw=KATAPULT_FW_NAME)
     if dev is None:
-        running = find_device(paths, chipset, serial, fw=KLIPPER_FW_NAME)
+        # Deliberately unconstrained by firmware name. chipset+serial already
+        # identify the board uniquely, and the katapult lookup above has already
+        # answered "is it sitting in its bootloader?" - so anything else
+        # answering to this serial is the board running its application,
+        # whatever that application calls itself.
+        #
+        # This asked for klipper by name until 2026-08-21, which made a board
+        # plainly present on the bus report as missing: the cartographer probe
+        # enumerates as `usb-Cartographer_stm32g431xx_<serial>-if00`, its own
+        # family rather than klipper's. Every other lookup site - device_state,
+        # the panel, the agent's own pre-flash check - passes no family at all,
+        # so the board was visible everywhere except the one place that writes
+        # to it, and the error told the operator to go check the cable.
+        running = find_device(paths, chipset, serial)
         if running is None:
             raise DeviceNotFoundError(
-                f"no device found for {serial} (looked for a katapult or klipper "
-                f"device with chipset {chipset}, e.g. "
-                f"{expected_path(KATAPULT_FW_NAME, chipset, serial)}). Is it plugged in?",
+                f"no device found for {serial} (looked for chipset {chipset} "
+                f"with that serial under any firmware name, e.g. "
+                f"{expected_path('*', chipset, serial)}). Is it plugged in?",
                 type=mcu_type,
                 serial=serial,
                 chipset=chipset,
             )
-        reporter("info", f"{serial} is running Klipper - requesting bootloader...")
+        reporter("info", f"{serial} is running {running.fw} - requesting bootloader...")
         run_streamed(
             [sys.executable, flashtool, "-d", running.path, "-r"],
             cwd=paths.home,

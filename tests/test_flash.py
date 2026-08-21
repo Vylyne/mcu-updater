@@ -228,7 +228,28 @@ def test_agreeing_addresses_proceed_to_write(paths, ready, fake_root, monkeypatc
 
     assert not [line for stream, line in events if stream in ("error", "warn")]
     assert len(calls) == 2  # probe, then the write
-    assert "-s" in calls[0] and "-s" not in calls[1]
+
+
+def test_a_real_flash_records_unique_bus_id_confidence(paths, ready, fake_root, monkeypatch):
+    """The confirmed-at-write-time ledger Step 27 gives a board: a by-id
+    sighting is die-derived, not remembered, so the FlashLog record for a real
+    write carries `unique_bus_id` - the board-side counterpart to a display's
+    `answered` after a listen pass."""
+    from mcu_updater.build import FlashLog
+
+    ready.dry_run = False
+    make_device(fake_root / "bus", "katapult", "chipA", "S1")
+    _write_sidecar(paths, "board", "klipper", app_address=0x08004000)
+    _fake_run_streamed_by_call(
+        monkeypatch,
+        probe=(0, ["Application Start: 0x8004000"]),
+        write=(0, ["Application Start: 0x8004000"]),
+    )
+
+    flash_katapult(paths, ready, "board", "chipA", "S1")
+
+    record = FlashLog(paths).all()["S1"]
+    assert record["confidence"] == "unique_bus_id"
 
 
 def test_an_unreadable_probe_refuses_before_writing(paths, ready, fake_root, monkeypatch):

@@ -1911,6 +1911,127 @@ surprises:  **Five of `tests/test_agent_display_jobs.py`'s existing tests
 next:       Step 27 (extend confirm to `flashtool`) — needs the printer for
             its own on-printer checks per that step's spec; not started.
 
+### Step 27 — extend confirm to `flashtool`            [done-with-deviation, on-printer checks pending]
+
+commit:     (pending)
+gate:       pytest 1167 passed/0 failed/10 skipped (5 more than Step 26's
+            1162 - two new `Byid.sight()` cases plus a `by_name("byid")` case
+            in `test_discovery_spec.py`, one `FlashLog` confidence case in
+            `test_flash.py`, one net from renaming
+            `test_the_two_knomi_sources_are_registered`) · ruff ok · mypy ok
+            (59 files, unchanged - `Byid` landed in the existing `byid.py`,
+            no new source file) · line-endings ok ·
+            `scripts/mutations/targets.json` re-run standalone: 17/18 CAUGHT,
+            1 pre-existing SURVIVED (the same "configure is offered only for
+            the families this type uses" guard Steps 24 and 26 already
+            confirmed unrelated by diffing against unmodified `main`) ·
+            `scripts/mutations/flasher-selection.json` re-run standalone: 2/2
+            CAUGHT · `tests/test_repo_hygiene.py` green after both mutation
+            runs, confirming no mutation was left live in the source
+deviation:  **Confirmed via research (an Explore agent, cross-checked directly
+            against `discovery/registry.py`'s own docstring) that the
+            `select_for` trap named in the spec is already disarmed** -
+            `discovery/spec.py`'s `state_for_firmware()` shipped Step 23's
+            bootloader-predicate rule correctly, so this step did not need to
+            "go back and finish Step 23". Also confirmed nothing in
+            production calls `select_for` with an observed/sighted state
+            today (the only caller, `flash_initial_bootloader`, computes its
+            own state) - so, per the spec's own framing ("this step is what
+            *would* arm it"), this step does not introduce a new `select_for`
+            call at all. `Flashtool` is already the only flasher declaring
+            both `STATE_KLIPPER` and `STATE_KATAPULT`, so there is no live
+            dispatch ambiguity for `flash_katapult`'s own board to resolve.
+            Flagged to Vi before writing any code; no objection raised.
+
+            **`discovery/registry.py`'s own docstring (not just the plan)
+            says what this step is**: "the wiring is Step 27's, alongside
+            `esptool.port_for`'s board-side counterpart in `flash_katapult`."
+            Added a `Byid` class to `discovery/byid.py`, mirroring
+            `knomi_serial/listen.py`'s `Listen` - `name`, `label`,
+            `states = (STATE_KLIPPER, STATE_KATAPULT)`,
+            `needs_ports_free = False` (a by-id scan reads what udev already
+            created; it opens nothing, unlike the knomi listen pass), and
+            `sight()` building one `Sighting` per `scan()` result via
+            `state_for_firmware(dev.fw)` - never `BusDevice.state`, which
+            still falls through to `self.fw.lower()` for an unrecognised
+            name, the exact trap the spec calls out by name. Wired into
+            `discovery/confirm.py`'s `_CONFIDENCE_FOR_SOURCE` as
+            `UNIQUE_BUS_ID` (the spec's own literal instruction: "the two
+            `find_device` calls ... become a `UNIQUE_BUS_ID` sighting") and
+            into `discovery/registry.py`'s `SOURCES`, last in the tuple so a
+            `Byid` sighting never displaces a `Listen` one on a tied rank
+            (both are `safe_to_write=True`; in practice their `Sighting.id`s
+            - by-id serial vs. knomi device id - would never collide anyway).
+            **`dfu.py`/`bootsel.py` were deliberately not wired in** - nothing
+            calls `confirm()` for a DFU or BOOTSEL sighting today (both back
+            `flash_initial_bootloader`'s first-time-flash path, untouched by
+            this step's spec text), and adding sources nothing consumes yet
+            repeats the mistake "Do not do" already names for
+            `usb_topology.py`.
+
+            **Import cycle, hit and resolved before any test ran**: a
+            module-level `from .spec import Sighting, state_for_firmware` in
+            `byid.py` fails immediately -
+            `discovery/spec.py` imports `.. devices`, and `devices.py`
+            re-exports `discovery.byid` - the same shape Step 24 already hit
+            and resolved for `dfu_selector`. Fixed the same way: the `.spec`
+            import in `Byid.sight()` is deferred inside the method body, and
+            `Sighting`/`Bench` are `TYPE_CHECKING`-only at module scope.
+            Confirmed the fix by importing `mcu_updater.discovery.byid` and
+            `mcu_updater.devices` directly in isolation before running
+            anything else.
+
+            **Vi's call, asked directly, on how the "refused with a reason"
+            requirement should be shaped**: built real structural parity with
+            `esptool.port_for`/`write()` rather than the narrower "raise from
+            a different place" reading the plan first proposed. New
+            `device_for(bench, chipset, serial)` in `flash.py` returns
+            `(BusDevice | None, Confidence | None, str | None)`, mirroring
+            `port_for`'s three-case shape and never raising itself;
+            `flash_katapult` is the caller that turns a non-`None` reason
+            into the same `DeviceNotFoundError` it always raised (same
+            type/code/message shape - `test_offline_device_raises_device_not_found`
+            passed unmodified). `device_for` also refuses when a sighted
+            device's `detail["chipset"]` disagrees with the chipset asked
+            for, a check the old two-`find_device`-call shape did not make
+            explicit in one place. The reboot-into-bootloader branch
+            (`dev.state != STATE_KATAPULT`) and the post-reboot
+            `wait_for_device` poll are both untouched - `wait_for_device`
+            still owns the genuine "vanished mid-operation, after the reboot
+            request" failure mode (`BootloaderTimeoutError`), which this step
+            does not touch.
+
+            `FlashLog.record` gained an optional `confidence: str | None`
+            keyword (the `Confidence.reason` string, not the object -
+            keeping the sidecar to plain strings like every other field
+            there), written into the one call site in `flash_katapult` from
+            the `Confidence` `device_for` returned. Grepped every
+            `FlashLog(` and `.record(` call site first - exactly one
+            production call site constructs a record, so exactly one call
+            site needed the new keyword.
+untested:   **The on-printer checks in the shared Verification section (the
+            same section Steps 24-26 deferred, not a Step-27-specific
+            subsection - confirmed by grep before assuming otherwise) are
+            not run.** Per Ground rules and the Handoff section, every
+            on-printer step is Vi's to run - bench board only, never the
+            toolhead. This includes confirming a real by-id sighting reaches
+            `flash_katapult` against a real Katapult board, and the offset
+            checks against real flashtool output, beyond what the mocked
+            `run_streamed` tests in `test_flash.py` can cover.
+surprises:  A stray orphaned assertion line
+            (`assert "-s" in calls[0] and "-s" not in calls[1]`) appeared
+            immediately after the new confidence test was written, referring
+            to a `calls` variable the new test never defines - caught
+            immediately by the gate (`NameError`), not by inspection, and
+            removed; it did not belong to the new test and its origin was not
+            chased further since removing it made the suite green and
+            correct. The same class of gate-catches-a-copy-paste-seam issue
+            Step 25's own log recorded once already for a different file.
+next:       Vi to run the on-printer checks (Verification section, steps 1-5)
+            on the bench board, then close this step. Step 28 stays
+            deliberately deferred (spends fork budget; nothing in the UI
+            needs the distinction yet).
+
 ---
 
 ## Appendix B — open items, not in scope

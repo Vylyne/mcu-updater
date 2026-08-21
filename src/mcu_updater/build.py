@@ -752,15 +752,25 @@ class FlashLog:
         fw: str,
         bin_sha256: str | None,
         fw_sha: str | None,
+        confidence: str | None = None,
     ) -> None:
         """Note a completed flash. Never raises - a lost record is not worth
-        failing a flash that already succeeded."""
+        failing a flash that already succeeded.
+
+        `confidence` is a `discovery.spec.Confidence.reason` string - how the
+        board's identity was confirmed at write time (e.g. `"unique_bus_id"`),
+        not the `Confidence` object itself, keeping this sidecar to plain
+        strings like every other field here. Optional so a manually-built
+        record, or a caller with no confirmed sighting to report, isn't forced
+        to invent one.
+        """
         data = self._read()
         data[serial] = {
             "type": mcu_type,
             "fw": fw,
             "bin_sha256": bin_sha256,
             "fw_sha": fw_sha,
+            "confidence": confidence,
             "at": time.time(),
         }
         try:

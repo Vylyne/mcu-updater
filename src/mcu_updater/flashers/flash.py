@@ -37,14 +37,17 @@ from ..devices import (
     KATAPULT_FW_NAME,
     STATE_BOOTSEL,
     STATE_DFU,
+    STATE_KATAPULT,
     BusDevice,
     dfu_devices,
     dfu_selector,
     expected_path,
-    find_device,
     wait_for_device,
     wait_for_new_device,
 )
+from ..discovery.confirm import confirm
+from ..discovery.registry import SOURCES
+from ..discovery.spec import Confidence
 from ..errors import (
     AmbiguousDfuError,
     DeviceNotFoundError,
@@ -56,6 +59,7 @@ from ..errors import (
 from ..paths import HUMAN_ACTION_TIMEOUT, REENUMERATE_TIMEOUT, Paths
 from ..settings import Settings
 from .batch import PlainContext
+from .spec import Bench
 
 DFU_VID_PID = "0483:df11"
 
@@ -65,6 +69,42 @@ def find_flashtool(paths: Paths, settings: Settings) -> str:
     if settings.flashtool_path:
         return firmware.expand_home(settings.flashtool_path, paths.home)
     return paths.flashtool
+
+
+def device_for(
+    bench: Bench, chipset: str, serial: str
+) -> tuple[BusDevice | None, Confidence | None, str | None]:
+    """Look up one board via `discovery.confirm`, in the shape `esptool.port_for`
+    already uses for displays: `(device, confidence, refusal reason)`. `device`
+    is `None` and `reason` is set when the board cannot be confirmed present -
+    never raises, same as `port_for`.
+
+    A `UNIQUE_BUS_ID` by-id sighting is the confirmed-at-write-time counterpart
+    to a display's `ANSWERED` listen-pass sighting: die-derived, not remembered.
+    """
+    sightings = confirm(bench, sources=SOURCES)
+    found = sightings.get(serial)
+    if found is None:
+        return None, None, (
+            f"no device found for {serial} (looked for chipset {chipset} "
+            f"with that serial under any firmware name, e.g. "
+            f"{expected_path('*', chipset, serial)}). Is it plugged in?"
+        )
+    sighting, confidence = found
+    seen_chipset = sighting.detail.get("chipset")
+    if seen_chipset != chipset:
+        return None, None, (
+            f"a device answered as {serial} but reports chipset "
+            f"{seen_chipset!r}, not {chipset!r} - refusing to flash a "
+            f"mismatched board."
+        )
+    dev = BusDevice(
+        fw=str(sighting.detail.get("fw", "")),
+        chipset=chipset,
+        serial=serial,
+        path=sighting.address,
+    )
+    return dev, confidence, None
 
 
 def flash_katapult(
@@ -115,31 +155,25 @@ def flash_katapult(
             path=fw_bin,
         )
 
-    dev = find_device(paths, chipset, serial, fw=KATAPULT_FW_NAME)
-    if dev is None:
-        # Deliberately unconstrained by firmware name. chipset+serial already
-        # identify the board uniquely, and the katapult lookup above has already
-        # answered "is it sitting in its bootloader?" - so anything else
-        # answering to this serial is the board running its application,
-        # whatever that application calls itself.
-        #
-        # This asked for klipper by name until 2026-08-21, which made a board
-        # plainly present on the bus report as missing: the cartographer probe
-        # enumerates as `usb-Cartographer_stm32g431xx_<serial>-if00`, its own
-        # family rather than klipper's. Every other lookup site - device_state,
-        # the panel, the agent's own pre-flash check - passes no family at all,
-        # so the board was visible everywhere except the one place that writes
-        # to it, and the error told the operator to go check the cable.
-        running = find_device(paths, chipset, serial)
-        if running is None:
-            raise DeviceNotFoundError(
-                f"no device found for {serial} (looked for chipset {chipset} "
-                f"with that serial under any firmware name, e.g. "
-                f"{expected_path('*', chipset, serial)}). Is it plugged in?",
-                type=mcu_type,
-                serial=serial,
-                chipset=chipset,
-            )
+    # Confirmed at write time, not just remembered - the same ledger Step 26
+    # gave a display. `device_for` reduces chipset+serial to at most one
+    # sighting; state (bootloader or running) replaces the old two-call
+    # katapult-then-unconstrained lookup, via the bootloader-predicate rule
+    # (`discovery.spec.state_for_firmware`) rather than a fixed firmware name -
+    # so a fork's own name (e.g. Cartographer's `usb-Cartographer_...`) is
+    # still found, the fix `7bbf152` shipped for the old two-call shape.
+    bench = Bench(paths=paths, settings=settings, controller=_no_services)
+    dev, confidence, reason = device_for(bench, chipset, serial)
+    if reason is not None:
+        raise DeviceNotFoundError(
+            reason,
+            type=mcu_type,
+            serial=serial,
+            chipset=chipset,
+        )
+    assert dev is not None  # device_for: reason is None iff dev is not None
+    if dev.state != STATE_KATAPULT:
+        running = dev
         reporter("info", f"{serial} is running {running.fw} - requesting bootloader...")
         run_streamed(
             [sys.executable, flashtool, "-d", running.path, "-r"],
@@ -212,6 +246,7 @@ def flash_katapult(
             bin_sha256=side.get("bin_sha256"),
             fw_sha=side.get("fw_sha")
             or git_head(firmware.resolve(paths, fw).source_dir(paths)),
+            confidence=confidence.reason if confidence is not None else None,
         )
 
         _report_offset_mismatch(reporter, serial, mcu_type, fw, side, transcript)

@@ -17,15 +17,17 @@ from __future__ import annotations
 from collections.abc import Sequence
 
 from ..flashers.spec import Bench
+from .byid import Byid
 from .knomi_serial.listen import Listen
 from .knomi_serial.watcher import Watcher
-from .spec import ANSWERED, REMEMBERED, UNCONFIRMED, Confidence, Sighting, Source
+from .spec import ANSWERED, REMEMBERED, UNCONFIRMED, UNIQUE_BUS_ID, Confidence, Sighting, Source
 
 #: Which `Confidence` reason a source's sightings carry. Sources not listed
 #: here are `UNCONFIRMED` - "something answered a query", nothing more.
 _CONFIDENCE_FOR_SOURCE: dict[str, str] = {
     Listen.name: ANSWERED,
     Watcher.name: REMEMBERED,
+    Byid.name: UNIQUE_BUS_ID,
 }
 
 

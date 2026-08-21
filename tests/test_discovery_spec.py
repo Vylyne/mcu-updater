@@ -14,8 +14,12 @@ import pytest
 
 from mcu_updater import devices
 from mcu_updater.discovery import spec
+from mcu_updater.discovery.byid import Byid
 from mcu_updater.discovery.registry import SOURCES, by_name
 from mcu_updater.discovery.spec import Confidence, Sighting, state_for_firmware
+from mcu_updater.flashers.spec import Bench
+
+from .conftest import make_device
 
 # --------------------------------------------------------------------------
 # the bootloader-predicate rule
@@ -145,12 +149,53 @@ def test_a_confidence_is_frozen():
 # --------------------------------------------------------------------------
 
 
-def test_the_two_knomi_sources_are_registered():
-    """Step 26 wires listen/watcher behind this seam. The three bus sources
-    (byid, dfu, bootsel) still are not - that is Step 27's."""
-    assert [s.name for s in SOURCES] == ["listen", "watcher"]
+def test_the_bus_and_knomi_sources_are_registered():
+    """Step 26 wired listen/watcher behind this seam; Step 27 adds byid, the
+    board-side counterpart. dfu/bootsel still are not - nothing needs them yet,
+    see discovery/registry.py's own docstring."""
+    assert [s.name for s in SOURCES] == ["listen", "watcher", "byid"]
+
+
+def test_by_name_finds_byid():
+    assert by_name("byid").name == "byid"
 
 
 def test_by_name_refuses_an_unknown_source():
     with pytest.raises(KeyError, match="no discovery source"):
-        by_name("byid")
+        by_name("dfu")
+
+
+# --------------------------------------------------------------------------
+# Byid - the by-id scan as a Source
+# --------------------------------------------------------------------------
+
+
+def test_byid_sights_a_board_in_its_bootloader(paths, settings, fake_root):
+    make_device(fake_root / "bus", "katapult", "chipA", "S1")
+    bench = Bench(paths=paths, settings=settings, controller=lambda name=None: None)
+
+    sightings = Byid().sight(bench)
+
+    assert len(sightings) == 1
+    assert sightings[0].id == "S1"
+    assert sightings[0].state == spec.STATE_KATAPULT
+    assert sightings[0].source == "byid"
+    assert sightings[0].detail["chipset"] == "chipA"
+
+
+def test_byid_sights_a_fork_running_its_application_as_state_klipper(paths, settings, fake_root):
+    """The exact case `7bbf152` fixed: a fork's own firmware name still counts
+    as "running an application", via the bootloader-predicate rule - not a
+    literal check for the name "klipper"."""
+    make_device(fake_root / "bus", "Cartographer", "chipA", "S1")
+    bench = Bench(paths=paths, settings=settings, controller=lambda name=None: None)
+
+    sightings = Byid().sight(bench)
+
+    assert sightings[0].state == spec.STATE_KLIPPER
+    assert sightings[0].detail["fw"] == "Cartographer"
+
+
+def test_byid_sights_nothing_on_an_empty_bus(paths, settings):
+    bench = Bench(paths=paths, settings=settings, controller=lambda name=None: None)
+    assert Byid().sight(bench) == []

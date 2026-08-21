@@ -22,9 +22,14 @@ import os
 import threading
 import time
 from collections.abc import Iterable
+from typing import TYPE_CHECKING
 
 from ..errors import BootloaderTimeoutError, OperationCancelled
 from ..paths import REENUMERATE_TIMEOUT, Paths
+
+if TYPE_CHECKING:
+    from ..flashers.spec import Bench
+    from .spec import Sighting
 
 _PREFIX = "usb-"
 
@@ -96,6 +101,42 @@ class BusDevice:
         `add-mcu` leaves behind on success.
         """
         return self.is_klipper or self.is_katapult
+
+
+class Byid:
+    """The by-id scan, as a `discovery.spec.Source`.
+
+    A by-id serial is die-derived - the kernel names it, not an application
+    that has to be running and cooperative to answer - so a match here is
+    `UNIQUE_BUS_ID`, the same strength `discovery.confirm` gives a knomi
+    display that just answered a listen pass. Deferred import of
+    `discovery.spec`: that module imports `.. devices`, which re-exports this
+    module, so importing it at module scope here would be a cycle - the same
+    shape Step 24 already hit and resolved for `dfu_selector`.
+    """
+
+    name = "byid"
+    label = "USB serial by-id"
+    states: tuple[str, ...] = (STATE_KLIPPER, STATE_KATAPULT)
+    #: Reads what udev has already created; opens nothing, so unlike the
+    #: knomi listen pass it never contends with Klipper or the watcher for a
+    #: port.
+    needs_ports_free = False
+
+    def sight(self, bench: Bench) -> list[Sighting]:
+        from .spec import Sighting as _Sighting
+        from .spec import state_for_firmware
+
+        return [
+            _Sighting(
+                id=dev.serial,
+                address=dev.path,
+                state=state_for_firmware(dev.fw),
+                source=self.name,
+                detail={"chipset": dev.chipset, "fw": dev.fw},
+            )
+            for dev in scan(bench.paths)
+        ]
 
 
 def parse_entry(name: str, directory: str) -> BusDevice | None:

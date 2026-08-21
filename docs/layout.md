@@ -2,7 +2,7 @@
 
 Files are split by *what they are*, following the `printer_data` conventions.
 
-```
+```shell
 ~/printer_data/config/mcu-updater/     # hand-edited. backed up. editable in Mainsail.
     mcu-updater.cfg                        #   [updater] settings + one [firmware ...]/[type ...] per board
     types/bttebb36/klipper.config          #   saved menuconfig answers, per type

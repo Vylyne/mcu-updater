@@ -15,6 +15,13 @@ be something to disagree with.
 device arbitrarily when several match, and every display on this printer is an
 indistinguishable CH340 - so an upload without an explicit port writes firmware
 to whichever one answered first. See `upload()`.
+
+The two knomi discovery sources - the broadcast listen pass and the watcher's
+`devices.json` map - moved to `discovery.listen` / `discovery.watcher`.
+`discover`, `read_device_map`, `device_map_path`, `WatcherDevice` and
+`DEVICE_MAP_VERSION` are re-exported here unchanged, the same shim shape
+`devices.py` uses for the three bus sources; new code should import from
+`discovery` directly.
 """
 
 from __future__ import annotations
@@ -26,12 +33,17 @@ import re
 import shutil
 import threading
 import time
-from typing import Any
 
 from .. import firmware, sections
 from ..build import Reporter, null_reporter, run_streamed, sha256_file
 from ..cfgdoc import CfgDocument
-from ..errors import BuildError, ConfigError, FlashError, SourceTreeMissingError, ToolMissingError
+from ..discovery.listen import discover as discover
+from ..discovery.listen import source_dir as _source_dir
+from ..discovery.watcher import DEVICE_MAP_VERSION as DEVICE_MAP_VERSION
+from ..discovery.watcher import WatcherDevice as WatcherDevice
+from ..discovery.watcher import device_map_path as device_map_path
+from ..discovery.watcher import read_device_map as read_device_map
+from ..errors import BuildError, ConfigError, FlashError, ToolMissingError
 from ..paths import Paths
 from ..settings import Settings
 from ..states import (
@@ -162,242 +174,6 @@ def load(paths: Paths) -> dict[str, PioType]:
     return out
 
 
-# --------------------------------------------------------------------------
-# the watcher's device map
-#
-# The one source that answers while Klipper is *down*, which is precisely when
-# flashing needs it: esptool wants the port to itself, so Klipper has to be
-# stopped, and stopping Klipper is what removes the only other source.
-# --------------------------------------------------------------------------
-
-#: The only schema this understands. A file announcing anything else is ignored
-#: rather than guessed at - the format is somebody else's to change, and a
-#: half-understood port is a write to the wrong display.
-DEVICE_MAP_VERSION = 1
-
-
-@dataclasses.dataclass(frozen=True)
-class WatcherDevice:
-    """One display the watcher has identified during its current run."""
-
-    device_id: str
-    port: str
-    firmware_version: str | None = None
-    build_variant: str | None = None
-    #: Does the port still exist? A gone node proves the entry is stale without
-    #: asking systemd anything. The converse does not hold - a port that exists
-    #: may since have become a *different* display, which is the whole reason
-    #: these are keyed by an id burned into the chip rather than by path.
-    present: bool = False
-
-    def to_json(self) -> dict[str, Any]:
-        return {
-            "device_id": self.device_id,
-            "port": self.port,
-            "firmware_version": self.firmware_version,
-            "build_variant": self.build_variant,
-            "present": self.present,
-        }
-
-
-def device_map_path(paths: Paths, display: PioType) -> str:
-    """Where this family's watcher writes its map. Empty if it has none."""
-    configured = display.device_map.strip()
-    if not configured:
-        return ""
-    expanded = os.path.expanduser(configured)
-    if os.path.isabs(expanded):
-        return expanded
-    return os.path.join(paths.printer_data, expanded)
-
-
-def read_device_map(paths: Paths, display: PioType) -> dict[str, WatcherDevice]:
-    """Parse the watcher's id -> port map.
-
-    **This says nothing about whether the file is current.** There are
-    deliberately no timestamps in it: an entry existing means the display was
-    identified during the watcher's current run and its port has not
-    disappeared since - which is only true while the watcher is *running*.
-    Callers must check the service first; nothing here can.
-
-    Unreadable, unparseable, wrong version, or wrong shape all mean an empty
-    map rather than an error. Every one of them is "we cannot tell you where
-    these displays are", and the caller's answer to that is the same in each
-    case.
-    """
-    path = device_map_path(paths, display)
-    if not path:
-        return {}
-
-    try:
-        with open(path, encoding="utf-8") as fh:
-            data = json.load(fh)
-    except (OSError, ValueError):
-        return {}
-    if not isinstance(data, dict) or data.get("version") != DEVICE_MAP_VERSION:
-        return {}
-
-    devices = data.get("devices")
-    if not isinstance(devices, dict):
-        return {}
-
-    out: dict[str, WatcherDevice] = {}
-    for raw_id, entry in devices.items():
-        if not isinstance(entry, dict):
-            continue
-        port = entry.get("port")
-        if not raw_id or not port:
-            # An id with no port names a display we cannot reach, which is the
-            # same as not knowing about it - and a WatcherDevice whose whole
-            # purpose is its port would be a lie.
-            continue
-        # Lowered because ids are compared case-insensitively; the vendor emits
-        # lowercase but their docs say not to depend on it.
-        device_id = str(raw_id).lower()
-        out[device_id] = WatcherDevice(
-            device_id=device_id,
-            port=str(port),
-            firmware_version=entry.get("fw"),
-            build_variant=entry.get("var"),
-            present=os.path.exists(str(port)),
-        )
-    return out
-
-
-# --------------------------------------------------------------------------
-# asking the displays themselves
-# --------------------------------------------------------------------------
-
-#: Interpreters to try, in order. knomi-serial declares `python3-serial` as a
-#: system dependency, so a plain `python3` is the one guaranteed to import
-#: pyserial; ours is tried first only because on most hosts it is the same
-#: binary and saves a process.
-DISCOVER_PYTHON_CANDIDATES = ("python3",)
-
-#: Emitted immediately before the JSON so a stray warning on stdout - a
-#: deprecation notice, a udev grumble - cannot be mistaken for the answer.
-_DISCOVER_MARKER = "__mcu_updater_discover__"
-
-_DISCOVER_SNIPPET = f"""
-import json, os, sys
-sys.path.insert(0, os.path.join(sys.argv[1], "klippy_extras"))
-import knomi_serial as k
-kwargs = {{}} if sys.argv[2] == "-" else {{"listen": float(sys.argv[2])}}
-found = k.discover_reports(**kwargs)
-# Only the three fields we use, so whatever else a report carries cannot make
-# this unserialisable.
-out = {{
-    str(i): {{"port": f.get("port"), "fw": f.get("fw"), "var": f.get("var")}}
-    for i, f in found.items()
-}}
-print("{_DISCOVER_MARKER}" + json.dumps(out))
-"""
-
-
-def discover(
-    paths: Paths,
-    settings: Settings,
-    display: PioType,
-    *,
-    listen: float | None = None,
-    reporter: Reporter = null_reporter,
-) -> dict[str, WatcherDevice]:
-    """Ask every display which it is, by listening on the free ports.
-
-    The authoritative source, and the only one that can be taken **at flash
-    time**. Each display broadcasts its id every couple of seconds unprompted,
-    so this opens the candidate ports, listens, and reads what answered - no
-    request, no protocol of its own, and no cooperation from a device that
-    might be busy.
-
-    That timing is the point. The Klipper query and the watcher's map are both
-    read before the ports are released, so both describe where displays *were*;
-    this describes where they are with esptool about to write. Their own docs
-    are explicit that identity must be resolved at flash time rather than from
-    a remembered path, and a remembered path is what every other source is.
-
-    **Requires the ports to be free.** pyserial's exclusive open is an advisory
-    flock that Klipper's sections, the watcher and esptool all take, so this has
-    to run after both are stopped. A port somebody still holds is reported as
-    busy rather than guessed at, which means it is simply absent here.
-
-    A display announces itself every two seconds, so one is usually heard in
-    about one. The six-second default is headroom rather than latency, and it
-    covers every port at once instead of each in turn. Left at their default:
-    listening too briefly does not flash the wrong screen, it *misses* one, and
-    a screen silently skipped is a worse answer than six seconds.
-    """
-    source = _source_dir(display)
-    argv_listen = "-" if listen is None else str(listen)
-
-    last: str | None = None
-    for candidate in DISCOVER_PYTHON_CANDIDATES:
-        found = shutil.which(candidate)
-        if not found:
-            last = f"{candidate} is not on PATH"
-            continue
-
-        transcript: list[str] = []
-
-        def capture(stream: str, line: str, _t: list = transcript) -> None:
-            _t.append(line)
-            reporter(stream, line)
-
-        reporter("info", f"Listening for displays on the free ports ({source})...")
-        rc = run_streamed(
-            [found, "-c", _DISCOVER_SNIPPET, source, argv_listen],
-            cwd=source,
-            reporter=capture,
-            dry_run=False,
-        )
-        text = "\n".join(transcript)
-        if rc == 0:
-            for line in transcript:
-                if line.startswith(_DISCOVER_MARKER):
-                    return _parse_discovered(line[len(_DISCOVER_MARKER) :])
-            last = "the discovery helper printed no result"
-        elif "No module named 'serial'" in text or "No module named serial" in text:
-            last = f"{candidate} cannot import pyserial"
-        else:
-            last = f"{candidate} exited {rc}"
-
-    raise ToolMissingError(
-        f"could not ask the displays which they are: {last}. That needs pyserial "
-        f"and the knomi-serial tree at {source} - on Debian, "
-        f"'sudo apt install python3-serial'.",
-        tool="discover",
-        path=source,
-    )
-
-
-def _parse_discovered(payload: str) -> dict[str, WatcherDevice]:
-    try:
-        data = json.loads(payload)
-    except ValueError:
-        return {}
-    if not isinstance(data, dict):
-        return {}
-
-    out: dict[str, WatcherDevice] = {}
-    for raw_id, entry in data.items():
-        if not isinstance(entry, dict):
-            continue
-        port = entry.get("port")
-        if not raw_id or not port:
-            continue
-        device_id = str(raw_id).lower()
-        out[device_id] = WatcherDevice(
-            device_id=device_id,
-            port=str(port),
-            firmware_version=entry.get("fw"),
-            build_variant=entry.get("var"),
-            # It answered. That is what present means, and here it is not a
-            # guess from a stat - the display spoke.
-            present=True,
-        )
-    return out
-
-
 def find_pio(settings: Settings) -> str:
     """The PlatformIO launcher, or a clear error naming what to install."""
     configured = settings.platformio_bin
@@ -411,23 +187,6 @@ def find_pio(settings: Settings) -> str:
         "~/.platformio/penv/bin/pio",
         tool="pio",
     )
-
-
-def _source_dir(display: PioType) -> str:
-    path = os.path.expanduser(display.source)
-    if not path:
-        raise ConfigError(
-            f"'{display.name}' has no source tree configured. Set 'source:' on its "
-            f"firmware family.",
-            type=display.name,
-        )
-    if not os.path.isdir(path):
-        raise SourceTreeMissingError(
-            f"source directory {path} not found for '{display.name}'.",
-            fw=display.env,
-            path=path,
-        )
-    return path
 
 
 # --------------------------------------------------------------------------

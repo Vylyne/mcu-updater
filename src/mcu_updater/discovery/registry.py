@@ -5,10 +5,10 @@ This process holds the exclusive lock and writes firmware to boards; importing
 whatever `.py` landed in a directory is privilege escalation, not a plugin
 system. The tuple is the seam.
 
-Empty for now. The three bus sources (`devices.py`'s by-id scan, DFU query and
-BOOTSEL mount) and the two knomi sources (`providers/pio.py`'s listen pass and
-watcher map) move behind `discovery.spec.Source` in later steps; nothing is
-registered until they do.
+Empty for now. The three bus sources (`byid.py`, `dfu.py`, `bootsel.py`) and
+the two knomi sources (`listen.py`, `watcher.py`) all now live in this
+package, but none of them implement `discovery.spec.Source` yet - that wiring,
+and `SOURCES` actually gaining entries, is a later step.
 """
 
 from __future__ import annotations

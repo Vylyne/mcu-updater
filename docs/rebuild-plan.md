@@ -847,7 +847,7 @@ process:    Fourth review running where a step was declined, redesigned or
             panel that currently corrupts a type on save.
 
 ### Step 18 — narrow the phantom `FwConfig` slots            [done]
-commit:     (pending)
+commit:     726f31c
 gate:       pytest 1155 passed/0 failed/10 skipped (unchanged) · ruff ok ·
             mypy ok (49 files) · line-endings ok · no mutation spec targets
             the changed lines (checked `application-firmware.json` and

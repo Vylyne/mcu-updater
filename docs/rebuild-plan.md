@@ -88,7 +88,7 @@ Violating any of these produces a bug that tests will not catch.
 |---|---|
 | **LF line endings everywhere**, repo and working tree | Ships to a Linux printer; a `\r` in a shebang becomes `bad interpreter: python3^M`. `.gitattributes` pins it. Run `python scripts/check_line_endings.py` before every commit. |
 | **stdlib only** — never add a dependency | `pyproject.toml` `dependencies = []` is deliberate. The agent talks to Moonraker over a unix socket with nothing but stdlib. |
-| **Python 3.9 is the floor** | Raspberry Pi OS. No `match`, no `X \| Y` at runtime, keep `from __future__ import annotations`. `UP007`/`UP045` are ruff-ignored on purpose — leave `Optional[X]` alone. |
+| **Python 3.11 is the floor** | Bumped from 3.9 on 2026-08-21; both printers run Trixie's 3.13. `X \| Y` and `match` are fine now, and annotations are PEP 604 throughout — do not reintroduce `Optional[X]`, ruff will reject it. **Keep `from __future__ import annotations`**: it is still load-bearing, because `config.py` returns `MakefilePatch \| None` from a method inside that class and the name is unbound at def time without it. |
 | **Never pip-install kconfiglib** | Klipper and Katapult each vendor their own *locally patched* copy. Their sentinels (`MENU`, `BOOL`) are different objects across trees; cross-comparing silently yields `False`. Always load from the tree being configured. |
 | **`posix_only` tests silently skip on Windows** | Every flock/signal/`/proc` assertion. A green Windows run proves nothing about locking. CI runs Linux too — trust that. |
 | **Use `scripts/mutation_test.py`, never a throwaway** | An inline mutation script once stranded a sabotaged guard on disk. `tests/test_mutation_helper.py` exists because of it. |
@@ -458,7 +458,7 @@ needs a sync. See `NOTES.md`, 2026-08-19.
 
 ## Verification
 
-**Per step:** the `GATE` block above. CI additionally runs Python 3.9 (the Pi
+**Per step:** the `GATE` block above. CI additionally runs Python 3.11 (the
 floor) and Windows.
 
 **Guard-level**, per the project's own rule (README, "Checking that a guard is

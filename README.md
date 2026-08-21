@@ -9,8 +9,10 @@ and flashes every board — so "Klipper updated, now reflash six toolheads" is o
 command instead of an afternoon. Driven from the CLI or from the [web
 UI](#web-ui) shown above.
 
-Linux only (it needs `/dev/serial/by-id`, systemd and `sudo`). Python 3.9+,
-standard library only — no pip dependencies, no virtualenv.
+Linux only (it needs `/dev/serial/by-id`, systemd and `sudo`). Python 3.11+,
+standard library only — no pip dependencies, and deliberately **no virtualenv**:
+it runs under the system `python3` so that katapult's `flashtool.py`, which is
+invoked with `sys.executable`, can import apt's `python3-serial`.
 
 ## Contents
 

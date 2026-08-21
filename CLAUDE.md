@@ -9,6 +9,13 @@ Project background: [docs/agent-api.md](docs/agent-api.md) (the Moonraker
 agent's JSON-RPC contract) and [docs/mainsail-fork.md](docs/mainsail-fork.md)
 (how the Mainsail panel fork stays small and rebaseable).
 
+[docs/decisions.md](docs/decisions.md) records the standing "this looks like a
+gap and is not" decisions — CAN, the katapult deployer, plugin auto-discovery,
+the cancellation boundary, the names that must not be renamed. **Read it before
+proposing anything it covers**, and before undoing something that looks
+half-finished. The ground-rules table below is what to check *before every
+commit*; that file is what to check *before starting work*.
+
 `docs/backlog.md` exists — unscheduled work and upstream issues. **Do not read
 it unless I name it.** It is deliberately outside default context; nothing in it
 is live.
@@ -67,13 +74,13 @@ directly — activating in one call and running the gate in the next silently
 gets the system interpreter back. Without a floor venv, CI's 3.11 matrix leg is
 the only thing checking this.
 
-## Extending providers or flashers
+## Extending providers, flashers or discovery sources
 
 No plugin auto-discovery (`pkgutil`, entry points) — this process holds the
 exclusive lock, writes firmware, and has NOPASSWD `systemctl` for Klipper, so
 importing whatever `.py` landed in a directory is privilege escalation. The
 extension point is deliberately manual: **one module + one line in the
-registry tuple.**
+registry tuple.** See [docs/decisions.md](docs/decisions.md).
 
 ## Commit voice
 

@@ -27,6 +27,7 @@ invoked with `sys.executable`, can import apt's `python3-serial`.
   - [ESP32 displays](#esp32-displays)
 - [Layout](#layout)
 - [Development](#development)
+  - [The release gate](#the-release-gate)
   - [Checking that a guard is load-bearing](#checking-that-a-guard-is-load-bearing)
   - [Line endings](#line-endings)
 
@@ -41,7 +42,8 @@ Flashing:
 - [x] `flashtool.py` — Katapult over USB, STM32 and RP2040
 - [x] `dfu-util` — bare STM32, first bootloader install
 - [x] `esptool` — ESP32, via PlatformIO
-- [x] RP2040 BOOTSEL — copy a `.uf2` to the mounted volume
+- [ ] RP2040 BOOTSEL — copy a `.uf2` to the mounted volume (written, never run
+      against a real board)
 - [ ] CAN — `flashtool.py -i <iface> -u <uuid>`
 - [ ] Katapult deployer — replaces a bootloader; no software recovery if wrong
 
@@ -53,6 +55,8 @@ Firmware and boards:
 - [x] Vendor profile seeding, custom profiles, drift detection
 - [x] Flash-time bootloader offset check
 - [x] Board tracking by `/dev/serial/by-id` serial
+- [x] Displays re-identified at flash time, once the ports are free
+- [x] Discovery surface — one vocabulary for where a device is and how sure we are
 - [ ] CAN device discovery (needs `canbus_uuid` from printer.cfg)
 
 Interfaces:
@@ -66,17 +70,37 @@ Interfaces:
 
 ## TODO
 
-- Finish the schema-first rebuild tracked in
-  [docs/rebuild-plan.md](docs/rebuild-plan.md) — config vocabulary, the
-  Cartographer flash-path bugs, the flash-time bootloader offset check, and the
-  legacy-key purge it drives.
-- Decide stable-or-beta for the Mainsail fork before tagging: it sits three
-  commits past `v2.18.4-vylyne.14`, which was never promoted to stable, so the
-  existing Flash All / Build All fixes haven't reached anyone's update manager.
-- Generalise `needs_klipper_stopped` into a per-type "services to stop" list —
-  deferred until it can land together with that list, not as a bare rename.
-- Reproduce and fix the flaky teardown `RuntimeError` in
+The schema-first rebuild is done — 28 steps, retired 2026-08-21. See
+[docs/rebuild-plan.md](docs/rebuild-plan.md) for the step-to-commit index, and
+[docs/decisions.md](docs/decisions.md) for the standing decisions that came out
+of it. What is still open:
+
+- **Finish the on-printer checks** below. The Cartographer flash path is
+  confirmed on hardware; `updatefw status`, `update-all`, and flashing from the
+  Mainsail panel rather than the CLI are not.
+- **Run the RP2040 BOOTSEL flasher against a real board.** It is written and
+  covered off-hardware, but nothing has verified that an RP2040 automounts as
+  `RPI-RP2` under either glob `bootsel_scan()` searches, or that a plain
+  `shutil.copy2` onto that mount is enough without a sync. Try
+  `mcu-updater add-mcu <rp2040-type>`. Bench board only.
+- **Promote `v2.18.4-vylyne.20`** on `Vylyne/mainsail` `mu/stable` once it has
+  soaked. It is published as a prerelease (beta channel) and carries the
+  `fw.display.*` wire-fold migration, the type-dialog fix, and the
+  `FW_SUPPORTED_API_VERSION` bump. Promote by editing the existing release — do
+  not re-run the release workflow with `stable: true`, which rebuilds the tree.
+- **Close the `.vue` type-checking gap** in the Mainsail fork. Blocked on a
+  structural `vue-tsc` incompatibility, not a version pin — read
+  [docs/decisions.md](docs/decisions.md) before attempting it, and treat
+  `npx vite build` as proving nothing about `.vue` script blocks meanwhile.
+- **Generalise `needs_klipper_stopped`** into a per-type "services to stop"
+  list — deferred until it can land together with that list, not as a bare
+  rename.
+- **Reproduce and fix the flaky teardown `RuntimeError`** in
   `test_an_unknown_inbound_method_gets_an_error_not_silence`.
+- **Revisit whether the API still needs an MCU/display distinction at all.**
+  Unscoped. Raised while putting `confidence` on the wire, where a display
+  device carries a literal `null` because the `Confidence` its flash already
+  computes is discarded before `esptool.port_for` returns.
 
 ## Requirements
 
@@ -462,6 +486,38 @@ every board as stale after you pull Klipper, and a stray `touch` doesn't lie.
 pip install -e ".[dev]"
 pytest -q
 ruff check src tests scripts
+```
+
+### The release gate
+
+The suite, `ruff`, `mypy` and `check_line_endings.py` are necessary and not
+sufficient — three of the bugs the schema-first rebuild fixed were invisible to
+985 passing tests. Before calling a release good, run these **on the printer**,
+in order. The dev box cannot test what matters here.
+
+1. `updatefw status` — every type resolves; nothing reads as unmanaged.
+2. `updatefw build <type>`. Then confirm the offsets agree *before* any write:
+   the application's `FLASH_APPLICATION_ADDRESS` against the
+   `Application Start:` the handshake reports.
+3. `updatefw flash <serial>`, then `fw.flash` from the Mainsail panel — both
+   paths, because they select a flasher differently.
+4. `updatefw update-all --dry-run`, then for real.
+5. **Klipper is running and ready after every one of these.**
+
+> ⚠️ **Bench board only.** Never the toolhead. Recovery from a bad flash there
+> is a DFU hunt inside the hotend assembly, and a firmware write must never be
+> interrupted — cancellation is checked *between* targets, never inside one, so
+> half an image is a brick.
+
+`pytest` is also the one gate that lies about the Python floor: a too-new
+stdlib API passes on a newer interpreter and fails on the printer.
+`Path.write_text(newline=)` is 3.10+ and reached CI exactly that way. Run the
+suite on a floor interpreter when there is one — and chain the activation into
+the same command, because shell state does not survive between agent tool
+calls:
+
+```bash
+uv venv --python 3.11 && source .venv/Scripts/activate && pytest -q
 ```
 
 ### Checking that a guard is load-bearing

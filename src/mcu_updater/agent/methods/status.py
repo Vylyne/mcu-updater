@@ -8,7 +8,7 @@ import platform
 import re
 import time
 from collections.abc import Callable
-from typing import Any, Optional
+from typing import Any
 
 from ... import API_VERSION, __version__, firmware, profiles, providers
 from ...build import read_sidecar
@@ -46,14 +46,14 @@ from ._api import _Base
 PROBE_TIMEOUT = 1.5
 
 
-def _mtime(path: str) -> Optional[float]:
+def _mtime(path: str) -> float | None:
     try:
         return os.path.getmtime(path)
     except OSError:
         return None
 
 
-def _size(path: str) -> Optional[int]:
+def _size(path: str) -> int | None:
     try:
         return os.path.getsize(path)
     except OSError:
@@ -69,12 +69,12 @@ _FW_SHA_RE = re.compile(r"(?:^|-)g([0-9a-f]{7,40})(?:-|$)")
 MCU_NAMES_TTL = 60.0
 
 
-def _running_sha(version: str) -> Optional[str]:
+def _running_sha(version: str) -> str | None:
     match = _FW_SHA_RE.search(version or "")
     return match.group(1) if match else None
 
 
-def _serial_from_path(path: str) -> Optional[str]:
+def _serial_from_path(path: str) -> str | None:
     """The serial component of a /dev/serial/by-id path.
 
     Reuses the bus parser rather than string-slicing, so the two cannot disagree
@@ -84,7 +84,7 @@ def _serial_from_path(path: str) -> Optional[str]:
     return parsed.serial if parsed is not None else None
 
 
-def serialize_device(dev: BusDevice, tracked_by: Optional[str] = None) -> dict[str, Any]:
+def serialize_device(dev: BusDevice, tracked_by: str | None = None) -> dict[str, Any]:
     return {
         "fw": dev.fw,
         "chipset": dev.chipset,
@@ -107,10 +107,10 @@ class StatusMixin(_Base):
         self,
         paths: Paths,
         *,
-        call: Optional[Callable[[str, Any, float], Any]] = None,
-        runner: Optional[Any] = None,
+        call: Callable[[str, Any, float], Any] | None = None,
+        runner: Any | None = None,
         logger: Any = None,
-        on_change: Optional[Callable[[], None]] = None,
+        on_change: Callable[[], None] | None = None,
     ) -> None:
         self.paths = paths
         # Called after a mutation so every connected client re-syncs. Injected
@@ -125,9 +125,9 @@ class StatusMixin(_Base):
         self._log = logger
         # Created on first kconfig call; an agent that never opens one pays
         # neither the import nor the memory.
-        self._kconfig_sessions: Optional[Any] = None
+        self._kconfig_sessions: Any | None = None
         # Cached printer-object names; see _all_object_names.
-        self._object_names: Optional[list[str]] = None
+        self._object_names: list[str] | None = None
         self._object_names_at = 0.0
 
     # -- helpers -----------------------------------------------------------
@@ -202,14 +202,14 @@ class StatusMixin(_Base):
         except Exception:  # noqa: BLE001 - enrichment only, never fatal
             return None
 
-    def klipper_service_state(self) -> Optional[str]:
+    def klipper_service_state(self) -> str | None:
         info = self._probe("machine.system_info")
         try:
             return info["system_info"]["service_state"]["klipper"]["active_state"]
         except (TypeError, KeyError):
             return None
 
-    def is_printing(self, activity: Optional[dict] = None) -> Optional[bool]:
+    def is_printing(self, activity: dict | None = None) -> bool | None:
         state = (activity or self._printer_activity()).get("print_state")
         if state is None:
             return None
@@ -267,7 +267,7 @@ class StatusMixin(_Base):
         self,
         reg: Registry,
         name: str,
-        versions: Optional[dict[str, dict[str, str]]] = None,
+        versions: dict[str, dict[str, str]] | None = None,
     ) -> dict[str, Any]:
         """One type's state, including what each of its boards is *running*.
 
@@ -562,7 +562,7 @@ class StatusMixin(_Base):
         }
 
     @staticmethod
-    def _aggregate(devices: list[dict[str, Any]]) -> Optional[bool]:
+    def _aggregate(devices: list[dict[str, Any]]) -> bool | None:
         """True if any device wants firmware, False if all provably don't, else None.
 
         The tri-state matters: `any()` reads None as falsey, so a type whose
@@ -959,7 +959,7 @@ class StatusMixin(_Base):
         has_artifact: bool,
         what: str,
         label: str,
-        extra: Optional[list[dict[str, Any]]] = None,
+        extra: list[dict[str, Any]] | None = None,
     ) -> list[dict[str, Any]]:
         """What can be done to one device.
 
@@ -1006,7 +1006,7 @@ class StatusMixin(_Base):
         flashable: list[dict[str, Any]],
         what: str,
         flash_method: str = "fw.flash_all",
-        update_method: Optional[str] = "fw.update_all",
+        update_method: str | None = "fw.update_all",
     ) -> list[dict[str, Any]]:
         """Flash, and build-then-flash, with the same reason for refusing both.
 
@@ -1067,7 +1067,7 @@ class StatusMixin(_Base):
             )
         return out
 
-    def lock_holder(self) -> Optional[dict[str, Any]]:
+    def lock_holder(self) -> dict[str, Any] | None:
         from ...lock import ExclusiveLock
 
         return ExclusiveLock(self.paths).holder()
@@ -1122,7 +1122,7 @@ class StatusMixin(_Base):
         else:
             self._log.debug(line)
 
-    def _printer_activity(self) -> dict[str, Optional[str]]:
+    def _printer_activity(self) -> dict[str, str | None]:
         """Both states that mean "don't touch the printer right now".
 
         print_stats.state only knows about virtual_sdcard print jobs, so it stays
@@ -1139,10 +1139,10 @@ class StatusMixin(_Base):
             "idle_state": (status.get("idle_timeout") or {}).get("state"),
         }
 
-    def _print_state(self) -> Optional[str]:
+    def _print_state(self) -> str | None:
         return self._printer_activity().get("print_state")
 
-    def _klippy_state(self) -> tuple[Optional[str], str]:
+    def _klippy_state(self) -> tuple[str | None, str]:
         info = self._probe("printer.info")
         if not isinstance(info, dict):
             return None, ""
@@ -1159,9 +1159,9 @@ class StatusMixin(_Base):
         self,
         reporter: Any,
         *,
-        timeout: Optional[float] = None,
-        after_restart: Optional[float] = None,
-    ) -> Optional[str]:
+        timeout: float | None = None,
+        after_restart: float | None = None,
+    ) -> str | None:
         """Wait for klipper to actually be usable, restarting firmware if needed.
 
         `systemctl is-active klipper` going green is **not** the same as klipper
@@ -1207,7 +1207,7 @@ class StatusMixin(_Base):
             )
         return state
 
-    def _poll_klippy(self, timeout: float) -> Optional[str]:
+    def _poll_klippy(self, timeout: float) -> str | None:
         deadline = time.monotonic() + timeout
         state = None
         while time.monotonic() < deadline:
@@ -1706,11 +1706,11 @@ class StatusMixin(_Base):
         self,
         serial: str,
         info: dict[str, dict[str, str]],
-        fw_head: Optional[str],
+        fw_head: str | None,
         *,
-        state: Optional[str] = None,
-        artifact_sha: Optional[str] = None,
-        flashlog: Optional[Any] = None,
+        state: str | None = None,
+        artifact_sha: str | None = None,
+        flashlog: Any | None = None,
     ) -> dict[str, Any]:
         """Whether this board wants flashing, and why.
 
@@ -1758,13 +1758,13 @@ class StatusMixin(_Base):
     @staticmethod
     def _device_status(
         serial: str,
-        version: Optional[str],
-        running: Optional[str],
-        fw_head: Optional[str],
+        version: str | None,
+        running: str | None,
+        fw_head: str | None,
         *,
-        state: Optional[str],
-        artifact_sha: Optional[str],
-        flashlog: Optional[Any],
+        state: str | None,
+        artifact_sha: str | None,
+        flashlog: Any | None,
     ) -> DeviceStatus:
         """The verdict behind `flash_state`, in the shared vocabulary."""
         if state == STATE_OFFLINE:

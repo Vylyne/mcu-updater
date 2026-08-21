@@ -22,7 +22,6 @@ from __future__ import annotations
 
 import os
 import threading
-from typing import Optional
 
 from ..build import Reporter
 from ..states import ArtifactStatus
@@ -30,7 +29,7 @@ from . import pio as pio_mod
 from .spec import BuildTarget, Install
 
 
-def source_problem(target: pio_mod.PioType) -> Optional[str]:
+def source_problem(target: pio_mod.PioType) -> str | None:
     """Why this type cannot be built, or None if it can be attempted.
 
     A module function so the status payload can ask the same question without
@@ -65,7 +64,7 @@ class PlatformIO:
             for name, display in install.displays.items()
         ]
 
-    def blocked(self, install: Install, target: BuildTarget) -> Optional[str]:
+    def blocked(self, install: Install, target: BuildTarget) -> str | None:
         """Is there a tree to build in?
 
         The counterpart of "has this been through menuconfig": the one thing
@@ -91,7 +90,7 @@ class PlatformIO:
         target: BuildTarget,
         *,
         reporter: Reporter,
-        cancel: Optional[threading.Event] = None,
+        cancel: threading.Event | None = None,
     ) -> None:
         pio_mod.build(
             install.paths,

@@ -73,7 +73,7 @@ import os
 import tempfile
 import time
 from collections.abc import Callable, Iterable, Sequence
-from typing import Any, Optional
+from typing import Any
 
 from . import firmware
 from .errors import (
@@ -157,13 +157,13 @@ class Seed:
     #: Custom only: the profile this was forked from, if it was forked from one.
     #: What lets a UI say "yours, forked from CartoV4USB" - and what makes going
     #: back a named button rather than a `force` flag.
-    parent: Optional[str] = None
+    parent: str | None = None
     #: Custom only: what `parent` answered at the moment of the fork, so
     #: :func:`overrides` compares two minimal lists rather than a minimal one
     #: against a hand-maintained file. A tuple because this is frozen.
     base: tuple[str, ...] = ()
 
-    def to_json(self) -> dict[str, Optional[str]]:
+    def to_json(self) -> dict[str, str | None]:
         return {
             "name": self.name,
             "fw": self.fw,
@@ -202,9 +202,9 @@ def valid_seed_name(name: str) -> str:
 def available(
     paths: Paths,
     fw: str,
-    families: Optional[dict[str, firmware.FirmwareFamily]] = None,
+    families: dict[str, firmware.FirmwareFamily] | None = None,
     *,
-    mcu_type: Optional[str] = None,
+    mcu_type: str | None = None,
 ) -> list[Seed]:
     """Every profile a type could be seeded from: the tree's, and its own.
 
@@ -239,9 +239,9 @@ def find(
     paths: Paths,
     fw: str,
     name: str,
-    families: Optional[dict[str, firmware.FirmwareFamily]] = None,
+    families: dict[str, firmware.FirmwareFamily] | None = None,
     *,
-    mcu_type: Optional[str] = None,
+    mcu_type: str | None = None,
 ) -> Seed:
     """Locate one profile, naming the real alternatives when it isn't there."""
     wanted = valid_seed_name(name)
@@ -269,7 +269,7 @@ def find(
 # --------------------------------------------------------------------------
 
 
-def read_custom(paths: Paths, mcu_type: str, fw: str) -> Optional[Seed]:
+def read_custom(paths: Paths, mcu_type: str, fw: str) -> Seed | None:
     """This type's own saved answers for `fw`, if it has any.
 
     None rather than an exception for every way of not having one - never
@@ -290,14 +290,14 @@ def read_custom(paths: Paths, mcu_type: str, fw: str) -> Optional[Seed]:
     )
 
 
-def _read_header(path: str) -> tuple[Optional[str], tuple[str, ...]]:
+def _read_header(path: str) -> tuple[str | None, tuple[str, ...]]:
     """The ``# forked-from:`` and ``# base:`` lines a capture wrote.
 
     Stops at the first answer line: the header is a header, and scanning a whole
     file for tags that belong at the top invites finding one in a comment
     somebody pasted in.
     """
-    parent: Optional[str] = None
+    parent: str | None = None
     base: list[str] = []
     try:
         with open(path, encoding="utf-8") as fh:
@@ -321,9 +321,9 @@ def capture_custom(
     mcu_type: str,
     fw: str,
     *,
-    answers: Optional[list[str]] = None,
-    parent: Optional[str] = None,
-    families: Optional[dict[str, firmware.FirmwareFamily]] = None,
+    answers: list[str] | None = None,
+    parent: str | None = None,
+    families: dict[str, firmware.FirmwareFamily] | None = None,
 ) -> Seed:
     """Save what this type currently answers as a profile of its own.
 
@@ -385,8 +385,8 @@ def capture_custom(
 
 
 def _forked_from(
-    paths: Paths, mcu_type: str, fw: str, parent: Optional[str]
-) -> tuple[Optional[str], tuple[str, ...]]:
+    paths: Paths, mcu_type: str, fw: str, parent: str | None
+) -> tuple[str | None, tuple[str, ...]]:
     """Which profile a capture should say it came from, and what that answered.
 
     A recapture while already on the custom profile keeps the *original* fork
@@ -436,10 +436,10 @@ class SeedResult:
     #: The minimal answers, as ``CONFIG_X=y`` lines. What a UI should show.
     answers: list[str]
     #: sha256 of the seed file we read, so a vendor bump is detectable.
-    source_sha256: Optional[str] = None
+    source_sha256: str | None = None
     #: sha256 of the .config we wrote, so a later hand-edit is detectable.
-    config_sha256: Optional[str] = None
-    backup: Optional[str] = None
+    config_sha256: str | None = None
+    backup: str | None = None
     #: Derivation only: answers carried from the application's config, and
     #: those the bootloader tree does not define. Empty for a plain seed.
     carried: list[str] = dataclasses.field(default_factory=list)
@@ -448,12 +448,12 @@ class SeedResult:
     #: this type's own profile. Reported rather than silent: "your edits are at
     #: config.custom" is the difference between a `force` a user can undo and one
     #: they only find out about afterwards.
-    kept: Optional[str] = None
+    kept: str | None = None
     #: Derivation only: the two addresses that were compared, once they agreed.
     #: An int, because `_address` parses the hex and compares numerically -
     #: 0x8002000 and 0x08002000 are the same address and two trees need not
     #: spell it the same way.
-    app_address: Optional[int] = None
+    app_address: int | None = None
 
     def to_record(self) -> dict[str, Any]:
         return {
@@ -487,7 +487,7 @@ def apply_seed(
     fw: str,
     name: str,
     *,
-    families: Optional[dict[str, firmware.FirmwareFamily]] = None,
+    families: dict[str, firmware.FirmwareFamily] | None = None,
     force: bool = False,
 ) -> SeedResult:
     """Write this type's answers for `fw` from the tree's own seed file.
@@ -541,8 +541,8 @@ def _keep_current_answers(
     paths: Paths,
     mcu_type: str,
     fw: str,
-    families: Optional[dict[str, firmware.FirmwareFamily]],
-) -> Optional[Seed]:
+    families: dict[str, firmware.FirmwareFamily] | None,
+) -> Seed | None:
     """Capture answers about to be lost, if there are any that are not ours.
 
     Only for a ``customised`` config. One that still matches its record holds
@@ -564,7 +564,7 @@ def derive_bootloader(
     app_fw: str,
     boot_fw: str = "katapult",
     *,
-    families: Optional[dict[str, firmware.FirmwareFamily]] = None,
+    families: dict[str, firmware.FirmwareFamily] | None = None,
     force: bool = False,
 ) -> SeedResult:
     """Write the bootloader's answers from the application's, and check them.
@@ -639,9 +639,9 @@ def reseed_if_moved(
     mcu_type: str,
     fw: str,
     *,
-    families: Optional[dict[str, firmware.FirmwareFamily]] = None,
-    log: Optional[Callable[[str], None]] = None,
-) -> Optional[str]:
+    families: dict[str, firmware.FirmwareFamily] | None = None,
+    log: Callable[[str], None] | None = None,
+) -> str | None:
     """Take the vendor's updated answers, if that is all that has changed.
 
     Called from :func:`mcu_updater.build.build`, so every way of starting a
@@ -683,8 +683,8 @@ def _check_addresses(
     mcu_type: str,
     app_fw: str,
     boot_fw: str,
-    app_address: Optional[int],
-    launch: Optional[int],
+    app_address: int | None,
+    launch: int | None,
 ) -> None:
     """Refuse a pair that would build cleanly and not boot.
 
@@ -736,7 +736,7 @@ def _load_answers(fw_dir: str, lines: list[str]) -> tuple[Any, Any]:
 # --------------------------------------------------------------------------
 
 
-def parse_answer(line: str) -> Optional[tuple[str, str]]:
+def parse_answer(line: str) -> tuple[str, str] | None:
     """``CONFIG_X=y`` or ``# CONFIG_X is not set`` -> ``("X", "y" | "n")``.
 
     The ``is not set`` form matters: a minimal config uses it for a bool whose
@@ -776,7 +776,7 @@ def answer_map(lines: Iterable[str]) -> dict[str, str]:
     return out
 
 
-def distinguishing(seeds: Sequence[Seed]) -> dict[str, list[dict[str, Optional[str]]]]:
+def distinguishing(seeds: Sequence[Seed]) -> dict[str, list[dict[str, str | None]]]:
     """Per profile, the answers that set it apart from the others offered.
 
     ``config.CartoV4USB`` and ``config.CartoV4CAN`` differ by one answer out of
@@ -817,7 +817,7 @@ def distinguishing(seeds: Sequence[Seed]) -> dict[str, list[dict[str, Optional[s
     }
 
 
-def _answer_line(symbol: str, value: Optional[str]) -> str:
+def _answer_line(symbol: str, value: str | None) -> str:
     if value is None:
         return f"# CONFIG_{symbol} unanswered"
     if value == "n":
@@ -829,8 +829,8 @@ def overrides(
     paths: Paths,
     mcu_type: str,
     fw: str,
-    families: Optional[dict[str, firmware.FirmwareFamily]] = None,
-) -> list[dict[str, Optional[str]]]:
+    families: dict[str, firmware.FirmwareFamily] | None = None,
+) -> list[dict[str, str | None]]:
     """What this type's own profile changed, against the one it forked from.
 
     The question a customised target actually raises - "fine, but what did I
@@ -917,7 +917,7 @@ def _refused(module: Any, kconf: Any, carried: list[str]) -> list[str]:
     return out
 
 
-def _address(kconf: Any, name: str) -> Optional[int]:
+def _address(kconf: Any, name: str) -> int | None:
     """A hex symbol's value as an int, or None if this tree has no such symbol.
 
     Compared numerically rather than as text on purpose: ``0x8002000`` and
@@ -941,7 +941,7 @@ def _address(kconf: Any, name: str) -> Optional[int]:
 # --------------------------------------------------------------------------
 
 
-def _sha256(path: str) -> Optional[str]:
+def _sha256(path: str) -> str | None:
     from .build import sha256_file
 
     return sha256_file(path)
@@ -961,7 +961,7 @@ def write_record(paths: Paths, mcu_type: str, fw: str, result: SeedResult) -> No
         pass
 
 
-def read_record(paths: Paths, mcu_type: str, fw: str) -> Optional[dict[str, Any]]:
+def read_record(paths: Paths, mcu_type: str, fw: str) -> dict[str, Any] | None:
     try:
         with open(paths.profile_file(mcu_type, fw), encoding="utf-8") as fh:
             data = json.load(fh)
@@ -998,7 +998,7 @@ SEED_MOVED = "seed_moved"
 #: :func:`capture_custom` gives them a home, being on your own profile is a
 #: destination rather than drift, and painting it amber would nag at the one
 #: state a user deliberately chose.
-_PROFILE_TONE: dict[Optional[str], str] = {
+_PROFILE_TONE: dict[str | None, str] = {
     None: TONE_OK,
     UNMANAGED: TONE_OK,
     CUSTOMISED: TONE_OK,
@@ -1007,7 +1007,7 @@ _PROFILE_TONE: dict[Optional[str], str] = {
 
 PROFILE_REASONS = tuple(r for r in _PROFILE_TONE if r is not None)
 
-_PROFILE_LABEL: dict[Optional[str], str] = {
+_PROFILE_LABEL: dict[str | None, str] = {
     None: "Matches profile",
     UNMANAGED: "Not profile-managed",
     CUSTOMISED: "Your own answers",
@@ -1024,12 +1024,12 @@ _CUSTOM_LABEL = "Your own profile"
 class ProfileStatus:
     """Whether a saved .config still says what its profile said."""
 
-    reason: Optional[str] = None
-    profile: Optional[str] = None
+    reason: str | None = None
+    profile: str | None = None
     #: Only for a type tracking :data:`CUSTOM_PROFILE`: what that was forked
     #: from. Elsewhere `profile` already names the fork point, because a
     #: customised config's record still names the vendor seed it drifted from.
-    parent: Optional[str] = None
+    parent: str | None = None
 
     def __post_init__(self) -> None:
         if self.reason not in _PROFILE_TONE:
@@ -1073,9 +1073,9 @@ def status(
     paths: Paths,
     mcu_type: str,
     fw: str,
-    families: Optional[dict[str, firmware.FirmwareFamily]] = None,
+    families: dict[str, firmware.FirmwareFamily] | None = None,
     *,
-    config_sha: Optional[str] = None,
+    config_sha: str | None = None,
 ) -> ProfileStatus:
     """Does this type's .config still hold what its profile put there?
 
@@ -1126,9 +1126,9 @@ def _current_source_sha(
     paths: Paths,
     mcu_type: str,
     fw: str,
-    name: Optional[str],
-    families: Optional[dict[str, firmware.FirmwareFamily]],
-) -> Optional[str]:
+    name: str | None,
+    families: dict[str, firmware.FirmwareFamily] | None,
+) -> str | None:
     """Hash of whatever this profile was seeded *from*, as it stands now.
 
     Three shapes: a vendor seed file in the firmware tree, this type's own

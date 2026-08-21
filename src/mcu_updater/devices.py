@@ -32,7 +32,6 @@ import subprocess
 import threading
 import time
 from collections.abc import Iterable
-from typing import Optional
 
 from .build import Reporter, null_reporter
 from .errors import (
@@ -115,7 +114,7 @@ class BusDevice:
         return self.is_klipper or self.is_katapult
 
 
-def parse_entry(name: str, directory: str) -> Optional[BusDevice]:
+def parse_entry(name: str, directory: str) -> BusDevice | None:
     """Parse one by-id filename. Returns None if it isn't a recognisable device."""
     if not name.startswith(_PREFIX):
         return None
@@ -149,15 +148,15 @@ def find_device(
     paths: Paths,
     chipset: str,
     serial: str,
-    fw: Optional[str] = None,
-) -> Optional[BusDevice]:
+    fw: str | None = None,
+) -> BusDevice | None:
     """Locate one board by chipset+serial, optionally constrained to a firmware.
 
     `fw` may be a single name or one of the KLIPPER_NAMES/KATAPULT_NAMES
     groups; matching is case-insensitive. Returns the device with its actual
     path, or None.
     """
-    wanted: Optional[tuple[str, ...]]
+    wanted: tuple[str, ...] | None
     if fw is None:
         wanted = None
     elif fw.lower() in KATAPULT_NAMES:
@@ -178,7 +177,7 @@ def find_device(
     return None
 
 
-def device_state(paths: Paths, chipset: str, serial: str) -> tuple[str, Optional[str]]:
+def device_state(paths: Paths, chipset: str, serial: str) -> tuple[str, str | None]:
     """(state, path) for a tracked serial: klipper, katapult, or offline."""
     dev = find_device(paths, chipset, serial)
     if dev is None:
@@ -190,8 +189,8 @@ def find_untracked(
     paths: Paths,
     known_serials: Iterable[str],
     *,
-    fw: Optional[str] = None,
-    chipset: Optional[str] = None,
+    fw: str | None = None,
+    chipset: str | None = None,
 ) -> list[BusDevice]:
     """Boards on the bus whose serial isn't tracked under any MCU type.
 
@@ -207,7 +206,7 @@ def find_untracked(
     `validate_type_name` avoids by living in the model, and this now does too.
     """
     known = set(known_serials)
-    wanted_group: Optional[tuple[str, ...]] = None
+    wanted_group: tuple[str, ...] | None = None
     if fw is not None:
         if fw.lower() in KATAPULT_NAMES:
             wanted_group = KATAPULT_NAMES
@@ -230,7 +229,7 @@ def find_untracked(
     return out
 
 
-def dfu_serial_for(serial: str) -> Optional[str]:
+def dfu_serial_for(serial: str) -> str | None:
     """What a board with this by-id serial calls itself while in DFU mode.
 
     An STM32 reports a *different* serial in DFU than it does running firmware,
@@ -290,7 +289,7 @@ _DFU_DENIED_RE = re.compile(
 )
 
 
-def dfu_devices(*, reporter: Reporter = null_reporter) -> list[dict[str, Optional[str]]]:
+def dfu_devices(*, reporter: Reporter = null_reporter) -> list[dict[str, str | None]]:
     """One entry per DFU *device* from `dfu-util -l`, parsed.
 
     Two things this must get right, both learned the hard way on real hardware:
@@ -326,7 +325,7 @@ def dfu_devices(*, reporter: Reporter = null_reporter) -> list[dict[str, Optiona
     # Deduplicate by whatever identifies the physical board, in decreasing order
     # of trustworthiness. dict preserves insertion order, so the first line for
     # each device is the one reported.
-    devices: dict[str, dict[str, Optional[str]]] = {}
+    devices: dict[str, dict[str, str | None]] = {}
     for raw in out.splitlines():
         line = raw.strip()
         match = _DFU_LINE_RE.search(line)
@@ -412,7 +411,7 @@ def expected_path(fw_name: str, chipset: str, serial: str) -> str:
     return f"/dev/serial/by-id/{_PREFIX}{fw_name}_{chipset}_{serial}"
 
 
-def _sleep_checked(seconds: float, cancel: Optional[threading.Event]) -> None:
+def _sleep_checked(seconds: float, cancel: threading.Event | None) -> None:
     if cancel is not None and cancel.wait(seconds):
         raise OperationCancelled("cancelled while waiting for a device")
     elif cancel is None:
@@ -428,7 +427,7 @@ def wait_for_device(
     timeout: float = REENUMERATE_TIMEOUT,
     poll: float = 0.5,
     settle: float = 0.0,
-    cancel: Optional[threading.Event] = None,
+    cancel: threading.Event | None = None,
 ) -> BusDevice:
     """Poll until a specific board shows up under `fw`, or raise.
 
@@ -459,12 +458,12 @@ def wait_for_new_device(
     paths: Paths,
     baseline: Iterable[str],
     *,
-    fw: Optional[str] = None,
-    chipset: Optional[str] = None,
+    fw: str | None = None,
+    chipset: str | None = None,
     timeout: float = REENUMERATE_TIMEOUT,
     poll: float = 0.5,
     settle: float = 1.0,
-    cancel: Optional[threading.Event] = None,
+    cancel: threading.Event | None = None,
 ) -> list[BusDevice]:
     """Poll for any device not in `baseline` to appear.
 

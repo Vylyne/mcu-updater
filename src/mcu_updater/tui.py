@@ -9,7 +9,6 @@ from __future__ import annotations
 
 import argparse
 from collections.abc import Callable
-from typing import Optional
 
 from . import cli
 from .config import Registry
@@ -26,7 +25,7 @@ def _registry() -> Registry:
 # --------------------------------------------------------------------------
 
 
-def prompt_choice(title: str, options: list[str], allow_cancel: bool = True) -> Optional[int]:
+def prompt_choice(title: str, options: list[str], allow_cancel: bool = True) -> int | None:
     """Numbered list, looping until a valid selection. Returns a 0-based index,
     or None if cancelled (entering 0)."""
     while True:
@@ -69,7 +68,7 @@ def prompt_nonempty(prompt: str) -> str:
 # --------------------------------------------------------------------------
 
 
-def pick_mcu_type(reg: Registry, allow_new: bool = True) -> Optional[str]:
+def pick_mcu_type(reg: Registry, allow_new: bool = True) -> str | None:
     """Picker over existing types.
 
     With allow_new, appends an "Add a new MCU type" entry that runs the add-type
@@ -98,7 +97,7 @@ def pick_mcu_type(reg: Registry, allow_new: bool = True) -> Optional[str]:
     return types[idx]
 
 
-def pick_fw_target() -> Optional[str]:
+def pick_fw_target() -> str | None:
     from . import firmware
     from .cli import ctx
 
@@ -109,7 +108,7 @@ def pick_fw_target() -> Optional[str]:
     return targets[idx]
 
 
-def pick_serial_for_type(mcu_type: str, reg: Registry) -> Optional[str]:
+def pick_serial_for_type(mcu_type: str, reg: Registry) -> str | None:
     """Tracked serials, plus untracked devices detected on the bus, plus manual
     entry. Used by Flash, where either is a valid target."""
     mcu = reg.get(mcu_type)
@@ -130,7 +129,7 @@ def pick_serial_for_type(mcu_type: str, reg: Registry) -> Optional[str]:
     return prompt_nonempty("Serial string")
 
 
-def pick_tracked_serial(mcu_type: str, reg: Registry) -> Optional[str]:
+def pick_tracked_serial(mcu_type: str, reg: Registry) -> str | None:
     """Only already-tracked serials - used by Remove-serial."""
     tracked = list(reg.get(mcu_type).serials)
     if not tracked:

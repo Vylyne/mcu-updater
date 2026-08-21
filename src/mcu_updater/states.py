@@ -36,7 +36,6 @@ not this one's.
 from __future__ import annotations
 
 import dataclasses
-from typing import Optional
 
 # --------------------------------------------------------------------------
 # how a verdict is meant to read
@@ -90,7 +89,7 @@ FOREIGN_BUILD = "foreign_build"
 #: wants different words in the UI.
 NO_PROVENANCE = "no_provenance"
 
-_ARTIFACT_STATE: dict[Optional[str], str] = {
+_ARTIFACT_STATE: dict[str | None, str] = {
     None: ARTIFACT_CURRENT,
     NEVER_BUILT: ARTIFACT_ABSENT,
     CONFIG_CHANGED: ARTIFACT_STALE,
@@ -118,7 +117,7 @@ _ARTIFACT_TONE: dict[str, str] = {
 #: These live here rather than in the panel so that one wording serves every
 #: front end - the CLI, the Mainsail component, and whatever renders a
 #: cartographer probe later - instead of three that drift.
-_ARTIFACT_LABEL: dict[Optional[str], str] = {
+_ARTIFACT_LABEL: dict[str | None, str] = {
     None: "Up to date",
     NEVER_BUILT: "Never built",
     CONFIG_CHANGED: "Config changed - rebuild",
@@ -133,7 +132,7 @@ _ARTIFACT_LABEL: dict[Optional[str], str] = {
 class ArtifactStatus:
     """Whether a built image still matches what produced it."""
 
-    reason: Optional[str] = None
+    reason: str | None = None
 
     def __post_init__(self) -> None:
         if self.reason not in _ARTIFACT_STATE:
@@ -187,7 +186,7 @@ OFFLINE = "offline"
 #: compare against.
 UNKNOWN_VERSION = "unknown_version"
 
-_NEEDS_FLASH: dict[Optional[str], Optional[bool]] = {
+_NEEDS_FLASH: dict[str | None, bool | None] = {
     None: False,
     IN_BOOTLOADER: True,
     SOURCE_CHANGED: True,
@@ -202,13 +201,13 @@ DEVICE_REASONS = tuple(r for r in _NEEDS_FLASH if r is not None)
 
 #: The tri-state answer, coloured. Nothing else to decide: "wants flashing" is
 #: the action, "cannot tell" is the caveat, "up to date" is the all-clear.
-_DEVICE_TONE: dict[Optional[bool], str] = {
+_DEVICE_TONE: dict[bool | None, str] = {
     False: TONE_OK,
     True: TONE_ATTENTION,
     None: TONE_UNKNOWN,
 }
 
-_DEVICE_LABEL: dict[Optional[str], str] = {
+_DEVICE_LABEL: dict[str | None, str] = {
     None: "Up to date",
     IN_BOOTLOADER: "Waiting in bootloader",
     SOURCE_CHANGED: "Update available",
@@ -224,7 +223,7 @@ _DEVICE_LABEL: dict[Optional[str], str] = {
 class DeviceStatus:
     """Whether a physical device wants flashing, and why."""
 
-    reason: Optional[str] = None
+    reason: str | None = None
 
     def __post_init__(self) -> None:
         if self.reason not in _NEEDS_FLASH:
@@ -242,7 +241,7 @@ class DeviceStatus:
         return _DEVICE_LABEL[self.reason]
 
     @property
-    def needs_flash(self) -> Optional[bool]:
+    def needs_flash(self) -> bool | None:
         """True, False, or None for "cannot tell".
 
         Never False on absent evidence. An offline board or an unreachable

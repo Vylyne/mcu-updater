@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import os
 import threading
-from typing import Optional
 
 from .. import build as build_mod
 from .. import firmware
@@ -62,7 +61,7 @@ class KconfigMake:
                 )
         return out
 
-    def blocked(self, install: Install, target: BuildTarget) -> Optional[str]:
+    def blocked(self, install: Install, target: BuildTarget) -> str | None:
         """Has this pair been through menuconfig?
 
         The one gate, and nothing else. A missing source tree is *not* checked
@@ -87,7 +86,7 @@ class KconfigMake:
         target: BuildTarget,
         *,
         reporter: Reporter,
-        cancel: Optional[threading.Event] = None,
+        cancel: threading.Event | None = None,
     ) -> None:
         build_mod.build(
             install.paths,

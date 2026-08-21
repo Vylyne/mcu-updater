@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import dataclasses
 import os
-from typing import Any, Optional
+from typing import Any
 
 from ... import firmware, flashers, providers
 from ...build import read_sidecar
@@ -75,8 +75,8 @@ class BulkMixin(_Base):
         self,
         install: providers.Install,
         scope: str,
-        only: Optional[str] = None,
-        fw: Optional[str] = None,
+        only: str | None = None,
+        fw: str | None = None,
     ) -> providers.Selection:
         """What a build_all should touch, across every build system.
 
@@ -102,7 +102,7 @@ class BulkMixin(_Base):
             install, stale_only=(scope == "stale"), only=only, fw=fw
         )
 
-    def _boards_to_flash(self, reg: Registry, scope: str, only: Optional[str] = None) -> list[dict]:
+    def _boards_to_flash(self, reg: Registry, scope: str, only: str | None = None) -> list[dict]:
         """Which boards a flash_all should write, with the reason for each.
 
         Offline boards are never included: a flash needs the device on the bus, so
@@ -157,7 +157,7 @@ class BulkMixin(_Base):
         return out
 
     def _screens_to_flash(
-        self, scope: str, only: Optional[str] = None
+        self, scope: str, only: str | None = None
     ) -> list[flashers.FlashTarget]:
         """Which screens a flash_all should write, with the reason for each.
 
@@ -222,8 +222,8 @@ class BulkMixin(_Base):
         """
         install = self._install()
 
-        built: list[dict[str, Optional[str]]] = []
-        failures: list[dict[str, Optional[str]]] = []
+        built: list[dict[str, str | None]] = []
+        failures: list[dict[str, str | None]] = []
         total = len(targets)
         for index, target in enumerate(targets):
             provider = providers.by_name(target.provider)
@@ -254,7 +254,7 @@ class BulkMixin(_Base):
         """
         from ...service import ServiceController, make_controller
 
-        def controller(name: Optional[str] = None) -> ServiceController:
+        def controller(name: str | None = None) -> ServiceController:
             return make_controller(settings, call=self._call_for_service, name=name)
 
         return flashers.Bench(

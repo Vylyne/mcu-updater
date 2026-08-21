@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import os
-from typing import Any, Optional
+from typing import Any
 
 from ... import firmware, profiles, providers
 from ...errors import (
@@ -20,7 +20,7 @@ class BuildMixin(_Base):
     #: alone, which is circular against the `if ... is None:` guard reading it
     #: first. An explicit annotation here breaks the cycle; `StatusMixin.__init__`
     #: still does the real (lazy - `None` until first use) initialisation.
-    _kconfig_sessions: Optional[Any]
+    _kconfig_sessions: Any | None
 
     def _require_runner(self):
         if self.runner is None:
@@ -182,7 +182,7 @@ class BuildMixin(_Base):
         return self._kconfig_sessions
 
     def kconfig_available(
-        self, families: Optional[dict[str, firmware.FirmwareFamily]] = None
+        self, families: dict[str, firmware.FirmwareFamily] | None = None
     ) -> dict[str, bool]:
         """Which firmware trees can be configured from here.
 
@@ -340,7 +340,7 @@ class BuildMixin(_Base):
 
     def _capture_answers(
         self, mcu_type: str, fw: str, answers: list[str]
-    ) -> Optional[str]:
+    ) -> str | None:
         """Keep a just-saved set of answers as this type's own profile.
 
         Skipped where it would only make noise: a tree that ships no profiles has

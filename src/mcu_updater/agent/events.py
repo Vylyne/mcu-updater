@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import threading
 from collections.abc import Callable
-from typing import Any, Optional
+from typing import Any
 
 from ..devices import BusDevice
 from ..paths import Paths
@@ -37,7 +37,7 @@ class EventEmitter:
         self._peer_getter = peer_getter
         self._log = logger
 
-    def emit(self, event: str, data: Optional[dict] = None) -> bool:
+    def emit(self, event: str, data: dict | None = None) -> bool:
         """Publish one event. Returns False if it could not be sent."""
         if event in RESERVED_EVENTS:
             raise ValueError(f"'{event}' is reserved by Moonraker and cannot be emitted")
@@ -78,12 +78,12 @@ class LogBatcher:
         self.emitter = emitter
         self._log = logger
         self._lock = threading.Lock()
-        self._job_id: Optional[str] = None
+        self._job_id: str | None = None
         self._pending: list[dict] = []
-        self._first_seq: Optional[int] = None
+        self._first_seq: int | None = None
         self._bytes = 0
         self._stop = threading.Event()
-        self._thread: Optional[threading.Thread] = None
+        self._thread: threading.Thread | None = None
 
     def start(self) -> None:
         if self._thread is not None:
@@ -185,7 +185,7 @@ class StateEmitter:
         self._log = logger
         self._dirty = threading.Event()
         self._stop = threading.Event()
-        self._thread: Optional[threading.Thread] = None
+        self._thread: threading.Thread | None = None
 
     def start(self) -> None:
         if self._thread is not None:
@@ -252,7 +252,7 @@ class BusWatcher:
         idle_interval: float = 15.0,
         busy_interval: float = 2.0,
         logger: Any = None,
-        on_change: Optional[Callable[[], Any]] = None,
+        on_change: Callable[[], Any] | None = None,
     ) -> None:
         self.paths = paths
         self.emitter = emitter
@@ -269,8 +269,8 @@ class BusWatcher:
         self._busy = threading.Event()
         self._wake = threading.Event()
         self._stop = threading.Event()
-        self._thread: Optional[threading.Thread] = None
-        self._last: Optional[tuple] = None
+        self._thread: threading.Thread | None = None
+        self._last: tuple | None = None
 
     def set_busy(self, busy: bool) -> None:
         """Speed up polling while an operation is running."""

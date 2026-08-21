@@ -22,7 +22,7 @@ import os
 import subprocess
 import time
 from collections.abc import Callable, Iterator
-from typing import Any, Optional
+from typing import Any
 
 from .build import Reporter, null_reporter
 from .errors import PrintInProgressError, ServiceControlError
@@ -105,7 +105,7 @@ class MoonrakerService(ServiceController):
         self,
         call: Callable[[str, dict], Any],
         name: str = "klipper",
-        fallback: Optional[ServiceController] = None,
+        fallback: ServiceController | None = None,
     ) -> None:
         self._call = call
         self.name = name
@@ -168,8 +168,8 @@ class NullService(ServiceController):
 def make_controller(
     settings: Settings,
     *,
-    call: Optional[Callable[[str, dict], Any]] = None,
-    name: Optional[str] = None,
+    call: Callable[[str, dict], Any] | None = None,
+    name: str | None = None,
 ) -> ServiceController:
     """Pick a backend. `call` is only available inside the agent.
 
@@ -218,7 +218,7 @@ class Journal:
         except OSError:
             pass
 
-    def pending(self) -> Optional[dict[str, Any]]:
+    def pending(self) -> dict[str, Any] | None:
         try:
             with open(self.path, encoding="utf-8") as fh:
                 data = json.load(fh)
@@ -261,7 +261,7 @@ STOP_VERIFY_TIMEOUT = 20.0
 
 @contextlib.contextmanager
 def paused(
-    svc: Optional[ServiceController], *, reporter: Reporter = null_reporter
+    svc: ServiceController | None, *, reporter: Reporter = null_reporter
 ) -> Iterator[None]:
     """Stop a *secondary* service for the duration of the block. Best effort.
 
@@ -365,7 +365,7 @@ def klipper_stopped(
 def assert_printer_idle(
     settings: Settings,
     *,
-    activity: Optional[Callable[[], dict]] = None,
+    activity: Callable[[], dict] | None = None,
     force: bool = False,
     reporter: Reporter = null_reporter,
 ) -> None:

@@ -42,7 +42,7 @@ from __future__ import annotations
 import dataclasses
 from collections.abc import Callable, Mapping
 from contextlib import AbstractContextManager
-from typing import Any, Optional, Protocol
+from typing import Any, Protocol
 
 from ..paths import Paths
 from ..service import ServiceController
@@ -63,7 +63,7 @@ class Bench:
     paths: Paths
     settings: Settings
     #: unit name -> controller. `None` means Klipper's own service.
-    controller: Callable[[Optional[str]], ServiceController]
+    controller: Callable[[str | None], ServiceController]
 
 
 @dataclasses.dataclass(frozen=True)

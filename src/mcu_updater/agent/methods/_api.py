@@ -20,7 +20,7 @@ maintain by hand for no benefit anything here uses.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING, Any, Optional, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 from ... import flashers
 from ...config import Registry
@@ -33,12 +33,12 @@ from ...states import DeviceStatus
 class _Api(Protocol):
     # -- instance state, set in StatusMixin.__init__ -----------------------
     paths: Paths
-    runner: Optional[Any]
-    _call: Optional[Any]
-    _log: Optional[Any]
-    _on_change: Optional[Any]
-    _kconfig_sessions: Optional[Any]
-    _object_names: Optional[list[str]]
+    runner: Any | None
+    _call: Any | None
+    _log: Any | None
+    _on_change: Any | None
+    _kconfig_sessions: Any | None
+    _object_names: list[str] | None
     _object_names_at: float
 
     # -- DFU reason codes and pairing TTL, status.py --------------------
@@ -61,23 +61,23 @@ class _Api(Protocol):
         self,
         serial: str,
         info: dict[str, dict[str, str]],
-        fw_head: Optional[str],
+        fw_head: str | None,
         *,
-        state: Optional[str] = None,
-        artifact_sha: Optional[str] = None,
-        flashlog: Optional[Any] = None,
+        state: str | None = None,
+        artifact_sha: str | None = None,
+        flashlog: Any | None = None,
     ) -> dict[str, Any]: ...
     @staticmethod
     def _screen_device_status(screen: dict[str, Any]) -> DeviceStatus: ...
     def _log_reporter(self, stream: str, line: str) -> None: ...
-    def _printer_activity(self) -> dict[str, Optional[str]]: ...
+    def _printer_activity(self) -> dict[str, str | None]: ...
     def _await_klippy_ready(
         self,
         reporter: Any,
         *,
-        timeout: Optional[float] = None,
-        after_restart: Optional[float] = None,
-    ) -> Optional[str]: ...
+        timeout: float | None = None,
+        after_restart: float | None = None,
+    ) -> str | None: ...
     def _call_for_service(self, method: str, params: Any) -> Any: ...
 
     # -- registry.py -----------------------------------------------------
@@ -89,7 +89,7 @@ class _Api(Protocol):
     def _require_runner(self) -> JobRunner: ...
     def _provider_of(self, name: str) -> str: ...
     def kconfig_available(
-        self, families: Optional[dict[str, Any]] = None
+        self, families: dict[str, Any] | None = None
     ) -> dict[str, bool]: ...
 
     # -- bulk.py -------------------------------------------------------

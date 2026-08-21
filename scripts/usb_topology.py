@@ -23,7 +23,6 @@ from __future__ import annotations
 import argparse
 import os
 import sys
-from typing import Optional
 
 SYSFS = "/sys/bus/usb/devices"
 
@@ -37,7 +36,7 @@ KNOWN = {
 }
 
 
-def read(path: str) -> Optional[str]:
+def read(path: str) -> str | None:
     try:
         with open(path, encoding="utf-8", errors="replace") as fh:
             return fh.read().strip()
@@ -65,7 +64,7 @@ class Device:
         return self.ports > 0
 
     @property
-    def parent_name(self) -> Optional[str]:
+    def parent_name(self) -> str | None:
         """`6-1.6.7` -> `6-1.6`; `6-1` -> `usb6`; a root hub -> None."""
         if self.name.startswith("usb"):
             return None
@@ -181,7 +180,7 @@ def render(dev: Device, devices: dict[str, Device], show_free: bool, prefix="") 
         render(child, devices, show_free, pad)
 
 
-def main(argv: Optional[list[str]] = None) -> int:
+def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--root", default=SYSFS, help=f"sysfs USB tree (default {SYSFS})")
     parser.add_argument("--tty-root", default="/sys/class/tty")

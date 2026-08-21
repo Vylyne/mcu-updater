@@ -44,7 +44,7 @@ import dataclasses
 import os
 import re
 from collections.abc import Iterable, Iterator
-from typing import Any, Optional
+from typing import Any
 
 from . import firmware, sections
 from .cfgdoc import CfgDocument
@@ -72,7 +72,7 @@ class MakefilePatch:
     line: str
 
     @classmethod
-    def parse(cls, raw: str) -> Optional[MakefilePatch]:
+    def parse(cls, raw: str) -> MakefilePatch | None:
         if PATCH_SEPARATOR not in raw:
             return None
         target, _, line = raw.partition(PATCH_SEPARATOR)
@@ -122,7 +122,7 @@ def _is_platformio_only(
     )
 
 
-def _is_bootloader(fw: str, families: Optional[dict[str, Any]]) -> bool:
+def _is_bootloader(fw: str, families: dict[str, Any] | None) -> bool:
     """Whether a declared family is a bootloader.
 
     Mirrors `firmware.resolve()`'s own fallback for a family this dict has no
@@ -184,7 +184,7 @@ class McuType:
         """
         return list(self.firmwares)
 
-    def application(self, families: Optional[dict[str, Any]] = None) -> str:
+    def application(self, families: dict[str, Any] | None = None) -> str:
         """The family this board actually *runs*: the first declared family
         that is not a bootloader.
 
@@ -202,7 +202,7 @@ class McuType:
                 return fw
         return self.firmwares[0] if self.firmwares else "klipper"
 
-    def bootloader(self, families: Optional[dict[str, Any]] = None) -> Optional[str]:
+    def bootloader(self, families: dict[str, Any] | None = None) -> str | None:
         """The bootloader family this type carries, if any.
 
         None means this board has no bootloader (`katapult_installed: false`,
@@ -528,7 +528,7 @@ class Registry:
         """Types tracking this serial. Normally 0 or 1; >1 is a misconfiguration."""
         return [name for name, mcu in self.types.items() if serial in mcu.serials]
 
-    def resolve_serial(self, serial: str, mcu_type: Optional[str] = None) -> str:
+    def resolve_serial(self, serial: str, mcu_type: str | None = None) -> str:
         """Work out which type a serial belongs to.
 
         With an explicit `mcu_type`, verifies the pairing. Raises

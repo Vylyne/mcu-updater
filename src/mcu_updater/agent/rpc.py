@@ -23,7 +23,7 @@ import sys
 import threading
 from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
-from typing import Any, Optional
+from typing import Any
 
 ETX = b"\x03"
 
@@ -88,17 +88,17 @@ class MoonrakerPeer:
         self,
         sock_path: str,
         on_request: RequestHandler,
-        on_notify: Optional[NotifyHandler] = None,
+        on_notify: NotifyHandler | None = None,
         *,
         logger: Any = None,
-        transport: Optional[Any] = None,
+        transport: Any | None = None,
         max_workers: int = 4,
     ) -> None:
         self.sock_path = sock_path
         self._on_request = on_request
         self._on_notify = on_notify
         self._log = logger
-        self._sock: Optional[Any] = transport
+        self._sock: Any | None = transport
         self._owns_socket = transport is None
 
         self._next_id = 0
@@ -107,8 +107,8 @@ class MoonrakerPeer:
         self._pending: dict[int, Future] = {}
         self._pending_lock = threading.Lock()
 
-        self._reader: Optional[threading.Thread] = None
-        self._pool: Optional[ThreadPoolExecutor] = None
+        self._reader: threading.Thread | None = None
+        self._pool: ThreadPoolExecutor | None = None
         self._stop = threading.Event()
         self._closed = threading.Event()
         self._max_workers = max_workers
@@ -166,7 +166,7 @@ class MoonrakerPeer:
         if pool is not None:
             pool.shutdown(wait=False)
 
-    def wait_closed(self, timeout: Optional[float] = None) -> bool:
+    def wait_closed(self, timeout: float | None = None) -> bool:
         """Block until the connection drops. Returns True if it did."""
         return self._closed.wait(timeout)
 

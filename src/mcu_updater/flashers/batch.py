@@ -16,7 +16,7 @@ stop, and the accounting.
 from __future__ import annotations
 
 from collections.abc import Callable
-from typing import Any, Optional
+from typing import Any
 
 from ..errors import OperationCancelled, UpdaterError
 from .registry import by_flasher, group_by_stop
@@ -61,7 +61,7 @@ def write_all(
     targets: list[FlashTarget],
     ctx: Any,
     *,
-    on_ready: Optional[ReadyCheck] = None,
+    on_ready: ReadyCheck | None = None,
 ) -> dict[str, Any]:
     """Write every selected device, with Klipper stopped once for the batch.
 

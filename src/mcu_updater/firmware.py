@@ -33,7 +33,7 @@ from __future__ import annotations
 
 import dataclasses
 import os
-from typing import Any, Optional
+from typing import Any
 
 from .cfgdoc import CfgDocument, parse_bool
 from .paths import FW_TARGETS, Paths
@@ -160,7 +160,7 @@ def load(paths: Paths) -> dict[str, FirmwareFamily]:
     return load_from_doc(doc)
 
 
-def names(paths: Paths, families: Optional[dict[str, FirmwareFamily]] = None) -> tuple[str, ...]:
+def names(paths: Paths, families: dict[str, FirmwareFamily] | None = None) -> tuple[str, ...]:
     """Every firmware family this install knows about.
 
     Built-ins first and in their own order - `klipper` before `katapult`, which
@@ -179,7 +179,7 @@ def names_of(families: dict[str, FirmwareFamily]) -> tuple[str, ...]:
 
 
 def resolve(
-    paths: Paths, fw: str, families: Optional[dict[str, FirmwareFamily]] = None
+    paths: Paths, fw: str, families: dict[str, FirmwareFamily] | None = None
 ) -> FirmwareFamily:
     """The family for `fw`, configured or conventional.
 

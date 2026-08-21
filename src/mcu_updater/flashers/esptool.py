@@ -27,7 +27,7 @@ from __future__ import annotations
 
 import contextlib
 from collections.abc import Iterator
-from typing import Any, Optional
+from typing import Any
 
 from ..devices import STATE_ESP_ROM
 from ..errors import FlashError, UpdaterError
@@ -147,7 +147,7 @@ def discover(bench: Bench, display: Any, ctx: Any) -> dict[str, Any]:
 
 def port_for(
     screen: dict, discovered: dict[str, Any], ctx: Any
-) -> tuple[str, Optional[str]]:
+) -> tuple[str, str | None]:
     """Where to write this screen, and why not if there is no answer.
 
     Three cases, and the middle one is the point:

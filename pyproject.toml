@@ -35,15 +35,6 @@ extend-exclude = ["tests/fixtures/kconfiglib"]
 select = ["E", "F", "W", "I", "UP", "B"]
 ignore = [
     "E501", # line length is handled by the formatter, not worth failing CI over
-    # Pending removal now the floor is 3.11. These were ignored because the
-    # runtime target was 3.9, where only `Optional[X]` is safe in a position an
-    # annotation actually gets evaluated - so a future edit dropping a
-    # `from __future__ import annotations` could not become a TypeError at
-    # import time on the printer. At 3.11 PEP 604 is valid at runtime
-    # everywhere, so that reason is gone. Kept for exactly one commit to keep
-    # the floor bump a small diff; the sweep is its own change.
-    "UP007",
-    "UP045",
 ]
 
 [tool.mypy]

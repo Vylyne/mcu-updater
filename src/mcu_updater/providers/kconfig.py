@@ -45,7 +45,7 @@ import threading
 import time
 from collections.abc import Iterable, Iterator
 from types import ModuleType
-from typing import Any, Optional
+from typing import Any
 
 from .. import firmware
 from ..errors import KconfigError
@@ -125,7 +125,7 @@ def _srctree(fw_dir: str) -> Iterator[None]:
                 os.environ["srctree"] = previous
 
 
-def parse_tree(fw_dir: str, config: Optional[str] = None) -> tuple[ModuleType, Any]:
+def parse_tree(fw_dir: str, config: str | None = None) -> tuple[ModuleType, Any]:
     """Parse a tree's ``src/Kconfig``, optionally loading answers into it.
 
     The whole of "open a firmware tree", in one call: find its kconfiglib, set
@@ -326,7 +326,7 @@ class Serializer:
 
     # -- values ------------------------------------------------------------
 
-    def value(self, node: Any) -> Optional[str]:
+    def value(self, node: Any) -> str | None:
         if self.is_menu(node) or self.is_comment(node):
             return None
         item = node.item
@@ -335,7 +335,7 @@ class Serializer:
             return selected.name if selected is not None else None
         return item.str_value
 
-    def value_label(self, node: Any) -> Optional[str]:
+    def value_label(self, node: Any) -> str | None:
         """How the current value should read.
 
         For a choice that is the selected option's prompt rather than its symbol
@@ -427,7 +427,7 @@ class Serializer:
             return len(options) > 1
         return True
 
-    def value_range(self, node: Any) -> Optional[dict[str, str]]:
+    def value_range(self, node: Any) -> dict[str, str] | None:
         """The active range for an int or hex, with its bounds resolved.
 
         Ranges can be conditional and their bounds can themselves be symbols, so
@@ -534,7 +534,7 @@ def help_for(node: Any) -> str:
 # editing
 # --------------------------------------------------------------------------
 
-def save_config(kconf: Any, fw_dir: str, path: str) -> Optional[str]:
+def save_config(kconf: Any, fw_dir: str, path: str) -> str | None:
     """Write a parsed configuration out, never leaving a truncated file behind.
 
     kconfiglib's own ``write_config`` writes in place and non-atomically, so a
@@ -968,7 +968,7 @@ class SessionStore:
         with self._lock:
             return self._sessions.pop(session_id, None) is not None
 
-    def dirty_for(self, mcu_type: str, fw: str) -> Optional[KconfigSession]:
+    def dirty_for(self, mcu_type: str, fw: str) -> KconfigSession | None:
         """An existing session with unsaved edits for the same target, if any.
 
         Opening a second session on a target someone is already editing would let

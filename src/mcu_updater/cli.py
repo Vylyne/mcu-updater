@@ -18,7 +18,6 @@ import json
 import os
 import sys
 from collections.abc import Sequence
-from typing import Optional
 
 from . import __version__, firmware, flashers, profiles, providers
 from .build import artifact_status, build, menuconfig_tty
@@ -64,7 +63,7 @@ class Context:
         return Registry.load(self.paths)
 
 
-_ctx: Optional[Context] = None
+_ctx: Context | None = None
 
 
 def ctx() -> Context:
@@ -322,8 +321,8 @@ def _build_interactive(
     c: Context,
     mcu_type: str,
     fw: str,
-    jobs: Optional[int] = None,
-    reseed: Optional[bool] = None,
+    jobs: int | None = None,
+    reseed: bool | None = None,
 ):
     """Build, offering menuconfig first if this type has never been configured.
 
@@ -397,7 +396,7 @@ def _bench(c: Context) -> flashers.Bench:
     its own port watcher, and a batch spanning two needs two. Sharing the
     factory is what keeps a dry run from stopping a real service.
     """
-    def controller(name: Optional[str] = None) -> ServiceController:
+    def controller(name: str | None = None) -> ServiceController:
         return make_controller(c.settings, name=name)
 
     return flashers.Bench(paths=c.paths, settings=c.settings, controller=controller)
@@ -433,7 +432,7 @@ def _board_targets(
 def _pio_targets(
     c: Context,
     name: str,
-    only_id: Optional[str] = None,
+    only_id: str | None = None,
     *,
     allow_discovery: bool = False,
 ) -> list:
@@ -656,7 +655,7 @@ def update_all(args: argparse.Namespace) -> None:
         print("Aborted.")
         return
 
-    failures: list[tuple[str, Optional[str]]] = []
+    failures: list[tuple[str, str | None]] = []
 
     with exclusive(c.paths, "update-all"):
         for skipped in selection.skipped:
@@ -761,7 +760,7 @@ def add_mcu(args: argparse.Namespace) -> None:
 # --------------------------------------------------------------------------
 
 
-def build_parser(fw_choices: Optional[Sequence[str]] = None) -> argparse.ArgumentParser:
+def build_parser(fw_choices: Sequence[str] | None = None) -> argparse.ArgumentParser:
     """The CLI. `fw_choices` is what `--fw` will accept.
 
     Passed in rather than read here because a declared `[firmware x]` family is
@@ -894,7 +893,7 @@ def build_parser(fw_choices: Optional[Sequence[str]] = None) -> argparse.Argumen
     return parser
 
 
-def main(argv: Optional[list[str]] = None) -> None:
+def main(argv: list[str] | None = None) -> None:
     global _ctx
 
     argv = list(sys.argv[1:] if argv is None else argv)

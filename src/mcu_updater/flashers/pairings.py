@@ -27,7 +27,7 @@ from __future__ import annotations
 import json
 import os
 import time
-from typing import Any, Optional
+from typing import Any
 
 from ..paths import Paths
 
@@ -76,7 +76,7 @@ class Pairings:
         data[dfu_serial] = {"type": mcu_type, "at": time.time()}
         self._write(data)
 
-    def type_for(self, dfu_serial: str) -> Optional[str]:
+    def type_for(self, dfu_serial: str) -> str | None:
         """The type this board was bootloadered as, if recent enough."""
         entry = self.all().get(dfu_serial)
         if not entry:

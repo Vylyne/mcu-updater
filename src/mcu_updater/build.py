@@ -22,7 +22,7 @@ import sys
 import threading
 import time
 from collections.abc import Callable, Iterator
-from typing import Any, Optional
+from typing import Any
 
 from . import firmware
 from .config import McuType, Registry
@@ -126,7 +126,7 @@ _FAKE_BUILD_LINES = [
 ]
 
 
-def _emit_fake_build_log(reporter: Reporter, delay: float, cancel: Optional[threading.Event]) -> None:
+def _emit_fake_build_log(reporter: Reporter, delay: float, cancel: threading.Event | None) -> None:
     """Replay a plausible build log at a realistic pace.
 
     Not cosmetic: this is what exercises log streaming, batching, sequence
@@ -146,12 +146,12 @@ def run_streamed(
     *,
     cwd: str,
     reporter: Reporter,
-    cancel: Optional[threading.Event] = None,
-    env: Optional[dict[str, str]] = None,
+    cancel: threading.Event | None = None,
+    env: dict[str, str] | None = None,
     dry_run: bool = False,
     grace: float = 5.0,
     poll: float = 0.25,
-    fake_delay: Optional[float] = None,
+    fake_delay: float | None = None,
 ) -> int:
     """Run a command, forwarding each output line to `reporter` as it arrives.
 
@@ -262,7 +262,7 @@ def makefile_patches(
     """
     fw_dir = firmware.resolve(paths, fw).source_dir(paths)
     patches = [p for p in mcu.fw_get(fw).makefile_patches if p.is_valid()]
-    backups: list[tuple[str, Optional[bytes]]] = []
+    backups: list[tuple[str, bytes | None]] = []
     try:
         for patch in patches:
             target = os.path.join(fw_dir, patch.file)
@@ -317,14 +317,14 @@ def makefile_patches(
 #: value that only changes when the user runs `git pull`, and it keeps that call
 #: inside its sub-second budget on a Pi.
 _HEAD_TTL = 5.0
-_head_cache: dict[str, tuple[float, Optional[str]]] = {}
+_head_cache: dict[str, tuple[float, str | None]] = {}
 
 
 def clear_head_cache() -> None:
     _head_cache.clear()
 
 
-def git_head(directory: str, *, ttl: float = _HEAD_TTL) -> Optional[str]:
+def git_head(directory: str, *, ttl: float = _HEAD_TTL) -> str | None:
     """Short HEAD sha of a source tree, or None if it isn't a git checkout."""
     key = os.path.abspath(directory)
     if ttl > 0:
@@ -339,7 +339,7 @@ def git_head(directory: str, *, ttl: float = _HEAD_TTL) -> Optional[str]:
     return value
 
 
-def _git_head_uncached(directory: str) -> Optional[str]:
+def _git_head_uncached(directory: str) -> str | None:
     try:
         res = subprocess.run(
             ["git", "rev-parse", "--short", "HEAD"],
@@ -355,7 +355,7 @@ def _git_head_uncached(directory: str) -> Optional[str]:
     return res.stdout.strip() or None
 
 
-def sha256_file(path: str) -> Optional[str]:
+def sha256_file(path: str) -> str | None:
     try:
         h = hashlib.sha256()
         with open(path, "rb") as fh:
@@ -369,28 +369,28 @@ def sha256_file(path: str) -> Optional[str]:
 @dataclasses.dataclass
 class BuildResult:
     bin_path: str
-    uf2_path: Optional[str]
+    uf2_path: str | None
     duration: float
-    fw_sha: Optional[str]
-    config_sha256: Optional[str]
+    fw_sha: str | None
+    config_sha256: str | None
     #: sha256 of the binary that was staged. The one piece of provenance a board
     #: cannot report: it tells us its klipper commit, so two builds from the same
     #: commit with different .config or makefile patches are indistinguishable
     #: from the board's side. Comparing this against what was last flashed is what
     #: makes "only flash the stale ones" true rather than approximately true.
-    bin_sha256: Optional[str] = None
+    bin_sha256: str | None = None
     #: True if `make` rewrote our .config (klipper runs olddefconfig when
     #: src/Kconfig is newer than the config, e.g. right after a git pull).
     config_rewritten: bool = False
     #: The profile whose updated answers were taken before compiling, if any.
     #: None on every build that had nothing to take, which is nearly all of them.
-    reseeded: Optional[str] = None
+    reseeded: str | None = None
     #: CONFIG_FLASH_APPLICATION_ADDRESS from the built .config, numerically.
     #: None for a bootloader build, or any tree that does not define the
     #: symbol. Recorded so flash time can compare it against what the board's
     #: own bootloader reports - see flashers/flash.py - without a Kconfig
     #: parse at flash time.
-    app_address: Optional[int] = None
+    app_address: int | None = None
 
     def to_sidecar(self) -> dict[str, Any]:
         return {
@@ -404,7 +404,7 @@ class BuildResult:
         }
 
 
-def read_sidecar(paths: Paths, mcu_type: str, fw: str) -> Optional[dict[str, Any]]:
+def read_sidecar(paths: Paths, mcu_type: str, fw: str) -> dict[str, Any] | None:
     try:
         with open(paths.sidecar_file(mcu_type, fw), encoding="utf-8") as fh:
             data = json.load(fh)
@@ -418,7 +418,7 @@ def artifact_status(
     mcu_type: str,
     fw: str,
     *,
-    config_sha: Optional[str] = None,
+    config_sha: str | None = None,
 ) -> ArtifactStatus:
     """Does this type's built image still match the inputs that produced it?
 
@@ -495,7 +495,7 @@ def menuconfig_tty(paths: Paths, mcu_type: str, fw: str, *, pause: bool = True) 
     )
 
 
-def _read_app_address(config_file: str) -> Optional[int]:
+def _read_app_address(config_file: str) -> int | None:
     """CONFIG_FLASH_APPLICATION_ADDRESS from a built .config, numerically.
 
     Read as text rather than through a Kconfig parse: by the time this runs,
@@ -524,10 +524,10 @@ def build(
     fw: str,
     *,
     reporter: Reporter = null_reporter,
-    cancel: Optional[threading.Event] = None,
-    jobs: Optional[int] = None,
-    clean: Optional[bool] = None,
-    reseed: Optional[bool] = None,
+    cancel: threading.Event | None = None,
+    jobs: int | None = None,
+    clean: bool | None = None,
+    reseed: bool | None = None,
 ) -> BuildResult:
     """Compile one type/firmware pair and stage the artifacts.
 
@@ -660,7 +660,7 @@ def build(
 
     # RP2040 BOOTSEL mass storage only accepts .uf2 - a .bin copied to the mount
     # is accepted and silently ignored - so stage it whenever the build made one.
-    uf2_out: Optional[str] = None
+    uf2_out: str | None = None
     compiled_uf2 = family.built_artifact(paths, "uf2")
     if not dry_run and os.path.exists(compiled_uf2):
         uf2_out = paths.uf2_file(mcu_type, fw)
@@ -728,7 +728,7 @@ class FlashLog:
         losing this degrades the answer to "unknown", which is survivable."""
         return self._read()
 
-    def entry_for(self, serial: str, running_sha: Optional[str]) -> Optional[dict[str, Any]]:
+    def entry_for(self, serial: str, running_sha: str | None) -> dict[str, Any] | None:
         """Our record for a serial, if it is still believable.
 
         Discarded when the board's running commit disagrees with what we recorded
@@ -750,8 +750,8 @@ class FlashLog:
         *,
         mcu_type: str,
         fw: str,
-        bin_sha256: Optional[str],
-        fw_sha: Optional[str],
+        bin_sha256: str | None,
+        fw_sha: str | None,
     ) -> None:
         """Note a completed flash. Never raises - a lost record is not worth
         failing a flash that already succeeded."""

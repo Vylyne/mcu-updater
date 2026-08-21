@@ -29,7 +29,7 @@ import re
 import sys
 import threading
 import time
-from typing import Any, Optional
+from typing import Any
 
 from .. import firmware
 from ..build import Reporter, null_reporter, run_streamed
@@ -73,9 +73,9 @@ def flash_katapult(
     mcu_type: str,
     chipset: str,
     serial: str,
-    fw_bin: Optional[str] = None,
+    fw_bin: str | None = None,
     *,
-    fw: Optional[str] = None,
+    fw: str | None = None,
     reporter: Reporter = null_reporter,
     timeout: float = REENUMERATE_TIMEOUT,
     force: bool = False,
@@ -214,7 +214,7 @@ def flash_katapult(
 _APP_START_RE = re.compile(r"Application Start:\s*0x\s*([0-9A-Fa-f]+)")
 
 
-def _parse_application_start(transcript: list[str]) -> Optional[int]:
+def _parse_application_start(transcript: list[str]) -> int | None:
     """The board's own launch address, from flashtool's handshake output."""
     match = _APP_START_RE.search("\n".join(transcript))
     if match is None:
@@ -394,7 +394,7 @@ def wait_for_dfu(
     reporter: Reporter = null_reporter,
     timeout: float = HUMAN_ACTION_TIMEOUT,
     poll: float = 1.0,
-    cancel: Optional[threading.Event] = None,
+    cancel: threading.Event | None = None,
 ) -> list[str]:
     """Poll for a DFU device to appear, giving a human time to hold BOOT0."""
     deadline = time.monotonic() + timeout
@@ -434,7 +434,7 @@ def flash_dfu_stm32(
     fw_bin: str,
     *,
     reporter: Reporter = null_reporter,
-    target_serial: Optional[str] = None,
+    target_serial: str | None = None,
 ) -> None:
     """Write a .bin to an STM32 sitting in DFU mode.
 
@@ -544,9 +544,9 @@ def flash_initial_bootloader(
     chipset: str,
     fw_bin: str,
     *,
-    uf2_bin: Optional[str] = None,
+    uf2_bin: str | None = None,
     reporter: Reporter = null_reporter,
-    target_serial: Optional[str] = None,
+    target_serial: str | None = None,
 ) -> None:
     """Install a first bootloader on a bare board of this chipset.
 
@@ -594,7 +594,7 @@ def flash_initial_bootloader(
 
 
 
-def _no_services(name: Optional[str] = None) -> Any:
+def _no_services(name: str | None = None) -> Any:
     raise AssertionError(
         "the bootstrap flash path controls no services; "
         f"something asked for {name!r}"

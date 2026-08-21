@@ -28,7 +28,6 @@ from __future__ import annotations
 
 import re
 from collections.abc import Iterator
-from typing import Optional
 
 #: A comment may follow the header. Klipper's own parser allows it, so a config
 #: sitting next to printer.cfg has to as well - and without this the line simply
@@ -46,7 +45,7 @@ _TRUE = {"true", "yes", "on", "1"}
 _FALSE = {"false", "no", "off", "0"}
 
 
-def parse_bool(raw: Optional[str], default: Optional[bool] = False) -> Optional[bool]:
+def parse_bool(raw: str | None, default: bool | None = False) -> bool | None:
     """Klipper-style truthiness. Returns None when the value is unrecognised, so
     a caller can tell "not set" from "set to nonsense".
 
@@ -130,8 +129,8 @@ class CfgDocument:
     def _parse(self) -> None:
         self.sections = {}
         self.duplicate_sections = []
-        current: Optional[Section] = None
-        current_option: Optional[Option] = None
+        current: Section | None = None
+        current_option: Option | None = None
 
         for index, line in enumerate(self.lines):
             match = _SECTION_RE.match(line)
@@ -193,14 +192,14 @@ class CfgDocument:
     def has_section(self, name: str) -> bool:
         return name in self.sections
 
-    def section_names(self, prefix: Optional[str] = None) -> list[str]:
+    def section_names(self, prefix: str | None = None) -> list[str]:
         """Section names in file order, optionally only those starting with a word."""
         names = sorted(self.sections, key=lambda n: self.sections[n].header)
         if prefix is None:
             return names
         return [n for n in names if n == prefix or n.startswith(prefix + " ")]
 
-    def get(self, section: str, key: str, default: Optional[str] = None) -> Optional[str]:
+    def get(self, section: str, key: str, default: str | None = None) -> str | None:
         sec = self.sections.get(section)
         if sec is None:
             return default
@@ -221,7 +220,7 @@ class CfgDocument:
     # -- writing -----------------------------------------------------------
 
     @staticmethod
-    def _decoration(existing: Optional[list[str]]) -> tuple[dict, dict, list]:
+    def _decoration(existing: list[str] | None) -> tuple[dict, dict, list]:
         """The comments a multi-line block already carries.
 
         Rewriting an option splices the whole block, so without this, adopting one
@@ -258,7 +257,7 @@ class CfgDocument:
         return inline, before, pending
 
     @classmethod
-    def _render(cls, key: str, value: object, existing: Optional[list[str]] = None) -> list[str]:
+    def _render(cls, key: str, value: object, existing: list[str] | None = None) -> list[str]:
         inline, before, trailing = cls._decoration(existing)
 
         def block(items: list[str]) -> list[str]:

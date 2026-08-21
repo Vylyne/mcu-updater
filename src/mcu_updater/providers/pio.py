@@ -26,7 +26,7 @@ import re
 import shutil
 import threading
 import time
-from typing import Any, Optional
+from typing import Any
 
 from .. import firmware, sections
 from ..build import Reporter, null_reporter, run_streamed, sha256_file
@@ -182,8 +182,8 @@ class WatcherDevice:
 
     device_id: str
     port: str
-    firmware_version: Optional[str] = None
-    build_variant: Optional[str] = None
+    firmware_version: str | None = None
+    build_variant: str | None = None
     #: Does the port still exist? A gone node proves the entry is stale without
     #: asking systemd anything. The converse does not hold - a port that exists
     #: may since have become a *different* display, which is the whole reason
@@ -299,7 +299,7 @@ def discover(
     settings: Settings,
     display: PioType,
     *,
-    listen: Optional[float] = None,
+    listen: float | None = None,
     reporter: Reporter = null_reporter,
 ) -> dict[str, WatcherDevice]:
     """Ask every display which it is, by listening on the free ports.
@@ -330,7 +330,7 @@ def discover(
     source = _source_dir(display)
     argv_listen = "-" if listen is None else str(listen)
 
-    last: Optional[str] = None
+    last: str | None = None
     for candidate in DISCOVER_PYTHON_CANDIDATES:
         found = shutil.which(candidate)
         if not found:
@@ -457,15 +457,15 @@ _FW_DIRTY_RE = re.compile(r"\.dirty\b", re.IGNORECASE)
 class SourceState:
     """What the display source tree would build right now."""
 
-    head: Optional[str] = None
-    version: Optional[str] = None
+    head: str | None = None
+    version: str | None = None
     dirty: bool = False
     #: HEAD is exactly the `v<VERSION>` tag, which is the one case the firmware
     #: reports a bare version with no sha to compare against.
     on_tag: bool = False
 
 
-def _git(directory: str, *args: str) -> Optional[str]:
+def _git(directory: str, *args: str) -> str | None:
     import subprocess
 
     try:
@@ -503,7 +503,7 @@ def source_state(source: str) -> SourceState:
     return SourceState(head=head, version=version, dirty=dirty, on_tag=on_tag)
 
 
-def device_status(running: Optional[str], state: SourceState) -> DeviceStatus:
+def device_status(running: str | None, state: SourceState) -> DeviceStatus:
     """Compare what a screen reports running against what the tree would build.
 
     Stronger than the artifact check, which compares a built artifact against
@@ -709,7 +709,7 @@ def build(
     display: PioType,
     *,
     reporter: Reporter = null_reporter,
-    cancel: Optional[threading.Event] = None,
+    cancel: threading.Event | None = None,
 ) -> str:
     """Compile one env. Returns the path to the image it produced."""
     source = _source_dir(display)
@@ -746,8 +746,8 @@ def upload(
     port: str,
     *,
     reporter: Reporter = null_reporter,
-    cancel: Optional[threading.Event] = None,
-) -> dict[str, Optional[str]]:
+    cancel: threading.Event | None = None,
+) -> dict[str, str | None]:
     """Write this env's firmware to the display at `port`.
 
     **`port` is required and is never inferred.** PlatformIO auto-detects an

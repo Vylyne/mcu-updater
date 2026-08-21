@@ -18,7 +18,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
-from typing import Any, Optional
+from typing import Any
 
 from .. import AGENT_NAME, __version__
 from ..jobs import IMMEDIATELY_CANCELLABLE, Job, JobRunner
@@ -43,9 +43,9 @@ class Agent:
         self,
         paths: Paths,
         *,
-        socket_path: Optional[str] = None,
-        logger: Optional[logging.Logger] = None,
-        peer_factory: Optional[Any] = None,
+        socket_path: str | None = None,
+        logger: logging.Logger | None = None,
+        peer_factory: Any | None = None,
     ) -> None:
         self.paths = paths
         self.socket_path = socket_path or paths.moonraker_sock
@@ -55,7 +55,7 @@ class Agent:
         # Moonraker. Signature: (on_request, on_notify) -> MoonrakerPeer.
         self._peer_factory = peer_factory
 
-        self._peer: Optional[MoonrakerPeer] = None
+        self._peer: MoonrakerPeer | None = None
         self._stop = threading.Event()
 
         self.emitter = EventEmitter(lambda: self._peer, logger=self.log)

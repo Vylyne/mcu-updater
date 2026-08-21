@@ -15,7 +15,7 @@ from __future__ import annotations
 
 import contextlib
 from collections.abc import Iterator
-from typing import Any, Optional
+from typing import Any
 
 from ..devices import STATE_DFU
 from .spec import Bench, FlashTarget
@@ -71,7 +71,7 @@ class DfuUtil:
 
 
 def target_for(
-    fw_bin: str, *, chipset: str, dfu_serial: Optional[str] = None
+    fw_bin: str, *, chipset: str, dfu_serial: str | None = None
 ) -> FlashTarget:
     """A bare board, as a target.
 

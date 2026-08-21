@@ -16,7 +16,7 @@ import os
 import sys
 import time
 from types import TracebackType
-from typing import Any, Optional
+from typing import Any
 
 from .errors import BusyError
 from .paths import Paths
@@ -84,15 +84,15 @@ class ExclusiveLock:
     surprise, not a convenience.
     """
 
-    def __init__(self, paths: Paths, path: Optional[str] = None) -> None:
+    def __init__(self, paths: Paths, path: str | None = None) -> None:
         self.paths = paths
         #: Overridable so registry edits can use their own lock file rather than
         #: queueing behind a build that holds the main one for minutes.
         self.path = path or paths.lock_file
-        self._fh: Optional[Any] = None
-        self.label: Optional[str] = None
+        self._fh: Any | None = None
+        self.label: str | None = None
 
-    def _record(self) -> Optional[dict[str, Any]]:
+    def _record(self) -> dict[str, Any] | None:
         """Whatever is written in the file, without judging whether it's current."""
         try:
             with open(self.path, encoding="utf-8") as fh:
@@ -103,7 +103,7 @@ class ExclusiveLock:
             return None
         return data
 
-    def holder(self) -> Optional[dict[str, Any]]:
+    def holder(self) -> dict[str, Any] | None:
         """Who holds the lock *right now*. None if free or unknown.
 
         This has to probe the lock, not just read the file. ``release()``
@@ -198,9 +198,9 @@ class ExclusiveLock:
 
     def __exit__(
         self,
-        exc_type: Optional[type],
-        exc: Optional[BaseException],
-        tb: Optional[TracebackType],
+        exc_type: type | None,
+        exc: BaseException | None,
+        tb: TracebackType | None,
     ) -> None:
         self.release()
 

@@ -20,7 +20,7 @@ import threading
 import time
 import traceback
 from collections.abc import Callable
-from typing import Any, Optional
+from typing import Any
 
 from .errors import BusyError, OperationCancelled, UpdaterError
 from .lock import ExclusiveLock
@@ -74,11 +74,11 @@ class Job:
         self.params = params
         self.state: str = QUEUED
         self.created = time.time()
-        self.started: Optional[float] = None
-        self.finished: Optional[float] = None
+        self.started: float | None = None
+        self.finished: float | None = None
         self.progress = Progress()
-        self.result: Optional[dict] = None
-        self.error: Optional[dict] = None
+        self.result: dict | None = None
+        self.error: dict | None = None
         self.cancel_requested = False
 
         self._lock = threading.Lock()
@@ -188,8 +188,8 @@ class JobRunner:
         paths: Paths,
         settings_getter: Callable[[], Settings],
         *,
-        on_job_change: Optional[Callable[[Job], None]] = None,
-        on_log_line: Optional[Callable[[Job, LogLine], None]] = None,
+        on_job_change: Callable[[Job], None] | None = None,
+        on_log_line: Callable[[Job, LogLine], None] | None = None,
         logger: Any = None,
         history: int = 10,
     ) -> None:
@@ -201,20 +201,20 @@ class JobRunner:
 
         self._ids = itertools.count(1)
         self._slot_lock = threading.Lock()
-        self._current: Optional[Job] = None
+        self._current: Job | None = None
         self._cancel = threading.Event()
         self._never_cancel = threading.Event()
         self._recent: collections.deque[Job] = collections.deque(maxlen=history)
         self._by_id: dict[str, Job] = {}
-        self._thread: Optional[threading.Thread] = None
+        self._thread: threading.Thread | None = None
 
     # -- queries -----------------------------------------------------------
 
-    def current(self) -> Optional[Job]:
+    def current(self) -> Job | None:
         with self._slot_lock:
             return self._current
 
-    def get(self, job_id: str) -> Optional[Job]:
+    def get(self, job_id: str) -> Job | None:
         return self._by_id.get(job_id)
 
     def recent(self, limit: int = 10) -> list[Job]:
@@ -251,7 +251,7 @@ class JobRunner:
         self,
         kind: str,
         params: dict,
-        fn: Callable[[JobContext], Optional[dict]],
+        fn: Callable[[JobContext], dict | None],
     ) -> Job:
         """Start a job, or raise BusyError. Returns immediately.
 
@@ -376,7 +376,7 @@ class JobRunner:
         self._emit_change(job)
         return {"cancelling": True, "immediate": immediate}
 
-    def wait(self, timeout: Optional[float] = None) -> bool:
+    def wait(self, timeout: float | None = None) -> bool:
         """Block until the current job finishes. For tests and shutdown."""
         thread = self._thread
         if thread is None:

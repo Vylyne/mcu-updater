@@ -15,7 +15,6 @@ part of it.
 from __future__ import annotations
 
 import dataclasses
-from typing import Optional
 
 from .kconfig_make import KconfigMake
 from .platformio import PlatformIO
@@ -57,8 +56,8 @@ def select(
     install: Install,
     *,
     stale_only: bool = True,
-    only: Optional[str] = None,
-    fw: Optional[str] = None,
+    only: str | None = None,
+    fw: str | None = None,
 ) -> Selection:
     """Everything wanting a build, in the order a batch should do it.
 

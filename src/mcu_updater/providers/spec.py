@@ -34,7 +34,7 @@ from __future__ import annotations
 
 import dataclasses
 import threading
-from typing import Optional, Protocol
+from typing import Protocol
 
 from ..build import Reporter
 from ..config import Registry
@@ -114,7 +114,7 @@ class BuildTarget:
     #: which family it is looking at.
     on_demand: bool = False
 
-    def to_json(self) -> dict[str, Optional[str]]:
+    def to_json(self) -> dict[str, str | None]:
         # `type` rather than `name`, because that is what every other bulk
         # payload has always called it.
         return {"type": self.name, "fw": self.fw, "provider": self.provider}
@@ -134,7 +134,7 @@ class Skipped:
     target: BuildTarget
     reason: str
 
-    def to_json(self) -> dict[str, Optional[str]]:
+    def to_json(self) -> dict[str, str | None]:
         return {**self.target.to_json(), "reason": self.reason}
 
 
@@ -156,7 +156,7 @@ class Provider(Protocol):
         """
         ...
 
-    def blocked(self, install: Install, target: BuildTarget) -> Optional[str]:
+    def blocked(self, install: Install, target: BuildTarget) -> str | None:
         """Why this cannot be built at all, or None if it can be attempted.
 
         Only for the once-per-target setup that has to happen outside this tool:
@@ -188,7 +188,7 @@ class Provider(Protocol):
         target: BuildTarget,
         *,
         reporter: Reporter,
-        cancel: Optional[threading.Event] = None,
+        cancel: threading.Event | None = None,
     ) -> None:
         """Produce the image. Raises `UpdaterError` on failure.
 

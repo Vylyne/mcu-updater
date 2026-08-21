@@ -9,7 +9,6 @@ import os
 import signal
 import sys
 import threading
-from typing import Optional
 
 from .. import AGENT_NAME, __version__
 from ..paths import Paths
@@ -45,7 +44,7 @@ def build_parser() -> argparse.ArgumentParser:
     return p
 
 
-def setup_logging(path: Optional[str], verbose: bool) -> logging.Logger:
+def setup_logging(path: str | None, verbose: bool) -> logging.Logger:
     level = logging.DEBUG if verbose else logging.INFO
     root = logging.getLogger("mcu_updater")
     root.setLevel(level)
@@ -69,7 +68,7 @@ def setup_logging(path: Optional[str], verbose: bool) -> logging.Logger:
     return root
 
 
-def main(argv: Optional[list[str]] = None) -> int:
+def main(argv: list[str] | None = None) -> int:
     args = build_parser().parse_args(argv)
     log = setup_logging(args.log, args.verbose)
 

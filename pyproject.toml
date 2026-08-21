@@ -46,9 +46,17 @@ ignore = [
 ]
 
 [tool.mypy]
-# Deliberately no `python_version = "3.9"`: current mypy refuses to target
-# anything below 3.10. The real 3.9 guarantee comes from CI actually running the
-# test suite on a 3.9 interpreter, which is a stronger check anyway.
+# Deliberately no `python_version = "3.9"`: mypy refuses that flag outright
+# ("must be 3.10 or higher"). It does, however, still *run* on 3.9 and then
+# targets whatever interpreter it runs under - so invoking it from a 3.9
+# environment is how this gets checked against the floor, and is what CI's
+# static job does. Under a newer interpreter `mypy src` silently checks against
+# that version's stdlib instead, which is a weaker check than it looks.
+#
+# Note this cannot police the test suite the same way. Test functions take
+# unannotated fixtures, so `tmp_path` is `Any` and a call on it is unchecked -
+# even with --check-untyped-defs. Running pytest on 3.9 is the only thing that
+# catches a 3.10+ stdlib API in a test, and CI's matrix is what does it.
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

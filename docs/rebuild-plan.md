@@ -1046,6 +1046,89 @@ process:    Fifth instance of a step being redesigned on a stated fact, and the
             against live payloads, is the authority — not this file's prose.**
             Where the two disagree, the doc wins and this file gets corrected.
 
+### Step 20 — fix the fork against the corrected contract            [done]
+commit:     `Vylyne/mainsail` `mu/stable` 13cb4d81 (fork repo, not this one)
+gate:       `npx eslint src tests` clean · `npx vitest run` 111 passed/0
+            failed (108 prior + 3 new) · `npx prettier --check` clean on the
+            scoped paths · `npx vite build` succeeded (last, per Ground
+            rules) - no code in this repo touched, so no pytest/ruff/mypy run
+deviation:  **`patchCount` (`FirmwareUpdaterPanelTarget.vue:642`) carried the
+            same `.klipper` bug**, one file beyond the corrected spec's named
+            two - same live payload proves it (a cartographer type's
+            "patched build" caption would stay hidden forever even with real
+            makefile patches applied). Fixed alongside the other two.
+
+            **Kept `katapult` a fixed `FwType` field rather than folding it
+            into a generic map too**, diverging from the corrected spec's
+            literal "replace the fixed klipper/katapult members ... with a
+            map keyed by family name". `katapult` is one of the two builtin
+            families and `type_status()` always writes its block under that
+            exact literal name when declared - unlike the application, it was
+            never dynamic and never actually broken; folding it in added risk
+            (the `katapultInstalled` toggle's whole design assumes one fixed
+            bootloader field) for no bug it fixes. Added
+            `fwApplicationConfig(type)` in `types.ts` for the one field that
+            *is* dynamic - a small cast (`(type as unknown as Record<string,
+            unknown>)[type.firmware]`) rather than an index signature on
+            `FwType` itself, which would have had to be a union across every
+            other field's type and weakened typo-checking on all of them for
+            one dynamic case.
+
+            **Found the write side was broken too - the corrected spec's fix
+            list named reading (`onOpen`), not `submit()`.** `submit()`'s
+            editing branch always sent `klipper_extra_args`;
+            `registry.py`'s `type_update` loops `f"{fw}_extra_args" for fw in
+            mcu.fw_order()`, so for a cartographer type that key is never
+            checked - the field looked editable and silently saved nothing.
+            Fixed by keying the submitted arg off `mcuType.firmware` (the
+            *saved* application, not `this.firmware`, which may be a family
+            just picked in this same edit with no answers of its own yet).
+            Renamed `klipperExtraArgs` -> `applicationExtraArgs` while
+            touching every read/write site.
+
+            **Left the create-flow's `klipper_extra_args` key untouched,
+            flagged not fixed.** `fw.type.add` (`registry.py`'s `type_add`)
+            has no generic per-family args parameter - only
+            `klipper_args`/`katapult_args` on `reg.add_type()` - so a dynamic
+            key here is a differently-named no-op for a non-klipper family,
+            same as today. Needs a backend signature change; out of a
+            fork-only step.
+
+            **Also fixed `FwArtifact.stale`/`.stale_reason`**, found while
+            touching this exact type for the `artifacts` shape change: both
+            retired in Step 14 (`docs/agent-api.md`'s `Artifact` section,
+            corrected in Step 19), replaced by `reason` plus a nested
+            `profile`. Grepped first - nothing in the fork read either field
+            (`Target.artifact`/`Target.profile` are a separate projection,
+            not this type) - zero runtime risk, and leaving it would have
+            been a trap for the next reader given the exact kind of dynamic
+            access this step just introduced elsewhere. Removed the
+            now-dead `FwStaleReason` export with it.
+
+            **`fwHasBinary(type)` exists as its own exported function, not a
+            component getter, specifically so the Gate's required regression
+            test could exist at all.** This fork has zero component-mount
+            tests today - `@vue/test-utils` is not a devDependency, every
+            existing spec tests store logic as pure functions - so a getter
+            buried in a `.vue` file cannot be unit-tested without new test
+            infrastructure, a bigger decision than this step. Hoisted the
+            DFU-setup describe block's `artifact`/`type` fixture factories
+            (`tests/store/server/fwUpdater/getters.spec.ts`) to module scope
+            so the new suite could reuse them instead of duplicating the full
+            `FwArtifact` shape a second time.
+untested:   Not run against a live printer/agent - same caveat as Step 16b.
+            The panel itself (the two safety warnings and the extra-args
+            round-trip, specifically on a cartographer type) needs a browser
+            against a running agent - Vi's to do, per Ground rules.
+surprises:  The label text ("Klipper extra args") on the now-generic
+            extra-args field was **not** changed - it still reads "Klipper"
+            while editing a cartographer type. Fixing it needs an i18n key
+            change (`src/locales/en.json`, the case-sensitive sort trap Step
+            16 notes) across every locale - cosmetic only, and beyond what
+            the corrected spec's fix list named. Flagged, not fixed.
+next:       Step 21 (close the `.vue` type-checking gap), then Step 22
+            (on-printer verification, Vi only, gated behind this step).
+
 ---
 
 ## Appendix B — open items, not in scope

@@ -19,7 +19,8 @@ import itertools
 import threading
 import time
 import traceback
-from typing import Any, Callable, Optional
+from collections.abc import Callable
+from typing import Any, Optional
 
 from .errors import BusyError, OperationCancelled, UpdaterError
 from .lock import ExclusiveLock

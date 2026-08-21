@@ -21,8 +21,9 @@ import json
 import socket
 import sys
 import threading
+from collections.abc import Callable
 from concurrent.futures import Future, ThreadPoolExecutor
-from typing import Any, Callable, Optional
+from typing import Any, Optional
 
 ETX = b"\x03"
 

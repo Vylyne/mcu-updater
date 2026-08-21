@@ -47,10 +47,13 @@ function preflight_checks {
         exit 1
     fi
 
-    # 3.9 is the floor; that is what ships on the Raspberry Pi OS release most
-    # printers run.
-    if ! "${PYTHON_BIN}" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 9) else 1)'; then
-        echo "[ERROR] python3 >= 3.9 required, found $(${PYTHON_BIN} -V)"
+    # 3.11 is the floor: Raspberry Pi OS Bookworm ships it, and Trixie ships
+    # 3.13. Note this is the *system* python3 by design - the agent runs under
+    # it (see the unit's %PYTHON%), and katapult's flashtool.py is invoked with
+    # sys.executable and needs apt's python3-serial, which a plain venv cannot
+    # see. Do not "fix" this by pointing PYTHON_BIN at one.
+    if ! "${PYTHON_BIN}" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)'; then
+        echo "[ERROR] python3 >= 3.11 required, found $(${PYTHON_BIN} -V)"
         exit 1
     fi
     printf "[PRE-CHECK] Using %s (%s)\n\n" "${PYTHON_BIN}" "$(${PYTHON_BIN} -V)"

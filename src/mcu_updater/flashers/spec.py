@@ -40,9 +40,9 @@ The agent selects and says which flasher owns each device; a flasher writes.
 from __future__ import annotations
 
 import dataclasses
-from collections.abc import Mapping
+from collections.abc import Callable, Mapping
 from contextlib import AbstractContextManager
-from typing import Any, Callable, Optional, Protocol
+from typing import Any, Optional, Protocol
 
 from ..paths import Paths
 from ..service import ServiceController

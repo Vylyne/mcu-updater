@@ -21,8 +21,8 @@ import subprocess
 import sys
 import threading
 import time
-from collections.abc import Iterator
-from typing import Any, Callable, Optional
+from collections.abc import Callable, Iterator
+from typing import Any, Optional
 
 from . import firmware
 from .config import McuType, Registry

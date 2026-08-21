@@ -7,7 +7,7 @@ name = "mcu-updater"
 version = "0.9.0"
 description = "Klipper/Katapult MCU firmware management with a Moonraker agent and Mainsail UI"
 readme = "README.md"
-requires-python = ">=3.9"
+requires-python = ">=3.11"
 # Deliberately empty. See docs/ - the agent talks to Moonraker over a unix
 # socket with nothing but the stdlib, and kconfiglib is loaded out of the
 # klipper/katapult source trees rather than pip (a PyPI copy would disagree
@@ -24,7 +24,7 @@ updatefw = "mcu_updater.cli:main"
 where = ["src"]
 
 [tool.ruff]
-target-version = "py39"
+target-version = "py311"
 line-length = 110
 # Third-party code vendored verbatim as a test fixture. Linting it reports 125
 # problems that are not ours, and `--fix` would silently rewrite upstream source -
@@ -35,28 +35,29 @@ extend-exclude = ["tests/fixtures/kconfiglib"]
 select = ["E", "F", "W", "I", "UP", "B"]
 ignore = [
     "E501", # line length is handled by the formatter, not worth failing CI over
-    # PEP 604 (`X | None`) is only safe here because every module has
-    # `from __future__ import annotations`. The runtime target is Python 3.9,
-    # where `Optional[X]` works in every position - including any spot where an
-    # annotation does get evaluated. Keeping the explicit typing form means a
-    # future edit that drops a `__future__` import can't turn into a
-    # TypeError at import time on the printer.
+    # Pending removal now the floor is 3.11. These were ignored because the
+    # runtime target was 3.9, where only `Optional[X]` is safe in a position an
+    # annotation actually gets evaluated - so a future edit dropping a
+    # `from __future__ import annotations` could not become a TypeError at
+    # import time on the printer. At 3.11 PEP 604 is valid at runtime
+    # everywhere, so that reason is gone. Kept for exactly one commit to keep
+    # the floor bump a small diff; the sweep is its own change.
     "UP007",
     "UP045",
 ]
 
 [tool.mypy]
-# Deliberately no `python_version = "3.9"`: mypy refuses that flag outright
-# ("must be 3.10 or higher"). It does, however, still *run* on 3.9 and then
-# targets whatever interpreter it runs under - so invoking it from a 3.9
-# environment is how this gets checked against the floor, and is what CI's
-# static job does. Under a newer interpreter `mypy src` silently checks against
-# that version's stdlib instead, which is a weaker check than it looks.
+# Pins the floor, so `mypy src` is honest on whatever interpreter it runs under
+# - including the much newer one a dev box will have. This is only possible
+# because the floor is 3.11: mypy rejects `python_version` below 3.10 outright,
+# which is why the old 3.9 floor could only be checked by *running* mypy on a
+# 3.9 interpreter.
 #
-# Note this cannot police the test suite the same way. Test functions take
-# unannotated fixtures, so `tmp_path` is `Any` and a call on it is unchecked -
-# even with --check-untyped-defs. Running pytest on 3.9 is the only thing that
-# catches a 3.10+ stdlib API in a test, and CI's matrix is what does it.
+# It still cannot police the test suite. Test functions take unannotated
+# fixtures, so `tmp_path` is `Any` and any call on it is unchecked - even with
+# --check-untyped-defs. Running pytest on a floor interpreter is the only thing
+# that catches a too-new stdlib API in a test, and CI's matrix is what does it.
+python_version = "3.11"
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]

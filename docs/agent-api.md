@@ -120,7 +120,7 @@ application error (see `data.code`), `-32603` internal.
 ```json
 {"api_version": 3, "version": "0.9.0", "dry_run": false, "enable_flashing": false,
  "phase": 1, "capabilities": ["fw.artifacts", "fw.bus.scan", "..."],
- "host": {"nproc": 4, "python": "3.9.2",
+ "host": {"nproc": 4, "python": "3.13.5",
           "config_dir": "/home/biqu/printer_data/config/mcu-updater",
           "data_dir": "/home/biqu/printer_data/mcu-updater"},
  "now": 1785412345.6}

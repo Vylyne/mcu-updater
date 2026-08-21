@@ -21,8 +21,8 @@ import json
 import os
 import subprocess
 import time
-from collections.abc import Iterator
-from typing import Any, Callable, Optional
+from collections.abc import Callable, Iterator
+from typing import Any, Optional
 
 from .build import Reporter, null_reporter
 from .errors import PrintInProgressError, ServiceControlError

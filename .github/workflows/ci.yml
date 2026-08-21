@@ -6,19 +6,18 @@ on:
   pull_request:
 
 jobs:
-  # Lint and type-check once, on the floor rather than a modern interpreter.
-  # mypy rejects `--python-version 3.9` but runs fine *on* 3.9 and then targets
-  # it, so this is what checks src against the stdlib the printer actually has;
-  # on 3.13 it would check against 3.13's and miss exactly that. If a future
-  # mypy drops 3.9 entirely, move this back to a modern interpreter and accept
-  # that the matrix below is the only floor guarantee again.
+  # Lint and type-check once, on a modern interpreter. Both tools pin the floor
+  # from pyproject (`target-version`, `python_version`) rather than inheriting
+  # it from whatever runs them, so this is a real floor check wherever it runs.
+  # That only became true at 3.11 - mypy rejects `python_version` below 3.10,
+  # so the old 3.9 floor forced this job onto a 3.9 interpreter.
   static:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.9"
+          python-version: "3.13"
       - run: pip install -e ".[dev]"
       - name: Lint
         run: ruff check src tests scripts
@@ -30,10 +29,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # 3.9 is the floor because that is what ships on the Raspberry Pi OS
-        # release most printers run. Actually executing the suite there is the
-        # real compatibility guarantee.
-        python-version: ["3.9", "3.13"]
+        # 3.11 is the floor (Raspberry Pi OS Bookworm); 3.13 is what the
+        # printers actually run today (Trixie). Executing the suite on the floor
+        # is the real compatibility guarantee - static analysis cannot see a
+        # too-new stdlib call inside an unannotated test.
+        python-version: ["3.11", "3.13"]
 
     steps:
       - uses: actions/checkout@v4

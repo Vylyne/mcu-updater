@@ -40,7 +40,7 @@ class FakeMoonraker:
         while not self._stop.is_set():
             try:
                 chunk = self.sock.recv(65536)
-            except socket.timeout:
+            except TimeoutError:
                 continue
             except OSError:
                 return

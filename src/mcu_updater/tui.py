@@ -8,7 +8,8 @@ one implementation of each action and the two front ends cannot drift.
 from __future__ import annotations
 
 import argparse
-from typing import Callable, Optional
+from collections.abc import Callable
+from typing import Optional
 
 from . import cli
 from .config import Registry

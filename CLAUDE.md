@@ -26,7 +26,7 @@ Violating any of these produces a bug that tests will not catch.
 |---|---|
 | **LF line endings everywhere**, repo and working tree | Ships to a Linux printer; a `\r` in a shebang becomes `bad interpreter: python3^M`. `.gitattributes` pins it. Run `python scripts/check_line_endings.py` before every commit. |
 | **stdlib only** — never add a dependency | `pyproject.toml` `dependencies = []` is deliberate. The agent talks to Moonraker over a unix socket with nothing but stdlib. |
-| **Python 3.9 is the floor** | Raspberry Pi OS. No `match`, no `X \| Y` at runtime, keep `from __future__ import annotations`. `UP007`/`UP045` are ruff-ignored on purpose — leave `Optional[X]` alone. |
+| **Python 3.11 is the floor** | Raspberry Pi OS Bookworm ships it; the printers run Trixie's 3.13. The floor is the *system* `python3` — the agent runs under it, and `flashtool.py` is invoked with `sys.executable` and needs apt's `python3-serial`, so a venv on the printer breaks flashing. Bumped from 3.9 on 2026-08-21. |
 | **Never pip-install kconfiglib** | Klipper and Katapult each vendor their own *locally patched* copy. Their sentinels (`MENU`, `BOOL`) are different objects across trees; cross-comparing silently yields `False`. Always load from the tree being configured. |
 | **`posix_only` tests silently skip on Windows** | Every flock/signal/`/proc` assertion. A green Windows run proves nothing about locking. CI runs Linux too — trust that. |
 | **Use `scripts/mutation_test.py`, never a throwaway** | An inline mutation script once stranded a sabotaged guard on disk. `tests/test_mutation_helper.py` exists because of it. |
@@ -37,22 +37,33 @@ Violating any of these produces a bug that tests will not catch.
 
 ## Gate
 
-Run before every commit, **in the 3.9 venv**. A green run on the system
-interpreter proves nothing about the floor: a 3.10+ stdlib API passes there and
-fails on the printer. `Path.write_text(newline=)` reached CI that way.
+Run before every commit:
 
 ```bash
-source .venv/Scripts/activate   # 3.9; the system python is not
 python -m pytest -q
 python -m ruff check src tests scripts
 python -m mypy src
 python scripts/check_line_endings.py
 ```
 
-Shell state does not survive between agent tool calls, so an agent must either
-chain the activation into the same command or call `.venv/Scripts/python.exe`
+`ruff` and `mypy` pin the floor from `pyproject.toml` (`target-version`,
+`python_version`), so those two are honest on any interpreter. **`pytest` is
+not.** A too-new stdlib API passes on a newer interpreter and fails on the
+printer — `Path.write_text(newline=)` is 3.10+ and reached CI exactly that way,
+and static analysis cannot catch it because test fixtures are unannotated and
+therefore `Any`.
+
+So run the suite on a floor interpreter when there is one:
+
+```bash
+uv venv --python 3.11 && source .venv/Scripts/activate
+```
+
+Shell state does not survive between agent tool calls, so an agent must chain
+the activation into the same command or call `.venv/Scripts/python.exe`
 directly — activating in one call and running the gate in the next silently
-gets the system interpreter back.
+gets the system interpreter back. Without a floor venv, CI's 3.11 matrix leg is
+the only thing checking this.
 
 ## Extending providers or flashers
 

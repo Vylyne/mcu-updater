@@ -15,7 +15,8 @@ stop, and the accounting.
 
 from __future__ import annotations
 
-from typing import Any, Callable, Optional
+from collections.abc import Callable
+from typing import Any, Optional
 
 from ..errors import OperationCancelled, UpdaterError
 from .registry import by_flasher, group_by_stop

@@ -7,7 +7,8 @@ import os
 import platform
 import re
 import time
-from typing import Any, Callable, Optional
+from collections.abc import Callable
+from typing import Any, Optional
 
 from ... import API_VERSION, __version__, firmware, profiles, providers
 from ...build import read_sidecar

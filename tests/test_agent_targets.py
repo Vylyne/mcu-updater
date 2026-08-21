@@ -649,7 +649,7 @@ def test_every_fact_in_the_old_keys_survives_the_projection(api, paths, fake_roo
         assert [d["id"] for d in target["devices"]] == [
             s["serial"] for s in legacy["serials"]
         ]
-        for device, serial in zip(target["devices"], legacy["serials"]):
+        for device, serial in zip(target["devices"], legacy["serials"], strict=True):
             assert device["needs_flash"] == serial["needs_flash"]
             assert device["reason"] == serial["reason"]
             assert device["state"] == serial["state"]
@@ -665,7 +665,7 @@ def test_every_fact_in_the_old_keys_survives_the_projection(api, paths, fake_roo
         assert target["extra"]["module_version"] == legacy["module_version"]
         assert target["extra"]["source_version"] == legacy["source_version"]
         assert target["extra"]["reachable"] == legacy["reachable"]
-        for device, screen in zip(target["devices"], legacy["screens"]):
+        for device, screen in zip(target["devices"], legacy["screens"], strict=True):
             assert device["present"] == screen["present"]
             assert device["version"] == screen["firmware_version"]
             assert device["name"] == screen["section"]

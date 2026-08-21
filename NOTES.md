@@ -10,6 +10,25 @@ session, so it is kept to live work. Removed entries stay in git history
 
 ---
 
+## 2026-08-21 — Fork's FW_SUPPORTED_API_VERSION was still 2, found while cutting v2.18.4-vylyne.20
+
+`store/server/fwUpdater/actions.ts`'s `FW_SUPPORTED_API_VERSION` was never
+raised past 2, even after Step 16b migrated the panel onto the api_version 3
+wire shape. `isTooNew` (`state.apiVersion > FW_SUPPORTED_API_VERSION`) read
+true against the real agent, so the panel showed "panel outdated" and never
+fetched status at all - a real regression that would have shipped in
+v2.18.4-vylyne.20's beta had it not been caught while preparing the release.
+No test exercised this path. Fixed (`fix(fwUpdater): bump
+FW_SUPPORTED_API_VERSION to 3`, fork commit `9ccdcbe2`) and folded into the
+same tag before pushing.
+
+`v2.18.4-vylyne.20` is on `Vylyne/mainsail` `mu/stable`, published as a
+**prerelease** (beta channel) - bundles Step 16b's wire-fold migration, Step
+20's type-edit dialog fix, and this constant fix. Not yet promoted to stable;
+that's `gh release edit v2.18.4-vylyne.20 --prerelease=false --latest` per
+`mu-release.yml`'s own comment, once it's been soaked - do not re-run the
+release workflow with `stable: true` to promote, it rebuilds the tree.
+
 ## 2026-08-20 — Step 16b found two Mainsail-fork bugs beyond its own scope
 
 While migrating the fork off `fw.display.*`/`kind` (`docs/rebuild-plan.md`

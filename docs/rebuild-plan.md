@@ -1469,6 +1469,34 @@ next:       Step 22 (on-printer verification, Vi only). The `.vue`
             per this step's own spec - not reopened here, since nothing about
             today's finding changes what that entry should say.
 
+### Step 23 — `discovery/spec.py` + `discovery/registry.py`, nothing moved            [done]
+commit:     d1a4e9d
+gate:       pytest 1162 passed/0 failed/10 skipped (7 more than Step 21's
+            1155 - the new discovery test file) · ruff ok · mypy ok
+            (52 files, up from 49) · line-endings ok · nothing imports the
+            new package yet, so no other suite count moved
+deviation:  none - `Sighting`/`Confidence`/`Source` modelled on
+            `flashers/spec.py`'s `FlashTarget`/`Flasher` exactly as specced,
+            `Confidence` built the way `states.py`'s `ArtifactStatus`/
+            `DeviceStatus` are (reason is the fact, tone/label/safe_to_write
+            derived, `__post_init__` raises on an unknown reason).
+            `state_for_firmware()` implements the bootloader-predicate rule
+            verbatim from the spec's own pseudocode, reusing
+            `devices.STATE_*` and `devices.KATAPULT_NAMES` rather than
+            redeclaring them. `SOURCES = ()`, static tuple, no `pkgutil` -
+            per "Do not do". Did not touch `is_mcu`/`find_untracked` or
+            `devices.py` at all, as specced - that allowlist is untouched
+            until a later step, and this step's `state_for_firmware` is a
+            new function, not a replacement for `BusDevice.state`.
+untested:   none - this step touches no hardware path and imports nothing
+            that does; it is vocabulary only.
+surprises:  none - `flashers/spec.py` and `states.py` were close enough in
+            shape that no design question came up while writing this.
+next:       Step 24 (move the three bus sources behind the seam -
+            `discovery/byid.py`, `discovery/dfu.py`, `discovery/bootsel.py`,
+            out of `devices.py`, with `devices.py` keeping every public name
+            as a thin re-export).
+
 ---
 
 ## Appendix B — open items, not in scope

@@ -255,7 +255,8 @@ from those steps that still *binds* was promoted out of the log and lives in
   `src/locales/en.json` must be followed by `npx prettier --write` on it
   (Python's `sorted()` is case-sensitive ASCII and reorders pre-existing keys);
   and **run `npx vite build` last**, after every edit, because it type-checks
-  the tests too.
+  the tests too. **Caveat, found in Step 21:** that pass covers bare `.ts` only —
+  `.vue` `<script>` blocks are unchecked unless `vue-tsc` runs separately.
 
 **Gate:** `GATE` + in the fork: `npm run test:unit`, then `npx vite build` last.
 
@@ -275,6 +276,146 @@ Purely mechanical — no behaviour change in the same commit. Done last so it ne
 overlaps a real change in review.
 
 **Gate:** `GATE`. The diff should be almost entirely moves.
+
+---
+
+### Step 18 — narrow the phantom `FwConfig` slots ⚠️ contract change
+
+`src/mcu_updater/config.py`. Was Appendix B's deferred bug; pulled into scope
+because `fw_order()` feeds `artifacts`, which Steps 19–20 have to document and
+re-declare — fix it first so the contract describes the intended shape rather
+than the defect.
+
+- `:380` — `for fw in fw_names:` iterates *every globally declared* family, and
+  `mcu.fw()` (`:163`) is `setdefault`, so a read **creates** the slot. Every type
+  ends up carrying `cartographer` and `knomi_serial` entries it never declared.
+  Iterate `mcu.firmwares` instead.
+- **Not `firmware.BUILTIN`.** That re-hardcodes klipper/katapult — the assumption
+  Steps 5–6 spent two commits removing — and would drop a genuine
+  `cartographer_extra_args` on the cartographer type.
+- Add a **non-mutating accessor** beside `fw()` and use it wherever a slot is only
+  read. Narrowing this loop fixes one call site; the `setdefault`-on-read shape is
+  what would recreate the bug at the next global-list iteration.
+- `fw_order()` (`:213`) needs no change — it filters `self.fws` rather than
+  assuming its contents.
+- **Unpin the two tests that assert the bug.** `test_artifacts_returns_both_firmwares`
+  and `test_status_type_shape` (`tests/test_agent_methods.py`) carry "known bug"
+  comments; flip them to assert the narrow set.
+
+**Gate:** `GATE`. `artifacts` should lose the keys a type does not declare.
+
+### Step 19 — make `docs/agent-api.md` true
+
+No code. The document is declared the single source of truth for the panel
+contract, and it is stale — which is *why* Step 20's bug shipped: the fork
+implements what this file says.
+
+Known-stale, from one grep — **treat as a starting point, not a complete list.
+Re-read the whole document against `McuType.to_json()` and the live method
+payloads.**
+
+| Location | Documents | Reality |
+|---|---|---|
+| `:162` | `"firmware": "klipper"` | `firmwares: [...]` since Step 6 |
+| `:163` | `"katapult_installed": true` | deleted in Step 6 |
+| `:165` | `"installed": true` on the katapult block | removed from `FwConfig` |
+| `:172` | `artifacts: {klipper, katapult}` | keyed per declared family |
+| `:184`, `:192`, `:198` | `stale` / `stale_reason` | retired in Step 14 |
+| `:250` | `"kind": "mcu"` on `Target` | retired in Step 16b |
+| `:114` | `"api_version": 2` | contradicts `:9`'s **3** |
+
+The `Family` section (`:352-357`) is already correct — Step 16a updated that much.
+Document `artifacts` as it stands *after* Step 18.
+
+**Gate:** `python scripts/check_line_endings.py`, plus spot-check two or three
+payloads against a live `Api` call rather than trusting the source read.
+
+### Step 20 — fix the fork against the corrected contract ⚠️
+
+`Vylyne/mainsail`, `mu/stable`. Every file here is fork-**added**, so this spends
+**no rebase budget** — see `docs/mainsail-fork.md`, the budget covers edited files
+only.
+
+**The live bug.** The agent emits `firmwares` and no `firmware` key.
+`FirmwareUpdaterPanelTypeDialog.vue:253` reads `mcuType?.firmware ?? 'klipper'` →
+always undefined → always `'klipper'`. `submit()` (`:271`, `:280`) then posts
+`firmware: this.firmware`, and `agent/methods/registry.py:290-307` applies it. The
+guard at `:299` is a **warning appended to a list, not a refusal**, so the write
+proceeds. Opening the cartographer type's dialog to change its *chipset* and
+saving silently rewrites its firmware to klipper — after which a build compiles
+upstream klipper and a flash writes it to a Cartographer board.
+
+- `store/server/fwUpdater/types.ts` — `FwType` (`:57-71`) gains
+  `firmwares: string[]`, drops `katapult_installed` (`:60`), and drops the fixed
+  `klipper`/`katapult` blocks and fixed `artifacts` pair for the per-family shape.
+  Check `stale_reason` (`:25`), `artifact_state` (`:329`) and `firmware_state`
+  (`:378`) against the corrected doc before deleting — some may still be live for
+  displays.
+- `FirmwareUpdaterPanelTypeDialog.vue` — `:253` read `firmwares`; `:256` derive
+  katapult from the family list rather than `katapult_installed`; `:81` and `:86`
+  compare the FirmwareChangeWarning against the real current family.
+- `FirmwareUpdaterPanelTarget.vue:590` reads `screen.firmware_state`; confirm
+  against the corrected doc whether displays still carry it.
+- **What `submit()` posts is a decision, not a default.** The agent still accepts
+  singular `firmware` + `katapult_installed` as a compat layer
+  (`registry.py:237`, `:290`, `:314`), so the dialog may keep posting that shape —
+  but comment it if so, because it becomes the only thing keeping that layer
+  alive.
+
+**Gate:** `npx eslint src` · `npx vitest run` · `npx prettier --check` on the
+scoped paths · `npx vite build` **last**.
+
+### Step 21 — close the `.vue` type-checking gap
+
+`vite.config.ts:84-89` configures `checker({ typescript: {...} })` with no
+`vueTsc: true`, so `npx vite build` type-checks bare `.ts` only. Step 20's bug
+lives in a `.vue` `<script>` block and was invisible to every gate.
+
+**Fix it in CI, not in the build.** `vite.config.ts` is an *upstream* file (last
+touched by upstream `ec6e2a58`, `5ee21d42`) and `vue-tsc` is absent from
+`package.json` (also upstream) — the direct fix costs two upstream files, taking
+the rebase surface 4 → 6. Instead add a step to `.github/workflows/mu-ci.yml`,
+which is fork-added and unbudgeted:
+
+```yaml
+- name: type-check .vue script blocks
+  run: npx vue-tsc --noEmit
+```
+
+- **Do not add `vue-tsc` to `package.json`.** `npx` fetches it — but see the
+  version trap below before assuming the command as written works.
+- ⚠️ **This tree is Vue 2.7.10** (`vue-class-component`,
+  `vue-property-decorator`, Vuetify 2). `vue-tsc`'s Vue 2 support is
+  version-dependent and a bare `npx vue-tsc` fetches the newest release, which
+  may not handle 2.7 at all. Expect to pin a version, and possibly to set
+  `vueCompilerOptions.target: 2.7` in `tsconfig.json`. **Confirm the tool runs
+  usefully here before treating this step as a one-liner.**
+- Upstream has never type-checked `.vue`, so expect pre-existing errors. If it is
+  noisy, **scope the run to fork-owned paths** — a permanently red job is worse
+  than no job.
+- If `vue-tsc` cannot run usefully against this Vue 2 / class-component tree,
+  **say so and stop.** Do not spend the upstream-file budget as a fallback
+  without asking.
+- Correct the claim in **Step 16's spec above** that `npx vite build`
+  "type-checks the tests too" — true for `.ts`, false for `.vue`. It is not in
+  Ground rules; that is the only copy.
+
+**Gate:** the job passes on `mu/stable`, **and fails** on a deliberately broken
+`.vue` field read. A checker that cannot fail has not been verified.
+
+The upstream half of this — raising it with `mainsail-crew/mainsail` as an issue
+or a PR off `develop` — is recorded in `docs/backlog.md`. Not part of this step.
+
+### Step 22 — on-printer verification (Vi only)
+
+The **Verification** section below, which has never been run. **Do not start
+before Step 20 ships** — it is done through the panel, and the panel currently
+corrupts a type's firmware on save.
+
+Also still open and needing hardware: **Step 13's RP2040 BOOTSEL flasher**, which
+shipped untested. Whether the board automounts as `RPI-RP2` under either glob
+`bootsel_scan()` searches, and whether `shutil.copy2` alone suffices or the mount
+needs a sync. See `NOTES.md`, 2026-08-19.
 
 ---
 
@@ -661,6 +802,50 @@ surprises:  `scripts/check_line_endings.py` and `git ls-files -s` (the tests in
 next:       This closes the six-step run started at Step 16. Nothing else is
             queued in this file.
 
+### Steps 16–17 — review                                    [1 live bug, 3 findings]
+reviewer:   planning session, against the diff, the fork at
+            C:\git\github\mainsail, and a full gate run
+gate:       verified independently — pytest 1155 passed/0 failed/10 skipped ·
+            ruff ok · mypy ok (49 files) · line-endings ok · tree clean
+verdict:    All 17 steps complete and green. The schema work landed as
+            designed. One live bug found, and its root cause is documentation,
+            not code.
+finding 1:  **The type-edit dialog silently rewrites a type's firmware to
+            klipper.** Agent emits `firmwares` and no `firmware`
+            (`config.py:219`); `FirmwareUpdaterPanelTypeDialog.vue:253` reads
+            `mcuType?.firmware ?? 'klipper'` -> always undefined -> always
+            klipper; `submit()` posts it back; `registry.py:290-307` applies
+            it. The guard at `:299` is a **warning appended to a list, not a
+            refusal** - the write proceeds. Open the cartographer type to
+            change its chipset, save, and it becomes klipper. Same shape at
+            `:256` for the deleted `katapult_installed`. -> Step 20.
+finding 2:  **`docs/agent-api.md` is stale, and it is the declared contract.**
+            Step 16a updated the `Family` section and the headline
+            `api_version: 3`, then stopped. `TypeStatus` still documents
+            `firmware` singular, `katapult_installed`, `installed` on the
+            katapult block and a fixed `artifacts` pair; `Artifact` still
+            documents `stale`/`stale_reason`; `Target` still documents `kind`;
+            and `:114` says `api_version: 2` against `:9`'s 3. This is *why*
+            finding 1 shipped - the fork's `FwType` matches the stale doc, and
+            Step 16b's own log cites it as evidence the field is real. The
+            implementer followed the contract; the contract was wrong.
+            -> Step 19, ordered before the fork fix.
+finding 3:  **The `vueTsc` note understates the cost of fixing it.**
+            `vite.config.ts` is an *upstream* file and `vue-tsc` is absent
+            from `package.json` (also upstream), so the direct fix takes the
+            rebase surface 4 -> 6. Vi's call: CI-only, in the fork-added
+            `mu-ci.yml`, which spends nothing. Also: this file's Ground rules
+            claim `npx vite build` "type-checks the tests too" - true for
+            `.ts`, false for `.vue`. -> Step 21.
+finding 4:  The deferred phantom-slot bug is pulled into scope as **Step 18**,
+            on Vi's call, because it must be fixed *before* the contract is
+            rewritten or the contract documents the defect.
+process:    Fourth review running where a step was declined, redesigned or
+            shipped on a stated fact that did not hold. Steps 18-22 are
+            ordered so each makes the next correct, and Step 22 is gated
+            behind Step 20 because the on-printer work is done through the
+            panel that currently corrupts a type on save.
+
 ---
 
 ## Appendix B — open items, not in scope
@@ -671,17 +856,5 @@ next:       This closes the six-step run started at Step 16. Nothing else is
 - `needs_klipper_stopped` → per-type "services to stop" list. See "Do not do".
 - An unreproduced flaky teardown `RuntimeError` in
   `test_an_unknown_inbound_method_gets_an_error_not_silence`.
-- **Phantom `FwConfig` slots for every globally declared family.**
-  `Registry.load()`'s per-type loop (`config.py:380`) iterates *every*
-  `[firmware ...]` family, and `mcu.fw()` (`config.py:163`) is `setdefault` —
-  so a read creates the slot. Every type ends up carrying `cartographer` and
-  `knomi_serial` entries it never declared, visible in `to_json()`,
-  `fw.artifacts`, `fw.type.list` and `type_status()`.
-  **Reporting only** — build and flash use `families()`, not `fw_order()`, so
-  nothing compiles or writes a phantom family. Found in Step 15, verified by
-  review, deliberately deferred by Vi. Two tests pin the current behaviour and
-  are commented as a known bug:
-  `test_artifacts_returns_both_firmwares`, `test_status_type_shape`.
-  Fix is to narrow the loop to `mcu.firmwares` — **not** `firmware.BUILTIN`,
-  which would re-hardcode klipper/katapult. Full reasoning in `NOTES.md`,
-  2026-08-20.
+- ~~Phantom `FwConfig` slots for every globally declared family.~~ — **pulled into scope 2026-08-20 as Step 18**, because `fw_order()` feeds
+  `artifacts`, which Steps 19–20 must document and re-declare.

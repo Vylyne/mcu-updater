@@ -15,6 +15,8 @@ DATA_PATH="${DATA_PATH:-${PRINTER_DATA}/mcu-updater}"
 MAIN_CONFIG="${CONFIG_PATH}/mcu-updater.cfg"
 # udev rule letting dfu-util open a bare STM32 without root.
 DFU_UDEV_RULE="${DFU_UDEV_RULE:-/etc/udev/rules.d/99-mcu-updater-dfu.rules}"
+# udev rule mounting an RP2040's BOOTSEL mass-storage volume without root.
+BOOTSEL_UDEV_RULE="${BOOTSEL_UDEV_RULE:-/etc/udev/rules.d/99-mcu-updater-bootsel.rules}"
 # Constrained from two directions:
 #  * Moonraker only permits a `managed_services` value equal to the
 #    [update_manager <name>] section, `klipper`, or `moonraker` - so the unit name
@@ -170,6 +172,48 @@ RULE
 
     sudo udevadm control --reload-rules && sudo udevadm trigger --subsystem-match=usb
     echo "[DFU]  Rule installed. Replug a board in DFU mode for it to take effect."
+    printf "\n"
+}
+
+function check_bootsel_permissions {
+    # An RP2040 in BOOTSEL mounts as USB mass storage. A headless printer has no
+    # desktop automounter, so nothing mounts it and bootsel_scan finds nothing -
+    # which we used to report as "give it a moment to automount", sending people
+    # to redo the one step that had actually worked. A rule fixes it for both
+    # the CLI and the agent, so neither needs sudo at flash time.
+    #
+    # Only relevant for writing the first bootloader onto a bare RP2040
+    # (add-mcu). Boards that already have Katapult never touch this path.
+    if ! command -v systemd-mount >/dev/null 2>&1; then
+        printf "[BOOTSEL]  systemd-mount not found - only needed for add-mcu on a bare RP2040.\n\n"
+        return 0
+    fi
+    if [ -f "${BOOTSEL_UDEV_RULE}" ]; then
+        printf "[BOOTSEL]  udev rule already present.\n\n"
+        return 0
+    fi
+
+    echo "[BOOTSEL]  No udev rule to mount an RP2040's BOOTSEL volume (${BOOTSEL_UDEV_RULE})."
+    echo "           Without it nothing mounts the volume on a headless printer, and"
+    echo "           add-mcu fails on a board whose BOOTSEL mode is perfectly fine."
+    local answer=""
+    read -r -p "[BOOTSEL]  Install the udev rule now? [Y/n]: " answer || answer=""
+    case "${answer}" in
+        n | N | no | NO)
+            echo "[WARN] Skipped. add-mcu on a bare RP2040 will need a manual mount until you add it."
+            printf "\n"
+            return 0
+            ;;
+    esac
+
+    local tmp
+    tmp="$(mktemp)"
+    sed -e "s|%USER%|${USER}|g" "${INSTALL_PATH}/scripts/udev.d-mcu-updater-bootsel.rules" > "${tmp}"
+    sudo install -m 0644 -o root -g root "${tmp}" "${BOOTSEL_UDEV_RULE}"
+    rm -f "${tmp}"
+
+    sudo udevadm control --reload-rules && sudo udevadm trigger --subsystem-match=block
+    echo "[BOOTSEL]  Rule installed. Replug a board in BOOTSEL mode for it to take effect."
     printf "\n"
 }
 
@@ -490,6 +534,7 @@ preflight_checks
 check_paths
 check_flash_deps
 check_dfu_permissions
+check_bootsel_permissions
 check_config
 migrate_legacy_service
 install_service

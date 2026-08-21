@@ -136,6 +136,18 @@ class AmbiguousDfuError(FlashError):
     code = "ambiguous_dfu"
 
 
+class BootselNotMountedError(FlashError):
+    """An RP2040 in BOOTSEL is attached but nothing mounted its volume.
+
+    Distinct from `device_not_found` for the same reason `DfuPermissionError`
+    is: "hold BOOTSEL and replug" sends the user to redo a step that already
+    worked, when the real fix is a udev rule (or a manual mount) on a headless
+    host with no automounter.
+    """
+
+    code = "bootsel_not_mounted"
+
+
 class DfuPermissionError(FlashError):
     """dfu-util can see the board but cannot open it.
 

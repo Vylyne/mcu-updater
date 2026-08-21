@@ -115,6 +115,9 @@ of it. What is still open:
   apt-install it, because without it a flash fails part-way through with Klipper
   already stopped.
 - `dfu-util`, only for installing Katapult onto a brand-new STM32 board
+- `systemd-mount`, only for installing Katapult onto a brand-new RP2040 board —
+  it mounts the BOOTSEL mass-storage volume so `add-mcu` can copy the `.uf2`
+  onto it without root; `install.sh` offers to add the udev rule that wires it up
 - Passwordless `sudo` for `systemctl {start,stop} klipper`
 
 ## Usage

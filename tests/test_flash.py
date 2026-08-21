@@ -9,6 +9,7 @@ from mcu_updater import devices as devices_mod
 from mcu_updater import flashers
 from mcu_updater.errors import (
     AmbiguousDfuError,
+    BootselNotMountedError,
     DeviceNotFoundError,
     FlashError,
     OffsetMismatchError,
@@ -603,6 +604,22 @@ def _mounted_volume(tmp_path, name: str = "bootsel_root"):
     return root, vol
 
 
+def _bootsel_device(root, serial: str = "E0C9125B0D9B"):
+    """A fake `by-id` entry under `root`, the shape `bootsel_devices` globs
+    for - present whether or not `root` also has a mounted volume in it.
+
+    The real device node has a `:` in it (e.g. `...-0:0-part1`), but NTFS
+    reads `:` as an alternate-data-stream separator and silently truncates
+    the filename there, so the fixture drops it - the glob under test only
+    cares about the `usb-RPI_RP2_<serial>-...-part1` shape either way.
+    """
+    by_id = root / "by-id"
+    by_id.mkdir(parents=True, exist_ok=True)
+    node = by_id / f"usb-RPI_RP2_{serial}-0-0-part1"
+    node.write_text("", encoding="utf-8")
+    return str(node)
+
+
 def test_bootsel_copies_the_uf2_to_the_mounted_volume(paths, settings, tmp_path):
     root, vol = _mounted_volume(tmp_path)
     rp_paths = dataclasses.replace(paths, bootsel_root=str(root))
@@ -657,6 +674,51 @@ def test_bootsel_refuses_when_no_volume_is_mounted(paths, settings, tmp_path):
 
     with pytest.raises(DeviceNotFoundError):
         flashers.Bootsel().write(bench, None, target, flashers.PlainContext(lambda *a: None))
+
+
+def test_bootsel_reports_unmounted_device_distinctly_from_no_device(paths, settings, tmp_path):
+    """A board attached but unmounted (no automounter on this host) is a
+    different failure than no board at all - the fix is a udev rule, not
+    holding BOOTSEL and replugging."""
+    root = tmp_path / "bootsel_root"
+    node = _bootsel_device(root)
+    rp_paths = dataclasses.replace(paths, bootsel_root=str(root))
+
+    uf2 = tmp_path / "katapult.uf2"
+    uf2.write_bytes(b"\0")
+    bench = flashers.Bench(paths=rp_paths, settings=settings, controller=lambda name=None: None)
+    target = flashers.bootsel.target_for(str(uf2), chipset="rp2040")
+
+    with pytest.raises(BootselNotMountedError) as exc:
+        flashers.Bootsel().write(bench, None, target, flashers.PlainContext(lambda *a: None))
+    assert exc.value.data["devices"] == [node]
+
+
+def test_bootsel_target_for_populates_id_from_the_one_attached_device(paths, tmp_path):
+    root = tmp_path / "bootsel_root"
+    _bootsel_device(root, serial="E0C9125B0D9B")
+    rp_paths = dataclasses.replace(paths, bootsel_root=str(root))
+
+    target = flashers.bootsel.target_for("fw.uf2", chipset="rp2040", paths=rp_paths)
+
+    assert target.id == "E0C9125B0D9B"
+
+
+def test_bootsel_target_for_leaves_id_empty_without_paths():
+    target = flashers.bootsel.target_for("fw.uf2", chipset="rp2040")
+    assert target.id == ""
+
+
+def test_bootsel_target_for_leaves_id_empty_with_no_or_ambiguous_devices(paths, tmp_path):
+    empty_root = tmp_path / "empty"
+    rp_paths = dataclasses.replace(paths, bootsel_root=str(empty_root))
+    assert flashers.bootsel.target_for("fw.uf2", chipset="rp2040", paths=rp_paths).id == ""
+
+    both_root = tmp_path / "both"
+    _bootsel_device(both_root, serial="AAAAAAAAAAAA")
+    _bootsel_device(both_root, serial="BBBBBBBBBBBB")
+    rp_paths = dataclasses.replace(paths, bootsel_root=str(both_root))
+    assert flashers.bootsel.target_for("fw.uf2", chipset="rp2040", paths=rp_paths).id == ""
 
 
 def test_bootsel_refuses_more_than_one_mounted_volume(paths, settings, tmp_path, monkeypatch):

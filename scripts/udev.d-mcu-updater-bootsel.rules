@@ -1,0 +1,7 @@
+# RP2040 in BOOTSEL mode presents as USB mass storage labelled RPI-RP2. A
+# headless printer has no desktop automounter, so nothing mounts it and
+# mcu-updater's bootsel flasher has no volume to copy the .uf2 onto. Mount it
+# where bootsel_scan already looks. Installed by mcu-updater's install.sh.
+# %USER% is substituted there.
+ACTION=="add", SUBSYSTEM=="block", ENV{DEVTYPE}=="partition", ENV{ID_FS_LABEL}=="RPI-RP2", \
+  RUN{program}+="/usr/bin/systemd-mount --no-block --collect --owner=%USER% $devnode /media/%USER%/RPI-RP2"

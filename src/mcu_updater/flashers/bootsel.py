@@ -2,10 +2,12 @@
 
 The RP2040 counterpart to :mod:`.dfu_util` - a factory-bare board has no
 bootloader yet to speak flashtool's protocol, so this writes before one exists.
-Unlike DFU, the ROM bootloader here has no USB bus presence a tool can query
-directly: it mounts as mass storage (:func:`mcu_updater.devices.bootsel_scan`
-finds it), and the "write" is a plain file copy - a `.uf2` dropped on the
-volume is what makes the board flash itself and reboot, no protocol at all.
+Unlike DFU, the ROM bootloader here speaks no protocol a tool can address a
+write through: it mounts as mass storage
+(:func:`mcu_updater.devices.bootsel_scan` finds the mount,
+:func:`mcu_updater.devices.bootsel_devices` finds the device whether mounted
+or not), and the "write" is a plain file copy - a `.uf2` dropped on the volume
+is what makes the board flash itself and reboot.
 
 `needs_klipper_stopped = False`, same reasoning as `DfuUtil`: by the time this
 runs the board is already in BOOTSEL, which means either it was never on the
@@ -16,13 +18,18 @@ from __future__ import annotations
 
 import contextlib
 import os
+import re
 import shutil
 from collections.abc import Iterator
 from typing import Any
 
-from ..devices import STATE_BOOTSEL, bootsel_scan
-from ..errors import DeviceNotFoundError, FlashError
+from ..devices import STATE_BOOTSEL, bootsel_devices, bootsel_scan
+from ..errors import BootselNotMountedError, DeviceNotFoundError, FlashError
 from .spec import Bench, FlashTarget
+
+#: The boot ROM's flash-chip unique ID, out of a `bootsel_devices` entry like
+#: ``/dev/disk/by-id/usb-RPI_RP2_E0C9125B0D9B-0:0-part1``.
+_SERIAL_RE = re.compile(r"usb-RPI_RP2_([0-9A-Fa-f]+)-")
 
 
 class Bootsel:
@@ -79,17 +86,31 @@ class Bootsel:
 def _find_mount(paths: Any) -> str:
     """The one RPI-RP2 volume to write, or a refusal.
 
-    BOOTSEL exposes no per-device identity at all - not a serial, not even a
-    bus address, just a mounted volume - so unlike DFU's `target_serial` there
-    is nothing to disambiguate with. More than one mounted at once means
-    guessing which board this write is for, which this refuses exactly the way
-    `DfuUtil`'s ambiguity guard does.
+    BOOTSEL has no protocol to address a specific board through - the write
+    itself is a plain file copy, not a command aimed at a device - so unlike
+    DFU's `target_serial` there is nothing here to disambiguate a *write* with.
+    More than one mounted at once means guessing which board this write is
+    for, which this refuses exactly the way `DfuUtil`'s ambiguity guard does.
+
+    A board can still be genuinely absent from the *volume* search while
+    present on the bus - a headless host with no automounter mounts nothing at
+    all - so an empty `bootsel_scan` is split against `bootsel_devices` to
+    give the right one of two very different failures.
     """
     mounts = bootsel_scan(paths)
     if not mounts:
+        present = bootsel_devices(paths)
+        if present:
+            raise BootselNotMountedError(
+                f"an RP2040 in BOOTSEL is attached ({', '.join(present)}) but "
+                f"nothing mounted its volume - this host has no automounter. "
+                f"Re-run install.sh to install the udev rule, or mount it "
+                f"manually at /media/<user>/RPI-RP2.",
+                devices=present,
+            )
         raise DeviceNotFoundError(
-            "no RPI-RP2 volume is mounted. Hold BOOTSEL and replug the board, "
-            "then give it a moment to automount before trying again."
+            "no RP2040 in BOOTSEL is attached. Hold BOOTSEL and replug the "
+            "board, then try again."
         )
     if len(mounts) > 1:
         raise FlashError(
@@ -101,16 +122,29 @@ def _find_mount(paths: Any) -> str:
     return mounts[0]
 
 
-def target_for(uf2_file: str, *, chipset: str) -> FlashTarget:
+def target_for(uf2_file: str, *, chipset: str, paths: Any = None) -> FlashTarget:
     """A bare RP2040, as a target.
 
-    `id` is always empty - BOOTSEL has no identity to put there at all, unlike
-    DFU's optional serial. Ambiguity is instead refused in `write`, once it is
-    known whether more than one volume is actually mounted.
+    BOOTSEL has no protocol to address a specific board through - unlike DFU,
+    the write cannot be aimed at one device among several - but the boot ROM
+    does publish the flash chip's unique ID as a USB mass-storage serial, so a
+    flash can still be *recorded* against a real identity when exactly one
+    board is attached. `paths` is optional and only used for that lookup
+    (via `bootsel_devices`); callers that omit it, or that hit zero or more
+    than one device, get `id=""` - the multi-volume case is still refused in
+    `write`, once it is known whether more than one volume is actually
+    mounted.
     """
+    device_id = ""
+    if paths is not None:
+        present = bootsel_devices(paths)
+        if len(present) == 1:
+            match = _SERIAL_RE.search(present[0])
+            if match:
+                device_id = match.group(1)
     return FlashTarget(
         flasher=Bootsel.name,
         type=chipset,
-        id="",
+        id=device_id,
         detail={"uf2_file": uf2_file, "chipset": chipset},
     )

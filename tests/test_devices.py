@@ -12,6 +12,7 @@ from mcu_updater.devices import (
     STATE_KATAPULT,
     STATE_KLIPPER,
     STATE_OFFLINE,
+    bootsel_devices,
     bootsel_scan,
     device_state,
     find_device,
@@ -303,3 +304,27 @@ def test_bootsel_scan_searches_the_automount_globs_with_no_override(paths, tmp_p
     )
 
     assert bootsel_scan(paths) == [str(vol)]
+
+
+# --------------------------------------------------------------------------
+# bootsel_devices - present on the bus whether mounted or not
+# --------------------------------------------------------------------------
+
+
+def test_bootsel_devices_finds_an_unmounted_device(paths, tmp_path):
+    # Real device nodes have a `:` (e.g. `...-0:0-part1`), but NTFS reads that
+    # as an alternate-data-stream separator and truncates the filename there,
+    # so this fixture drops it - the glob under test doesn't care either way.
+    root = tmp_path / "bootsel_root"
+    by_id = root / "by-id"
+    by_id.mkdir(parents=True)
+    node = by_id / "usb-RPI_RP2_E0C9125B0D9B-0-0-part1"
+    node.write_text("", encoding="utf-8")
+
+    found = bootsel_devices(dataclasses.replace(paths, bootsel_root=str(root)))
+    assert found == [str(node)]
+
+
+def test_bootsel_devices_is_empty_with_nothing_attached(paths, tmp_path):
+    found = bootsel_devices(dataclasses.replace(paths, bootsel_root=str(tmp_path / "nothing-here")))
+    assert found == []

@@ -605,7 +605,7 @@ def flash_initial_bootloader(
                 f"a .bin - build again once the tree produces one.",
                 chipset=chipset,
             )
-        target = flashers.bootsel.target_for(uf2_bin, chipset=chipset)
+        target = flashers.bootsel.target_for(uf2_bin, chipset=chipset, paths=paths)
     else:
         target = flashers.dfu_util.target_for(
             fw_bin, chipset=chipset, dfu_serial=target_serial

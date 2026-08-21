@@ -1,7 +1,7 @@
 """BOOTSEL - an RP2040's ROM bootloader.
 
-No by-id entry and no ``dfu-util`` protocol - it mounts as mass storage.
-See :func:`bootsel_scan`.
+No ``dfu-util`` protocol - it mounts as mass storage. See :func:`bootsel_scan`.
+It does publish a by-id serial, unmounted or not; see :func:`bootsel_devices`.
 """
 
 from __future__ import annotations
@@ -54,3 +54,30 @@ def bootsel_scan(paths: Paths) -> list[str]:
         if os.path.isfile(os.path.join(candidate, _BOOTSEL_MARKER)):
             found.append(candidate)
     return found
+
+
+#: Where the boot ROM's mass-storage device node shows up, unmounted or not.
+#: The serial after ``usb-RPI_RP2_`` is the flash chip's unique ID - see
+#: `bootsel_devices`.
+_BOOTSEL_DISK_BY_ID_GLOB = "/dev/disk/by-id/usb-RPI_RP2_*-part1"
+
+
+def bootsel_devices(paths: Paths) -> list[str]:
+    """Every RP2040 boot-ROM block device attached, mounted or not.
+
+    `bootsel_scan` answers "where can I copy a .uf2" and sees nothing without a
+    mount. This answers "is a board even here" without needing one: the boot ROM
+    publishes the flash chip's unique ID as a USB mass-storage serial, so the
+    device node exists in `/dev/disk/by-id` the instant the board enumerates,
+    before anything mounts it. Read-only, no privilege needed - `_find_mount`
+    uses it to tell "no board" apart from "board present, nothing mounts it".
+
+    `paths.bootsel_root` doubles as the seam here too: empty means search the
+    real `/dev`, and a test pointing it at a tmp_path searches there instead
+    (`<bootsel_root>/by-id/usb-RPI_RP2_*-part1`) so no test touches `/dev`.
+    """
+    if paths.bootsel_root:
+        pattern = os.path.join(paths.bootsel_root, "by-id", "usb-RPI_RP2_*-part1")
+    else:
+        pattern = _BOOTSEL_DISK_BY_ID_GLOB
+    return sorted(glob.glob(pattern))

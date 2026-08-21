@@ -1792,6 +1792,125 @@ surprises:  none in the move itself. Three findings surfaced while writing the
 next:       Step 26 (`discovery.confirm()`; `port_for` becomes a caller),
             resumed against the corrected paths.
 
+### Step 26 — `discovery.confirm()`; `port_for` becomes a caller            [done]
+commit:     40758e7
+gate:       pytest 1162 passed/0 failed/10 skipped (unchanged) · ruff ok ·
+            mypy ok (59 files, up from 58 - the new `confirm.py`) ·
+            line-endings ok · `scripts/mutations/display-flash.json` re-run
+            standalone, **zero edits to the spec file**, all 9 guards still
+            CAUGHT · `scripts/mutations/pio.json` re-run standalone (`Listen`/
+            `Watcher` changed): 11 guards, all CAUGHT · `flasher-selection.json`
+            re-run standalone: 2 guards, all CAUGHT · `targets.json` re-run
+            standalone: baseline 177 passed/1 skipped, 17/18 guards CAUGHT,
+            1 pre-existing SURVIVED ("configure is offered only for the
+            families this type uses" - the same guard Step 24's log already
+            confirmed unrelated by diffing against unmodified `main`; not
+            re-confirmed here since nothing this step touched could plausibly
+            change it)
+deviation:  **`confirm()`'s real signature is `confirm(bench, *, sources)`, not
+            `confirm(bench, targets, *, sources)` as specced.** `Source.sight
+            (bench)` (Step 23) takes no target/family filter - it is a
+            whole-bus (or, for a knomi source, whole-config) sweep, matching
+            how `byid.scan`/`dfu_devices` already work. Threading `targets`
+            through would have meant either changing that Protocol (not this
+            step's to redesign) or `confirm()` silently ignoring the
+            parameter it was given. Filtering to what a caller actually wants
+            happens after the sweep, in the caller.
+
+            **Returns `dict[str, tuple[Sighting, Confidence]]`, not "a
+            `Confidence` per target".** A caller needs the *address* a device
+            was sighted at, not only how sure the sweep is - `port_for` reads
+            `found.port`, and confidence alone cannot answer where to write.
+            Keyed by `Sighting.id` (matching how `port_for` already keys on
+            `screen["device_id"]`), each value carries both the winning
+            `Sighting` and the `Confidence` that produced it. When two
+            sources report the same identity, the higher-`safe_to_write`
+            sighting wins (`_rank`), so a stale `REMEMBERED` port from the
+            watcher map never shadows a live `ANSWERED` one from the listen
+            pass.
+
+            **A real scoping problem the plan's prose did not anticipate, and
+            how it was resolved.** `esptool.discover(bench, display, ctx)` is
+            called once per display family - text pinned verbatim by
+            `display-flash.json`'s "identity is verified once the ports are
+            free" guard, which this step's own gate forbids editing. But
+            `Listen.sight(bench)` sweeps *every* configured family in one
+            listen pass (Step 25b's carried-forward finding: the natural
+            answer once the subpackage named the firmware). Calling
+            `confirm()` fresh from inside `discover()` would re-run that
+            six-second sweep once per family *per family asked* - quadratic.
+            Resolved by caching one `confirm()` sweep on `ctx` (a real,
+            mutable object for the batch's whole life -
+            `flashers.batch.PlainContext`/`jobs.JobContext` both qualify),
+            keyed by nothing since `ctx` lives for exactly one
+            `prepared()`/`write()` batch and cannot leak between batches;
+            `discover()` then filters the cached sweep to `display.name`.
+            Needed a new fact on the wire to make that filtering possible:
+            `Sighting.detail["family"]`, stamped by `Listen`/`Watcher`'s own
+            `_as_sighting` - `Sighting` itself carries no family field by
+            design (`detail` is a source's private payload), so this is the
+            source doing the labelling, not a change to the shared type.
+
+            **`port_for` is untouched, not merely "kept" - verified, not
+            assumed.** The corrected spec called for `port_for` to "reduce to
+            a caller" while keeping its three cases and exact warning wording;
+            in the actual diff `port_for` has zero lines changed. The seam
+            that made this possible: a small frozen `_Answered(port: str)`
+            wraps a `Sighting`'s `.address` under the `.port` name `port_for`
+            already reads, so the function that changed is `discover()`
+            (its data source, not its shape) and the function that stayed
+            untouched is the one the plan named specifically not to touch.
+untested:   Not run against a live printer - `Listen`/`Watcher` now really
+            execute inside every display flash (dry runs excepted), but only
+            through the dev-box test suite's mocked `discover`/`devices.json`
+            fixtures. The genuinely new path - two sources, `confirm()`'s
+            tie-break, `ctx`-scoped caching across a multi-family batch - has
+            never run against a real knomi_serial checkout or a real watcher
+            process. Needs the printer; Vi's to run per Ground rules.
+surprises:  **Five of `tests/test_agent_display_jobs.py`'s existing tests
+            monkeypatched `mcu_updater.providers.pio.discover` - a call site
+            `discover()` no longer reaches at all**, so simply repointing the
+            patch string (the fix Steps 24/25 both needed) was not enough by
+            itself. The deeper issue: those tests' fixture registry declares
+            **two** display types (the repo's own sample `[type knomi]` plus
+            the fixture's own `[type knomi_toolchanger]`), and the old,
+            per-call-scoped `pio_mod.discover(..., display, ...)` never
+            exposed this because each call only ever concerned the one
+            family it was given. `Listen.sight()` now asks about every
+            configured family in one sweep, and the tests' family-agnostic
+            `lambda *a, **k: _found(...)` mocks answered for *both* -
+            `dict.setdefault` in `_sightings_by_family` let whichever family
+            was grouped last win, occasionally the sample config's `knomi`
+            rather than the fixture's own `knomi_toolchanger`, so the
+            filtered-by-name lookup in `discover()` sometimes came up empty
+            and silently fell back to the configured port. Two tests failed
+            outright on this; two more passed by coincidence (their assertion
+            did not depend on which family's mock answered) and were fixed
+            anyway rather than left passing for the wrong reason. Fixed with
+            a `_discover_only_for(name, **by_id)` helper that mirrors the real
+            `discover(paths, settings, display, ...)` signature and only
+            answers for the family under test, same as production code now
+            requires of any caller asking about a specific family.
+
+            mypy caught a second, independent instance of the exact bug this
+            step's carried-forward finding #1 already named: `Listen`/
+            `Watcher.states` needed an explicit `tuple[str, ...]`
+            annotation, not bare `states = (STATE_KLIPPER,)` - without it
+            mypy infers the narrower literal-tuple type and rejects the
+            assignment into `SOURCES: tuple[Source, ...]`. `flashers/
+            esptool.py`'s own `Esptool.states` already carries this
+            annotation for the same reason; missed here until mypy caught it,
+            not caught by writing the finding down in Step 25b's log.
+
+            ruff's B010 flagged the first cache-write attempt
+            (`setattr(ctx, "_esptool_sightings_by_family", result)`) as
+            unsafe compared to plain attribute assignment - fixed to
+            `ctx._esptool_sightings_by_family = result`. Not a functional
+            difference, but ruff was right that `setattr` on a literal name
+            adds nothing `.` access does not already give, more safely.
+next:       Step 27 (extend confirm to `flashtool`) — needs the printer for
+            its own on-printer checks per that step's spec; not started.
+
 ---
 
 ## Appendix B — open items, not in scope

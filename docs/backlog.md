@@ -109,6 +109,9 @@ managed_services: klipper                     # the outermost level
 
 [firmware knomi_serial]
 managed_services: klipper, knomi_serial       # OVERRIDE - replaces, never merges
+
+[type bttebb36]
+managed_services: klipper                     # OVERRIDE - replaces both parients, only last tier applies
 ```
 
 - `[updater] service:` becomes `managed_services:` and takes a list.

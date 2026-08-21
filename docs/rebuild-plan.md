@@ -332,38 +332,75 @@ payloads against a live `Api` call rather than trusting the source read.
 
 ### Step 20 — fix the fork against the corrected contract ⚠️
 
-`Vylyne/mainsail`, `mu/stable`. Every file here is fork-**added**, so this spends
-**no rebase budget** — see `docs/mainsail-fork.md`, the budget covers edited files
-only.
+> **Corrected 2026-08-20.** This step's original text was written on a premise
+> that does not hold, caught by the implementer before any fork code was
+> touched. It claimed the agent emits `firmwares` with no `firmware` key and
+> that `katapult_installed` was deleted, and concluded the type dialog silently
+> rewrites a type's firmware to klipper. **That is wrong.** The error came from
+> reading `McuType.to_json()` in `config.py` — the *registry serialization* —
+> and assuming it was the `fw.type.list` wire shape. It is not: `type_status()`
+> (`agent/methods/status.py:265`) builds its own payload with a **derived**
+> singular `firmware` (the application) and a **derived** `katapult_installed`.
+> Step 19 had already documented this correctly against live payloads; this step
+> was never reconciled with it.
 
-**The live bug.** The agent emits `firmwares` and no `firmware` key.
-`FirmwareUpdaterPanelTypeDialog.vue:253` reads `mcuType?.firmware ?? 'klipper'` →
-always undefined → always `'klipper'`. `submit()` (`:271`, `:280`) then posts
-`firmware: this.firmware`, and `agent/methods/registry.py:290-307` applies it. The
-guard at `:299` is a **warning appended to a list, not a refusal**, so the write
-proceeds. Opening the cartographer type's dialog to change its *chipset* and
-saving silently rewrites its firmware to klipper — after which a build compiles
-upstream klipper and a flash writes it to a Cartographer board.
+**The live payload**, pulled from the sample config for the cartographer type:
 
-- `store/server/fwUpdater/types.ts` — `FwType` (`:57-71`) gains
-  `firmwares: string[]`, drops `katapult_installed` (`:60`), and drops the fixed
-  `klipper`/`katapult` blocks and fixed `artifacts` pair for the per-family shape.
-  Check `stale_reason` (`:25`), `artifact_state` (`:329`) and `firmware_state`
-  (`:378`) against the corrected doc before deleting — some may still be live for
-  displays.
-- `FirmwareUpdaterPanelTypeDialog.vue` — `:253` read `firmwares`; `:256` derive
-  katapult from the family list rather than `katapult_installed`; `:81` and `:86`
-  compare the FirmwareChangeWarning against the real current family.
-- `FirmwareUpdaterPanelTarget.vue:590` reads `screen.firmware_state`; confirm
-  against the corrected doc whether displays still carry it.
-- **What `submit()` posts is a decision, not a default.** The agent still accepts
-  singular `firmware` + `katapult_installed` as a compat layer
-  (`registry.py:237`, `:290`, `:314`), so the dialog may keep posting that shape —
-  but comment it if so, because it becomes the only thing keeping that layer
-  alive.
+```text
+top-level keys:      artifacts, cartographer, chipset, firmware, katapult,
+                     katapult_installed, name, needs_flash, serials
+firmware           -> 'cartographer'
+firmwares          -> absent
+katapult_installed -> True
+artifacts keys     -> ['cartographer', 'katapult']
+```
+
+`mutations.ts` assigns `fw.type.list` straight into `state.types` with no
+mapping, so the runtime object carries `firmware` regardless of `FwType` never
+declaring it. **There is no firmware-corruption bug. Do not "fix" it.**
+
+**The real bug, same payload.** Every per-family field in the dialog is
+hardcoded to `klipper`, and for any type whose application is not klipper those
+resolve to `undefined`:
+
+| Line | Reads | For cartographer |
+|---|---|---|
+| `:213` | `mcuType?.artifacts?.klipper?.has_bin` | always `false` — no `klipper` key |
+| `:217` | `mcuType?.klipper?.makefile_patches` | always empty |
+| `:254` | `mcuType?.klipper?.extra_args` | always blank |
+
+`hasBinary` (`:213`) gates **both safety warnings** — chipset-changed (`:43`)
+and firmware-changed (`:81`). So on a Cartographer, the board that has already
+bricked once, both warnings are silently suppressed. That is the actual defect
+and it is a safety one.
+
+**The fix, in the shape the payload actually calls for:**
+
+- `store/server/fwUpdater/types.ts` — `FwType` **gains `firmware: string`**. It
+  is simply missing; the field has always been live. **Do not add `firmwares`
+  and do not remove `katapult_installed`** — both would break fields the agent
+  really sends.
+- Replace the fixed `klipper` / `katapult` members and the fixed
+  `artifacts: {klipper, katapult}` pair with a **map keyed by family name**
+  (`Record<string, FwFirmwareConfig>` / `Record<string, FwArtifact>`), since
+  `artifacts` is built from `mcu.fw_order()` and carries exactly the families a
+  type declares.
+- `FirmwareUpdaterPanelTypeDialog.vue` — `hasBinary`, `patchLines` and the
+  extra-args fields resolve against **the type's own application family**
+  (`mcuType.firmware`), not the literal `klipper`.
+- Check `stale_reason` (`:25`), `artifact_state` (`:329`) and `firmware_state`
+  (`:378`) against the corrected `docs/agent-api.md` before touching them —
+  Step 19 rewrote that document against live payloads, so it is now the
+  authority, not this step's prose.
+
+Every file here is fork-**added**, so this spends **no rebase budget** — see
+`docs/mainsail-fork.md`, the budget covers edited files only.
 
 **Gate:** `npx eslint src` · `npx vitest run` · `npx prettier --check` on the
-scoped paths · `npx vite build` **last**.
+scoped paths · `npx vite build` **last**. Add a vitest case that a non-klipper
+type surfaces `hasBinary === true` when its own artifact exists — the assertion
+that would have caught this.
+
 
 ### Step 21 — close the `.vue` type-checking gap
 
@@ -810,7 +847,13 @@ gate:       verified independently — pytest 1155 passed/0 failed/10 skipped ·
 verdict:    All 17 steps complete and green. The schema work landed as
             designed. One live bug found, and its root cause is documentation,
             not code.
-finding 1:  **The type-edit dialog silently rewrites a type's firmware to
+finding 1:  ~~**The type-edit dialog silently rewrites a type's firmware to~~
+            **SUPERSEDED 2026-08-20 — this finding was wrong.** See the
+            "Step 20 premise" correction block below. The dialog reads
+            `firmware`, the agent really sends it, and nothing is
+            corrupted. The real defect is `hasBinary` hardcoding klipper.
+            Original text kept below as written; the log is evidence.
+            ~~The type-edit dialog silently rewrites a type's firmware to
             klipper.** Agent emits `firmwares` and no `firmware`
             (`config.py:219`); `FirmwareUpdaterPanelTypeDialog.vue:253` reads
             `mcuType?.firmware ?? 'klipper'` -> always undefined -> always
@@ -961,6 +1004,47 @@ surprises:  **A self-contradiction inside the doc itself**, found on the full
             never going to be found in `errors.py` no matter how carefully
             that file was read.
 next:       Step 20, the fork fix against this now-corrected contract.
+
+### Step 20 premise — correction                          [caught before any code]
+raised by:  the implementing context, which paused rather than proceeding
+reviewer:   planning session; confirmed by pulling a live `type_status()`
+            payload, not by re-reading source
+finding:    **Step 20's stated premise was false, and it was mine.** I claimed
+            `fw.type.list` emits `firmwares` with no `firmware` key and that
+            `katapult_installed` was deleted, concluding the type dialog
+            silently rewrote a type's firmware to klipper. The live payload for
+            cartographer shows `firmware: 'cartographer'`,
+            `katapult_installed: True`, `firmwares` absent, and `artifacts`
+            keyed `['cartographer', 'katapult']`.
+cause:      I read `McuType.to_json()` in `config.py` — the registry
+            serialization — and assumed it was the wire shape. It is not.
+            `type_status()` (`agent/methods/status.py:265`) builds its own
+            payload with a *derived* singular `firmware` and a *derived*
+            `katapult_installed`. Step 19 had already documented this correctly
+            against live payloads; Step 20's prose was never reconciled with
+            Step 19's own finding.
+impact:     None shipped. The implementer checked the premise before touching
+            fork code, which is exactly what the Handoff section asks for. Had
+            it been followed as written, it would have added `firmwares` and
+            removed `katapult_installed` — breaking two fields that are live.
+real bug:   `hasBinary` (`FirmwareUpdaterPanelTypeDialog.vue:213`) reads
+            `artifacts.klipper.has_bin`, which is `undefined` for any type whose
+            application is not klipper. It gates **both** safety warnings
+            (chipset-changed `:43`, firmware-changed `:81`), so on a Cartographer
+            — the board that already bricked once — both are silently
+            suppressed. `patchLines` (`:217`) and the extra-args fields (`:254`)
+            hardcode klipper the same way, more cosmetically.
+action:     Step 20 rewritten against the payload: `FwType` **gains**
+            `firmware: string` (it was simply missing), keeps
+            `katapult_installed`, and the fixed klipper/katapult members become
+            family-keyed maps. Plus a vitest case that a non-klipper type
+            surfaces `hasBinary === true` — the assertion that would have caught
+            this.
+process:    Fifth instance of a step being redesigned on a stated fact, and the
+            first where the wrong fact was the reviewer's. The rule earns its
+            keep in both directions: **`docs/agent-api.md`, rewritten in Step 19
+            against live payloads, is the authority — not this file's prose.**
+            Where the two disagree, the doc wins and this file gets corrected.
 
 ---
 

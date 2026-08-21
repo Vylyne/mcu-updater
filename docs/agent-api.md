@@ -182,10 +182,10 @@ shape doesn't change when jobs arrive. `klipper_service`, `printing` and
    {"serial": "290055001850304158373620-if00", "state": "klipper",
     "path": "/dev/serial/by-id/usb-Klipper_stm32g0b1xx_290055001850304158373620-if00",
     "mcu": "EBBT0", "running_version": "v0.12.0-381-g...", "running_sha": "e4f5a6b",
-    "needs_flash": false, "reason": null},
+    "confidence": "unique_bus_id", "needs_flash": false, "reason": null},
    {"serial": "230048001750304158373620-if00", "state": "offline", "path": null,
     "mcu": null, "running_version": null, "running_sha": null,
-    "needs_flash": null, "reason": "offline"}],
+    "confidence": null, "needs_flash": null, "reason": "offline"}],
  "artifacts": {"klipper": Artifact, "katapult": Artifact}}
 ```
 
@@ -206,6 +206,18 @@ on-disk path, never a reconstructed one. `mcu`, `running_version` and
 `running_sha` are `null` while offline - they come from Klipper's own MCU
 identification, not from the bus scan. `needs_flash`/`reason` per serial use the
 same `DeviceStatus` vocabulary as a `Target` device entry, below.
+
+`confidence` is a `discovery.spec.Confidence.reason` string (`"unique_bus_id"`,
+`"answered"`, ...), or `null`. It is this tool's own record of how the board's
+identity was last confirmed *at flash time* - not a live discovery answer, which
+only exists inside a flash's own Klipper stop and is never computed on a status
+poll. `null` covers two different things a caller cannot tell apart from this
+field alone: never flashed by this tool, or a stale record discarded because the
+board's running commit no longer matches what was recorded (`FlashLog.entry_for`).
+Distinct from `present`/`state`, which are a live bus read - a board can be
+`present: true` and `confidence: null` when it answers the bus but this tool has
+never confirmed it by writing to it. Screens carry no `confidence`: nothing
+records one for a display flash today.
 
 ### `Artifact`
 
@@ -291,7 +303,8 @@ component renders both — and renders whatever comes next without being taught 
  "devices": [
    {"id": "290055001850304158373620-if00", "name": "mcu scanner",
     "present": true, "state": "klipper", "path": "/dev/serial/by-id/usb-...",
-    "version": "v0.12.0-381-g...", "needs_flash": true, "tone": "attention",
+    "version": "v0.12.0-381-g...", "confidence": "unique_bus_id",
+    "needs_flash": true, "tone": "attention",
     "label": "Update available", "reason": "source_changed",
     "actions": [{"id": "flash", "label": "Flash", "method": "fw.flash",
                  "params": {"name": "carto_v4", "serial": "2900...-if00"},

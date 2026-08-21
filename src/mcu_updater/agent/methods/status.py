@@ -622,6 +622,13 @@ class StatusMixin(_Base):
                     "state": serial["state"],
                     "path": serial.get("path"),
                     "version": serial.get("running_version"),
+                    # How this tool's own record confirmed this board's identity
+                    # the last time it wrote firmware here - a
+                    # `discovery.spec.Confidence.reason` string, or null when
+                    # there is no believable record. Distinct from `present`,
+                    # which is a live bus read: `present` can be true for a
+                    # board this tool has never confirmed at all.
+                    "confidence": serial.get("confidence"),
                     **self._device_json(DeviceStatus(serial.get("reason"))),
                     "actions": self._device_actions(
                         allowed,
@@ -830,6 +837,10 @@ class StatusMixin(_Base):
                     "state": self._screen_state(screen),
                     "path": screen.get("resolved_path"),
                     "version": screen.get("firmware_version"),
+                    # Always null - nothing records a Confidence for a display
+                    # flash today. The key stays present so a display device
+                    # projects onto the same shape an MCU device does.
+                    "confidence": None,
                     **self._device_json(device),
                     "actions": self._device_actions(
                         allowed,
@@ -1747,12 +1758,24 @@ class StatusMixin(_Base):
             artifact_sha=artifact_sha,
             flashlog=flashlog,
         )
+        # Our own record of how the board's identity was confirmed the last time
+        # this tool wrote to it - a `discovery.spec.Confidence.reason` string, or
+        # None when there is no record (never flashed by this tool, or the record
+        # was discarded because the running commit no longer matches it). Not the
+        # live discovery answer: that only exists inside a flash's own Klipper
+        # stop, and a status poll must never pay for one.
+        confidence = (
+            (flashlog.entry_for(serial, running) or {}).get("confidence")
+            if flashlog is not None
+            else None
+        )
         return {
             "mcu": mcu,
             "running_version": version,
             "running_sha": running,
             "needs_flash": status.needs_flash,
             "reason": status.reason,
+            "confidence": confidence,
         }
 
     @staticmethod

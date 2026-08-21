@@ -93,6 +93,7 @@ def test_an_mcu_type_projects_onto_the_shared_shape(api):
         "state",
         "path",
         "version",
+        "confidence",
         "needs_flash",
         "tone",
         "label",

@@ -742,22 +742,7 @@ An MCU gets the same confirmed-at-write-time ledger a screen has.
 **Gate:** `GATE`, plus `scripts/mutations/targets.json` and
 `flasher-selection.json`, one at a time. Then the on-printer checks below.
 
-### Step 28 — `confidence` on the wire ⚠️ contract change — DEFERRED
-
-Recorded so it is not rediscovered; **deliberately not scheduled.**
-
-- `fw.status` / `fw.device.list` carry `confidence` per device, so the panel can
-  distinguish "confirmed" from "remembered" instead of rendering `present` as
-  though it answered the question. `device_list`'s own comment
-  (`agent/methods/status.py:1510`) already says `present` is "necessary but
-  nowhere near sufficient" — the panel does not know that.
-- Bumps `api_version` → a fork edit → **and a `FW_SUPPORTED_API_VERSION` bump in
-  `store/server/fwUpdater/actions.ts`**. That constant was missed once already
-  and shipped a panel that never fetched status at all; see `NOTES.md`,
-  2026-08-21.
-- **Deferred because it is the only step here that spends fork budget**, and
-  23–27 are useful without it. Take it only when something in the UI actually
-  needs to show the distinction.
+### Step 28 — `confidence` on the wire
 
 ### Steps 23–28 — do not
 
@@ -837,7 +822,7 @@ Firmware and boards:
 - [x] Flash-time bootloader offset check
 - [x] Board tracking by `/dev/serial/by-id` serial
 - [x] Displays re-identified at flash time, once the ports are free
-- [ ] Discovery surface — one vocabulary for where a device is and how sure we are
+- [x] Discovery surface — one vocabulary for where a device is and how sure we are
 - [ ] CAN device discovery (needs `canbus_uuid` from printer.cfg)
 
 Interfaces:
@@ -2035,9 +2020,102 @@ surprises:  A stray orphaned assertion line
             chased further since removing it made the suite green and
             correct. The same class of gate-catches-a-copy-paste-seam issue
             Step 25's own log recorded once already for a different file.
-next:       Step 27 is closed. Step 28 stays deliberately deferred (spends
-            fork budget; nothing in the UI needs the distinction yet). No
-            further step is queued in this file.
+next:       Step 27 is closed. Step 28 follows.
+
+---
+
+### Step 28 — `confidence` on the wire            [done]
+
+commit:     (pending)
+gate:       pytest 1167 passed/0 failed/10 skipped (unchanged from Step 27 -
+            two existing tests updated for the new key, no new test added)
+            · ruff ok · mypy ok · line-endings ok · floor venv (3.11.15)
+            pytest also 1167/10, matching the system interpreter
+deviation:  **Un-deferred on Vi's direction, asked directly** ("proceed
+            anyway, no new UI need") rather than waiting for a UI consumer, so
+            this entry records that plainly instead of inventing a
+            justification the way the original spec text anticipated one.
+
+            **No `api_version` bump, and no fork edit.** The spec text said
+            this step "bumps `api_version`", but `mcu_updater/__init__.py`'s
+            own comment on `API_VERSION` and `docs/agent-api.md`'s own line
+            under `api_version: 3` both say the same thing in the same
+            words: "bumped only when a field is *removed* or changes
+            meaning; additions do not need one." `confidence` is a pure
+            addition - nothing removed, no existing key's meaning changed -
+            so the spec's premise was wrong on the code's own documented
+            rule, not just imprecise. Per the Handoff section ("if this file
+            and the code disagree about *fact*, the code wins"), skipped the
+            bump and the `FW_SUPPORTED_API_VERSION` fork edit entirely. This
+            also means the thing `NOTES.md`'s 2026-08-21 entry warns about
+            (that constant being missed) cannot recur here - there is
+            nothing to miss.
+
+            **Scope, decided by tracing where a `Confidence` is actually
+            computed today.** `discovery.confirm()` only runs inside a
+            flash's own Klipper stop (Step 26/27) - a status poll must never
+            pay for one, so there is no *live* confidence to put on a
+            `fw.status` response. The only thing that survives past a flash
+            is `FlashLog`'s persisted record, and Step 27 already writes
+            `confidence` into it for MCUs (`flash.py:249`, one call site).
+            So this step reads that record back rather than computing
+            anything new: `flash_state` (`status.py`) now also fetches
+            `flashlog.entry_for(serial, running).get("confidence")` -
+            reusing the same lookup `_device_status` already made for
+            `bin_sha256`, not a second read - and returns it alongside
+            `needs_flash`/`reason`. `_mcu_target`'s device entry
+            (`targets[].devices[]`) and `type_status`'s `serials[]` both
+            carry it through unchanged, since both already thread the same
+            dict.
+
+            **Displays got `confidence: null`, unconditionally, after a
+            correction mid-step.** First pass reasoned "nothing records a
+            Confidence for a display flash" from grepping for `FlashLog(` -
+            true of persistence, but wrong as a claim about discovery: Vi
+            corrected that `esptool.py`'s `_sightings_by_family` already
+            calls `discovery.confirm()` and gets a real `(Sighting,
+            Confidence)` pair per screen, every flash, inside the same
+            Klipper-stop ordering Step 26 built. What actually happens is
+            narrower than "nothing records one" - a `Confidence` **is**
+            computed, then discarded before `write()` returns: `_Answered`
+            only keeps `.port`, and `port_for`'s two-element
+            `(port, problem)` return has nowhere to put a third value.
+            `flash.device_for`'s own docstring already claims parity
+            ("the shape `esptool.port_for` already uses for displays") that
+            does not hold today - `port_for` doesn't carry confidence yet.
+            Asked directly whether to thread `Confidence` through
+            `port_for`/`write()` and persist it for screens too (real
+            parity, not `null`) - **Vi's answer: leave it `None` for now,
+            revisit separately** ("why we still have mcu vs displays at all
+            in the api"), which reads as a larger, different question than
+            this step's wire-field scope. So `_pio_target`'s device entry
+            carries a literal `"confidence": None` with a comment naming why,
+            not a computed value - the key stays present so a display device
+            keeps projecting onto the exact shape an MCU device does
+            (`test_a_display_projects_onto_the_same_shape`,
+            `tests/test_agent_targets.py`), which is this file's own
+            documented invariant for `targets[]`.
+
+            **`docs/agent-api.md` updated to match**: both worked examples
+            (`TypeStatus.serials[]` and the `Target.devices[]` projection)
+            gained `confidence`, plus a paragraph explaining what `null`
+            means (never flashed by this tool, or a stale record discarded
+            because the running commit moved on - the same two-causes-one-
+            value ambiguity `FlashLog.entry_for` already accepted) and that
+            it is distinct from `present`/`state`, which are a live bus
+            read.
+untested:   none. Nothing here touches hardware - `confidence` is read from
+            an existing on-disk record (`FlashLog`, already exercised on
+            real hardware in Step 27) and projected onto two already-tested
+            JSON shapes.
+surprises:  The `flash.device_for` docstring's claim about `port_for`
+            already matching its shape does not hold - see the display
+            paragraph above. Left uncorrected in that docstring for now,
+            since fixing it is part of the deferred "thread Confidence
+            through esptool" work, not this step's.
+next:       Nothing queued. The MCU-vs-display API question Vi flagged
+            ("why we still have mcu vs displays at all") is unscoped and not
+            written up as a step.
 
 ---
 
@@ -2054,7 +2132,9 @@ next:       Step 27 is closed. Step 28 stays deliberately deferred (spends
 - ~~The Inventory axis, deferred by both `spec.py` files.~~ — **pulled into scope
   2026-08-21 as Steps 23–28.** The deferral's own criterion ("two
   implementations, and the third is not committed") no longer holds: there are
-  six. Step 28 is written down but stays deferred — it is the only one that
-  spends fork budget.
+  six. **Step 28 closed 2026-08-21**, un-deferred on Vi's direction with no new
+  UI need cited — see its Progress log entry for what actually shipped
+  (no `api_version` bump, no fork edit; the spec's own "additions do not need
+  one" rule applied).
 - `discovery/topology.py` — the sysfs USB tree as a `Source`, which is where CAN
   identity would land. Blocked by "Do not do", not by the seam.

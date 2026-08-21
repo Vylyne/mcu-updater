@@ -105,6 +105,7 @@ def test_status_type_shape(api):
         "running_sha",
         "needs_flash",
         "reason",
+        "confidence",
     }
     # bttebb36 declares only klipper/katapult - artifacts is keyed by exactly
     # the families a type declares, not every [firmware ...] section in the

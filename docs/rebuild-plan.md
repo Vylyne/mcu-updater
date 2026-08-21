@@ -505,6 +505,23 @@ implementations, no importers. Green by construction.
 - **Reuse `devices.STATE_*` verbatim** for `state`. A parallel vocabulary for the
   same facts is a second thing to keep in step, which is the failure
   `states.py` exists to have already fixed once.
+- ⚠️ **Identity and state are different axes, and this step is where that gets
+  decided.** Identity is **chipset + serial** — it is what the silicon is, it
+  does not change when you write to it, and it is what a lookup matches on.
+  State is *what the board is currently running*, which changes every time you
+  flash it. The firmware name belongs to the second and has no business in the
+  first.
+  They are conflated today: `BusDevice.state` (`devices.py:88`) returns
+  `self.fw.lower()` for anything that is neither klipper nor katapult, so a
+  Cartographer reports the string `"cartographer"` as a *state*. That is a
+  firmware name wearing a state's clothes, and `7bbf152` removed the last place
+  it was doing identity work — dropping the hardcoded klipper filter from
+  `flash_katapult`'s lookup so a Cartographer could be found at all.
+  **Decide here what a sighting reports for a fork**: a fork running its
+  application is in `STATE_KLIPPER` as far as any flasher cares — that is what
+  the state is *for* — and the family name it enumerates under travels in
+  `detail`, where it stays available without steering dispatch. See Step 27's
+  `select_for` trap for what happens if this is left as it is.
 - **`Confidence`** — built the way `states.py` is, and for the same reason: **the
   reason is the fact**, with `tone`/`label`/`safe_to_write` derived rather than
   stored, so an inconsistent pair cannot be constructed at all. Reasons:
@@ -606,11 +623,21 @@ An MCU gets the same confirmed-at-write-time ledger a screen has.
 
 - The two `find_device` calls inside the stop, at the top of
   `flash.flash_katapult`, become a `UNIQUE_BUS_ID` sighting. **Cited by name, not
-  line: this function is churning.** As of 2026-08-21 the second call dropped its
-  `KLIPPER_FW_NAME` constraint, because chipset+serial already identify a board
-  uniquely and a Cartographer probe enumerates under its own family name. That
-  change is this step's premise arriving early — identity is the serial, not the
-  firmware name — so read what is there before assuming this bullet describes it.
+  line: this function is churning.**
+- ⚠️ **The `select_for` trap — read before writing a line of this step.**
+  `BusDevice.state` (`devices.py:88`) falls through to `self.fw.lower()`, so a
+  Cartographer running its application reports state `"cartographer"`. No
+  flasher declares that: `Flashtool.states` is `(STATE_KLIPPER, STATE_KATAPULT)`
+  (`flashers/flashtool.py:29`). It is **not a live bug today** — the only
+  production caller of `select_for` is `flash_initial_bootloader`
+  (`flashers/flash.py:580`), which computes its own state and never passes an
+  observed one.
+  This step is what arms it. The moment a batch picks a flasher from a *sighted*
+  state rather than a computed one, a Cartographer matches nothing and
+  `select_for` raises `UnsupportedChipsetError` telling the operator to flash
+  katapult by hand — the same class of failure `7bbf152` fixed in the lookup,
+  one layer up in the dispatch. Decide the identity/state split (Step 23) before
+  wiring sightings into `select_for`, not after.
 - A board whose by-id entry vanished between selection and write is **refused
   with a reason** rather than raising `DeviceNotFoundError` from inside
   `flash_katapult`. Same outcome, a better-shaped one — and the batch already

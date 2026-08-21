@@ -1730,7 +1730,7 @@ next:       Step 25b (name the knomi sources for the firmware they integrate
             with) - raised mid-Step-26, see that step's own log entry.
 
 ### Step 25b — name the knomi sources for the firmware they integrate with            [done]
-commit:     (pending)
+commit:     9a3388a
 gate:       pytest 1162 passed/0 failed/10 skipped (unchanged from Step 25) ·
             ruff ok · mypy ok (58 files, up from 57 - the new
             `knomi_serial/__init__.py`) · line-endings ok ·

@@ -155,11 +155,11 @@ Every path derives from one `Paths` object, so nothing is hardcoded elsewhere:
 ## Coming from the old layout
 
 **Historical.** Both migrations below predate the schema-first rebuild
-(`docs/rebuild-plan.md`) and describe moves off layouts nothing still ships;
-`scripts/migrate_config.py` is what carries an install from the pre-rebuild
-`[mcu ...]`/`[display ...]`/single-`firmware`-key config into the current
-target schema. Kept for an install that never made either of these earlier
-moves.
+(`docs/rebuild-plan.md`) and describe moves off layouts nothing still ships.
+The pre-rebuild `[mcu ...]`/`[display ...]`/single-`firmware`-key config had a
+migration script as well; it was retired once the one install it existed for
+had run it, on the same reasoning as "Registry moves" below — a one-time job is
+not worth shipping code for.
 
 ### Per-type folders → `types/`
 

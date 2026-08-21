@@ -477,16 +477,15 @@ Run specs **one at a time**; see Ground rules.
 
 **On the printer**, in order. The dev box cannot test what matters here.
 
-1. `python scripts/migrate_config.py` — inspect the diff before `--write`.
-2. `updatefw status` — every type resolves; nothing reads as unmanaged.
-3. `updatefw build cartographer`. Then confirm the offsets agree *before* any
+1. `updatefw status` — every type resolves; nothing reads as unmanaged.
+2. `updatefw build cartographer`. Then confirm the offsets agree *before* any
    write: the app's `FLASH_APPLICATION_ADDRESS` against the `Application Start:`
    the handshake reports.
-4. `updatefw flash <carto-serial>`, then `fw.flash` from the panel.
+3. `updatefw flash <carto-serial>`, then `fw.flash` from the panel.
    ⚠️ **Bench board only** — this is the board that bricked, and recovery is
    DFU + katapult + a vendor bin.
-5. `updatefw update-all --dry-run`, then for real.
-6. **Klipper is running and ready after every one of these.** That is this
+4. `updatefw update-all --dry-run`, then for real.
+5. **Klipper is running and ready after every one of these.** That is this
    project's existing release gate and it does not change.
 
 ---

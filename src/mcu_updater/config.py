@@ -21,7 +21,6 @@ Per-type keys, and that is all:
     Required. Which families this board runs, comma-separated - an
     application and, for a board with one, its bootloader, e.g.
     ``cartographer, katapult``. A type with no bootloader simply omits one.
-    ``scripts/migrate_config.py`` adds this key to a file predating it.
 ``profile``
     The vendor answer file this type's application config is seeded from, e.g.
     ``config.CartoV4USB``. Names a file in that firmware's own source tree, not
@@ -346,8 +345,7 @@ class Registry:
                 raise ConfigCorruptError(
                     f"{path}: '{name}' declares no firmware: key. Every type "
                     f"must name at least one firmware family it runs, e.g. "
-                    f"'firmware: klipper'. Run scripts/migrate_config.py to add "
-                    f"it automatically.",
+                    f"'firmware: klipper'.",
                     path=path,
                     type=name,
                 )

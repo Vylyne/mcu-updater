@@ -77,12 +77,19 @@ Or over HTTP: `POST /server/extensions/request` with the same body.
 ```
 
 Switch on `error.data.code`, never on the message text. Those codes are stable
-API; the prose is not. Codes come from `errors.py`: `config_corrupt`,
-`unknown_type`, `unknown_serial`, `ambiguous_serial`, `serial_tracked_elsewhere`,
-`no_saved_config`, `source_missing`, `build_failed`, `flash_failed`,
-`device_not_found`, `bootloader_timeout`, `ambiguous_dfu`, `tool_missing`,
-`unsupported_chipset`, `busy`, `print_in_progress`, `cancelled`, `tty_required`,
-`invalid_type_name`, `dfu_permission_denied`, `kconfig`.
+API; the prose is not. Most come from `errors.py`: `config_corrupt`,
+`unknown_type`, `invalid_type_name`, `duplicate_type`, `unknown_serial`,
+`ambiguous_serial`, `serial_tracked_elsewhere`, `source_missing`,
+`no_saved_config`, `build_failed`, `tty_required`, `flash_failed`,
+`device_not_found`, `bootloader_timeout`, `ambiguous_dfu`,
+`dfu_permission_denied`, `tool_missing`, `unsupported_chipset`,
+`service_control`, `flashing_disabled`, `busy`, `print_in_progress`,
+`cancelled`, `profile`, `profile_not_found`, `profile_customised`,
+`offset_mismatch`, `kconfig`, `no_session`. A few are built inline at the call
+site rather than from a typed exception - `no_artifact`, `nothing_to_do`, and
+the `dfu_<reason>` family (`dfu_none`, `dfu_no_tool`, `dfu_permission_denied`,
+`dfu_ambiguous`) `fw.add_mcu.start` derives from `fw.dfu.scan`'s own `reason` -
+documented where each is raised rather than repeated here.
 
 JSON-RPC codes: `-32601` unknown method, `-32602` bad params, `-32000`
 application error (see `data.code`), `-32603` internal.
@@ -97,7 +104,7 @@ application error (see `data.code`), `-32603` internal.
 | `fw.bus.scan` | `only_untracked?`, `chipset?` | `{devices: [BusDevice]}` |
 | `fw.dfu.scan` | — | `{devices, count, ready, reason, message}` — read-only |
 | `fw.add_mcu.start` | `name`, `dfu_serial?` | `{job_id, job, dfu_serial}` — **off by default** |
-| `fw.artifacts` | `name` (required) | `{klipper: Artifact, katapult: Artifact}` |
+| `fw.artifacts` | `name` (required) | `{<fw>: Artifact, ...}`, one key per family the type declares |
 | `fw.settings.get` | — | `{settings: Settings}` |
 | `fw.build` | `name`, `fw`, `jobs?`, `clean?`, `reseed?` | `{job_id, job}` — returns immediately |
 | `fw.flash` | `serial\|port`, `name?`, `force?` | `{job_id, job}` — **off by default**, see below |
@@ -111,7 +118,7 @@ application error (see `data.code`), `-32603` internal.
 ### `fw.ping`
 
 ```json
-{"api_version": 2, "version": "0.9.0", "dry_run": false, "enable_flashing": false,
+{"api_version": 3, "version": "0.9.0", "dry_run": false, "enable_flashing": false,
  "phase": 1, "capabilities": ["fw.artifacts", "fw.bus.scan", "..."],
  "host": {"nproc": 4, "python": "3.9.2",
           "config_dir": "/home/biqu/printer_data/config/mcu-updater",
@@ -132,24 +139,31 @@ update the panel.
 ### `fw.status`
 
 ```json
-{"types": [TypeStatus], "displays": [DisplayStatus], "targets": [Target],
- "firmware_families": [Family], "bus": [BusDevice],
+{"targets": [Target], "firmware_families": [Family],
+ "kconfig_available": {"klipper": true, "katapult": true},
+ "bus": [BusDevice],
  "job": null, "recent": [],
  "locked_by": null,
  "klipper_service": "active",
  "printing": false,
+ "idle_state": "Ready",
  "settings": {...},
  "read_only": true}
 ```
 
-`targets` is `types` and `displays` said in one shape — see below. The two
-originals stay exactly as they are; nothing about them changes because it
-exists.
+`targets` is `TypeStatus` and `DisplayStatus` said in one shape - see below.
+Those two originals are not embedded here; fetch them with `fw.type.list` and
+`fw.device.list` when a caller needs the full per-type detail `targets`
+projects away (extra_args, makefile_patches, serial-by-serial version info).
+
+`kconfig_available` is keyed by family name, `true` when that family's tree has
+a parseable Kconfig - it is what a picker uses to decide whether "configure"
+can be offered for a family at all, before spending a Kconfig parse to find out.
 
 `job` and `recent` are always `null`/`[]` in Phase 1; the keys exist now so the
-shape doesn't change when jobs arrive. `klipper_service` and `printing` are
-**best-effort** — they come from querying Moonraker, and are `null` when it can't
-be reached. Never treat them as load-bearing.
+shape doesn't change when jobs arrive. `klipper_service`, `printing` and
+`idle_state` are **best-effort** — they come from querying Moonraker, and are
+`null` when it can't be reached. Never treat them as load-bearing.
 
 `locked_by` is non-null when a CLI build or flash is running on the host:
 `{"pid": 1234, "label": "build klipper/bttebb36", "since": 1785412000.0}`.
@@ -161,18 +175,37 @@ be reached. Never treat them as load-bearing.
  "chipset": "stm32g0b1xx",
  "firmware": "klipper",
  "katapult_installed": true,
+ "needs_flash": false,
  "klipper":  {"extra_args": "", "makefile_patches": []},
  "katapult": {"extra_args": "", "makefile_patches": [], "installed": true},
  "serials": [
    {"serial": "290055001850304158373620-if00", "state": "klipper",
-    "path": "/dev/serial/by-id/usb-Klipper_stm32g0b1xx_290055001850304158373620-if00"},
-   {"serial": "230048001750304158373620-if00", "state": "offline", "path": null}],
+    "path": "/dev/serial/by-id/usb-Klipper_stm32g0b1xx_290055001850304158373620-if00",
+    "mcu": "EBBT0", "running_version": "v0.12.0-381-g...", "running_sha": "e4f5a6b",
+    "needs_flash": false, "reason": null},
+   {"serial": "230048001750304158373620-if00", "state": "offline", "path": null,
+    "mcu": null, "running_version": null, "running_sha": null,
+    "needs_flash": null, "reason": "offline"}],
  "artifacts": {"klipper": Artifact, "katapult": Artifact}}
 ```
 
+`firmware` is the type's *application* - the first declared family that is not a
+bootloader (`McuType.application()`), not the full `firmware:` list. `katapult`
+is folded into it as `katapult_installed` plus the `installed` flag on the
+`katapult` block, rather than a `firmwares` array - `mcu.firmwares` is a
+config-model attribute that is never serialised under that name.
+`artifacts` is keyed by exactly the families this type declares (see
+docs/rebuild-plan.md Step 18) - a type with no bootloader carries no `katapult`
+key at all, here or in `artifacts`. `needs_flash` at this level is `true` if any
+serial's is, `false` only if every serial provably is not, `null` otherwise -
+the same tri-state rule `Target.needs_flash` uses, described below.
+
 `state` ∈ `"klipper"` | `"katapult"` | `"offline"`. Case in the firmware name is
 not dependable on the bus, so matching is case-insensitive and `path` is the real
-on-disk path, never a reconstructed one.
+on-disk path, never a reconstructed one. `mcu`, `running_version` and
+`running_sha` are `null` while offline - they come from Klipper's own MCU
+identification, not from the bus scan. `needs_flash`/`reason` per serial use the
+same `DeviceStatus` vocabulary as a `Target` device entry, below.
 
 ### `Artifact`
 
@@ -181,7 +214,7 @@ on-disk path, never a reconstructed one.
  "has_bin": true, "bin_mtime": 1785410000.0, "bin_size": 43120,
  "has_uf2": false,
  "built_fw_sha": "a1b2c3d", "current_fw_sha": "e4f5a6b",
- "stale": true, "stale_reason": "source_changed", "reason": "source_changed",
+ "reason": "source_changed",
  "last_build_seconds": 74.2, "last_build_at": 1785410000.0,
  "config_rewritten": false,
  "profile": {"managed": true, "profile": "config.CartoV4USB", "custom": false,
@@ -189,16 +222,16 @@ on-disk path, never a reconstructed one.
              "label": "Matches profile"}}
 ```
 
-`stale_reason` ∈ `null` | `"never_built"` | `"config_changed"` |
-`"source_changed"`.
-
-`reason` is the same verdict without the collapse, and is what `Target.artifact`
-carries. It adds `"built_dirty"`, `"foreign_build"` and `"no_provenance"`.
-The last is why both exist: a binary sitting on disk with no build record is
-**not** the same as never having built one, and `stale_reason` reports
-`"never_built"` for both because that string is a documented API value. "You
-have never built this" and "somebody rebuilt this behind you" want different
-words, and only `reason` can tell you which you have.
+`reason` ∈ `null` | `"never_built"` | `"config_changed"` | `"source_changed"` |
+`"built_dirty"` | `"foreign_build"` | `"no_provenance"`. Retired in Step 14 of
+docs/rebuild-plan.md: this used to be two fields, a three-value `stale`/
+`stale_reason` collapse and a six-value `reason` carrying the full detail
+beside it - now there is only `reason`, and it carries the full set directly.
+The two extra values are why a single granular field was worth keeping instead
+of collapsing back down: a binary sitting on disk with no build record
+(`"no_provenance"`) is **not** the same as never having built one
+(`"never_built"`), and a three-value field cannot say which you have. `reason`
+is also what `Target.artifact` carries, unchanged.
 
 **This is the field the whole panel exists for**: it answers "do I need to
 reflash after that Klipper update?" at a glance. It compares recorded provenance
@@ -247,7 +280,7 @@ to. `targets` is `types` and `displays` projected onto that shape, so one
 component renders both — and renders whatever comes next without being taught to.
 
 ```json
-{"kind": "mcu", "name": "carto_v4", "descriptor": "stm32g431xx",
+{"provider": "kconfig_make", "name": "carto_v4", "descriptor": "stm32g431xx",
  "firmware": "cartographer",
  "artifact": {"state": "stale", "tone": "attention",
               "label": "Source updated - rebuild", "reason": "source_changed"},
@@ -330,7 +363,7 @@ can see as up to date.
 
 A display carries one extra key, `extra`, holding the facts only a screen has
 (`module_version`, `source_version`, `source_dirty`, `klipper_section`,
-`reachable`, `moved`). A reader that never opens it renders both kinds.
+`reachable`). A reader that never opens it renders both kinds.
 `firmware` is `null` for a display: PlatformIO builds from its own tree rather
 than from a `[firmware ...]` family, and naming one would be a guess.
 

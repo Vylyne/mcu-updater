@@ -895,6 +895,73 @@ surprises:  **Narrowing to `mcu.firmwares` broke four tests the plan did not
 next:       Step 19 (make `docs/agent-api.md` true), ordered before Step 20's
             fork fix per the Steps 16-17 review.
 
+### Step 19 — make `docs/agent-api.md` true            [done]
+commit:     (pending)
+gate:       line-endings ok · no code touched, so no pytest/ruff/mypy run ·
+            spot-checked against a live `Api` (four calls: `fw.ping`,
+            `fw.status`, `fw.type.list`, `fw.artifacts`) run through a real
+            `Registry.load()` of the repo-root `mcu-updater.cfg`, plus a
+            direct read of `errors.py` and `states.py` for the two catalogs
+            (error codes, `Artifact.reason`) - more than the plan's own
+            "two or three payloads", because the known-stale table's items
+            turned out to need the source read to sort real staleness from
+            not.
+deviation:  **Most of the plan's own known-stale table turned out to be
+            wrong, not the doc.** Checked each of its seven rows against the
+            live dump and Step 16a's own log (which had already re-verified
+            some of these): `firmware: "klipper"` (singular) is correct -
+            there is no `firmwares` wire key, `mcu.firmwares` is never
+            serialised under that name (Step 16a found this already);
+            `katapult_installed` and `installed` on the katapult block are
+            both still live keys, not deleted - `status.py:326,339-341`
+            emits both today. Three rows were real: `:114`'s `api_version: 2`
+            (fixed to 3), `stale`/`stale_reason` (genuinely retired in Step
+            14, only `reason` exists on the wire - fixed the example and
+            rewrote the paragraph that explained two fields to describe one),
+            and `targets[].kind` (fixed to `provider`, matching Step 16b).
+            Treated the table as a lead, per its own "starting point, not a
+            complete list" framing, and verified every row rather than
+            trusting it - this is the fifth review-log entry finding that
+            shape (a stated fact not holding up against source), so verifying
+            first rather than acting on the table directly was deliberate,
+            not incidental.
+untested:   The rewrite covers what a full read plus four live payloads plus
+            two source-file cross-references could confirm: `fw.ping`,
+            `fw.status`, `TypeStatus`, `Artifact`, `Target`, `Family`, and the
+            error-code catalog. Jobs, bulk operations, the DFU flow, display
+            flashing and profiles were read in full and not found
+            self-contradictory, but were not independently re-derived against
+            a live payload the way the four above were - none of those are
+            reachable from a plain `Registry.load()` without a job runner,
+            a DFU mock, or a Kconfig tree, and building those fixtures is
+            past what this step's "no code" framing covers. If Step 20's fork
+            work runs into one of those sections disagreeing with the fork,
+            that section needs the same live-payload treatment this step gave
+            the first four.
+surprises:  **A self-contradiction inside the doc itself**, found on the full
+            read rather than from the known-stale table: `targets[].extra`'s
+            key list (then line 332) still named `moved` as a current field,
+            while the changelog nine lines above (`:14`) already said Version
+            2 retired `targets[].extra.moved`. Removed `moved` from the key
+            list. Also found, not in the table: `fw.status`'s example was
+            missing two real top-level keys (`kconfig_available`,
+            `idle_state`) and carried two that do not exist there at all
+            (`types`, `displays` - those are `fw.type.list`/`fw.device.list`'s
+            own return shapes, never embedded in `fw.status`); `TypeStatus`
+            was missing `needs_flash` entirely and its serial objects were
+            missing 5 of 8 real fields (`mcu`, `running_version`,
+            `running_sha`, `needs_flash`, `reason` - the exact set
+            `test_status_type_shape` already pins); and the top-level error
+            catalog ("Codes come from `errors.py`") was both incomplete
+            (missing `duplicate_type`, `service_control`, `flashing_disabled`,
+            `profile`, `profile_not_found`, `profile_customised`,
+            `offset_mismatch`, `no_session`) and, in its own framing, wrong -
+            several real codes (`no_artifact`, `nothing_to_do`, the
+            `dfu_<reason>` family) are built inline at the call site and were
+            never going to be found in `errors.py` no matter how carefully
+            that file was read.
+next:       Step 20, the fork fix against this now-corrected contract.
+
 ---
 
 ## Appendix B — open items, not in scope

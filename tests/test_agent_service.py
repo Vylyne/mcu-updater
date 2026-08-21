@@ -233,14 +233,57 @@ def test_an_unknown_inbound_method_gets_an_error_not_silence(wired):
     assert next(r for r in server.responses if r["id"] == 1001)["error"]["code"] == -32601
 
 
+def _state_events(server: FakeMoonraker) -> list[dict]:
+    """Just the `state` events, ignoring the bus/job/log traffic around them."""
+    return [
+        n
+        for n in server.notifications
+        if n.get("method") == "connection.send_event"
+        and (n.get("params") or {}).get("event") == "state"
+    ]
+
+
 def test_service_state_change_triggers_a_fresh_state_event(wired):
     agent, server = wired
     _run(agent)
     assert server.wait_for(lambda: server.methods_called("server.connection.identify"))
-    before = len(server.notifications)
+
+    # Wait for the reconnect's own state event before counting. State emission
+    # coalesces, so a `before` taken while that one is still in flight lets this
+    # pass on the startup event and assert nothing about the trigger.
+    assert server.wait_for(lambda: len(_state_events(server)) >= 1)
+    before = len(_state_events(server))
 
     server.send({"jsonrpc": "2.0", "method": "notify_service_state_changed", "params": [{}]})
-    assert server.wait_for(lambda: len(server.notifications) > before)
+    assert server.wait_for(lambda: len(_state_events(server)) > before)
+
+
+def test_a_notification_never_blocks_the_reader_thread(wired):
+    """A notify handler must not stall the socket it arrived on.
+
+    `notify_service_state_changed` was handled inline on the rpc reader thread,
+    and handling it built a state payload - which calls back into Moonraker,
+    whose reply only that same thread could ever read. Every probe burned its
+    full PROBE_TIMEOUT, the socket went unread for seconds, and the `state` that
+    eventually went out had every Moonraker-derived field null.
+
+    Requests were already dispatched off the reader thread for exactly this
+    reason; notifications simply never got the same treatment. This asserts the
+    property that regressed rather than the symptom: a request queued directly
+    behind a notification is still answered promptly.
+    """
+    agent, server = wired
+    _run(agent)
+    assert server.wait_for(lambda: server.methods_called("server.connection.identify"))
+
+    server.send({"jsonrpc": "2.0", "method": "notify_service_state_changed", "params": [{}]})
+    # Straight behind it, with no pause: if the notification is handled inline,
+    # this is not even read off the socket until that handler returns.
+    server.send({"jsonrpc": "2.0", "method": "fw.does.not.exist", "id": 2001})
+
+    assert server.wait_for(
+        lambda: any(r["id"] == 2001 for r in server.responses), timeout=2.0
+    ), "the reader thread was blocked handling a notification"
 
 
 def test_run_once_returns_when_moonraker_disconnects(wired):

@@ -146,6 +146,88 @@ class LogBatcher:
                     self._log.debug(f"log flush failed: {exc}")
 
 
+class StateEmitter:
+    """Emits `state` from a worker thread, coalescing bursts.
+
+    Building a state payload calls back into Moonraker for service state and
+    printer activity, so it must never run on the thread that reads Moonraker's
+    replies. It used to: `notify_service_state_changed` is delivered inline on
+    the rpc reader thread, so the reply to every enrichment probe sat behind the
+    handler that was waiting for it. Each probe burned its full timeout, the
+    socket went unread for as long as that took, and the `state` that eventually
+    went out had every Moonraker-derived field null - which is worse than late,
+    because the panel cannot tell a null it should ignore from one that means
+    klipper really is unreachable.
+
+    So `poke()` only sets a flag and returns; one worker rebuilds and emits.
+    Coalescing falls out of that and is worth having on its own: a single
+    Klipper restart produces several service-state notifications, and only the
+    last one's payload is worth sending.
+    """
+
+    #: How long to let a burst settle before rebuilding. Long enough to collapse
+    #: one service transition into a single emit, short enough to stay live.
+    SETTLE = 0.15
+    #: Bounds how long `stop()` takes to be noticed, nothing more - a `poke()`
+    #: wakes the worker immediately.
+    TICK = 0.5
+
+    def __init__(
+        self,
+        emitter: EventEmitter,
+        build: Callable[[], Any],
+        *,
+        logger: Any = None,
+    ) -> None:
+        self.emitter = emitter
+        self._build = build
+        self._log = logger
+        self._dirty = threading.Event()
+        self._stop = threading.Event()
+        self._thread: Optional[threading.Thread] = None
+
+    def start(self) -> None:
+        if self._thread is not None:
+            return
+        self._stop.clear()
+        self._thread = threading.Thread(target=self._loop, name="state-emitter", daemon=True)
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop.set()
+        # Wake the worker so it sees the stop rather than waiting out a TICK.
+        self._dirty.set()
+        thread, self._thread = self._thread, None
+        if thread is not None:
+            thread.join(timeout=5.0)
+
+    def poke(self) -> None:
+        """Mark the state stale. Safe from any thread, and always immediate."""
+        self._dirty.set()
+
+    def _loop(self) -> None:
+        while not self._stop.is_set():
+            if not self._dirty.wait(self.TICK):
+                continue
+            if self._stop.is_set():
+                return
+            # Let the rest of a burst land before doing the expensive part.
+            if self._stop.wait(self.SETTLE):
+                return
+            # Cleared *before* building, never after: a poke that arrives while
+            # we are building is a change we have not looked at yet, and
+            # clearing afterwards would swallow it.
+            self._dirty.clear()
+            self._emit()
+
+    def _emit(self) -> None:
+        try:
+            self.emitter.emit("state", self._build())
+        except Exception as exc:  # noqa: BLE001 - an emitter must never die
+            if self._log is not None:
+                self._log.warning(f"could not emit state: {exc}")
+
+
 def _fingerprint(devices: list[BusDevice]) -> tuple:
     """A comparable snapshot, so we only emit when the bus actually changes."""
     return tuple(sorted((d.fw.lower(), d.chipset, d.serial) for d in devices))

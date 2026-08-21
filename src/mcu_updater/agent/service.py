@@ -24,7 +24,7 @@ from .. import AGENT_NAME, __version__
 from ..jobs import IMMEDIATELY_CANCELLABLE, Job, JobRunner
 from ..paths import Paths
 from ..settings import Settings, load_settings
-from .events import BusWatcher, EventEmitter, LogBatcher
+from .events import BusWatcher, EventEmitter, LogBatcher, StateEmitter
 from .methods import Api
 from .rpc import MoonrakerPeer, RpcError
 
@@ -86,6 +86,11 @@ class Agent:
             # here instead. Adopting it on the same tick means the bus event the
             # panel receives already shows it under its type.
             on_change=self.api.adopt_paired,
+        )
+        # Built last: it needs the Api to serialise with. Nothing above calls it
+        # during construction - `emit_state` resolves this attribute at call time.
+        self.state = StateEmitter(
+            self.emitter, lambda: self.api.status({}), logger=self.log
         )
 
     # -- outbound calls used by the Api for enrichment ---------------------
@@ -160,6 +165,7 @@ class Agent:
         self._stop.set()
         self.watcher.stop()
         self.batcher.stop()
+        self.state.stop()
         peer = self._peer
         if peer is not None:
             peer.close()
@@ -182,10 +188,13 @@ class Agent:
             self.log.warning(f"could not reconcile a previous run: {exc}")
 
     def emit_state(self) -> None:
-        try:
-            self.emitter.emit("state", self.api.status({}))
-        except Exception as exc:  # noqa: BLE001
-            self.log.warning(f"could not emit state: {exc}")
+        """Ask for a fresh `state` event. Returns immediately; never emits inline.
+
+        Callers include the rpc reader thread, and building the payload calls
+        back into Moonraker - see `StateEmitter` for why doing that on the
+        caller's thread deadlocked the socket.
+        """
+        self.state.poke()
 
     def _handshake(self, peer: MoonrakerPeer) -> None:
         res = peer.call(
@@ -232,6 +241,7 @@ class Agent:
         self.watcher.reset()
         self.watcher.start()
         self.batcher.start()
+        self.state.start()
         self.emit_state()
 
         # A job started before the socket dropped keeps running - it outlives the

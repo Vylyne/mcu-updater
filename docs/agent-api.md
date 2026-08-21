@@ -1080,13 +1080,18 @@ The agent pushes with `connection.send_event`; clients receive
 
 | Event | `data` | When |
 | --- | --- | --- |
-| `state` | the full `fw.status` payload | on connect, when Klipper's service state changes, and after any job finishes |
+| `state` | the full `fw.status` payload | on connect, when Klipper's service state changes, and after any job finishes; coalesced over 150 ms |
 | `bus` | `{devices: [BusDevice]}` | when the set of attached devices changes |
 | `job` | `{job: Job}` | on every state transition and progress step |
 | `log` | `{job_id, seq, lines}` | batched: 250 ms / 40 lines / 32 KiB |
 
 Poll interval for `bus` is 15s idle, dropping to 2s while a job runs (a board
 disappears and reappears within seconds during a flash).
+
+`state` is built on its own worker thread and coalesced, so a burst of triggers
+produces one event rather than one each — a single Klipper restart makes
+Moonraker emit several service-state notifications. Every `state` is a full
+snapshot, so a client sees no difference beyond receiving fewer of them.
 
 Pending log lines are always flushed *before* the `job` event that follows them,
 so the UI never shows "finished" above the final few lines of output.

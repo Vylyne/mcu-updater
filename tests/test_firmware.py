@@ -293,16 +293,19 @@ def test_declared_families_are_ordered_independently_of_the_file(paths):
 
 def test_a_declared_family_gets_its_own_per_type_keys(paths):
     """`<fw>_extra_args` is derived from the family name, so a new family has
-    to be known before the registry can read or write its keys at all."""
+    to be known - and declared on the type - before the registry round-trips
+    its keys. A family a type does not declare is not read back on load; see
+    docs/rebuild-plan.md Step 18."""
     _write_firmware(paths, "cartographer", artifact="klipper")
 
     reg = Registry.load(paths)
     reg.add_type("carto_v4", "stm32g431xx")
+    reg.get("carto_v4").firmwares = ["cartographer", "katapult"]
     reg.get("carto_v4").fw("cartographer").extra_args = "-DSCANNER"
     reg.save(paths)
 
     reloaded = Registry.load(paths)
-    assert reloaded.get("carto_v4").fw("cartographer").extra_args == "-DSCANNER"
+    assert reloaded.get("carto_v4").fw_get("cartographer").extra_args == "-DSCANNER"
     assert "cartographer_extra_args" in open(paths.main_config, encoding="utf-8").read()
 
 
@@ -310,6 +313,7 @@ def test_a_declared_family_appears_in_a_types_own_ordering(paths):
     _write_firmware(paths, "cartographer")
     reg = Registry.load(paths)
     reg.add_type("carto_v4", "stm32g431xx")
+    reg.get("carto_v4").firmwares = ["klipper", "katapult", "cartographer"]
     reg.save(paths)
 
     order = Registry.load(paths).get("carto_v4").fw_order()
@@ -429,8 +433,10 @@ def test_a_type_lists_only_the_families_it_uses(paths):
 
     mcu = Registry.load(paths).get("carto_v4")
     assert mcu.families() == ["cartographer", "katapult"]
-    # ...while still *carrying* klipper's keys, which are harmless and unused.
-    assert "klipper" in mcu.fw_order()
+    # fw_order() is narrowed to what this type actually declares too - a
+    # klipper slot for a board that will never run klipper is exactly the
+    # phantom-entry noise docs/rebuild-plan.md Step 18 removes.
+    assert "klipper" not in mcu.fw_order()
 
 
 def test_a_board_with_no_bootloader_lists_only_its_application(paths):

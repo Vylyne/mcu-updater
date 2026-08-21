@@ -361,10 +361,10 @@ def test_untrack_is_offered_per_board_and_never_for_a_screen(
 
 
 def test_the_artifact_shown_is_the_one_this_type_would_flash(paths, live_registry_text):
-    """A cartographer type carries klipper config keys it will never use, so
-    `artifacts` has a `klipper` entry that stays "never built" forever. Reading
-    that one is what makes the panel say a perfectly good probe was never built,
-    and disable its flash button for good."""
+    """A cartographer-only type declares no klipper - `artifacts` is narrowed
+    to exactly the families it declares (docs/rebuild-plan.md Step 18), so
+    there is no phantom `klipper` entry to make the panel say a perfectly good
+    probe was never built and disable its flash button for good."""
     with open(paths.registry_file, "w", encoding="utf-8") as fh:
         fh.write(live_registry_text)
         fh.write("\n[type carto_v4]\nchipset: stm32g431xx\nfirmware: cartographer\n")
@@ -378,7 +378,7 @@ def test_the_artifact_shown_is_the_one_this_type_would_flash(paths, live_registr
     legacy = api.type_status(api.registry(), "carto_v4", api.mcu_info())
     target = {t["name"]: t for t in status["targets"]}["carto_v4"]
 
-    assert legacy["artifacts"]["klipper"]["reason"] == "never_built"
+    assert "klipper" not in legacy["artifacts"]
     assert legacy["artifacts"]["cartographer"]["has_bin"] is True
     assert target["artifact"]["reason"] == "no_provenance"
 

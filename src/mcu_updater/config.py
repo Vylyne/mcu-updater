@@ -163,6 +163,18 @@ class McuType:
     def fw(self, fw: str) -> FwConfig:
         return self.fws.setdefault(fw, FwConfig())
 
+    def fw_get(self, fw: str) -> FwConfig:
+        """Read a firmware family's config without creating a slot.
+
+        Distinct from `fw()`, which is `setdefault` and therefore *creates* a
+        slot as a side effect of merely being asked for one - the bug behind
+        docs/rebuild-plan.md Step 18, where a read-only loop over every
+        globally declared family left every type carrying phantom slots for
+        families it never declared. Use this wherever a family's config is
+        only being read, never assigned into.
+        """
+        return self.fws.get(fw, FwConfig())
+
     def families(self) -> list[str]:
         """The families this type actually uses - exactly what it declares.
 
@@ -377,7 +389,12 @@ class Registry:
                 )
             mcu.firmwares = declared_fws
             mcu.profile = (doc.get(section, "profile") or "").strip()
-            for fw in fw_names:
+            # Only the families this type actually declares - not every
+            # globally-declared [firmware ...] section. mcu.fw() is
+            # setdefault, so iterating fw_names here would seed a phantom
+            # slot for every family in the file on every type, not just the
+            # ones it runs. See docs/rebuild-plan.md Step 18.
+            for fw in mcu.firmwares:
                 cfg = mcu.fw(fw)
                 cfg.extra_args = (doc.get(section, f"{fw}_extra_args") or "").strip()
                 for raw_patch in doc.get_list(section, f"{fw}_makefile_patches"):

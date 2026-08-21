@@ -261,7 +261,7 @@ def makefile_patches(
     `-dirty` suffix. That is expected and not a sign of local modifications.
     """
     fw_dir = firmware.resolve(paths, fw).source_dir(paths)
-    patches = [p for p in mcu.fw(fw).makefile_patches if p.is_valid()]
+    patches = [p for p in mcu.fw_get(fw).makefile_patches if p.is_valid()]
     backups: list[tuple[str, Optional[bytes]]] = []
     try:
         for patch in patches:
@@ -580,7 +580,7 @@ def build(
     )
 
     dry_run = settings.dry_run
-    extra_args = shlex.split(mcu.fw(fw).extra_args or "")
+    extra_args = shlex.split(mcu.fw_get(fw).extra_args or "")
     if extra_args:
         reporter("info", f"Extra make args: {extra_args}")
 

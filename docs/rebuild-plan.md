@@ -846,6 +846,55 @@ process:    Fourth review running where a step was declined, redesigned or
             behind Step 20 because the on-printer work is done through the
             panel that currently corrupts a type on save.
 
+### Step 18 — narrow the phantom `FwConfig` slots            [done]
+commit:     (pending)
+gate:       pytest 1155 passed/0 failed/10 skipped (unchanged) · ruff ok ·
+            mypy ok (49 files) · line-endings ok · no mutation spec targets
+            the changed lines (checked `application-firmware.json` and
+            `pio-provider-selection.json`, the only two naming
+            `src/mcu_updater/config.py`; neither `find` string matches
+            anything touched here, so none needed a re-run)
+deviation:  **None in the implementation** - `config.py:380`'s per-type loop
+            now iterates `mcu.firmwares` exactly as specced, not
+            `firmware.BUILTIN` and not `fw_names`. Added the non-mutating
+            `fw_get()` accessor beside `fw()` as specced and repointed the
+            three pure-read call sites (`build.py:264`, `build.py:583`,
+            `agent/methods/status.py:334`) onto it; `registry.py:312` and
+            `config.py`'s own load-time populate line keep `fw()` because
+            both are genuine writes. Unpinned the two named tests
+            (`test_artifacts_returns_both_firmwares`,
+            `test_status_type_shape`) to assert the narrow set.
+untested:   none - this step touches no hardware path.
+surprises:  **Narrowing to `mcu.firmwares` broke four tests the plan did not
+            name**, because they encoded the *other* half of the old
+            behaviour as if it were intentional: `test_a_declared_family_
+            gets_its_own_per_type_keys` and `test_a_declared_family_appears_
+            in_a_types_own_ordering` (`tests/test_firmware.py`) both round-
+            tripped or ordered a family the type under test never declared;
+            `test_a_type_lists_only_the_families_it_uses`
+            (`tests/test_firmware.py`) asserted klipper stayed in
+            `fw_order()` "harmless and unused" for a cartographer-only type;
+            and `test_the_artifact_shown_is_the_one_this_type_would_flash`
+            (`tests/test_agent_targets.py`) had a docstring explicitly
+            describing the phantom klipper entry as the *cause* of a panel
+            bug, then asserted the entry's presence as the expected
+            behaviour rather than the defect. Weighed reverting to
+            `set(firmware.BUILTIN) | set(mcu.firmwares)` instead, which
+            would have kept all four green unmodified - the "Reviewed and
+            confirmed 2026-08-20" entry this step is based on considered and
+            rejected `firmware.BUILTIN` twice, by name, so treated that as
+            settled intent rather than re-litigating it against tests
+            written before the bug was understood. Updated all four to
+            declare the family under test (first two) or assert its absence
+            (last two) instead, matching the corrected contract. Flagging
+            here rather than only in the diff because Step 18 is marked a
+            contract change and this is the concrete shape of it: a type
+            that does not declare klipper no longer gets a klipper artifact
+            entry, full stop, including in cases these four tests happened
+            to be the only coverage for.
+next:       Step 19 (make `docs/agent-api.md` true), ordered before Step 20's
+            fork fix per the Steps 16-17 review.
+
 ---
 
 ## Appendix B — open items, not in scope

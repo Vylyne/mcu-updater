@@ -106,10 +106,10 @@ def test_status_type_shape(api):
         "needs_flash",
         "reason",
     }
-    # KNOWN BUG, see test_artifacts_returns_both_firmwares - cartographer and
-    # knomi_serial leak into every type's artifacts, not just bttebb36's own
-    # declared klipper/katapult.
-    assert set(ebb["artifacts"]) == {"klipper", "katapult", "cartographer", "knomi_serial"}
+    # bttebb36 declares only klipper/katapult - artifacts is keyed by exactly
+    # the families a type declares, not every [firmware ...] section in the
+    # file. See docs/rebuild-plan.md Step 18.
+    assert set(ebb["artifacts"]) == {"klipper", "katapult"}
     # The live sample declares `firmware: klipper, katapult` explicitly (step
     # 11's migration added it) - under the list-based schema "installed" is
     # just "is katapult in the declared list", nothing implicit any more.
@@ -228,14 +228,11 @@ def test_artifacts_for_an_unknown_type_carries_the_stable_code(api):
 
 def test_artifacts_returns_both_firmwares(api):
     res = api.dispatch("fw.artifacts", {"name": "bttebb36"})
-    # KNOWN BUG (found via Step 15's real config, not yet fixed - see NOTES.md
-    # "config.py leaks every global [firmware] family into every type's
-    # fw_order()"): bttebb36 declares only klipper/katapult, but
-    # Registry.load()'s per-type loop seeds a slot for every family declared
-    # anywhere in the file, not just the two builtins - so cartographer and
-    # knomi_serial (both real [firmware] sections in live_registry_text) leak
-    # in too. This assertion pins current behaviour, not correct behaviour.
-    assert set(res) == {"klipper", "katapult", "cartographer", "knomi_serial"}
+    # bttebb36 declares only klipper/katapult - cartographer and knomi_serial
+    # are real [firmware] sections elsewhere in live_registry_text, but this
+    # type never declared them, so they must not appear here.
+    # See docs/rebuild-plan.md Step 18.
+    assert set(res) == {"klipper", "katapult"}
 
 
 def test_settings_get_is_serialisable(api):

@@ -331,7 +331,7 @@ class StatusMixin(_Base):
             "needs_flash": any(s.get("needs_flash") for s in serials),
         }
         for fw in mcu.fw_order():
-            cfg = mcu.fw(fw)
+            cfg = mcu.fw_get(fw)
             block: dict[str, Any] = {
                 "extra_args": cfg.extra_args,
                 "makefile_patches": [p.to_json() for p in cfg.makefile_patches],

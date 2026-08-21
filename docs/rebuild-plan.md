@@ -896,7 +896,7 @@ next:       Step 19 (make `docs/agent-api.md` true), ordered before Step 20's
             fork fix per the Steps 16-17 review.
 
 ### Step 19 — make `docs/agent-api.md` true            [done]
-commit:     (pending)
+commit:     5c46df7
 gate:       line-endings ok · no code touched, so no pytest/ruff/mypy run ·
             spot-checked against a live `Api` (four calls: `fw.ping`,
             `fw.status`, `fw.type.list`, `fw.artifacts`) run through a real

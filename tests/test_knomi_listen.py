@@ -7,10 +7,12 @@ write - which is what the display project's own docs require, because a
 remembered path is the thing the whole identity scheme exists to avoid.
 
 Split out of `test_pio.py` in Step 25, alongside `discover()`'s own move to
-`discovery/listen.py`. The monkeypatch targets moved with it: `discover()`
-now calls `shutil.which`/`run_streamed` from its own module's namespace, not
-`providers.pio`'s, so patching the old path would silently stop reaching it -
-the same shared-object lesson Step 24 hit with `bootsel_scan`.
+`discovery/listen.py`; moved again in Step 25b into `discovery/knomi_serial/`,
+the subpackage named for the firmware this module integrates with. The
+monkeypatch targets moved both times: `discover()` calls `shutil.which`/
+`run_streamed` from its own module's namespace, not `providers.pio`'s, so
+patching the old path would silently stop reaching it - the same
+shared-object lesson Step 24 hit with `bootsel_scan`.
 """
 
 from __future__ import annotations
@@ -19,7 +21,7 @@ import os
 
 import pytest
 
-from mcu_updater.discovery.listen import discover
+from mcu_updater.discovery.knomi_serial.listen import discover
 from mcu_updater.errors import ToolMissingError
 from mcu_updater.providers import pio
 
@@ -63,8 +65,8 @@ REAL = MARKER + (
 
 def test_every_display_that_answered_is_returned(paths, settings, display, monkeypatch, tmp_path):
     calls, which, run = _fake_python(tmp_path, REAL)
-    monkeypatch.setattr("mcu_updater.discovery.listen.shutil.which", which)
-    monkeypatch.setattr("mcu_updater.discovery.listen.run_streamed", run)
+    monkeypatch.setattr("mcu_updater.discovery.knomi_serial.listen.shutil.which", which)
+    monkeypatch.setattr("mcu_updater.discovery.knomi_serial.listen.run_streamed", run)
 
     found = discover(paths, settings, display)
 
@@ -81,8 +83,8 @@ def test_noise_on_stdout_is_not_mistaken_for_the_answer(
     """A deprecation warning or a udev grumble shares stdout with the result."""
     noisy = "DeprecationWarning: something\n" + REAL + "\nall done\n"
     calls, which, run = _fake_python(tmp_path, noisy)
-    monkeypatch.setattr("mcu_updater.discovery.listen.shutil.which", which)
-    monkeypatch.setattr("mcu_updater.discovery.listen.run_streamed", run)
+    monkeypatch.setattr("mcu_updater.discovery.knomi_serial.listen.shutil.which", which)
+    monkeypatch.setattr("mcu_updater.discovery.knomi_serial.listen.run_streamed", run)
 
     assert sorted(discover(paths, settings, display)) == ["196c94", "19aa38"]
 
@@ -93,24 +95,24 @@ def test_nothing_answering_is_an_empty_map_not_an_error(
     """Klipper still holding the ports looks exactly like this, and the caller's
     answer - flash nothing we cannot identify - is the same either way."""
     calls, which, run = _fake_python(tmp_path, MARKER + "{}")
-    monkeypatch.setattr("mcu_updater.discovery.listen.shutil.which", which)
-    monkeypatch.setattr("mcu_updater.discovery.listen.run_streamed", run)
+    monkeypatch.setattr("mcu_updater.discovery.knomi_serial.listen.shutil.which", which)
+    monkeypatch.setattr("mcu_updater.discovery.knomi_serial.listen.run_streamed", run)
 
     assert discover(paths, settings, display) == {}
 
 
 def test_an_entry_with_no_port_is_not_offered(paths, settings, display, monkeypatch, tmp_path):
     calls, which, run = _fake_python(tmp_path, MARKER + '{"19aa38": {"fw": "0.5.0"}}')
-    monkeypatch.setattr("mcu_updater.discovery.listen.shutil.which", which)
-    monkeypatch.setattr("mcu_updater.discovery.listen.run_streamed", run)
+    monkeypatch.setattr("mcu_updater.discovery.knomi_serial.listen.shutil.which", which)
+    monkeypatch.setattr("mcu_updater.discovery.knomi_serial.listen.run_streamed", run)
 
     assert discover(paths, settings, display) == {}
 
 
 def test_ids_are_lowered_so_they_compare(paths, settings, display, monkeypatch, tmp_path):
     calls, which, run = _fake_python(tmp_path, MARKER + '{"19AA38": {"port": "/dev/ttyUSB0"}}')
-    monkeypatch.setattr("mcu_updater.discovery.listen.shutil.which", which)
-    monkeypatch.setattr("mcu_updater.discovery.listen.run_streamed", run)
+    monkeypatch.setattr("mcu_updater.discovery.knomi_serial.listen.shutil.which", which)
+    monkeypatch.setattr("mcu_updater.discovery.knomi_serial.listen.run_streamed", run)
 
     assert list(discover(paths, settings, display)) == ["19aa38"]
 
@@ -121,8 +123,8 @@ def test_a_missing_pyserial_says_what_to_install(
     calls, which, run = _fake_python(
         tmp_path, "ModuleNotFoundError: No module named 'serial'", rc=1
     )
-    monkeypatch.setattr("mcu_updater.discovery.listen.shutil.which", which)
-    monkeypatch.setattr("mcu_updater.discovery.listen.run_streamed", run)
+    monkeypatch.setattr("mcu_updater.discovery.knomi_serial.listen.shutil.which", which)
+    monkeypatch.setattr("mcu_updater.discovery.knomi_serial.listen.run_streamed", run)
 
     with pytest.raises(ToolMissingError) as exc:
         discover(paths, settings, display)
@@ -136,8 +138,8 @@ def test_the_helper_runs_against_the_configured_source_tree(
     """knomi_serial is imported from the tree, so a relocated checkout has to
     be the one asked - otherwise discovery and the build disagree."""
     calls, which, run = _fake_python(tmp_path, MARKER + "{}")
-    monkeypatch.setattr("mcu_updater.discovery.listen.shutil.which", which)
-    monkeypatch.setattr("mcu_updater.discovery.listen.run_streamed", run)
+    monkeypatch.setattr("mcu_updater.discovery.knomi_serial.listen.shutil.which", which)
+    monkeypatch.setattr("mcu_updater.discovery.knomi_serial.listen.run_streamed", run)
 
     discover(paths, settings, display)
 

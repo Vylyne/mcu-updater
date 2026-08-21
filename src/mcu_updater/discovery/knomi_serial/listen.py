@@ -25,14 +25,14 @@ import os
 import shutil
 from typing import TYPE_CHECKING
 
-from ..build import Reporter, null_reporter, run_streamed
-from ..errors import ConfigError, SourceTreeMissingError, ToolMissingError
+from ...build import Reporter, null_reporter, run_streamed
+from ...errors import ConfigError, SourceTreeMissingError, ToolMissingError
 from .watcher import WatcherDevice
 
 if TYPE_CHECKING:
-    from ..paths import Paths
-    from ..providers.pio import PioType
-    from ..settings import Settings
+    from ...paths import Paths
+    from ...providers.pio import PioType
+    from ...settings import Settings
 
 #: Interpreters to try, in order. knomi-serial declares `python3-serial` as a
 #: system dependency, so a plain `python3` is the one guaranteed to import

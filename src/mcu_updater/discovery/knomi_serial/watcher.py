@@ -19,8 +19,8 @@ import os
 from typing import TYPE_CHECKING, Any
 
 if TYPE_CHECKING:
-    from ..paths import Paths
-    from ..providers.pio import PioType
+    from ...paths import Paths
+    from ...providers.pio import PioType
 
 #: The only schema this understands. A file announcing anything else is ignored
 #: rather than guessed at - the format is somebody else's to change, and a

@@ -594,6 +594,15 @@ and nothing else move.
 
 ### Step 25 — move the two knomi sources out of `providers/pio.py`
 
+> **Corrected 2026-08-21 by Step 25b.** This step's destination for the two
+> knomi sources — plain `discovery/listen.py` / `discovery/watcher.py`, flat
+> beside the three generic bus sources — was itself wrong, not just imprecise.
+> `providers/pio.py`'s own docstring (`:19-24`) already said what the modules
+> are: firmware integrations, not host scans. Naming that in the file tree is
+> Step 25b's whole job. The text below is left as originally written; where it
+> says `discovery/listen.py` / `discovery/watcher.py`, read
+> `discovery/knomi_serial/listen.py` / `discovery/knomi_serial/watcher.py`.
+
 `discovery/listen.py` (the broadcast listen) and `discovery/watcher.py` (the
 `devices.json` map). `providers/pio.py` keeps its build-and-write half —
 `build`, `upload`, `artifact_status`, `source_state`, `resolve_port`,
@@ -621,6 +630,55 @@ and nothing else move.
   path updated. It is the only hygiene test that names this code.
 
 **Gate:** `GATE`.
+
+### Step 25b — name the knomi sources for the firmware they integrate with
+
+Not in the original plan; raised by Vi mid-Step-26 and scoped as its own step
+before Step 26 resumed. `byid.py`, `dfu.py` and `bootsel.py` are generic host
+scans — each answers a question true of any board. `listen.py` and `watcher.py`
+are not: `listen.py`'s discovery snippet does `import knomi_serial as k` and
+calls `k.discover_reports()` inside that klippy module's own source tree;
+`watcher.py` reads `devices.json`, a shape that module's watcher process owns
+(`DEVICE_MAP_VERSION`). Both sat flat beside the generic three, so nothing in
+the tree said which sources were firmware-scoped — which is what actually
+stalled Step 26's implementation (see that step's log).
+
+- Move `discovery/listen.py` and `discovery/watcher.py` into
+  `discovery/knomi_serial/`, a new subpackage. `byid.py`/`dfu.py`/`bootsel.py`
+  stay flat — they landed in Step 24 and moving them again is churn without
+  clarity, and it matches how `providers/` and `flashers/` keep their own
+  implementations flat.
+- **Not a merge into one `knomi_serial.py`.** `read_device_map` (watcher) and
+  `_parse_discovered` (listen) carry textually identical "no port" / "lowered
+  id" guards, and `scripts/mutation_test.py` only mutates the first match per
+  file. Step 25's own log records that splitting them into two files is what
+  took `scripts/mutations/pio.json` from 9 guards to 11 — merging back would
+  silently return 2 of those 11 to untested, with the spec still reporting
+  all-CAUGHT. Two modules, one subpackage.
+- `discovery/knomi_serial/__init__.py` re-exports the public names (`discover`,
+  `source_dir`, `DEVICE_MAP_VERSION`, `WatcherDevice`, `device_map_path`,
+  `read_device_map`) the same `as`-suffixed way `devices.py` and
+  `providers/pio.py` already do.
+- Relative imports in both moved files gain one level (`..` → `...`);
+  `listen.py`'s `from .watcher import WatcherDevice` does not change — both
+  files stay siblings.
+- `providers/pio.py`'s re-export block and docstring repoint to
+  `discovery.knomi_serial`.
+- Tests rename with the source: `tests/test_discovery_listen.py` →
+  `tests/test_knomi_listen.py`, `tests/test_discovery_watcher.py` →
+  `tests/test_knomi_watcher.py`. The listen tests monkeypatch by dotted string
+  (`"mcu_updater.discovery.listen.shutil.which"`, ×7) — every one needs the new
+  path, the same trap Step 24 hit with `bootsel_scan`.
+- `scripts/mutations/pio.json`'s 5 per-mutation `file` entries, its `command`
+  array, and its `_comment` (which should say **why** the two files stay
+  separate, not just where they live).
+- `tests/test_repo_hygiene.py:218`'s docstring names the old path.
+
+**Gate:** `GATE`, expect the suite count **unchanged** (pure move) —
+plus `python scripts/mutation_test.py scripts/mutations/pio.json`, standalone,
+expecting **11 guards, all CAUGHT** (a report of 9 means the split property was
+lost) — plus `tests/test_devices.py` passing with **zero edits**, proving the
+bus half is unaffected.
 
 ### Step 26 — `discovery.confirm()`; `port_for` becomes a caller
 
@@ -1668,9 +1726,71 @@ surprises:  **The `shutil.which`/`run_streamed` monkeypatches in
             predicted "will need its path updated," though the fix was to a
             docstring only; the test's assertions never touched the module
             path at all.
-next:       Step 26 (`discovery.confirm()`; `port_for` becomes a caller) - the
-            payoff step. Steps 23-25 are all vocabulary-and-move; nothing yet
-            reads a `Sighting`/`Confidence` in production code.
+next:       Step 25b (name the knomi sources for the firmware they integrate
+            with) - raised mid-Step-26, see that step's own log entry.
+
+### Step 25b — name the knomi sources for the firmware they integrate with            [done]
+commit:     (pending)
+gate:       pytest 1162 passed/0 failed/10 skipped (unchanged from Step 25) ·
+            ruff ok · mypy ok (58 files, up from 57 - the new
+            `knomi_serial/__init__.py`) · line-endings ok ·
+            `tests/test_devices.py` passed with zero edits ·
+            `scripts/mutations/pio.json` re-run standalone: 11 guards, all
+            CAUGHT (unchanged count - the split property survived the move)
+deviation:  **Not in the original plan.** Raised by Vi partway through
+            implementing Step 26, when `discovery.spec.Source.sight(bench)`'s
+            fixed, family-less signature ran into a real question with no
+            answer in the tree: should a knomi source scan every configured
+            display family internally (matching how `byid`/`dfu` scan the
+            whole bus), or be scoped to the one family a caller cares about?
+            The friction traced back one step further - nothing in the layout
+            said `listen.py`/`watcher.py` were firmware-specific rather than
+            generic host scans, so there was no established place to decide
+            how they should behave. Scoped as its own step, ahead of Step 26,
+            rather than folded into it: Step 26's own gate requires
+            `scripts/mutations/display-flash.json` stay green **with no
+            edits**, and this move touches paths that spec's `find` strings
+            do not pin, so doing the rename first keeps that constraint
+            simple to verify in isolation.
+
+            Went with a subpackage (`discovery/knomi_serial/{listen,watcher}.py`)
+            rather than a single merged `knomi_serial.py`, on a constraint
+            Step 25's own log already recorded and this step re-derived
+            independently before checking: `read_device_map` and
+            `_parse_discovered` carry textually identical "no port"/"lowered
+            id" guards, and `mutation_test.py`'s `str.replace(needle, replace,
+            1)` only mutates the first match per file. Step 25 split them into
+            two files for exactly this reason - 9 guards became 11. A merge
+            would silently return 2 of those 11 to untested, with
+            `pio.json` still reporting all-CAUGHT, since the spec verifies
+            guards are load-bearing, not that the file layout keeps them
+            independently mutable. Confirmed by running the gate after the
+            move: 11 guards, all CAUGHT, unchanged from before.
+
+            `byid.py`/`dfu.py`/`bootsel.py` stayed flat, not moved into a
+            mirrored `discovery/sources/` layout - considered and declined.
+            They landed in Step 24, one commit prior; moving them again so
+            soon is churn the generic/firmware split does not need, and it
+            matches how `providers/` and `flashers/` already keep their own
+            implementations flat rather than subpackaged.
+untested:   none - this step touches no hardware path, and the mutation spec
+            that does reach this code was re-run standalone, per Ground
+            rules.
+surprises:  none in the move itself. Three findings surfaced while writing the
+            Step 26 work this step interrupted, carried forward rather than
+            lost: `Source.states` for a knomi source should be
+            `(STATE_KLIPPER,)` written plainly, not computed via
+            `state_for_firmware("")`; `Sighting.state` must not be derived
+            from `WatcherDevice.firmware_version` (a version string, not a
+            firmware name - `state_for_firmware` expects the latter, and
+            feeding it the former only works by falling through to the
+            default); and the per-family scoping question that started this
+            step is still open, now with a natural answer once the
+            subpackage names the firmware - a knomi source scoped to its own
+            families, `confirm()` taking an optional scope - but that is
+            Step 26's decision to make, not this step's.
+next:       Step 26 (`discovery.confirm()`; `port_for` becomes a caller),
+            resumed against the corrected paths.
 
 ---
 

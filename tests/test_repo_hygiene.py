@@ -215,9 +215,9 @@ def test_the_declared_system_dependencies_file_is_where_the_conf_says():
 def test_pyserial_is_declared_because_discovery_shells_out_for_it():
     """The agent is stdlib-only, so this is the one system package it asks for -
     and it is asked for on behalf of a subprocess, which makes it easy to think
-    nothing needs it. `discovery.listen.discover` runs the system python3 to ask
-    the screens which they are, and that import is the whole reason this file
-    exists.
+    nothing needs it. `discovery.knomi_serial.discover` runs the system python3
+    to ask the screens which they are, and that import is the whole reason this
+    file exists.
     """
     import json
 

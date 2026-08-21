@@ -6,10 +6,12 @@ to be stopped, and stopping Klipper removes the only other source.
 
 Split out of `test_agent_displays.py` in Step 25, alongside
 `read_device_map()`/`device_map_path()`/`WatcherDevice`'s own move to
-`discovery/watcher.py`. The two tests that exercise `api.device_list` stayed
-behind - they are agent-level, not `providers.pio`-level - and are re-tested
-via `providers.pio`'s re-export shim rather than `discovery.watcher` directly,
-matching how `devices.py`'s shim is tested for the three bus sources.
+`discovery/watcher.py`; moved again in Step 25b into `discovery/knomi_serial/`,
+the subpackage named for the firmware this module integrates with. The two
+tests that exercise `api.device_list` stayed behind - they are agent-level,
+not `providers.pio`-level - and are re-tested via `providers.pio`'s re-export
+shim rather than `discovery.knomi_serial` directly, matching how `devices.py`'s
+shim is tested for the three bus sources.
 """
 
 from __future__ import annotations
@@ -19,7 +21,7 @@ import os
 
 import pytest
 
-from mcu_updater.discovery import watcher
+from mcu_updater.discovery import knomi_serial as watcher
 from mcu_updater.providers import pio as pio_mod
 
 

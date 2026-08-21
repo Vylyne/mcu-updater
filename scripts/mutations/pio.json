@@ -1,13 +1,13 @@
 {
-  "_comment": "Display upload guards. Firmware written to the wrong screen is the failure these prevent. Step 25 moved the watcher map and the listen pass to discovery/watcher.py and discovery/listen.py, so the last three mutations carry a per-mutation 'file' - each of those two files has its own copy of the same 'no port' / 'lower the id' guard, and a mutation only ever touches one file.",
+  "_comment": "Display upload guards. Firmware written to the wrong screen is the failure these prevent. Step 25 moved the watcher map and the listen pass to discovery/watcher.py and discovery/listen.py; Step 25b moved both again into discovery/knomi_serial/, the subpackage named for the firmware they integrate with (as opposed to the generic host scans byid.py/dfu.py/bootsel.py, which stayed flat). The last four mutations carry a per-mutation 'file' - each of the two knomi files has its own copy of the same 'no port' / 'lower the id' guard, and a mutation only ever touches one file. Do not merge listen.py and watcher.py back into one module: mutation_test.py's str.replace only mutates the first match per file, so a merge would silently drop two of these four guards back to untested, the way they were before Step 25 split the files apart.",
   "file": "src/mcu_updater/providers/pio.py",
   "command": [
     "python",
     "-m",
     "pytest",
     "tests/test_pio.py",
-    "tests/test_discovery_listen.py",
-    "tests/test_discovery_watcher.py",
+    "tests/test_knomi_listen.py",
+    "tests/test_knomi_watcher.py",
     "tests/test_agent_display_jobs.py",
     "tests/test_agent_displays.py",
     "-q"
@@ -45,31 +45,31 @@
     },
     {
       "name": "a map version we do not understand is ignored",
-      "file": "src/mcu_updater/discovery/watcher.py",
+      "file": "src/mcu_updater/discovery/knomi_serial/watcher.py",
       "find": "    if not isinstance(data, dict) or data.get(\"version\") != DEVICE_MAP_VERSION:",
       "replace": "    if not isinstance(data, dict):"
     },
     {
       "name": "an entry with no port is not offered as a watcher-map target",
-      "file": "src/mcu_updater/discovery/watcher.py",
+      "file": "src/mcu_updater/discovery/knomi_serial/watcher.py",
       "find": "        if not raw_id or not port:",
       "replace": "        if False:"
     },
     {
       "name": "watcher-map ids are lowered so they compare",
-      "file": "src/mcu_updater/discovery/watcher.py",
+      "file": "src/mcu_updater/discovery/knomi_serial/watcher.py",
       "find": "        device_id = str(raw_id).lower()",
       "replace": "        device_id = str(raw_id)"
     },
     {
       "name": "an entry with no port is not offered as a listen-pass target",
-      "file": "src/mcu_updater/discovery/listen.py",
+      "file": "src/mcu_updater/discovery/knomi_serial/listen.py",
       "find": "        if not raw_id or not port:",
       "replace": "        if False:"
     },
     {
       "name": "listen-pass ids are lowered so they compare",
-      "file": "src/mcu_updater/discovery/listen.py",
+      "file": "src/mcu_updater/discovery/knomi_serial/listen.py",
       "find": "        device_id = str(raw_id).lower()",
       "replace": "        device_id = str(raw_id)"
     }

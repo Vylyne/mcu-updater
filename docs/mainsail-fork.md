@@ -127,7 +127,7 @@ When it is good, flip that release — the one that was tested — to stable, fr
 the Releases UI or:
 
 ```bash
-gh release edit v2.18.4-vylyne.16 --repo Vylyne/mainsail --prerelease=false --latest
+gh release edit v2.18.4-vylyne.16 --repo Vylyne/mainsail --prerelease=false
 ```
 
 `--latest` is belt-and-braces rather than load-bearing. GitHub recomputes

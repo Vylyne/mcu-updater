@@ -86,19 +86,6 @@ been overtaken by there being six.
 
 Fork commits are on `Vylyne/mainsail`, branch `mu/stable`, not in this repo.
 
-## The two steps that did not close
-
-**Step 21 — the `.vue` type-checking gap.** Blocked, not deferred: no `vue-tsc`
-version can check this tree, for a structural reason. The full finding is in
-[decisions.md](decisions.md); read it before proposing a fix, because the
-obvious ones were tested and do not work.
-
-**Step 22 — on-printer verification.** Partly run. Vi flashed the Cartographer
-on hestia on 2026-08-21 and the flash-path half is confirmed end to end (see
-Step 27's log entry via `git log -p`, which records the transcript and the
-`.flashed.json` evidence). The remaining checks are in the README's Development
-section. Step 13's RP2040 BOOTSEL flasher has still never met a board.
-
 ## What the log recorded, and why it was kept honest
 
 Worth carrying forward into whatever runbook comes next, because it caught real

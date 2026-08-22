@@ -239,11 +239,9 @@ def test_a_katapult_board_already_on_the_bus_is_not_reported_as_new(
 ):
     """The snapshot is taken before the write, so a board already sitting in
     Katapult - a previous adopt that was never finished, say - cannot be mistaken
-    for the one this just created.
-
-    It has to be a *Katapult* device to test anything: adoptable_devices only ever
-    considers those, so an already-present Klipper board would be excluded by the
-    firmware filter whether the snapshot worked or not.
+    for the one this just created. The wait is no longer filtered to Katapult
+    devices (see the chain-load test below), so this exclusion works purely off
+    the before/after baseline diff now - not off firmware name.
     """
     make_device(fake_root / "bus", "katapult", EBB_CHIPSET, "WASHERE-if00")
     _stage_katapult(paths)
@@ -268,6 +266,31 @@ def test_the_new_board_is_told_apart_from_one_already_in_katapult(
 
     def appear(*args, **kwargs):
         make_device(fake_root / "bus", "katapult", EBB_CHIPSET, "NEWBOARD-if00")
+
+    monkeypatch.setattr("mcu_updater.flashers.flash.flash_initial_bootloader", appear)
+
+    res = adder.dispatch("fw.add_mcu.start", {"name": EBB})
+    assert adder.runner.wait(timeout=30)
+    job = adder.runner.get(res["job_id"])
+
+    assert job.state == "succeeded", job.error
+    assert [c["serial"] for c in job.result["candidates"]] == ["NEWBOARD-if00"]
+
+
+def test_a_board_that_chain_loads_past_katapult_is_still_a_candidate(
+    adder, paths, fake_root, monkeypatch
+):
+    """Found on hardware: a board that already carries a valid application does
+    not sit in Katapult waiting to be found - Katapult's own first boot chain-
+    loads straight into that application. Re-installing a bootloader on such a
+    board (the normal case, not an edge case) makes it reappear running its own
+    firmware, not "katapult". The wait must still recognize it.
+    """
+    _stage_katapult(paths)
+    patch_dfu(monkeypatch, stdout=ONE_BOARD)
+
+    def appear(*args, **kwargs):
+        make_device(fake_root / "bus", "klipper", EBB_CHIPSET, "NEWBOARD-if00")
 
     monkeypatch.setattr("mcu_updater.flashers.flash.flash_initial_bootloader", appear)
 

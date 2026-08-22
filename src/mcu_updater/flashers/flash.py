@@ -639,14 +639,18 @@ def adoptable_devices(
     *,
     timeout: float = REENUMERATE_TIMEOUT,
 ) -> list[BusDevice]:
-    """Katapult devices that appeared and aren't tracked yet.
+    """Devices of this chipset that appeared and aren't tracked yet.
+
+    Not filtered to Katapult: a board that already carries a valid application
+    chain-loads straight past Katapult on its first boot, so it can legitimately
+    reappear running its own firmware instead. Matching is chipset + "wasn't on
+    the bus before" - the same thing a bare board's first boot gives for free.
 
     Replaces the original's fixed `time.sleep(3)` with a real poll.
     """
     return wait_for_new_device(
         paths,
         known_serials,
-        fw=KATAPULT_FW_NAME,
         chipset=chipset,
         timeout=timeout,
     )

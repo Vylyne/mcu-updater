@@ -828,6 +828,13 @@ board was attached) only on the BOOTSEL path — the other is always `null`:
  "already_tracked": []}
 ```
 
+`candidates` are matched by chipset and by not having been on the bus before
+the write, not by which firmware they come back running. A board that already
+carried a valid application chain-loads straight past Katapult on its first
+boot — this is the normal case for a board getting a bootloader *re*-installed
+— so `state` here can legitimately be the board's own firmware name instead of
+`"katapult"`.
+
 `candidates` are boards that appeared and are **not** in the registry — the ones
 to adopt. `already_tracked` are boards that appeared and already belong to a
 type, which is the normal case when re-installing a bootloader: such a board sits
@@ -893,7 +900,11 @@ completion of an operation already asked for - the type was chosen and the butto
 pressed - rather than a new decision. Five conditions keep it from ever being a
 surprise:
 
-- only **untracked Katapult** devices; anything already in the registry is left alone
+- only **untracked** devices; anything already in the registry is left alone. Not
+  filtered to Katapult — a board that already carried a valid application
+  chain-loads straight past Katapult on its first boot, so it can turn up
+  running its own firmware instead; the pairing-key match below is what
+  actually identifies it, the same as the live wait in `fw.add_mcu.start`
 - only an **unambiguous** match against the pairing key
 - only within the **TTL** (24h), so a board found in a drawer next month is the stranger it has become
 - only if the **type still exists**

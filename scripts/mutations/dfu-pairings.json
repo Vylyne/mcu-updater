@@ -12,13 +12,8 @@
   "mutations": [
     {
       "name": "only untracked boards are adopted",
-      "find": "        untracked = find_untracked(self.paths, reg.all_serials(), fw=KATAPULT_FW_NAME)",
-      "replace": "        untracked = find_untracked(self.paths, set(), fw=KATAPULT_FW_NAME)"
-    },
-    {
-      "name": "only Katapult devices are adopted",
-      "find": "fw=KATAPULT_FW_NAME)\n        if not untracked:",
-      "replace": ")\n        if not untracked:"
+      "find": "        untracked = find_untracked(self.paths, reg.all_serials())",
+      "replace": "        untracked = find_untracked(self.paths, set())"
     },
     {
       "name": "an ambiguous key adopts nothing",

@@ -146,13 +146,19 @@ def test_an_already_tracked_board_is_untouched(api, paths, fake_root):
     assert tracked in Registry.load(paths).get("bttebb36").serials
 
 
-def test_a_klipper_device_is_not_adopted(api, paths, fake_root):
-    """Only Katapult. A board running Klipper did not just come out of a
-    bootloader install."""
+def test_a_board_running_its_own_firmware_is_still_adopted(api, paths, fake_root):
+    """Found on hardware: a board that already carried a valid application
+    chain-loads straight past Katapult on its first boot - the normal case for
+    re-installing a bootloader, not an edge case. It is not filtered out just
+    because it is not running Katapult by the time the poll notices it; the
+    pairing key is what actually identifies it, and that match is unaffected."""
     Pairings(paths).record(NEW_DFU, "bttebb36")
     _appear(fake_root, NEW_UID, fw="Klipper")
 
-    assert api.adopt_paired() == []
+    adopted = api.adopt_paired()
+
+    assert [a["serial"] for a in adopted] == [NEW_UID]
+    assert adopted[0]["type"] == "bttebb36"
 
 
 def test_a_removed_type_is_skipped_quietly_not_attempted_and_failed(paths, live_registry_text, fake_root):

@@ -265,8 +265,11 @@ class FlashMixin(_Base):
 
         Every condition below exists to keep it from ever being a *surprise*:
 
-        * only Katapult devices that are **untracked** - anything already in the
-          registry is left exactly as it is;
+        * only **untracked** devices - anything already in the registry is left
+          exactly as it is. Not filtered to Katapult: a board that already
+          carries a valid application chain-loads straight past Katapult on its
+          first boot, so it can legitimately turn up running its own firmware
+          instead - the pairing-key match below is what actually identifies it;
         * only an **unambiguous** match, for the same reason `_identify_dfu`
           refuses to name a colliding board: the DFU serial is derived by a sum
           and two boards could in principle share one;
@@ -291,7 +294,7 @@ class FlashMixin(_Base):
         Returns what it adopted, for the log - a registry edit nobody can see
         happening is the thing to avoid.
         """
-        from ...devices import KATAPULT_FW_NAME, dfu_serial_for, find_untracked
+        from ...devices import dfu_serial_for, find_untracked
         from ...flashers.pairings import Pairings
 
         pairings = Pairings(self.paths, ttl=self.PAIRING_TTL)
@@ -299,7 +302,7 @@ class FlashMixin(_Base):
             return []
 
         reg = self.registry()
-        untracked = find_untracked(self.paths, reg.all_serials(), fw=KATAPULT_FW_NAME)
+        untracked = find_untracked(self.paths, reg.all_serials())
         if not untracked:
             pairings.prune()
             return []
@@ -695,7 +698,7 @@ class FlashMixin(_Base):
         before = {d.serial for d in scan_bus(self.paths)}
 
         def run(ctx) -> dict[str, Any]:
-            from ...devices import KATAPULT_FW_NAME, wait_for_new_device
+            from ...devices import wait_for_new_device
             from ...flashers.flash import flash_initial_bootloader
 
             label = "BOOTSEL board" if is_bootsel else "DFU board"
@@ -722,11 +725,15 @@ class FlashMixin(_Base):
 
                 Pairings(self.paths).record(pairing_key, name)
 
-            ctx.step("Waiting for the board to re-enumerate as Katapult", 1, 2)
+            # Not filtered to Katapult: a board that already carries a valid
+            # application (a re-bootloadered board, say) chain-loads straight
+            # past Katapult on its first boot and can legitimately reappear
+            # running its own firmware instead. Chipset + "wasn't on the bus
+            # before" is what actually identifies it either way.
+            ctx.step("Waiting for the board to re-enumerate", 1, 2)
             appeared = wait_for_new_device(
                 self.paths,
                 before,
-                fw=KATAPULT_FW_NAME,
                 chipset=mcu.chipset,
                 timeout=self.ADD_MCU_REENUMERATE_TIMEOUT,
             )

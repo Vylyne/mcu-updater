@@ -1344,6 +1344,7 @@ class StatusMixin(_Base):
         "fw.type.list": "type_list",
         "fw.bus.scan": "bus_scan",
         "fw.dfu.scan": "dfu_scan",
+        "fw.bootsel.scan": "bootsel_scan",
         "fw.device.list": "device_list",
         "fw.artifacts": "artifacts",
         "fw.settings.get": "settings_get",
@@ -1426,6 +1427,16 @@ class StatusMixin(_Base):
     DFU_PERMISSION_DENIED = "permission_denied"
     DFU_NONE = "none"
     DFU_AMBIGUOUS = "ambiguous"
+
+    # -- BOOTSEL: what is waiting to be adopted -----------------------------
+
+    #: Why a BOOTSEL flash cannot start right now. No tool/permission code here
+    #: - reading /dev/disk/by-id and a mount point is plain filesystem access,
+    #: no subprocess and no libusb claim to fail. Readiness gates on the mount
+    #: count rather than the device count - see `bootsel_scan`.
+    BOOTSEL_NONE = "none"
+    BOOTSEL_NOT_MOUNTED = "not_mounted"
+    BOOTSEL_AMBIGUOUS = "ambiguous"
 
     #: How long a bootloader-install pairing stays actionable. A class attribute
     #: so tests can shrink it without patching a call site, matching

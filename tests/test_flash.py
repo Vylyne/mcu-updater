@@ -23,7 +23,7 @@ from mcu_updater.flashers.flash import (
     flash_katapult,
 )
 
-from .conftest import cmd_tokens, make_device
+from .conftest import bootsel_device_node, cmd_tokens, make_device, mounted_bootsel_volume
 
 
 def _cmds(events: list) -> list[str]:
@@ -596,32 +596,8 @@ def test_select_for_refuses_an_impossible_chipset_state_pair():
 # --------------------------------------------------------------------------
 
 
-def _mounted_volume(tmp_path, name: str = "bootsel_root"):
-    root = tmp_path / name
-    vol = root / "RPI-RP2"
-    vol.mkdir(parents=True)
-    (vol / "INFO_UF2.TXT").write_text("", encoding="utf-8")
-    return root, vol
-
-
-def _bootsel_device(root, serial: str = "E0C9125B0D9B"):
-    """A fake `by-id` entry under `root`, the shape `bootsel_devices` globs
-    for - present whether or not `root` also has a mounted volume in it.
-
-    The real device node has a `:` in it (e.g. `...-0:0-part1`), but NTFS
-    reads `:` as an alternate-data-stream separator and silently truncates
-    the filename there, so the fixture drops it - the glob under test only
-    cares about the `usb-RPI_RP2_<serial>-...-part1` shape either way.
-    """
-    by_id = root / "by-id"
-    by_id.mkdir(parents=True, exist_ok=True)
-    node = by_id / f"usb-RPI_RP2_{serial}-0-0-part1"
-    node.write_text("", encoding="utf-8")
-    return str(node)
-
-
 def test_bootsel_copies_the_uf2_to_the_mounted_volume(paths, settings, tmp_path):
-    root, vol = _mounted_volume(tmp_path)
+    root, vol = mounted_bootsel_volume(tmp_path)
     rp_paths = dataclasses.replace(paths, bootsel_root=str(root))
 
     uf2 = tmp_path / "build" / "katapult.uf2"
@@ -637,7 +613,7 @@ def test_bootsel_copies_the_uf2_to_the_mounted_volume(paths, settings, tmp_path)
 
 
 def test_bootsel_dry_run_copies_nothing(paths, settings, tmp_path):
-    root, vol = _mounted_volume(tmp_path)
+    root, vol = mounted_bootsel_volume(tmp_path)
     rp_paths = dataclasses.replace(paths, bootsel_root=str(root))
     settings.dry_run = True
 
@@ -681,7 +657,7 @@ def test_bootsel_reports_unmounted_device_distinctly_from_no_device(paths, setti
     different failure than no board at all - the fix is a udev rule, not
     holding BOOTSEL and replugging."""
     root = tmp_path / "bootsel_root"
-    node = _bootsel_device(root)
+    node = bootsel_device_node(root)
     rp_paths = dataclasses.replace(paths, bootsel_root=str(root))
 
     uf2 = tmp_path / "katapult.uf2"
@@ -696,7 +672,7 @@ def test_bootsel_reports_unmounted_device_distinctly_from_no_device(paths, setti
 
 def test_bootsel_target_for_populates_id_from_the_one_attached_device(paths, tmp_path):
     root = tmp_path / "bootsel_root"
-    _bootsel_device(root, serial="E0C9125B0D9B")
+    bootsel_device_node(root, serial="E0C9125B0D9B")
     rp_paths = dataclasses.replace(paths, bootsel_root=str(root))
 
     target = flashers.bootsel.target_for("fw.uf2", chipset="rp2040", paths=rp_paths)
@@ -715,8 +691,8 @@ def test_bootsel_target_for_leaves_id_empty_with_no_or_ambiguous_devices(paths, 
     assert flashers.bootsel.target_for("fw.uf2", chipset="rp2040", paths=rp_paths).id == ""
 
     both_root = tmp_path / "both"
-    _bootsel_device(both_root, serial="AAAAAAAAAAAA")
-    _bootsel_device(both_root, serial="BBBBBBBBBBBB")
+    bootsel_device_node(both_root, serial="AAAAAAAAAAAA")
+    bootsel_device_node(both_root, serial="BBBBBBBBBBBB")
     rp_paths = dataclasses.replace(paths, bootsel_root=str(both_root))
     assert flashers.bootsel.target_for("fw.uf2", chipset="rp2040", paths=rp_paths).id == ""
 

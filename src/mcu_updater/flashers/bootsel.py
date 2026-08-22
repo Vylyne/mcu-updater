@@ -18,18 +18,13 @@ from __future__ import annotations
 
 import contextlib
 import os
-import re
 import shutil
 from collections.abc import Iterator
 from typing import Any
 
-from ..devices import STATE_BOOTSEL, bootsel_devices, bootsel_scan
+from ..devices import STATE_BOOTSEL, bootsel_devices, bootsel_id_for, bootsel_scan
 from ..errors import BootselNotMountedError, DeviceNotFoundError, FlashError
 from .spec import Bench, FlashTarget
-
-#: The boot ROM's flash-chip unique ID, out of a `bootsel_devices` entry like
-#: ``/dev/disk/by-id/usb-RPI_RP2_E0C9125B0D9B-0:0-part1``.
-_SERIAL_RE = re.compile(r"usb-RPI_RP2_([0-9A-Fa-f]+)-")
 
 
 class Bootsel:
@@ -139,9 +134,7 @@ def target_for(uf2_file: str, *, chipset: str, paths: Any = None) -> FlashTarget
     if paths is not None:
         present = bootsel_devices(paths)
         if len(present) == 1:
-            match = _SERIAL_RE.search(present[0])
-            if match:
-                device_id = match.group(1)
+            device_id = bootsel_id_for(present[0]) or ""
     return FlashTarget(
         flasher=Bootsel.name,
         type=chipset,

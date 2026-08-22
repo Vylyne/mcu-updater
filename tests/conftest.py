@@ -117,6 +117,40 @@ def make_device(bus_dir: pathlib.Path, fw: str, chipset: str, serial: str) -> pa
     return p
 
 
+def mounted_bootsel_volume(
+    tmp_path: pathlib.Path, name: str = "bootsel_root"
+) -> tuple[pathlib.Path, pathlib.Path]:
+    """A fake mounted RPI-RP2 volume under `tmp_path`, for `paths.bootsel_root`.
+
+    Returns `(root, volume)` - `root` is what `bootsel_root` should be set to,
+    `volume` is where a `.uf2` would be copied.
+    """
+    root = tmp_path / name
+    vol = root / "RPI-RP2"
+    vol.mkdir(parents=True)
+    (vol / "INFO_UF2.TXT").write_text("", encoding="utf-8")
+    return root, vol
+
+
+def bootsel_device_node(root: pathlib.Path, serial: str = "E0C9125B0D9B") -> str:
+    """A fake `by-id` entry under `root`, the shape `bootsel_devices()` globs for.
+
+    Present whether or not `root` also has a mounted volume in it - the two are
+    independent, which is the whole point of `bootsel_devices` existing
+    alongside `bootsel_scan`.
+
+    The real device node has a `:` in it (e.g. `...-0:0-part1`), but NTFS reads
+    `:` as an alternate-data-stream separator and silently truncates the
+    filename there, so this drops it - the glob under test only cares about the
+    `usb-RPI_RP2_<serial>-...-part1` shape either way.
+    """
+    by_id = root / "by-id"
+    by_id.mkdir(parents=True, exist_ok=True)
+    node = by_id / f"usb-RPI_RP2_{serial}-0-0-part1"
+    node.write_text("", encoding="utf-8")
+    return str(node)
+
+
 def display_objects(sections: dict, objects: dict = None) -> dict:
     """Fold printer.cfg terms into what the klippy module actually reports.
 

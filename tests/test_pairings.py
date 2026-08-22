@@ -215,6 +215,63 @@ def test_no_pairings_at_all_does_no_work(api, fake_root):
     assert api.adopt_paired() == []
 
 
+# --------------------------------------------------------------------------
+# the RP2040/BOOTSEL identity path - no derivation, an assumed identity.
+# See docs/agent-api.md's "RP2040 pairing identity" note.
+# --------------------------------------------------------------------------
+
+RP2040_CHIPSET = "rp2040"
+#: A boot-ROM flash-chip id, as `bootsel.target_for` records it: bare hex, no
+#: interface suffix. Assumed (unverified on real hardware) to be the same
+#: string Katapult later runs under, up to the `-if00` every by-id name gets.
+PICO_BOOT_ID = "E0C9125B0D9B"
+PICO_RUNNING = PICO_BOOT_ID + "-if00"
+
+
+def test_an_rp2040_boards_running_uid_tried_as_is_adopts_it(api, paths, fake_root):
+    """The path this whole mechanism is betting on: no derivation, just the
+    UID prefix of the running serial compared directly to the recorded id."""
+    api.dispatch("fw.type.add", {"name": "pico", "chipset": RP2040_CHIPSET})
+    Pairings(paths).record(PICO_BOOT_ID, "pico")
+    _appear(fake_root, PICO_RUNNING, chipset=RP2040_CHIPSET)
+
+    adopted = api.adopt_paired()
+
+    assert [a["serial"] for a in adopted] == [PICO_RUNNING]
+    assert adopted[0]["type"] == "pico"
+    assert adopted[0]["pairing_key"] == PICO_BOOT_ID
+    assert PICO_RUNNING in Registry.load(paths).get("pico").serials
+
+
+def test_a_mismatched_rp2040_identity_is_left_alone(api, paths, fake_root):
+    """The safe-degrade property the whole design leans on: if the boot-ROM id
+    and Katapult's own running serial turn out NOT to be the same string on
+    real hardware, this must do nothing - never a wrong adoption, just the
+    "not adopted automatically" experience that existed before this path did."""
+    api.dispatch("fw.type.add", {"name": "pico", "chipset": RP2040_CHIPSET})
+    Pairings(paths).record(PICO_BOOT_ID, "pico")
+    # A running serial whose UID does not match the recorded boot-ROM id at all.
+    _appear(fake_root, "DIFFERENTUID99-if00", chipset=RP2040_CHIPSET)
+
+    assert api.adopt_paired() == []
+    assert Pairings(paths).type_for(PICO_BOOT_ID) == "pico", "the pairing is kept"
+
+
+def test_an_unrelated_rp2040_board_does_not_touch_an_stm32_pairing(api, paths, fake_root):
+    """Both mechanisms share one store, keyed by plain strings - a genuinely
+    new RP2040 board with no pairing of its own must not be adopted by
+    coincidence, and must not disturb an unrelated STM32 pairing sitting in
+    the same file. (A literal string collision between a derived DFU serial
+    and a boot-ROM id would still adopt, exactly as two STM32 boards summing
+    to the same DFU serial already can - that is the pre-existing collision
+    risk of a shared string-keyed store, not something this path adds.)"""
+    Pairings(paths).record(NEW_DFU, "bttebb36")
+    _appear(fake_root, PICO_RUNNING, chipset=RP2040_CHIPSET)
+
+    assert api.adopt_paired() == []
+    assert Pairings(paths).type_for(NEW_DFU) == "bttebb36", "the unrelated pairing is untouched"
+
+
 def test_the_flash_records_the_pairing_before_waiting(paths, live_registry_text, fake_root):
     """Ordering is the point: the wait timing out is the case this covers, so
     recording after it would help in exactly the situations it does not."""

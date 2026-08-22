@@ -17,6 +17,7 @@ import subprocess as subprocess
 from .discovery.bootsel import BOOTSEL_VOLUME_NAME as BOOTSEL_VOLUME_NAME
 from .discovery.bootsel import DEFAULT_BOOTSEL_ROOT_GLOBS as DEFAULT_BOOTSEL_ROOT_GLOBS
 from .discovery.bootsel import bootsel_devices as bootsel_devices
+from .discovery.bootsel import bootsel_id_for as bootsel_id_for
 from .discovery.bootsel import bootsel_scan as bootsel_scan
 from .discovery.byid import KATAPULT_FW_NAME as KATAPULT_FW_NAME
 from .discovery.byid import KATAPULT_NAMES as KATAPULT_NAMES

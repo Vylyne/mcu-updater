@@ -7,6 +7,7 @@
     "pytest",
     "tests/test_agent_add_mcu.py",
     "tests/test_agent_dfu.py",
+    "tests/test_agent_bootsel.py",
     "-q"
   ],
   "mutations": [
@@ -17,22 +18,27 @@
     },
     {
       "name": "katapult artifact must exist",
-      "find": "        if not os.path.exists(katapult_bin):",
+      "find": "        if not os.path.exists(artifact_path):",
       "replace": "        if False:"
     },
     {
-      "name": "non-stm32 is refused",
-      "find": "        if not mcu.chipset.startswith(\"stm32\"):",
+      "name": "an unsupported chipset is refused",
+      "find": "        if not (mcu.chipset.startswith(\"stm32\") or is_bootsel):",
       "replace": "        if False:"
     },
     {
       "name": "ambiguous DFU is refused when no serial is named",
-      "find": "        elif not scan[\"ready\"]:",
-      "replace": "        elif False:"
+      "find": "            elif not scan[\"ready\"]:",
+      "replace": "            elif False:"
     },
     {
       "name": "a named serial must actually be in DFU",
-      "find": "            if not any(d.get(\"serial\") == target for d in scan[\"devices\"]):",
+      "find": "                if not any(d.get(\"serial\") == target for d in scan[\"devices\"]):",
+      "replace": "                if False:"
+    },
+    {
+      "name": "a not-ready BOOTSEL scan is refused",
+      "find": "            if not bscan[\"ready\"]:",
       "replace": "            if False:"
     },
     {

@@ -12,11 +12,15 @@ In all of those the board arrives as an anonymous untracked device and the
 intent - "this is a bttebb36" - is lost, even though the user stated it clearly
 a minute earlier.
 
-**Keyed on the DFU serial**, because that is the only identifier that exists on
-both sides of the transition. A board in DFU has no ``/dev/serial/by-id`` name at
-all, and the name it gets afterwards is not knowable in advance - but the reverse
+**Keyed on whatever identifier survives the transition.** For an STM32 board in
+DFU that is the *derived* DFU serial - it has no ``/dev/serial/by-id`` name at
+all, and the name it gets afterwards is not knowable in advance, but the reverse
 *is* computable (`devices.dfu_serial_for`), so a board appearing later can be
-matched back to what we wrote to it.
+matched back to what we wrote to it. For an RP2040 in BOOTSEL it is the boot
+ROM's flash-chip id - an *assumed* identity rather than a derived one (no
+transformation is known to be needed), unverified on real hardware; see
+`agent.methods.flash.FlashMixin.adopt_paired`. Either way this class itself
+stays a plain ``str -> {type, at}`` store with no chipset-specific logic.
 
 Deliberately expiring: a pairing that could still act a month later would be a
 surprise, and surprise is the one thing an automatic registry edit must not be.
@@ -63,22 +67,24 @@ class Pairings:
 
     # -- use ---------------------------------------------------------------
 
-    def record(self, dfu_serial: str, mcu_type: str) -> None:
-        """Note that `dfu_serial` was just given `mcu_type`'s bootloader.
+    def record(self, key: str, mcu_type: str) -> None:
+        """Note that `key` was just given `mcu_type`'s bootloader.
 
         Called immediately after the write and *before* the re-enumeration wait,
         which is the whole point: the cases this exists for are exactly the ones
-        where that wait does not succeed.
+        where that wait does not succeed. `key` is the DFU serial for an STM32
+        board or the boot-ROM flash-chip id for an RP2040 one - this class does
+        not care which.
         """
-        if not dfu_serial:
+        if not key:
             return
         data = self.all()
-        data[dfu_serial] = {"type": mcu_type, "at": time.time()}
+        data[key] = {"type": mcu_type, "at": time.time()}
         self._write(data)
 
-    def type_for(self, dfu_serial: str) -> str | None:
+    def type_for(self, key: str) -> str | None:
         """The type this board was bootloadered as, if recent enough."""
-        entry = self.all().get(dfu_serial)
+        entry = self.all().get(key)
         if not entry:
             return None
         at = entry.get("at")
@@ -87,10 +93,10 @@ class Pairings:
         mcu_type = entry.get("type")
         return mcu_type if isinstance(mcu_type, str) and mcu_type else None
 
-    def forget(self, dfu_serial: str) -> None:
+    def forget(self, key: str) -> None:
         """Drop a pairing once it has been acted on, so it cannot act twice."""
         data = self.all()
-        if data.pop(dfu_serial, None) is not None:
+        if data.pop(key, None) is not None:
             self._write(data)
 
     def prune(self) -> int:

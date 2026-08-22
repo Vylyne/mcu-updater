@@ -21,23 +21,23 @@
       "replace": ")\n        if not untracked:"
     },
     {
-      "name": "an ambiguous DFU serial adopts nothing",
-      "find": "            if not key or seen.get(key, 0) != 1:",
-      "replace": "            if not key:"
+      "name": "an ambiguous key adopts nothing",
+      "find": "                if seen.get(key, 0) != 1:\n                    continue",
+      "replace": "                if False:\n                    continue"
     },
     {
       "name": "the type must still exist",
-      "find": "            if not mcu_type or mcu_type not in reg.names():",
-      "replace": "            if not mcu_type:"
+      "find": "            if not mcu_type or used_key is None or mcu_type not in reg.names():",
+      "replace": "            if not mcu_type or used_key is None:"
     },
     {
       "name": "the pairing is consumed so it cannot act twice",
-      "find": "            pairings.forget(key)\n",
+      "find": "            pairings.forget(used_key)\n",
       "replace": ""
     },
     {
       "name": "the pairing is recorded BEFORE the re-enumeration wait",
-      "find": "            if target:\n                from ...flashers.pairings import Pairings\n\n                Pairings(self.paths).record(target, name)\n",
+      "find": "            pairing_key = bootsel_id if is_bootsel else target\n            if pairing_key:\n                from ...flashers.pairings import Pairings\n\n                Pairings(self.paths).record(pairing_key, name)\n",
       "replace": ""
     }
   ]

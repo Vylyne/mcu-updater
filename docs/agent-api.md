@@ -84,14 +84,17 @@ API; the prose is not. Most come from `errors.py`: `config_corrupt`,
 `ambiguous_serial`, `serial_tracked_elsewhere`, `source_missing`,
 `no_saved_config`, `build_failed`, `tty_required`, `flash_failed`,
 `device_not_found`, `bootloader_timeout`, `ambiguous_dfu`,
-`dfu_permission_denied`, `tool_missing`, `unsupported_chipset`,
-`service_control`, `flashing_disabled`, `busy`, `print_in_progress`,
-`cancelled`, `profile`, `profile_not_found`, `profile_customised`,
-`offset_mismatch`, `kconfig`, `no_session`. A few are built inline at the call
-site rather than from a typed exception - `no_artifact`, `nothing_to_do`, and
-the `dfu_<reason>` family (`dfu_none`, `dfu_no_tool`, `dfu_permission_denied`,
-`dfu_ambiguous`) `fw.add_mcu.start` derives from `fw.dfu.scan`'s own `reason` -
-documented where each is raised rather than repeated here.
+`dfu_permission_denied`, `bootsel_not_mounted`, `tool_missing`,
+`unsupported_chipset`, `service_control`, `flashing_disabled`, `busy`,
+`print_in_progress`, `cancelled`, `profile`, `profile_not_found`,
+`profile_customised`, `offset_mismatch`, `kconfig`, `no_session`. A few are
+built inline at the call site rather than from a typed exception -
+`no_artifact`, `nothing_to_do`, the `dfu_<reason>` family (`dfu_none`,
+`dfu_no_tool`, `dfu_permission_denied`, `dfu_ambiguous`) `fw.add_mcu.start`
+derives from `fw.dfu.scan`'s own `reason`, and the `bootsel_<reason>` family
+(`bootsel_none`, `bootsel_not_mounted`, `bootsel_ambiguous`) it derives from
+`fw.bootsel.scan`'s the same way - documented where each is raised rather than
+repeated here.
 
 JSON-RPC codes: `-32601` unknown method, `-32602` bad params, `-32000`
 application error (see `data.code`), `-32603` internal.
@@ -105,7 +108,8 @@ application error (see `data.code`), `-32603` internal.
 | `fw.type.list` | — | `{types: [TypeStatus]}` |
 | `fw.bus.scan` | `only_untracked?`, `chipset?` | `{devices: [BusDevice]}` |
 | `fw.dfu.scan` | — | `{devices, count, ready, reason, message}` — read-only |
-| `fw.add_mcu.start` | `name`, `dfu_serial?` | `{job_id, job, dfu_serial}` — **off by default** |
+| `fw.bootsel.scan` | — | `{devices, count, mounts, mount_count, ready, reason, message}` — read-only |
+| `fw.add_mcu.start` | `name`, `dfu_serial?` (STM32 only) | `{job_id, job, dfu_serial, bootsel_id}` — **off by default** |
 | `fw.artifacts` | `name` (required) | `{<fw>: Artifact, ...}`, one key per family the type declares |
 | `fw.settings.get` | — | `{settings: Settings}` |
 | `fw.build` | `name`, `fw`, `jobs?`, `clean?`, `reseed?` | `{job_id, job}` — returns immediately |
@@ -739,12 +743,14 @@ and the service restart.
 
 ### Setting up a brand-new board
 
-A board with no bootloader on it is reached over **DFU**, and the whole flow is
-four calls of which only one is new:
+A board with no bootloader on it is reached over **DFU** (STM32) or **BOOTSEL**
+mass storage (RP2040) — one `fw.add_mcu.start` routes to whichever mechanism the
+type's `chipset` calls for, mirroring `flash_initial_bootloader`'s own dispatch.
+Either way the whole flow is four calls of which only two are new:
 
 | Step | Call | New? |
 | --- | --- | --- |
-| 1. What is in DFU? | `fw.dfu.scan` | new, read-only |
+| 1. What is in DFU / BOOTSEL? | `fw.dfu.scan` / `fw.bootsel.scan` | **new**, read-only |
 | 2. Put Katapult on it | `fw.add_mcu.start {name}` | **new** |
 | 3. Adopt what appeared | `fw.serial.add {name, serial}` | existing |
 | 4. Put Klipper on it | `fw.flash {serial}` | existing |
@@ -777,13 +783,47 @@ exposes no `/dev/serial/by-id` name, so those are the only identity it has.
 **`path` is the one to show prominently** — it is the only field corresponding to
 a physical port, and therefore the only hint about which board is which.
 
+#### `fw.bootsel.scan`
+
+Mirrors `fw.dfu.scan`'s report-don't-raise shape. Diverges where BOOTSEL
+genuinely differs: reading `/dev/disk/by-id` and a mount point is plain
+filesystem access, not a subprocess or a libusb claim, so there is no
+`no_tool`/`permission_denied` here at all. `ready` gates on the **mount**
+count, not the device count — that is exactly what the write itself
+(the flasher's `_find_mount`) gates on, since a board present but unmounted is
+not writable regardless of how many are attached.
+
+| `reason` | What it means, and what to do |
+| --- | --- |
+| `null` | Ready. One board, one mounted volume. |
+| `none` | Nothing in BOOTSEL. Hold BOOTSEL and replug. |
+| `not_mounted` | A board is attached but nothing mounted its volume — this host has no automounter. Re-run `install.sh` to install the udev rule, or mount it manually at `/media/<user>/RPI-RP2`. |
+| `ambiguous` | More than one RPI-RP2 volume is mounted at once. |
+
+`ambiguous` is a dead end here, unlike DFU's — there is no serial-based
+targeting for a mount-based write (see `fw.add_mcu.start` below), and the udev
+rule mounts every board to the same fixed path, so two boards in BOOTSEL at
+once genuinely collide. Bench convention is one board at a time; unplug the
+others and rescan.
+
+Each device carries `id` (the boot ROM's flash-chip unique id, parsed from
+`/dev/disk/by-id/usb-RPI_RP2_<id>-...`, or `null` if it couldn't be parsed) and
+`node` (the raw by-id path). Like DFU's `_identify_dfu`, a device already
+matching a tracked rp2040 board's serial carries `known_serial`/`tracked_by` —
+but unlike DFU's derivation, this is an **assumed identity** (the boot-ROM id
+equals Katapult's later running serial), not a computed one; see "A board that
+turns up later is still adopted" below.
+
 #### `fw.add_mcu.start`
 
-Writes Katapult to the board in DFU, waits for it to re-enumerate, and reports
-what appeared:
+Writes Katapult to a board in DFU or BOOTSEL (by the type's `chipset`), waits
+for it to re-enumerate, and reports what appeared. `dfu_serial` is populated
+only on the DFU path; `bootsel_id` (the boot-ROM flash-chip id, when exactly one
+board was attached) only on the BOOTSEL path — the other is always `null`:
 
 ```json
 {"type": "bttebb36", "chipset": "stm32g0b1xx", "dfu_serial": "3941335F3434",
+ "bootsel_id": null,
  "candidates":      [{"serial": "2D0043...-if00", "path": "...", "state": "katapult"}],
  "already_tracked": []}
 ```
@@ -797,9 +837,11 @@ flash worked; only `candidates` leaves anything to do.
 Both empty means nothing came back at all, which is the only case worth
 investigating.
 
-**It cannot take a serial for the new board, because there isn't one yet.** A DFU
-device has no by-id name, so the identity to adopt does not exist until Katapult
-is on it. That is why this snapshots the bus first and diffs afterwards.
+**Neither path can take a serial for the new board, because there isn't one
+yet.** A DFU device has no by-id name at all, and a BOOTSEL board's only
+identity (the boot-ROM id) is not the serial it will run under — the identity
+to adopt does not exist until Katapult is on it either way. That is why this
+snapshots the bus first and diffs afterwards, for both mechanisms.
 
 **Klipper is never stopped.** A board that is not in `printer.cfg` is not held by
 Klipper, so there is no port contention and no reason for an outage. The
@@ -811,11 +853,13 @@ Refusals, all synchronous and before a job exists:
 | --- | --- |
 | capability gate | `flashing_disabled` |
 | type exists | `unknown_type` |
-| chipset uses DFU at all | `unsupported_chipset` (RP2040 needs BOOTSEL + `.uf2`) |
-| Katapult has been built for the type | `no_artifact` |
-| something is in DFU | `dfu_none` / `dfu_permission_denied` / `dfu_no_tool` |
-| exactly one, or one named | `dfu_ambiguous` |
-| the named serial is present | `device_not_found` |
+| chipset uses DFU or BOOTSEL at all | `unsupported_chipset` |
+| Katapult has been built for the type (`.bin` for DFU, `.uf2` for BOOTSEL) | `no_artifact` |
+| **DFU:** something is in DFU | `dfu_none` / `dfu_permission_denied` / `dfu_no_tool` |
+| **DFU:** exactly one, or one named | `dfu_ambiguous` |
+| **DFU:** the named serial is present | `device_not_found` |
+| **BOOTSEL:** something is in BOOTSEL and mounted | `bootsel_none` / `bootsel_not_mounted` |
+| **BOOTSEL:** exactly one mounted | `bootsel_ambiguous` |
 
 **Several boards in DFU is a choice, not a dead end.** dfu-util takes `-S`, `-p`
 and `-n`, so passing `dfu_serial` targets one exactly. It is still refused by
@@ -826,6 +870,12 @@ wrong one.
 The write is pinned to the chosen device even when only one is attached — between
 the scan and the command, a second board can be jumpered and plugged in.
 
+**BOOTSEL has no equivalent choice.** There is no `bootsel_id` argument to
+`fw.add_mcu.start` — mounting *is* the addressing, the udev rule mounts every
+board to the same fixed path, and the write (`_find_mount`) refuses outright on
+more than one mounted volume. Bench convention is one board at a time; this is
+a deliberate scope line, not a gap left to close later.
+
 Finding no new board **warns rather than failing the job**: the write may have
 succeeded and the board simply be slow or on a marginal port, so the log says to
 check `/dev/serial/by-id` and adopt directly.
@@ -833,8 +883,8 @@ check `/dev/serial/by-id` and adopt directly.
 #### A board that turns up later is still adopted
 
 The wait is 15 seconds, which a board on a chain of hubs can miss - and one
-unplugged after flashing and brought back tomorrow will certainly miss. So the
-DFU serial is paired with the chosen type in `.dfu-pairings.json`, written
+unplugged after flashing and brought back tomorrow will certainly miss. So a
+pairing key is recorded against the chosen type in `.dfu-pairings.json`, written
 **after the write and before the wait**, since the wait timing out is exactly the
 case it covers.
 
@@ -844,7 +894,7 @@ pressed - rather than a new decision. Five conditions keep it from ever being a
 surprise:
 
 - only **untracked Katapult** devices; anything already in the registry is left alone
-- only an **unambiguous** DFU-serial match, since the derivation sums two id words
+- only an **unambiguous** match against the pairing key
 - only within the **TTL** (24h), so a board found in a drawer next month is the stranger it has become
 - only if the **type still exists**
 - the pairing is **consumed**, so it cannot re-add a board you deliberately untracked
@@ -852,9 +902,23 @@ surprise:
 Each adoption is logged and emits a `state` event, because a registry edit nobody
 can see happening is the thing to avoid.
 
-Only STM32 is supported. RP2040 needs BOOTSEL mass storage and a `.uf2`, which is
-a different mechanism; `unsupported_chipset` says so rather than failing later
-with something about dfu-util.
+**The pairing key means something different for each mechanism, and that
+difference matters.** For DFU it is the *derived* DFU serial
+(`devices.dfu_serial_for`), computed from the same 96-bit unique id the running
+serial is built from - a real transformation, verified working. For BOOTSEL it
+is the boot-ROM flash-chip id, compared directly against the UID prefix of the
+board's running serial (stripping the `-if00` interface suffix every by-id name
+carries, the same split `dfu_serial_for` itself starts with) - **no
+transformation of that UID itself** - an *assumed* identity (RP2040 UF2
+bootloaders and Katapult's own RP2040 port both commonly derive their USB
+serial from the same Pico SDK unique-id call, but this repo has not yet
+confirmed the two strings are literally identical on real hardware). If that
+assumption turns out wrong, late adoption simply never fires for a BOOTSEL
+board that missed its wait - the same "not adopted automatically" experience
+as before this existed, never a *wrong* adoption, since nothing is ever
+recorded under a bare running UID for a DFU-paired board either. `fw.add_mcu.start`'s
+synchronous `candidates`/`already_tracked` result is unaffected either way -
+this only covers the board that missed the live wait.
 
 ## ESP32 displays
 

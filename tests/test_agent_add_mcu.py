@@ -12,6 +12,7 @@ and the diff after, rather than taking a serial as an argument.
 
 from __future__ import annotations
 
+import dataclasses
 import os
 
 import pytest
@@ -21,12 +22,14 @@ from mcu_updater.agent.rpc import RpcError
 from mcu_updater.config import Registry
 from mcu_updater.jobs import JobRunner
 
-from .conftest import make_device, write_settings
+from .conftest import bootsel_device_node, make_device, mounted_bootsel_volume, write_settings
 from .test_agent_dfu import ONE_BOARD, TWO_BOARDS, patch_dfu
 
 EBB = "bttebb36"
 EBB_CHIPSET = "stm32g0b1xx"
 TRACKED = "290055001850304158373620-if00"
+PICO = "testrp2040"
+PICO_CHIPSET = "rp2040"
 
 
 def _runner(paths) -> JobRunner:
@@ -41,6 +44,14 @@ def _runner(paths) -> JobRunner:
 def _stage_katapult(paths, mcu_type=EBB) -> str:
     os.makedirs(paths.artifact_dir(mcu_type), exist_ok=True)
     path = paths.bin_file(mcu_type, "katapult")
+    with open(path, "wb") as fh:
+        fh.write(b"\0" * 512)
+    return path
+
+
+def _stage_katapult_uf2(paths, mcu_type=PICO) -> str:
+    os.makedirs(paths.artifact_dir(mcu_type), exist_ok=True)
+    path = paths.uf2_file(mcu_type, "katapult")
     with open(path, "wb") as fh:
         fh.write(b"\0" * 512)
     return path
@@ -111,19 +122,18 @@ def test_a_type_with_no_katapult_build_is_refused_with_the_reason(adder, monkeyp
     assert adder.runner.current() is None
 
 
-def test_a_non_stm32_type_is_refused_precisely(adder, paths, monkeypatch):
-    """RP2040 needs BOOTSEL mass storage and a .uf2 - a different mechanism
-    entirely. Failing inside the job with something about dfu-util would send the
-    user hunting for a boot jumper that was never involved."""
-    adder.dispatch("fw.type.add", {"name": "pico", "chipset": "rp2040"})
-    assert "pico" in Registry.load(paths).names()
-    _stage_katapult(paths, "pico")
+def test_an_unrelated_chipset_is_refused_precisely(adder, paths, monkeypatch):
+    """Neither DFU nor BOOTSEL applies to an ESP32 - say so precisely rather
+    than failing inside the job with something about dfu-util or a mount."""
+    adder.dispatch("fw.type.add", {"name": "knomi", "chipset": "esp32"})
+    assert "knomi" in Registry.load(paths).names()
+    _stage_katapult(paths, "knomi")
     patch_dfu(monkeypatch, stdout=ONE_BOARD)
 
     with pytest.raises(RpcError) as exc:
-        adder.dispatch("fw.add_mcu.start", {"name": "pico"})
+        adder.dispatch("fw.add_mcu.start", {"name": "knomi"})
     assert exc.value.data["code"] == "unsupported_chipset"
-    assert exc.value.data["data"]["chipset"] == "rp2040"
+    assert exc.value.data["data"]["chipset"] == "esp32"
 
 
 def test_no_board_in_dfu_is_refused_before_a_job(adder, paths, monkeypatch):
@@ -358,3 +368,168 @@ def test_adopting_the_result_is_the_existing_method(adder, paths, fake_root, mon
 
     adder.dispatch("fw.serial.add", {"name": EBB, "serial": candidate})
     assert candidate in Registry.load(paths).get(EBB).serials
+
+
+# --------------------------------------------------------------------------
+# the rp2040/BOOTSEL branch
+# --------------------------------------------------------------------------
+
+
+def _pico_type(adder, paths) -> None:
+    adder.dispatch("fw.type.add", {"name": PICO, "chipset": PICO_CHIPSET})
+    assert PICO in Registry.load(paths).names()
+
+
+def test_a_type_with_no_katapult_uf2_is_refused_with_the_reason(adder, paths):
+    """BOOTSEL needs a .uf2, not a .bin - the artifact check has to look for
+    the right file or this fails deep inside the write with a confusing error."""
+    _pico_type(adder, paths)
+    _stage_katapult(paths, PICO)  # only the .bin, deliberately
+
+    with pytest.raises(RpcError) as exc:
+        adder.dispatch("fw.add_mcu.start", {"name": PICO})
+    assert exc.value.data["code"] == "no_artifact"
+    assert exc.value.data["data"]["path"] == paths.uf2_file(PICO, "katapult")
+
+
+def test_bootsel_no_board_is_refused_before_a_job(adder, paths, fake_root):
+    _pico_type(adder, paths)
+    _stage_katapult_uf2(paths, PICO)
+    adder.paths = dataclasses.replace(
+        adder.paths, bootsel_root=str(fake_root / "nothing-here")
+    )
+
+    with pytest.raises(RpcError) as exc:
+        adder.dispatch("fw.add_mcu.start", {"name": PICO})
+    assert exc.value.data["code"] == "bootsel_none"
+    assert adder.runner.current() is None
+
+
+def test_bootsel_unmounted_device_is_refused_before_a_job(adder, paths, fake_root):
+    """The board is attached but nothing mounts it - the fix is the udev rule,
+    not replugging a board that never had a problem."""
+    _pico_type(adder, paths)
+    _stage_katapult_uf2(paths, PICO)
+    root = fake_root / "bootsel_root"
+    node = bootsel_device_node(root)
+    adder.paths = dataclasses.replace(adder.paths, bootsel_root=str(root))
+
+    with pytest.raises(RpcError) as exc:
+        adder.dispatch("fw.add_mcu.start", {"name": PICO})
+    assert exc.value.data["code"] == "bootsel_not_mounted"
+    assert exc.value.data["data"]["devices"][0]["node"] == node
+    assert adder.runner.current() is None
+
+
+def test_bootsel_ambiguous_mounts_is_refused_before_a_job(
+    adder, paths, fake_root, monkeypatch
+):
+    """Two boards in BOOTSEL at once - unlike DFU there is no serial to pick
+    one by, so this is a plain refusal, not a choice the caller can make."""
+    import mcu_updater.discovery.bootsel as bootsel_discovery
+    from mcu_updater import devices as devices_mod
+
+    _pico_type(adder, paths)
+    _stage_katapult_uf2(paths, PICO)
+
+    media = fake_root / "media"
+    for user in ("alice", "bob"):
+        vol = media / user / "RPI-RP2"
+        vol.mkdir(parents=True)
+        (vol / "INFO_UF2.TXT").write_text("", encoding="utf-8")
+    monkeypatch.setattr(devices_mod, "DEFAULT_BOOTSEL_ROOT_GLOBS", (str(media / "*"),))
+
+    by_id = fake_root / "by-id"
+    by_id.mkdir()
+    for serial in ("AAAAAAAAAAAA", "BBBBBBBBBBBB"):
+        (by_id / f"usb-RPI_RP2_{serial}-0-0-part1").write_text("", encoding="utf-8")
+    monkeypatch.setattr(
+        bootsel_discovery, "_BOOTSEL_DISK_BY_ID_GLOB", str(by_id / "usb-RPI_RP2_*-part1")
+    )
+    adder.paths = dataclasses.replace(adder.paths, bootsel_root="")
+
+    with pytest.raises(RpcError) as exc:
+        adder.dispatch("fw.add_mcu.start", {"name": PICO})
+    assert exc.value.data["code"] == "bootsel_ambiguous"
+    assert len(exc.value.data["data"]["devices"]) == 2
+    assert adder.runner.current() is None
+
+
+def test_a_lone_bootsel_board_needs_no_choice(adder, paths, fake_root, monkeypatch):
+    _pico_type(adder, paths)
+    _stage_katapult_uf2(paths, PICO)
+    root, _vol = mounted_bootsel_volume(fake_root)
+    bootsel_device_node(root, serial="E0C9125B0D9B")
+    adder.paths = dataclasses.replace(adder.paths, bootsel_root=str(root))
+    monkeypatch.setattr("mcu_updater.flashers.flash.flash_initial_bootloader", lambda *a, **k: None)
+
+    res = adder.dispatch("fw.add_mcu.start", {"name": PICO})
+    assert res["bootsel_id"] == "E0C9125B0D9B"
+    assert res["dfu_serial"] is None
+    assert adder.runner.wait(timeout=30)
+    assert adder.runner.get(res["job_id"]).state == "succeeded"
+
+
+def test_bootsel_flash_receives_the_uf2_path(adder, paths, fake_root, monkeypatch):
+    """The one detail that is easy to get wrong porting the DFU branch: BOOTSEL
+    needs uf2_bin threaded through, or the write fails deep inside the job with
+    a message about a missing .uf2 that a caller cannot act on synchronously."""
+    _pico_type(adder, paths)
+    uf2_path = _stage_katapult_uf2(paths, PICO)
+    root, _vol = mounted_bootsel_volume(fake_root)
+    bootsel_device_node(root)
+    adder.paths = dataclasses.replace(adder.paths, bootsel_root=str(root))
+
+    calls: list[dict] = []
+
+    def spy(paths, settings, chipset, fw_bin, *, uf2_bin=None, reporter=None, target_serial=None):
+        calls.append({"chipset": chipset, "fw_bin": fw_bin, "uf2_bin": uf2_bin})
+
+    monkeypatch.setattr("mcu_updater.flashers.flash.flash_initial_bootloader", spy)
+
+    res = adder.dispatch("fw.add_mcu.start", {"name": PICO})
+    assert adder.runner.wait(timeout=30)
+    assert adder.runner.get(res["job_id"]).state == "succeeded"
+    assert calls[0]["uf2_bin"] == uf2_path
+    assert calls[0]["chipset"] == PICO_CHIPSET
+
+
+def test_the_new_bootsel_board_is_found_by_diffing_the_bus(
+    adder, paths, fake_root, monkeypatch
+):
+    _pico_type(adder, paths)
+    _stage_katapult_uf2(paths, PICO)
+    root, _vol = mounted_bootsel_volume(fake_root)
+    bootsel_device_node(root)
+    adder.paths = dataclasses.replace(adder.paths, bootsel_root=str(root))
+
+    def appear(*args, **kwargs):
+        make_device(fake_root / "bus", "katapult", PICO_CHIPSET, "NEWPICO-if00")
+
+    monkeypatch.setattr("mcu_updater.flashers.flash.flash_initial_bootloader", appear)
+
+    res = adder.dispatch("fw.add_mcu.start", {"name": PICO})
+    assert adder.runner.wait(timeout=30)
+    job = adder.runner.get(res["job_id"])
+
+    assert job.state == "succeeded", job.error
+    assert [c["serial"] for c in job.result["candidates"]] == ["NEWPICO-if00"]
+    assert job.result["bootsel_id"] is not None
+
+
+def test_bootsel_pairing_is_recorded_before_the_wait(adder, paths, fake_root, monkeypatch):
+    """Keyed on the boot-ROM id, exactly what `Pairings` needs to catch a board
+    that misses the live re-enumeration wait - see docs/agent-api.md."""
+    from mcu_updater.flashers.pairings import Pairings
+
+    _pico_type(adder, paths)
+    _stage_katapult_uf2(paths, PICO)
+    root, _vol = mounted_bootsel_volume(fake_root)
+    bootsel_device_node(root, serial="E0C9125B0D9B")
+    adder.paths = dataclasses.replace(adder.paths, bootsel_root=str(root))
+    monkeypatch.setattr("mcu_updater.flashers.flash.flash_initial_bootloader", lambda *a, **k: None)
+
+    res = adder.dispatch("fw.add_mcu.start", {"name": PICO})
+    assert adder.runner.wait(timeout=30)
+    assert res["bootsel_id"] == "E0C9125B0D9B"
+    assert Pairings(adder.paths).type_for("E0C9125B0D9B") == PICO

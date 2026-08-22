@@ -48,6 +48,11 @@ class _Api(Protocol):
     DFU_AMBIGUOUS: str
     PAIRING_TTL: float
 
+    # -- BOOTSEL reason codes, status.py --------------------------------
+    BOOTSEL_NONE: str
+    BOOTSEL_NOT_MOUNTED: str
+    BOOTSEL_AMBIGUOUS: str
+
     # -- status.py -----------------------------------------------------
     def settings(self) -> Settings: ...
     def registry(self) -> Registry: ...

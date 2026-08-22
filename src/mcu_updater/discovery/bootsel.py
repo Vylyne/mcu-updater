@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import glob
 import os
+import re
 
 from ..paths import Paths
 
@@ -81,3 +82,20 @@ def bootsel_devices(paths: Paths) -> list[str]:
     else:
         pattern = _BOOTSEL_DISK_BY_ID_GLOB
     return sorted(glob.glob(pattern))
+
+
+#: The boot ROM's flash-chip unique ID, out of a `bootsel_devices` entry like
+#: ``/dev/disk/by-id/usb-RPI_RP2_E0C9125B0D9B-0:0-part1``.
+_SERIAL_RE = re.compile(r"usb-RPI_RP2_([0-9A-Fa-f]+)-")
+
+
+def bootsel_id_for(node: str) -> str | None:
+    """The boot ROM's flash-chip unique ID out of a `bootsel_devices()` entry.
+
+    Central so both `flashers.bootsel.target_for` and the agent's
+    `bootsel_scan`/`_identify_bootsel` parse the same string the same way,
+    mirroring how `dfu_serial_for` lives here rather than in each of its
+    callers.
+    """
+    match = _SERIAL_RE.search(node)
+    return match.group(1) if match else None

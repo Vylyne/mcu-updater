@@ -34,11 +34,13 @@ invoked with `sys.executable`, can import apt's `python3-serial`.
 ## Features
 
 Build systems ("builders" — one module + one registry line to add another):
+
 - [x] `kconfig_make` — Klipper, Katapult, and forks (menuconfig + make)
 - [x] `platformio` — anything with a `platformio.ini`
 - [ ] prebuilt images — download a release asset instead of building
 
 Flashing:
+
 - [x] `flashtool.py` — Katapult over USB, STM32 and RP2040
 - [x] `dfu-util` — bare STM32, first bootloader install
 - [x] `esptool` — ESP32, via PlatformIO
@@ -48,6 +50,7 @@ Flashing:
 - [ ] Katapult deployer — replaces a bootloader; no software recovery if wrong
 
 Firmware and boards:
+
 - [x] Multiple firmware families, each with its own tree and builder
 - [x] Multiple firmwares per board type
 - [x] Per-type saved menuconfig answers, per firmware
@@ -60,6 +63,7 @@ Firmware and boards:
 - [ ] CAN device discovery (needs `canbus_uuid` from printer.cfg)
 
 Interfaces:
+
 - [x] CLI and interactive TUI
 - [x] Moonraker agent (JSON-RPC over the unix socket)
 - [x] Mainsail panel, including menuconfig in the browser

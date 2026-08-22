@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 from typing import Any
 
-from ... import firmware, flashers, providers
+from ... import firmware, flashers, providers, stop_services
 from ...config import Registry
 from ...errors import (
     DfuPermissionError,
@@ -102,12 +102,18 @@ class FlashMixin(_Base):
             from ...devices import KLIPPER_FW_NAME, wait_for_device
             from ...errors import BootloaderTimeoutError
             from ...flashers.flash import flash_katapult
-            from ...service import klipper_stopped, make_controller
+            from ...service import make_controller, services_stopped
 
             settings_now = self.settings()
-            svc = make_controller(settings_now, call=self._call_for_service)
-            ctx.step(f"Stopping {svc.name}", 0, 4)
-            with klipper_stopped(self.paths, svc, f"flash {serial}", reporter=ctx.reporter):
+            units = stop_services.for_mcu(self.paths, mcu, settings_now)
+            controllers = [
+                make_controller(settings_now, call=self._call_for_service, name=unit)
+                for unit in units
+            ]
+            ctx.step(f"Stopping {', '.join(units) or 'nothing'}", 0, 4)
+            with services_stopped(
+                self.paths, controllers, f"flash {serial}", reporter=ctx.reporter
+            ):
                 ctx.step(f"Flashing {serial}", 1, 4)
                 # No cancel is threaded into the write on purpose - interrupting
                 # flashtool leaves half an image on the board.
@@ -145,9 +151,9 @@ class FlashMixin(_Base):
                         # real verdict.
                         ctx.reporter("warn", str(exc))
 
-                ctx.step(f"Restarting {svc.name}", 3, 4)
+                ctx.step(f"Restarting {', '.join(units) or 'nothing'}", 3, 4)
 
-            # klipper_stopped has started the service by now. Being *active* is
+            # services_stopped has started them by now. Being *active* is
             # not the same as being ready, so confirm - and firmware-restart if
             # the MCU came back shut down.
             klippy_state = self._await_klippy_ready(ctx.reporter)
@@ -230,7 +236,10 @@ class FlashMixin(_Base):
         # watcher pause, the discovery, the writes - is the same machinery a
         # fleet flash uses, because there was never anything display-shaped
         # about it beyond the two steps the esptool flasher now owns.
-        screens = [flashers.esptool.target_for(display, s) for s in targets]
+        units = stop_services.for_display(self.paths, display, settings)
+        screens = [
+            flashers.esptool.target_for(display, s, stop_services=units) for s in targets
+        ]
 
         def run(ctx) -> dict[str, Any]:
             result = self._do_flash_all(ctx, screens)

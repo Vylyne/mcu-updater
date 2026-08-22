@@ -31,7 +31,7 @@ class Flashtool:
     #: Klipper has long since let go. Because *getting* it there does: the
     #: reboot-into-bootloader request is sent over the serial port Klipper is
     #: holding open, and it goes nowhere while Klipper has it.
-    needs_klipper_stopped = True
+    needs_services_stopped = True
 
     @contextlib.contextmanager
     def prepared(
@@ -92,13 +92,22 @@ class Flashtool:
             ctx.reporter("warn", str(exc))
 
 
-def target_for(board: dict[str, Any]) -> FlashTarget:
+def target_for(
+    board: dict[str, Any], *, stop_services: tuple[str, ...] = ()
+) -> FlashTarget:
     """One entry from the agent's board selection, as a target.
 
     The selection's dict shape is on the wire (`fw.flash_all` returns it), so it
     is carried whole rather than unpacked and rebuilt - a second copy of those
     keys is a second thing to keep in step.
+
+    `stop_services` is resolved by the caller against the board's type, its
+    firmware family and `[updater]` - see `stop_services.py`.
     """
     return FlashTarget(
-        flasher=Flashtool.name, type=board["type"], id=board["serial"], detail=board
+        flasher=Flashtool.name,
+        type=board["type"],
+        id=board["serial"],
+        stop_services=stop_services,
+        detail=board,
     )

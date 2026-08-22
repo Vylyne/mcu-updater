@@ -1650,20 +1650,27 @@ class StatusMixin(_Base):
         watcher leaves a file that still parses and may name ports that have
         since moved, and nothing in it says so.
         """
+        from ... import stop_services
         from ...providers import pio as pio_mod
         from ...service import make_controller
 
         settings = self.settings()
         out: dict[str, Any] = {}
         for name, display in self.pio_types().items():
+            # The resolved list, minus klipper: klipper is reported through
+            # `fw.status`'s own MCU join, not here, and this map exists to
+            # answer one question - is this display's own watcher up? - which
+            # only the non-klipper units bear on.
+            resolved = stop_services.for_display(self.paths, display, settings)
+            watcher = next((u for u in resolved if u != "klipper"), None)
             svc = (
-                make_controller(settings, call=self._call_for_service, name=display.service)
-                if display.service
+                make_controller(settings, call=self._call_for_service, name=watcher)
+                if watcher
                 else None
             )
             devices = pio_mod.read_device_map(self.paths, display)
             out[name] = {
-                "service": display.service or None,
+                "service": watcher,
                 "active": svc.is_active() if svc is not None else None,
                 # When the watcher last wrote. Weak evidence, and only in one
                 # direction: an old file is suspicious, but a fresh one does not

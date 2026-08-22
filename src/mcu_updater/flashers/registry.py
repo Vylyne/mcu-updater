@@ -36,17 +36,34 @@ def group_by_stop(
     """Split a batch into (needs Klipper down, does not), preserving order.
 
     The whole point of the flag. Grouping by *requirement* rather than by kind
-    is what lets one `klipper_stopped` cover boards and screens without either
+    is what lets one `services_stopped` cover boards and screens without either
     loop knowing the other exists - and what would let a write that needs no
     stop stay outside it rather than inheriting one it does not need.
     """
     stopped: list[FlashTarget] = []
     free: list[FlashTarget] = []
     for target in targets:
-        (stopped if by_name(target.flasher).needs_klipper_stopped else free).append(
+        (stopped if by_name(target.flasher).needs_services_stopped else free).append(
             target
         )
     return stopped, free
+
+
+def stop_services_union(targets: list[FlashTarget]) -> list[str]:
+    """The first-seen-order union of `stop_services` across a group.
+
+    One outage covers the whole group rather than one per distinct set - ten
+    stop/start cycles is the thing `write_all`'s docstring already argues
+    against, and stopping a unit a given target did not ask for is harmless
+    since it comes back. Order matters (`services_stopped` stops in list
+    order and restarts in reverse), so this is a dict used as an ordered set,
+    not a `set()`.
+    """
+    seen: dict[str, None] = {}
+    for target in targets:
+        for unit in target.stop_services:
+            seen.setdefault(unit, None)
+    return list(seen)
 
 
 def by_flasher(targets: list[FlashTarget]) -> list[tuple[Flasher, list[FlashTarget]]]:

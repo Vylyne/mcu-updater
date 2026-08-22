@@ -85,6 +85,11 @@ class FirmwareFamily:
     #: (`providers.spec.on_demand`) and, with the application, whether the two
     #: are the pair the flash-time offset checks compare.
     bootloader: bool = False
+    #: Units to stop before a write of this family, overriding `[updater]`
+    #: and overridden by a `[type ...]`/`[display ...]` that names its own.
+    #: `None` means this family said nothing - inherit the next level out.
+    #: See `stop_services.py`.
+    stop_services: list[str] | None = None
 
     def source_dir(self, paths: Paths) -> str:
         """The tree to run `make` in.
@@ -142,6 +147,7 @@ def load_from_doc(doc: CfgDocument) -> dict[str, FirmwareFamily]:
             # existing [firmware katapult] section can't silently turn its
             # bootloader status off.
             bootloader=bool(parse_bool(doc.get(section, "bootloader"), name == "katapult")),
+            stop_services=doc.get_csv(section, "stop_services"),
         )
     return out
 

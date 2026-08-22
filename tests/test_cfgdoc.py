@@ -70,6 +70,36 @@ def test_equals_is_accepted_as_a_separator():
     assert doc.get("a", "key") == "value"
 
 
+# --------------------------------------------------------------------------
+# get_csv: the absent/blank/values trichotomy
+# --------------------------------------------------------------------------
+
+
+def test_get_csv_is_none_when_the_key_is_absent():
+    doc = CfgDocument("[a]\nother: x\n")
+    assert doc.get_csv("a", "key") is None
+
+
+def test_get_csv_is_empty_list_for_a_bare_key():
+    doc = CfgDocument("[a]\nkey:\n")
+    assert doc.get_csv("a", "key") == []
+
+
+def test_get_csv_splits_and_strips_comma_separated_values():
+    doc = CfgDocument("[a]\nkey: klipper, knomi_serial ,  x\n")
+    assert doc.get_csv("a", "key") == ["klipper", "knomi_serial", "x"]
+
+
+def test_get_csv_a_single_value_with_no_comma():
+    doc = CfgDocument("[a]\nkey: klipper\n")
+    assert doc.get_csv("a", "key") == ["klipper"]
+
+
+def test_get_csv_drops_blank_items_between_commas():
+    doc = CfgDocument("[a]\nkey: klipper,, knomi_serial\n")
+    assert doc.get_csv("a", "key") == ["klipper", "knomi_serial"]
+
+
 def test_a_value_containing_a_colon_survives():
     """Makefile lines and paths contain colons; only the first separator counts."""
     doc = CfgDocument("[a]\nline: src/Makefile -> foo: bar\n")

@@ -28,7 +28,7 @@
     {
       "name": "a write that needs no stop stays outside the outage",
       "file": "src/mcu_updater/flashers/registry.py",
-      "find": "        (stopped if by_name(target.flasher).needs_klipper_stopped else free).append(\n            target\n        )",
+      "find": "        (stopped if by_name(target.flasher).needs_services_stopped else free).append(\n            target\n        )",
       "replace": "        stopped.append(target)"
     },
     {

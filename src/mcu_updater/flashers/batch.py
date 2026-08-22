@@ -19,13 +19,13 @@ from collections.abc import Callable
 from typing import Any
 
 from ..errors import OperationCancelled, UpdaterError
-from .registry import by_flasher, group_by_stop
+from .registry import by_flasher, group_by_stop, stop_services_union
 from .spec import Bench, FlashTarget
 
 #: Called once the batch is over and the service is back, to decide whether it
 #: really came back. The agent asks Moonraker and will issue a FIRMWARE_RESTART
 #: if klippy came up in an error state; the CLI has nobody to ask, so
-#: `klipper_stopped` restarting the unit is the whole of its answer.
+#: `services_stopped` restarting the units is the whole of its answer.
 #:
 #: The return is deliberately `Any` and deliberately ignored. The agent's
 #: `_await_klippy_ready` hands back the state it settled on, which is useful to
@@ -78,7 +78,7 @@ def write_all(
     half an image on a board, so the check is at the top of each iteration and
     never inside one.
     """
-    from ..service import klipper_stopped
+    from ..service import services_stopped
 
     stopped, free = group_by_stop(targets)
 
@@ -114,9 +114,10 @@ def write_all(
 
     write_group(free)
     if stopped:
-        with klipper_stopped(
+        units = stop_services_union(stopped)
+        with services_stopped(
             bench.paths,
-            bench.controller(None),
+            [bench.controller(unit) for unit in units],
             f"flash {len(stopped)} device(s)",
             reporter=ctx.reporter,
         ):
@@ -124,8 +125,8 @@ def write_all(
     ctx.step(f"Flashed {len(flashed)} of {total}", total, total)
 
     if on_ready is not None:
-        # klipper_stopped has started the service again by now; confirm it really
-        # came back, which is the release gate for every flashing path.
+        # services_stopped has started every unit again by now; confirm klipper
+        # really came back, which is the release gate for every flashing path.
         ctx.reporter("info", "Waiting for Klipper to be ready...")
         on_ready(ctx.reporter)
     return {"flashed": flashed, "failures": failures}

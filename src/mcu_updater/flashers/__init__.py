@@ -3,7 +3,7 @@
     from mcu_updater import flashers
 
     stopped, free = flashers.group_by_stop(targets)
-    with klipper_stopped(...):
+    with services_stopped(paths, controllers_for(flashers.stop_services_union(stopped)), ...):
         for flasher, mine in flashers.by_flasher(stopped):
             with flasher.prepared(bench, mine, ctx) as session:
                 for target in mine:
@@ -27,6 +27,7 @@ from .registry import (
     by_name,
     group_by_stop,
     select_for,
+    stop_services_union,
 )
 from .spec import Bench, Flasher, FlashTarget
 
@@ -44,5 +45,6 @@ __all__ = [
     "by_name",
     "group_by_stop",
     "select_for",
+    "stop_services_union",
     "write_all",
 ]

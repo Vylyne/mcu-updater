@@ -181,7 +181,7 @@ class Agent:
         try:
             reconcile(
                 self.paths,
-                make_controller(self._settings()),
+                lambda name: make_controller(self._settings(), name=name),
                 reporter=lambda stream, line: self.log.warning(line),
             )
         except Exception as exc:  # noqa: BLE001 - must never block startup

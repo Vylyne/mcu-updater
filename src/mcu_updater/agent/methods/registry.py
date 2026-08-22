@@ -25,12 +25,14 @@ class RegistryMixin(_Base):
 
     #: Settings the panel may change. Everything here is a *behaviour* preference.
     #:
-    #: `service` and `service_backend` are deliberately absent. They describe how
-    #: this host is wired, not what the user wants, and getting them wrong breaks
-    #: the agent's ability to stop Klipper - `service_backend: null` in particular
-    #: would let a real flash proceed *without* stopping it, which fails at best
-    #: and corrupts a board at worst. Nothing about a browser form makes that a
-    #: sensible thing to offer; editing the cfg is the right amount of friction.
+    #: `stop_services` and `service_backend` are deliberately absent. They
+    #: describe how this host is wired, not what the user wants, and getting
+    #: them wrong breaks the agent's ability to stop what a flash needs down -
+    #: `service_backend: null` in particular would let a real flash proceed
+    #: *without* stopping anything, which fails at best and corrupts a board at
+    #: worst. Nothing about a browser form makes that a sensible thing to
+    #: offer; editing the cfg is the right amount of friction. Remote service
+    #: control is privilege, full stop.
     SETTABLE = (
         "make_jobs",
         "clean_before_build",
@@ -63,7 +65,7 @@ class RegistryMixin(_Base):
         if unknown:
             raise RpcError(
                 f"cannot set {', '.join(sorted(unknown))} from here. Settable: "
-                f"{', '.join(self.SETTABLE)}. 'service' and 'service_backend' "
+                f"{', '.join(self.SETTABLE)}. 'stop_services' and 'service_backend' "
                 f"describe how this host is wired and are edited in "
                 f"{self.paths.settings_file}.",
                 data={

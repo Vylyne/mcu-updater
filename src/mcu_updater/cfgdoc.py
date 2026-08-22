@@ -213,6 +213,25 @@ class CfgDocument:
             return []
         return [part.strip() for part in raw.splitlines() if part.strip()]
 
+    def get_csv(self, section: str, key: str) -> list[str] | None:
+        """A one-line, comma-separated value - the absent/blank/values
+        trichotomy in one return type.
+
+        `None` when the key is not present at all (inherit whatever the next
+        level out says); `[]` when it is present but empty, i.e. a bare
+        `key:` (explicitly nothing); the split, stripped items otherwise. A
+        blank entry does not mean the same as an absent one - the caller
+        decides what "explicitly nothing" means, this only reports it.
+
+        Distinct from `get_list`, which is one item per line: this is for a
+        single comma-separated line, matching Moonraker's own spelling for
+        `[update_manager] managed_services:`.
+        """
+        raw = self.get(section, key)
+        if raw is None:
+            return None
+        return [part.strip() for part in raw.split(",") if part.strip()]
+
     def options(self, section: str) -> list[str]:
         sec = self.sections.get(section)
         return [] if sec is None else list(sec.options)

@@ -14,7 +14,7 @@ from mcu_updater.agent.methods import Api
 from mcu_updater.agent.rpc import ERR_INVALID_PARAMS, ERR_METHOD_NOT_FOUND, RpcError
 from mcu_updater.errors import ServiceControlError
 from mcu_updater.jobs import JobRunner
-from mcu_updater.service import Journal, NullService, klipper_stopped
+from mcu_updater.service import Journal, NullService, services_stopped
 
 from .conftest import make_device, write_settings
 
@@ -313,7 +313,7 @@ def test_a_failed_stop_aborts_rather_than_flashing_anyway(paths):
     not take effect must abort - not proceed and hope."""
     svc = FailingStopService()
     with pytest.raises(ServiceControlError) as exc:
-        with klipper_stopped(paths, svc, "flash x", verify_timeout=0.3):
+        with services_stopped(paths, [svc], "flash x", verify_timeout=0.3):
             raise AssertionError("the body must never run")
     assert "refusing to continue" in str(exc.value)
     # And it still tried to put things back.
@@ -324,7 +324,7 @@ def test_a_failed_stop_aborts_rather_than_flashing_anyway(paths):
 def test_klipper_is_restarted_even_when_the_flash_raises(paths):
     svc = NullService()
     with pytest.raises(RuntimeError):
-        with klipper_stopped(paths, svc, "flash x"):
+        with services_stopped(paths, [svc], "flash x"):
             raise RuntimeError("flashtool exploded")
     assert svc.actions == ["stop", "start"]
     assert svc.is_active() is True
@@ -336,7 +336,7 @@ def test_an_already_stopped_klipper_is_left_alone(paths):
     svc = NullService()
     svc.stop()
     svc.actions.clear()
-    with klipper_stopped(paths, svc, "flash x"):
+    with services_stopped(paths, [svc], "flash x"):
         pass
     assert svc.actions == []
     assert svc.is_active() is False
@@ -345,10 +345,10 @@ def test_an_already_stopped_klipper_is_left_alone(paths):
 def test_the_journal_records_the_stop_for_crash_recovery(paths):
     """This is the layer that covers kill -9, where no finally block runs."""
     svc = NullService()
-    with klipper_stopped(paths, svc, "flash 2900550018"):
+    with services_stopped(paths, [svc], "flash 2900550018"):
         entry = Journal(paths).pending()
         assert entry is not None
-        assert entry["service"] == "klipper"
+        assert entry["services"] == ["klipper"]
         assert "2900550018" in entry["label"]
     assert Journal(paths).pending() is None
 
@@ -361,7 +361,7 @@ def test_agent_startup_reconciles_a_crashed_flash(paths, live_registry_text):
     with open(paths.registry_file, "w", encoding="utf-8") as fh:
         fh.write(live_registry_text)
     _write_settings(paths)
-    Journal(paths).record_stop("klipper", "flash 2900550018 (killed)")
+    Journal(paths).record_stop(["klipper"], "flash 2900550018 (killed)")
 
     agent = Agent(paths, socket_path="unused")
     agent.reconcile_startup()

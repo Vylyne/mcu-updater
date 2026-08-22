@@ -158,6 +158,10 @@ class McuType:
     #: the intent in the hand-edited config and the verdict in the data tree is
     #: what lets a user declare a profile for a board they have not wired up.
     profile: str = ""
+    #: Units to stop before a write to this type, overriding `[firmware ...]`
+    #: and `[updater]`. `None` means this type said nothing - inherit the
+    #: next level out. See `stop_services.py`.
+    stop_services: list[str] | None = None
 
     def fw(self, fw: str) -> FwConfig:
         return self.fws.setdefault(fw, FwConfig())
@@ -387,6 +391,7 @@ class Registry:
                 )
             mcu.firmwares = declared_fws
             mcu.profile = (doc.get(section, "profile") or "").strip()
+            mcu.stop_services = doc.get_csv(section, "stop_services")
             # Only the families this type actually declares - not every
             # globally-declared [firmware ...] section. mcu.fw() is
             # setdefault, so iterating fw_names here would seed a phantom
@@ -470,6 +475,11 @@ class Registry:
                 doc.set(section, "profile", mcu.profile.strip())
             else:
                 doc.remove_option(section, "profile")
+
+            if mcu.stop_services is None:
+                doc.remove_option(section, "stop_services")
+            else:
+                doc.set(section, "stop_services", ", ".join(mcu.stop_services))
 
             # Retired: whether a bootloader is present is now just whether one
             # is in `firmware:`. Dropped on every save rather than left stale.

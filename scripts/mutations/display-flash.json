@@ -34,16 +34,10 @@
       "replace": "        ]"
     },
     {
-      "name": "the port watcher is stopped for the upload",
-      "file": "src/mcu_updater/flashers/esptool.py",
-      "find": "                if display.service:\n                    stack.enter_context(\n                        paused(bench.controller(display.service), reporter=ctx.reporter)\n                    )",
-      "replace": "                if False:\n                    stack.enter_context(\n                        paused(bench.controller(display.service), reporter=ctx.reporter)\n                    )"
-    },
-    {
       "name": "identity is verified once the ports are free",
       "file": "src/mcu_updater/flashers/esptool.py",
-      "find": "            yield {\n                name: discover(bench, display, ctx)\n                for name, display in families.items()\n            }",
-      "replace": "            yield {}"
+      "find": "        yield {\n            name: discover(bench, display, ctx)\n            for name, display in families.items()\n        }",
+      "replace": "        yield {}"
     },
     {
       "name": "a screen is written where it answered, not where it was",

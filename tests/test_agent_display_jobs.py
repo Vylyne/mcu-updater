@@ -182,8 +182,10 @@ def test_the_screens_are_read_before_klipper_is_stopped(api, no_pio, monkeypatch
 
 
 def test_klipper_is_stopped_once_for_the_whole_batch(api, no_pio, monkeypatch):
-    svc = NullService()
-    monkeypatch.setattr("mcu_updater.service.make_controller", lambda *a, **k: svc)
+    """Once for the batch's two screens, not once per screen - and distinct
+    from the watcher, which is a different unit and stops alongside it."""
+    made, factory = _services([])
+    monkeypatch.setattr("mcu_updater.service.make_controller", factory)
 
     res = api.dispatch("fw.flash", {"name": ENV})
     assert api.runner.wait(timeout=30)
@@ -191,7 +193,7 @@ def test_klipper_is_stopped_once_for_the_whole_batch(api, no_pio, monkeypatch):
 
     assert job.state == "succeeded", job.error
     assert len(job.result["flashed"]) == 2
-    assert svc.actions == ["stop", "start"]
+    assert made["klipper"].actions == ["stop", "start"]
 
 
 # --------------------------------------------------------------------------
@@ -345,15 +347,17 @@ def test_the_watcher_stops_inside_the_klipper_stop(api, no_pio, monkeypatch):
     ]
 
 
-def test_the_watcher_never_touches_the_crash_journal(api, no_pio, monkeypatch):
-    """The journal holds exactly one pending stop and record_stop overwrites.
-    Recording the watcher would erase klipper's entry, so a crash would bring
-    the watcher back and leave klipper down - the exact failure the journal
-    exists to prevent."""
-    recorded: list[str] = []
+def test_every_stopped_service_is_journaled_together(api, no_pio, monkeypatch):
+    """The journal used to hold exactly one pending stop, so recording the
+    watcher would have erased klipper's entry - a crash would then bring the
+    watcher back while leaving klipper down. Now it is a list, written once
+    up front with everything about to be stopped, precisely so a SIGKILL
+    between two stops in the same batch does not leave the later one
+    unrecorded."""
+    recorded: list[list[str]] = []
     monkeypatch.setattr(
         "mcu_updater.service.Journal.record_stop",
-        lambda self, service, label: recorded.append(service),
+        lambda self, services, label: recorded.append(list(services)),
     )
     _made, factory = _services([])
     monkeypatch.setattr("mcu_updater.service.make_controller", factory)
@@ -362,7 +366,7 @@ def test_the_watcher_never_touches_the_crash_journal(api, no_pio, monkeypatch):
     assert api.runner.wait(timeout=30)
     assert api.runner.get(res["job_id"]).state == "succeeded"
 
-    assert recorded == ["klipper"]
+    assert recorded == [["klipper", "knomi_serial"]]
 
 
 def test_a_watcher_that_is_not_running_is_left_alone(api, no_pio, monkeypatch):
@@ -382,20 +386,44 @@ def test_a_watcher_that_is_not_running_is_left_alone(api, no_pio, monkeypatch):
     assert order == ["stop klipper", "start klipper"]
 
 
-def test_a_watcher_that_will_not_stop_does_not_abort_the_flash(api, no_pio, monkeypatch):
-    """Unlike klipper, this one is never verified. The worst case is the flake
-    it was meant to remove - a clean failure that retrying fixes - and refusing
-    to flash at all would be worse than that."""
+def test_a_watcher_that_will_not_stop_aborts_the_flash(api, no_pio, monkeypatch):
+    """No longer best-effort: the watcher is now part of the same verified
+    `stop_services` list klipper is, so a unit that will not go down is a
+    hard failure, the same as klipper refusing would be - see
+    `service.services_stopped`. Racing a write against a service that still
+    holds the port is not a clean, retryable failure; it is a corrupted
+    flash, which is worse than refusing outright."""
     made, factory = _services([])
     monkeypatch.setattr("mcu_updater.service.make_controller", factory)
     watcher = factory(None, name="knomi_serial")
     monkeypatch.setattr(watcher, "stop", lambda *a, **k: None)  # stays "active"
+    # Skip the real 20s verify_timeout wait. Rebinding the `time` name inside
+    # `service` module's own namespace - rather than patching the real global
+    # `time.monotonic` - keeps this from also freezing whatever `api.runner`
+    # itself times its polling with.
+    import time as real_time
+
+    class _FastClock:
+        def __init__(self) -> None:
+            self._t = 0.0
+
+        def monotonic(self) -> float:
+            self._t += 100.0  # every call jumps well past any verify_timeout
+            return self._t
+
+        def sleep(self, seconds: float) -> None:
+            pass
+
+        def time(self) -> float:
+            return real_time.time()
+
+    monkeypatch.setattr("mcu_updater.service.time", _FastClock())
 
     res = api.dispatch("fw.flash", {"name": ENV})
     assert api.runner.wait(timeout=30)
     job = api.runner.get(res["job_id"])
-    assert job.state == "succeeded", job.error
-    assert len(job.result["flashed"]) == 2
+    assert job.state == "failed"
+    assert job.error["data"]["service"] == "knomi_serial"
 
 
 def test_a_display_family_can_declare_it_has_no_watcher(api, paths, no_pio, monkeypatch):
@@ -854,8 +882,8 @@ def test_a_fleet_flash_writes_boards_and_screens_under_one_stop(
     write - so one stop covers both and neither loop knows the other exists.
     """
     _built(api, paths, fake_root)
-    svc = NullService()
-    monkeypatch.setattr("mcu_updater.service.make_controller", lambda *a, **k: svc)
+    made, factory = _services([])
+    monkeypatch.setattr("mcu_updater.service.make_controller", factory)
 
     res = api.dispatch("fw.flash_all", {"scope": "all"})
     assert api.runner.wait(timeout=60)
@@ -864,7 +892,7 @@ def test_a_fleet_flash_writes_boards_and_screens_under_one_stop(
     assert job.state == "succeeded", job.error
     assert [f["flasher"] for f in job.result["flashed"]] == ["esptool", "esptool"]
     # Stopped once for the batch, not once per device.
-    assert svc.actions == ["stop", "start"]
+    assert made["klipper"].actions == ["stop", "start"]
 
 
 # --------------------------------------------------------------------------

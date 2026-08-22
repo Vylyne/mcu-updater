@@ -98,16 +98,30 @@ class PioType:
     #: `[knomi_serial T0_knomi]` -> `knomi_serial`. A second display with its own
     #: klippy module would set this differently; one sharing the module leaves it.
     klipper_section: str = "knomi_serial"
-    #: A systemd unit that watches these displays' ports and must let go before
-    #: esptool can have one. Same defaulting as `klipper_section`: a display
-    #: family with its own watcher names it, one sharing this leaves it. Blank
-    #: means there is nothing to pause, and a unit systemd has never heard of is
-    #: simply never active, so an install without it pays nothing.
-    service: str = "knomi_serial"
+    #: Units to stop before a write to this type, overriding `[firmware ...]`
+    #: and `[updater]`. `None` means this type said nothing at the new key -
+    #: see `load()` for the legacy `service:` key this replaces, and
+    #: `stop_services.py` for how the three levels resolve.
+    stop_services: list[str] | None = None
     #: The map that watcher writes: device id -> port. Relative paths hang off
     #: `printer_data`, which is where it lives. Blank means this family has no
-    #: watcher map, and is what a family with no `service` would set too.
+    #: watcher map, and is what a family with no watcher would set too.
     device_map: str = "knomi/devices.json"
+
+    def _compat_service(self) -> str | None:
+        """The old single-unit `service` field, derived rather than stored.
+
+        `to_json` keeps emitting it so a Mainsail panel built against the old
+        wire shape still gets a sensible answer - see the `targets[]`
+        wire-shape rule (don't reverse a projection). Not resolved across
+        levels: this is exactly what the retired field used to report, which
+        was this type's own setting or the built-in default, never anything
+        inherited from `[firmware ...]`/`[updater]`.
+        """
+        if self.stop_services is None:
+            return "knomi_serial"  # today's default, unresolved
+        watchers = [s for s in self.stop_services if s != "klipper"]
+        return watchers[0] if watchers else None
 
     def to_json(self) -> dict:
         return {
@@ -116,7 +130,8 @@ class PioType:
             "source": self.source,
             "firmware": self.firmware,
             "klipper_section": self.klipper_section,
-            "service": self.service,
+            "service": self._compat_service(),
+            "stop_services": self.stop_services,
             "device_map": self.device_map,
         }
 
@@ -157,10 +172,22 @@ def load(paths: Paths) -> dict[str, PioType]:
                 type=name,
             )
 
-        # Absent and blank differ here, unlike every other key: an absent
-        # `service:` takes the default watcher, while `service:` with nothing
-        # after it is how you say this family has no watcher to pause.
-        watcher = doc.get(section, "service")
+        stop_services = doc.get_csv(section, "stop_services")
+        if stop_services is None:
+            # Legacy `service:` key. Its meaning does not carry over
+            # mechanically: today it means "pause this *in addition to*
+            # klipper" (klipper stops unconditionally, globally), and
+            # `stop_services:` means "stop *only* these" - so a bare
+            # `service: knomi_serial` becomes `["klipper", "knomi_serial"]`,
+            # not `["knomi_serial"]`. Absent takes the default watcher, same
+            # as it always did; present-but-blank means no watcher at all,
+            # which is still just klipper.
+            legacy = doc.get(section, "service")
+            if legacy is None:
+                stop_services = None  # no key at all: inherit the next level
+            else:
+                unit = legacy.strip()
+                stop_services = ["klipper", unit] if unit else ["klipper"]
         device_map = doc.get(section, "device_map")
         out[name] = PioType(
             name=name,
@@ -168,7 +195,7 @@ def load(paths: Paths) -> dict[str, PioType]:
             source=source,
             firmware=first_fw,
             klipper_section=(doc.get(section, "klipper_section") or "knomi_serial").strip(),
-            service=("knomi_serial" if watcher is None else watcher).strip(),
+            stop_services=stop_services,
             device_map=(
                 "knomi/devices.json" if device_map is None else device_map
             ).strip(),

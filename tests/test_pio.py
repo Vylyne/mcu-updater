@@ -116,24 +116,66 @@ def test_the_klipper_section_defaults_to_knomi_serial(paths):
 
 
 def test_an_absent_service_key_takes_the_default_watcher(paths):
+    """No `stop_services:` and no legacy `service:` either: this type says
+    nothing at any of its own keys, so it inherits the next level out - which
+    resolves to the built-in default, klipper plus the watcher, exactly what
+    an unconfigured knomi always got."""
     with open(paths.main_config, "w", encoding="utf-8") as fh:
         fh.write(
             _KNOMI_SERIAL_FAMILY
             + "[type knomi_toolchanger]\nfirmware: knomi_serial\nenv: knomi_toolchanger\n"
         )
-    assert pio.load(paths)["knomi_toolchanger"].service == "knomi_serial"
+    assert pio.load(paths)["knomi_toolchanger"].stop_services is None
 
 
-def test_a_blank_service_key_means_no_watcher_to_pause(paths):
-    """Present but empty is not the same as absent - it is how a type says it
-    has no watcher, not "use the default"."""
+def test_a_blank_legacy_service_key_still_stops_klipper(paths):
+    """Present but empty is not the same as absent under the *old* key - it is
+    how a type said it has no watcher, not "use the default". Klipper still
+    stopped unconditionally back then, so the migration maps this to
+    `["klipper"]`, not `[]`."""
     with open(paths.main_config, "w", encoding="utf-8") as fh:
         fh.write(
             _KNOMI_SERIAL_FAMILY
             + "[type knomi_toolchanger]\nfirmware: knomi_serial\nenv: knomi_toolchanger\n"
             + "service:\n"
         )
-    assert pio.load(paths)["knomi_toolchanger"].service == ""
+    assert pio.load(paths)["knomi_toolchanger"].stop_services == ["klipper"]
+
+
+def test_a_legacy_service_key_becomes_klipper_plus_the_named_unit(paths):
+    """The rename inverts meaning, so this is not a mechanical substitution:
+    `service: knomi_serial` used to mean "pause this *in addition to*
+    klipper" (klipper stopped unconditionally); `stop_services:` means "stop
+    *only* these". The legacy reading has to keep saying what it always said."""
+    with open(paths.main_config, "w", encoding="utf-8") as fh:
+        fh.write(
+            _KNOMI_SERIAL_FAMILY
+            + "[type knomi_toolchanger]\nfirmware: knomi_serial\nenv: knomi_toolchanger\n"
+            + "service: my_watcher\n"
+        )
+    assert pio.load(paths)["knomi_toolchanger"].stop_services == ["klipper", "my_watcher"]
+
+
+def test_an_explicit_stop_services_key_wins_over_a_legacy_service_key(paths):
+    """Both spellings parsing cleanly is the requirement; the new key must
+    still be the one that is honoured when a config carries both."""
+    with open(paths.main_config, "w", encoding="utf-8") as fh:
+        fh.write(
+            _KNOMI_SERIAL_FAMILY
+            + "[type knomi_toolchanger]\nfirmware: knomi_serial\nenv: knomi_toolchanger\n"
+            + "service: my_watcher\nstop_services: knomi_serial\n"
+        )
+    assert pio.load(paths)["knomi_toolchanger"].stop_services == ["knomi_serial"]
+
+
+def test_stop_services_blank_means_stop_nothing(paths):
+    with open(paths.main_config, "w", encoding="utf-8") as fh:
+        fh.write(
+            _KNOMI_SERIAL_FAMILY
+            + "[type knomi_toolchanger]\nfirmware: knomi_serial\nenv: knomi_toolchanger\n"
+            + "stop_services:\n"
+        )
+    assert pio.load(paths)["knomi_toolchanger"].stop_services == []
 
 
 def test_no_pio_type_sections_is_not_an_error(paths):

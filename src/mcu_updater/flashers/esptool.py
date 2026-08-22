@@ -54,47 +54,37 @@ class Esptool:
     #: pyserial's exclusive open is an advisory flock that both it and esptool
     #: take. Unlike flashtool, this one is about the write and not about
     #: getting somewhere first.
-    needs_klipper_stopped = True
+    needs_services_stopped = True
 
     @contextlib.contextmanager
     def prepared(
         self, bench: Bench, targets: list[FlashTarget], ctx: Any
     ) -> Iterator[dict[str, dict[str, Any]]]:
-        """Pause each family's watcher, then ask the screens which they are.
+        """Ask the screens which they are, now that the ports are free.
 
-        In that order, and both inside the Klipper stop. It is the order the
-        knomi_serial docs give: Klipper holds the port, and the watcher merely
-        contends for it - it opens any port that appears and has not been
-        identified yet, so if one turns up at the moment esptool wants it, one
-        of them loses.
+        The watcher pause that used to happen here is gone: it is now part of
+        the outer stop `write_all` opens over the batch's own
+        `stop_services` union, verified and journaled rather than best-effort
+        - see `flashers.batch.write_all` and `service.services_stopped`.
 
-        Discovery comes last because it needs the ports free, and it is the only
-        moment identity can be *resolved* rather than remembered. The screen
-        list was read before the stop, so its paths describe where these screens
-        were; a remembered path is what the whole device-id scheme exists to
-        avoid.
+        Discovery needs the ports free, and it is the only moment identity
+        can be *resolved* rather than remembered. The screen list was read
+        before the stop, so its paths describe where these screens were; a
+        remembered path is what the whole device-id scheme exists to avoid.
 
         Once per family rather than once per screen: a single listen covers
         every port at once, and doing it per screen would multiply the six
         seconds by the number of displays.
         """
-        from ..service import paused
-
         families = {}
         for target in targets:
             display = target.detail["display"]
             families[display.name] = display
 
-        with contextlib.ExitStack() as stack:
-            for display in families.values():
-                if display.service:
-                    stack.enter_context(
-                        paused(bench.controller(display.service), reporter=ctx.reporter)
-                    )
-            yield {
-                name: discover(bench, display, ctx)
-                for name, display in families.items()
-            }
+        yield {
+            name: discover(bench, display, ctx)
+            for name, display in families.items()
+        }
 
     def write(
         self, bench: Bench, session: Any, target: FlashTarget, ctx: Any
@@ -323,17 +313,24 @@ def port_for(
     return found.port, found.confidence, None
 
 
-def target_for(display: Any, screen: dict) -> FlashTarget:
+def target_for(
+    display: Any, screen: dict, *, stop_services: tuple[str, ...] = ()
+) -> FlashTarget:
     """One screen Klipper reported, as a target.
 
     Both the family and the screen entry are carried whole. The family is what
-    `pio run -e` needs and what names the watcher; the screen entry is what
-    `port_for` matches on, and it has to be the one read *before* the stop -
-    only a running Klipper can produce it.
+    `pio run -e` needs; the screen entry is what `port_for` matches on, and it
+    has to be the one read *before* the stop - only a running Klipper can
+    produce it.
+
+    `stop_services` is resolved by the caller (`stop_services.py`, against the
+    display's own config, its firmware family and `[updater]`) - this factory
+    just carries it onto the target, same as `flasher` and `type`.
     """
     return FlashTarget(
         flasher=Esptool.name,
         type=display.name,
         id=screen["configured_path"],
+        stop_services=stop_services,
         detail={"display": display, "screen": screen},
     )

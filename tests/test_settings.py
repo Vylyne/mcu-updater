@@ -21,15 +21,45 @@ def test_values_are_parsed_with_the_right_types(paths):
             "make_jobs = 4\n"
             "clean_before_build = false\n"
             "dry_run = yes\n"
-            "service = klipper-1\n"
+            "stop_services = klipper, knomi_serial\n"
             "service_backend = systemd\n"
         )
     s = load_settings(paths.settings_file)
     assert s.make_jobs == 4
     assert s.clean_before_build is False
     assert s.dry_run is True
-    assert s.service == "klipper-1"
+    assert s.stop_services == ["klipper", "knomi_serial"]
     assert s.service_backend == "systemd"
+
+
+def test_a_bare_legacy_service_key_becomes_a_one_element_stop_services(paths):
+    """Retired in favour of `stop_services`, but a KIAUH multi-instance cfg
+    that still says `service: klipper-1` must not silently stop the wrong
+    unit the moment this version is installed."""
+    with open(paths.settings_file, "w", encoding="utf-8") as fh:
+        fh.write("[updater]\nservice = klipper-1\n")
+    assert load_settings(paths.settings_file).stop_services == ["klipper-1"]
+
+
+def test_an_explicit_stop_services_wins_over_a_legacy_service_key(paths):
+    with open(paths.settings_file, "w", encoding="utf-8") as fh:
+        fh.write("[updater]\nservice = klipper-1\nstop_services = klipper\n")
+    assert load_settings(paths.settings_file).stop_services == ["klipper"]
+
+
+def test_stop_services_blank_means_the_global_off_switch(paths):
+    """The one setting that makes a flash unsafe rather than merely
+    inconvenient - see the README's "Which services stop before a write"."""
+    with open(paths.settings_file, "w", encoding="utf-8") as fh:
+        fh.write("[updater]\nstop_services:\n")
+    assert load_settings(paths.settings_file).stop_services == []
+
+
+def test_stop_services_absent_is_none_not_the_default(paths):
+    """Resolution, not storage, is where the built-in default lives - see
+    `stop_services.resolve_stop_services`."""
+    s = load_settings(paths.settings_file)
+    assert s.stop_services is None
 
 
 def test_dashes_are_accepted_as_underscores(paths):
@@ -68,9 +98,36 @@ def test_no_section_yields_defaults(paths):
 
 
 def test_save_then_load_round_trips(paths):
-    original = Settings(make_jobs=3, dry_run=True, service="klipper-2", enable_flashing=True)
+    original = Settings(
+        make_jobs=3, dry_run=True, stop_services=["klipper-2"], enable_flashing=True
+    )
     save_settings(paths.settings_file, original)
     assert load_settings(paths.settings_file) == original
+
+
+def test_save_then_load_round_trips_an_absent_stop_services(paths):
+    original = Settings(make_jobs=3)
+    assert original.stop_services is None
+    save_settings(paths.settings_file, original)
+    assert load_settings(paths.settings_file) == original
+
+
+def test_save_then_load_round_trips_a_blank_stop_services(paths):
+    original = Settings(stop_services=[])
+    save_settings(paths.settings_file, original)
+    assert load_settings(paths.settings_file).stop_services == []
+
+
+def test_saving_never_leaves_the_legacy_service_key_behind(paths):
+    """The two keys must not be able to disagree once one of them has been
+    written back out."""
+    with open(paths.settings_file, "w", encoding="utf-8") as fh:
+        fh.write("[updater]\nservice: klipper-1\n")
+    save_settings(paths.settings_file, Settings(stop_services=["klipper"]))
+    with open(paths.settings_file, encoding="utf-8") as fh:
+        out = fh.read()
+    assert "service:" not in out
+    assert load_settings(paths.settings_file).stop_services == ["klipper"]
 
 
 # --------------------------------------------------------------------------

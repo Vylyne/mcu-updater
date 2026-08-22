@@ -19,7 +19,7 @@ import os
 import sys
 from collections.abc import Sequence
 
-from . import __version__, firmware, flashers, profiles, providers
+from . import __version__, firmware, flashers, profiles, providers, stop_services
 from .build import artifact_status, build, menuconfig_tty
 from .config import Registry
 from .devices import (
@@ -40,10 +40,9 @@ from .paths import FW_TARGETS, Paths
 from .service import (
     Journal,
     ServiceController,
-    klipper_stopped,
     make_controller,
-    paused,
     reconcile,
+    services_stopped,
 )
 from .settings import Settings, load_settings
 from .states import NEVER_BUILT
@@ -415,6 +414,7 @@ def _board_targets(
     """
     mcu = c.registry().get(mcu_type)
     application = mcu.application()
+    units = stop_services.for_mcu(c.paths, mcu, c.settings)
     return [
         flashers.flashtool.target_for(
             {
@@ -423,7 +423,8 @@ def _board_targets(
                 "chipset": mcu.chipset,
                 "fw": application,
                 "force": force,
-            }
+            },
+            stop_services=units,
         )
         for serial in serials
     ]
@@ -451,8 +452,8 @@ def _pio_targets(
 
     Discovery needs the ports free, which is why `allow_discovery` exists rather
     than it simply always being tried: the caller has to have stopped Klipper and
-    paused the watcher first. `klipper_stopped` is idempotent, so the batch's own
-    stop inside that one correctly no-ops.
+    paused the watcher first. `services_stopped` is idempotent per unit, so the
+    batch's own stop inside that one correctly no-ops.
 
     An empty answer from both is reported as "cannot tell", not as "no devices".
     Flashing nothing and calling it success is the failure this whole area exists
@@ -473,9 +474,11 @@ def _pio_targets(
             # the message below naming both sources rather than a tool error
             # from the fallback.
             stdout_reporter("warn", f"could not ask the devices ({exc})")
+    units = stop_services.for_display(c.paths, display, c.settings)
     if not found:
         where = pio.device_map_path(c.paths, display) or "(no device_map configured)"
-        watcher = f"the '{display.service}' watcher" if display.service else "a watcher"
+        own_watcher = [u for u in units if u != "klipper"]
+        watcher = f"the '{own_watcher[0]}' watcher" if own_watcher else "a watcher"
         raise UpdaterError(
             f"nothing found for '{name}'. Neither the device map at {where} nor "
             f"asking the devices directly turned anything up - so either {watcher} "
@@ -492,6 +495,7 @@ def _pio_targets(
                 "device_id": device.device_id,
                 "present": device.present,
             },
+            stop_services=units,
         )
         for device in sorted(found.values(), key=lambda d: d.port)
         if device.present and (only_id is None or only_id in (device.port, device.device_id))
@@ -500,31 +504,36 @@ def _pio_targets(
 
 @contextlib.contextmanager
 def _ports_free(c: Context, names: Sequence[str], label: str):
-    """Klipper down and every named family's watcher paused, so discovery works.
+    """Every named family's units stopped, so discovery works.
 
     Hoisted out of the batch because the CLI has to *select* inside the stop, not
     just write inside it: with no Moonraker to ask, asking the devices themselves
-    is its fallback and that needs the ports free. `klipper_stopped` is
-    idempotent, so `write_all`'s own stop inside this one sees it already stopped
-    and correctly leaves it that way - one stop/start cycle, not two.
+    is its fallback and that needs the ports free. `services_stopped` is
+    idempotent per unit, so `write_all`'s own stop inside this one sees each
+    already stopped and correctly leaves it that way - one stop/start cycle,
+    not two.
+
+    The union covers klipper without saying so explicitly: every named
+    display's resolved `stop_services` already includes it (by convention, or
+    by the built-in default), so there is nothing left to stop unconditionally
+    here the way there used to be.
     """
     from .providers import pio
 
     displays = pio.load(c.paths)
-    with klipper_stopped(
-        c.paths, make_controller(c.settings), label, reporter=stdout_reporter
+    units: list[str] = []
+    for name in names:
+        for unit in stop_services.for_display(c.paths, displays[name], c.settings):
+            if unit not in units:
+                units.append(unit)
+
+    with services_stopped(
+        c.paths,
+        [make_controller(c.settings, name=unit) for unit in units],
+        label,
+        reporter=stdout_reporter,
     ):
-        with contextlib.ExitStack() as stack:
-            for name in names:
-                unit = displays[name].service if name in displays else ""
-                if unit:
-                    stack.enter_context(
-                        paused(
-                            make_controller(c.settings, name=unit),
-                            reporter=stdout_reporter,
-                        )
-                    )
-            yield
+        yield
 
 
 def _run_batch(c: Context, targets: list, label: str) -> int:
@@ -533,8 +542,8 @@ def _run_batch(c: Context, targets: list, label: str) -> int:
     The same `flashers.write_all` the agent submits as a job, with a context that
     has no job behind it. `on_ready` is deliberately absent: the agent asks
     Moonraker whether klippy really came back and will issue a FIRMWARE_RESTART,
-    and the CLI has nobody to ask - `klipper_stopped` restarting the unit is the
-    whole of its answer.
+    and the CLI has nobody to ask - `services_stopped` restarting the units is
+    the whole of its answer.
     """
     result = flashers.write_all(
         _bench(c), targets, flashers.PlainContext(stdout_reporter)
@@ -561,8 +570,8 @@ def flash_fw_cmd(args: argparse.Namespace) -> None:
         sys.exit(1)
 
     if not args.yes and not _confirm(
-        f"Flashing requires stopping the '{c.settings.service}' service "
-        f"(aborts any active print!). Continue?"
+        "Flashing requires stopping the affected service(s) "
+        "(aborts any active print!). Continue?"
     ):
         print("Aborted.")
         return
@@ -648,9 +657,9 @@ def update_all(args: argparse.Namespace) -> None:
     summary = ", ".join(providers.by_name(k).label for k in kinds) or "nothing"
 
     if not args.yes and not _confirm(
-        f"This stops the '{c.settings.service}' service (aborts any active print!), "
+        f"This stops the affected service(s) (aborts any active print!), "
         f"rebuilds what is stale ({summary}) and writes it to every tracked "
-        f"device, then restarts it. Continue?"
+        f"device, then restarts them. Continue?"
     ):
         print("Aborted.")
         return
@@ -939,7 +948,11 @@ def _reconcile_quietly(c: Context) -> None:
     if os.name == "nt":  # no systemd on the dev box
         return
     try:
-        reconcile(c.paths, make_controller(c.settings), reporter=stdout_reporter)
+        reconcile(
+            c.paths,
+            lambda name: make_controller(c.settings, name=name),
+            reporter=stdout_reporter,
+        )
     except Exception as exc:  # noqa: BLE001 - never block the requested command
         print(f"WARNING: could not reconcile previous run: {exc}", file=sys.stderr)
 

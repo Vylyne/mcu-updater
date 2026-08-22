@@ -712,32 +712,51 @@ def test_a_write_that_needs_no_stop_stays_outside_the_outage(bulk, paths, monkey
     Klipper. Grouping by that requirement rather than by kind is the whole point
     of the flag - a batch that stopped Klipper for every write would take a
     printer down to talk to a board that is not even on its bus.
+
+    A board needing the stop rides in the same batch so the assertion can tell
+    "outside the outage" from "coincidentally never touched a service" - the
+    DFU target's own `stop_services` is empty either way (dfu-util never
+    populates it), so on its own it cannot distinguish being correctly routed
+    to the free group from being incorrectly routed to the stopped one with
+    nothing to stop. The order the two writes happen in relative to the
+    stop/start pair is what actually proves it.
     """
     import mcu_updater.flashers.flash as flash_mod
 
     order: list[str] = []
     svc = NullService()
-    monkeypatch.setattr("mcu_updater.service.make_controller", lambda *a, **k: svc)
+
+    def factory(*a, **k):
+        for action in ("stop", "start"):
+            if not hasattr(svc, f"_wrapped_{action}"):
+                orig = getattr(svc, action)
+
+                def wrapped(reporter=lambda s, line: None, _orig=orig, _action=action):
+                    order.append(_action)
+                    _orig(reporter)
+
+                setattr(svc, action, wrapped)
+                setattr(svc, f"_wrapped_{action}", True)
+        return svc
+
+    monkeypatch.setattr("mcu_updater.service.make_controller", factory)
     monkeypatch.setattr(
         flash_mod, "flash_dfu_stm32", lambda *a, **k: order.append("dfu write")
+    )
+    monkeypatch.setattr(
+        flash_mod, "flash_katapult", lambda *a, **k: order.append("board write")
     )
     write_settings(paths, dry_run="false", service_backend="null", enable_flashing="true")
 
     bare = flashers.dfu_util.target_for(
         "/tmp/katapult.bin", chipset=EBB_CHIPSET, dfu_serial="3941335F3434"
     )
-    result = bulk._do_flash_all(_ctx(), [bare])
+    result = bulk._do_flash_all(_ctx(), [bare, _board(EBB_A)])
 
-    assert order == ["dfu write"]
-    assert svc.actions == [], "Klipper was never stopped"
-    assert result["flashed"] == [
-        {
-            "type": EBB_CHIPSET,
-            "id": "3941335F3434",
-            "flasher": "dfu_util",
-            "dfu_serial": "3941335F3434",
-        }
-    ]
+    # The DFU write happens first, entirely outside the stop/start pair the
+    # board's write opens - not merely "before klipper happened to move".
+    assert order == ["dfu write", "stop", "board write", "start"]
+    assert {f["id"] for f in result["flashed"]} == {"3941335F3434", EBB_A}
 
 
 def _board(serial: str) -> flashers.FlashTarget:
@@ -749,7 +768,8 @@ def _board(serial: str) -> flashers.FlashTarget:
             "state": "klipper",
             "fw": "klipper",
             "reason": "x",
-        }
+        },
+        stop_services=("klipper",),
     )
 
 

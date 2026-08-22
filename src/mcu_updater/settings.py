@@ -44,8 +44,14 @@ class Settings:
     #: panel, the CLI and a fleet build cannot disagree about what a build does.
     reseed_on_build: bool = True
 
-    #: systemd unit name. KIAUH multi-instance setups use klipper-1, klipper-2...
-    service: str = "klipper"
+    #: Units to stop before a write that needs one, most granular
+    #: `[type ...]`/`[firmware ...]` override winning over this. `None` means
+    #: every install got before this key existed: the per-provider built-in
+    #: default, `("klipper",)` for a plain board. See `stop_services.py`.
+    #:
+    #: KIAUH multi-instance setups that used to write `service: klipper-1`
+    #: now write `stop_services: klipper-1` here - see `load_settings`.
+    stop_services: list[str] | None = None
 
     #: "moonraker" | "systemd" | "null". Only the agent honours "moonraker";
     #: the CLI always uses systemd since it has no Moonraker connection.
@@ -99,8 +105,16 @@ BOOL_FIELDS = {
 #: lists of the same thing is how one grows a field the other does not.
 _BOOL_FIELDS = BOOL_FIELDS
 _INT_FIELDS = {"make_jobs", "log_ring_size"}
-_STR_FIELDS = {"service", "service_backend", "platformio_bin", "flashtool_path"}
+_STR_FIELDS = {"service_backend", "platformio_bin", "flashtool_path"}
+_LIST_FIELDS = {"stop_services"}
 _BACKENDS = ("moonraker", "systemd", "null")
+
+#: Retired in favour of `stop_services`, but still read: a bare
+#: `service: klipper-1` becomes a one-element `stop_services` list, so a
+#: KIAUH multi-instance cfg does not silently stop the wrong unit the moment
+#: this version is installed. Ignored (not "unknown key") whenever an
+#: explicit `stop_services:` is also present - the new key always wins.
+_LEGACY_SERVICE_KEY = "service"
 
 
 def _read(path: str) -> CfgDocument:
@@ -136,8 +150,13 @@ def load_settings(path: str) -> Settings:
     if not doc.has_section(SECTION):
         return s
 
-    for key in doc.options(SECTION):
+    options = doc.options(SECTION)
+    has_stop_services = any(k.replace("-", "_") == "stop_services" for k in options)
+
+    for key in options:
         name = key.replace("-", "_")
+        if name == _LEGACY_SERVICE_KEY:
+            continue  # handled below, once, after the explicit key is known
         raw = doc.get(SECTION, key)
         if raw is None:
             continue
@@ -151,12 +170,19 @@ def load_settings(path: str) -> Settings:
                 setattr(s, name, int(raw.strip()))
             elif name in _STR_FIELDS:
                 setattr(s, name, raw.strip())
+            elif name in _LIST_FIELDS:
+                setattr(s, name, doc.get_csv(SECTION, key))
             # Unknown keys are ignored rather than fatal: a newer version of the
             # tool may have written a setting this version does not know yet.
         except ValueError as exc:
             raise ConfigError(
                 f"bad value for '{key}' in [{SECTION}] of {path}: {exc}", path=path, key=key
             ) from exc
+
+    if not has_stop_services:
+        legacy = doc.get(SECTION, _LEGACY_SERVICE_KEY)
+        if legacy is not None and legacy.strip():
+            s.stop_services = [legacy.strip()]
 
     if s.service_backend not in _BACKENDS:
         raise ConfigError(
@@ -175,10 +201,21 @@ def save_settings(path: str, settings: Settings) -> None:
     """
     doc = _read(path)
     for field in dataclasses.fields(settings):
+        if field.name == "stop_services":
+            continue  # trichotomy: handled below, `None` must stay absent
         value: Any = getattr(settings, field.name)
         if isinstance(value, bool):
             value = "true" if value else "false"
         doc.set(SECTION, field.name, value)
+
+    if settings.stop_services is None:
+        doc.remove_option(SECTION, "stop_services")
+    else:
+        doc.set(SECTION, "stop_services", ", ".join(settings.stop_services))
+    # The legacy key is never round-tripped back out: reading it already
+    # folded its meaning into `stop_services` above, so leaving it on disk
+    # too would be two keys disagreeing the moment one of them is next edited.
+    doc.remove_option(SECTION, _LEGACY_SERVICE_KEY)
 
     os.makedirs(os.path.dirname(path), exist_ok=True)
     tmp = path + ".tmp"

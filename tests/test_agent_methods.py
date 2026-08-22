@@ -238,7 +238,7 @@ def test_artifacts_returns_both_firmwares(api):
 
 def test_settings_get_is_serialisable(api):
     s = api.dispatch("fw.settings.get")["settings"]
-    assert s["service"] == "klipper"
+    assert s["stop_services"] is None
     assert isinstance(s["clean_before_build"], bool)
 
 
@@ -679,10 +679,10 @@ def test_settings_set_announces_the_change(paths, live_registry_text):
     assert len(changes) == 1
 
 
-@pytest.mark.parametrize("key", ["service", "service_backend"])
+@pytest.mark.parametrize("key", ["stop_services", "service_backend"])
 def test_wiring_settings_cannot_be_changed_remotely(api, key):
     """service_backend: null would let a real flash proceed *without* stopping
-    klipper. Nothing about a browser form makes that worth offering."""
+    anything. Nothing about a browser form makes that worth offering."""
     with pytest.raises(RpcError) as exc:
         api.dispatch("fw.settings.set", {"settings": {key: "null"}})
     assert exc.value.data["code"] == "setting_not_settable"

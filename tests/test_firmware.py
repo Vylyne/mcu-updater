@@ -190,6 +190,26 @@ def test_to_json_carries_builder_and_bootloader(paths):
     assert payload["bootloader"] is True
 
 
+def test_stop_services_absent_by_default(paths):
+    assert firmware.resolve(paths, "klipper").stop_services is None
+
+
+def test_a_family_can_declare_stop_services(paths, fake_root):
+    _write_firmware(paths, "knomi_serial", stop_services="klipper, knomi_serial")
+    assert firmware.resolve(paths, "knomi_serial").stop_services == ["klipper", "knomi_serial"]
+
+
+def test_a_family_can_declare_stop_services_blank(paths, fake_root):
+    _write_firmware(paths, "second_stage", stop_services="")
+    assert firmware.resolve(paths, "second_stage").stop_services == []
+
+
+def test_overriding_one_key_does_not_disturb_stop_services(paths, fake_root):
+    _write_firmware(paths, "knomi_serial", stop_services="klipper, knomi_serial")
+    _write_firmware(paths, "knomi_serial", builder="platformio")
+    assert firmware.resolve(paths, "knomi_serial").stop_services == ["klipper", "knomi_serial"]
+
+
 def test_a_nameless_section_is_ignored_rather_than_crashing(paths):
     from mcu_updater.cfgdoc import CfgDocument
 

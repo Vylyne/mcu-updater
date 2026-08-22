@@ -616,7 +616,7 @@ def flash_initial_bootloader(
         settings=settings,
         # Nothing on this path touches a service: the board is in its ROM
         # bootloader (DFU or BOOTSEL), not on the Klipper bus, which is what
-        # both flashers' `needs_klipper_stopped: False` says.
+        # both flashers' `needs_services_stopped: False` says.
         controller=_no_services,
     )
     with flasher.prepared(bench, [target], PlainContext(reporter)) as session:

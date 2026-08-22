@@ -1,15 +1,15 @@
-"""Stopping and starting Klipper around a flash, and surviving a crash.
+"""Stopping and starting services around a flash, and surviving a crash.
 
 Leaving klipper stopped is the one genuinely bad outcome this tool can produce:
 the printer is dead until someone notices and SSHes in. Defence is layered.
 
-1. ``klipper_stopped()`` restores state in a ``finally``.
+1. ``services_stopped()`` restores state in a ``finally``.
 2. ``MoonrakerService.start()`` falls back to systemd if Moonraker has gone away
    between the stop and the start.
-3. A **journal** file records "we stopped it" before stopping, so a process that
-   dies outright can be reconciled on next startup.
-4. The systemd unit carries an ``ExecStopPost`` net for the case where even that
-   doesn't run.
+3. A **journal** file records "we stopped these" before stopping, so a process
+   that dies outright can be reconciled on next startup.
+4. The systemd unit carries an ``ExecStopPost`` net for klipper specifically,
+   for the case where even that doesn't run.
 
 This module owns 1-3.
 """
@@ -142,7 +142,7 @@ class NullService(ServiceController):
     """Narrates instead of acting. Used by dry-run and tests.
 
     Tracks its own state rather than always claiming to be active, because
-    klipper_stopped() verifies that a stop actually took effect - a NullService
+    services_stopped() verifies that a stop actually took effect - a NullService
     that lied about being up would make every dry run fail that check.
     """
 
@@ -171,16 +171,22 @@ def make_controller(
     call: Callable[[str, dict], Any] | None = None,
     name: str | None = None,
 ) -> ServiceController:
-    """Pick a backend. `call` is only available inside the agent.
+    """Pick a backend for one unit. `call` is only available inside the agent.
 
-    `name` overrides which unit is controlled, for services other than klipper -
-    a display watcher, say. The *backend* choice is deliberately shared: a
-    dry run must stay a dry run for every unit, or a rehearsal would stop a real
-    service. A unit Moonraker refuses to touch because it is not in
-    moonraker.asvc simply fails to stop, which is why the only caller of this
-    with a `name` uses `paused()` and does not treat that as fatal.
+    `name` names the unit; every caller that actually stops something now
+    passes one explicitly, resolved from `stop_services` - there is no
+    per-install default unit name to fall back to any more (that was
+    `Settings.service`, retired in favour of the list). `None` falls back to
+    the literal `"klipper"`, for a caller that only wants *a* controller and
+    does not care which unit, e.g. a status probe with nothing configured yet.
+
+    The *backend* choice is deliberately shared: a dry run must stay a dry
+    run for every unit, or a rehearsal would stop a real service. A unit
+    Moonraker refuses to touch because it is not in moonraker.asvc simply
+    fails to stop, which `services_stopped` now treats as fatal rather than
+    best-effort - see its own docstring.
     """
-    unit = name or settings.service
+    unit = name or "klipper"
     if settings.dry_run or settings.service_backend == "null":
         return NullService(unit)
     if settings.service_backend == "moonraker" and call is not None:
@@ -194,21 +200,34 @@ def make_controller(
 
 
 class Journal:
-    """Records that we stopped a service, so a crash can be reconciled.
+    """Records that we stopped some services, so a crash can be reconciled.
 
-    Written before the stop and cleared after the start. If the process is
-    SIGKILLed in between, the next startup finds the entry and restarts klipper.
+    Written once, before any of them are stopped, and cleared after they are
+    all back. If the process is SIGKILLed in between, the next startup finds
+    the entry and restarts whatever it names.
+
+    The whole list is written up front rather than growing one entry at a
+    time as each stop happens - a SIGKILL between two stops in the same batch
+    must not leave the later ones unrecorded. `reconcile` restarting a unit
+    that, it turns out, was never actually stopped is a safe no-op (`start`
+    on an already-running unit), so naming one early costs nothing.
     """
 
     def __init__(self, paths: Paths) -> None:
         self.path = paths.journal_file
 
-    def record_stop(self, service: str, label: str) -> None:
+    def record_stop(self, services: list[str], label: str) -> None:
         os.makedirs(os.path.dirname(self.path), exist_ok=True)
         tmp = self.path + ".tmp"
         with open(tmp, "w", encoding="utf-8") as fh:
             json.dump(
-                {"service": service, "label": label, "at": time.time(), "pid": os.getpid()}, fh
+                {
+                    "services": list(services),
+                    "label": label,
+                    "at": time.time(),
+                    "pid": os.getpid(),
+                },
+                fh,
             )
         os.replace(tmp, self.path)
 
@@ -219,21 +238,43 @@ class Journal:
             pass
 
     def pending(self) -> dict[str, Any] | None:
+        """The pending entry, or `None` if there isn't a usable one.
+
+        A journal written by an older version of this tool names a single
+        `"service"` rather than a `"services"` list - wrapped here into the
+        same shape so `reconcile` never has to know the file predates this.
+        """
         try:
             with open(self.path, encoding="utf-8") as fh:
                 data = json.load(fh)
         except (OSError, ValueError):
             return None
-        return data if isinstance(data, dict) and data.get("service") else None
+        if not isinstance(data, dict):
+            return None
+        services = data.get("services")
+        if isinstance(services, list) and services:
+            return data
+        legacy = data.get("service")
+        if legacy:
+            return {**data, "services": [legacy]}
+        return None
 
 
 def reconcile(
     paths: Paths,
-    svc: ServiceController,
+    controller_for: Callable[[str], ServiceController],
     *,
     reporter: Reporter = null_reporter,
 ) -> bool:
-    """On startup: if a previous run died with klipper stopped, start it.
+    """On startup: if a previous run died with services stopped, start them.
+
+    Restarts in reverse order, the same order `services_stopped` itself
+    restarts in - so a batch that stopped [klipper, knomi_serial] comes back
+    knomi_serial then klipper, however the crash unwound it.
+
+    `controller_for` builds a controller for one unit name; the journal now
+    names an arbitrary list rather than always klipper, so there is no single
+    controller to hand in any more.
 
     Returns True if it took action.
     """
@@ -242,15 +283,18 @@ def reconcile(
     if entry is None:
         return False
 
+    services = list(entry.get("services") or [])
     age = time.time() - float(entry.get("at") or 0)
     reporter(
         "warn",
         f"found an unfinished operation from {age:.0f}s ago "
-        f"({entry.get('label', 'unknown')}) that stopped '{entry.get('service')}'. "
-        f"Making sure it's running again.",
+        f"({entry.get('label', 'unknown')}) that stopped "
+        f"{', '.join(services)}. Making sure they're running again.",
     )
-    if not svc.is_active():
-        svc.start(reporter)
+    for name in reversed(services):
+        svc = controller_for(name)
+        if not svc.is_active():
+            svc.start(reporter)
     journal.clear()
     return True
 
@@ -270,13 +314,16 @@ def paused(
     been identified yet, and pyserial's exclusive open is an advisory flock, so
     if a port turns up at the moment esptool wants it one of them loses.
 
-    Three deliberate differences from `klipper_stopped`, all of them because
-    this service is not the dangerous one:
+    Two deliberate differences from `services_stopped`, both because this
+    service is not the dangerous one:
 
-    **It never journals.** The journal holds exactly one pending stop and
-    `record_stop` overwrites, so recording this would erase klipper's entry -
-    and a crash would then bring the watcher back while leaving klipper down.
-    Klipper's record is the one that must survive.
+    **It never journals.** Unlike the old single-slot journal this used to be
+    the workaround for, the journal now holds a list and could name this
+    service perfectly well - but a best-effort pause that was never verified
+    stopped is not a fact worth a crash recovery acting on, so this still
+    does not record one. Anything that genuinely must come back after a
+    SIGKILL belongs in `stop_services` and `services_stopped` instead, not
+    here.
 
     **It never verifies, and never raises.** If the watcher will not stop, the
     worst case is the flake this avoids: the upload fails cleanly and a retry
@@ -300,66 +347,80 @@ def paused(
 
 
 @contextlib.contextmanager
-def klipper_stopped(
+def services_stopped(
     paths: Paths,
-    svc: ServiceController,
+    controllers: list[ServiceController],
     label: str,
     *,
     reporter: Reporter = null_reporter,
     verify: bool = True,
     verify_timeout: float = STOP_VERIFY_TIMEOUT,
 ) -> Iterator[None]:
-    """Stop the service for the duration of the block, then put it back.
+    """Stop every controller in order, then put them back in reverse.
 
-    Idempotent: if klipper was already stopped on entry, it is left stopped on
-    exit rather than being helpfully started - the user stopped it for a reason.
+    The generalisation of the old single-service `klipper_stopped`: a write
+    now names an ordered list of units - klipper first by convention, then
+    whatever else it needs the port from - and this stops each in turn,
+    verifies each, and restarts every one it touched in reverse order in a
+    `finally`, whatever happened above. Order is config order; that is the
+    whole reason it is a list and not a set.
 
-    **The stop is verified.** If klipper is still running - no passwordless sudo,
-    Moonraker unreachable, a wedged unit - this raises instead of continuing.
-    Flashing with klipper up means klipper is holding the serial port, so the
-    write would either fail outright or fight for the device. Refusing is the
-    only safe answer.
+    Idempotent per controller, same as before: one already stopped on entry
+    is left stopped on exit rather than being helpfully started - it was
+    stopped for a reason, whether by the user or by an earlier stage of the
+    same batch.
+
+    **The stop is verified for every controller, not just the first one.** A
+    unit that will not go down - no passwordless sudo, not in
+    moonraker.asvc, a wedged service - raises before the write, because a
+    firmware write racing a service that still holds the port is not a clean
+    "port busy" failure, it is a corrupted flash.
     """
-    was_active = svc.is_active()
     journal = Journal(paths)
+    to_stop = [svc for svc in controllers if svc.is_active()]
+    for svc in controllers:
+        if svc not in to_stop:
+            reporter("info", f"{svc.name} is already stopped - leaving it that way.")
 
-    if not was_active:
-        reporter("info", f"{svc.name} is already stopped - leaving it that way.")
-        yield
-        return
+    if to_stop:
+        journal.record_stop([svc.name for svc in to_stop], label)
 
-    journal.record_stop(svc.name, label)
-    svc.stop(reporter)
+    def _restart_all() -> None:
+        # Belt and braces: this is the single most important loop in the
+        # project. Whatever happened above, every service it touched has to
+        # come back - including one whose own stop never verified, since it
+        # may yet have complied and must not be left ambiguous.
+        try:
+            for svc in reversed(to_stop):
+                svc.start(reporter)
+        finally:
+            journal.clear()
 
-    if verify:
-        deadline = time.monotonic() + verify_timeout
-        while svc.is_active():
-            if time.monotonic() >= deadline:
-                # Put it back the way we found it before bailing out: we asked it
-                # to stop and it may yet comply, so don't leave it ambiguous.
-                try:
-                    svc.start(reporter)
-                finally:
-                    journal.clear()
-                raise ServiceControlError(
-                    f"could not stop '{svc.name}' within {verify_timeout:.0f}s - refusing to "
-                    f"continue, because flashing while klipper holds the serial port is unsafe. "
-                    f"Check passwordless sudo for systemctl, or that klipper is in "
-                    f"~/printer_data/moonraker.asvc.",
-                    service=svc.name,
-                )
-            time.sleep(0.5)
-        reporter("info", f"{svc.name} confirmed stopped.")
+    for svc in to_stop:
+        svc.stop(reporter)
+        if verify:
+            deadline = time.monotonic() + verify_timeout
+            while svc.is_active():
+                if time.monotonic() >= deadline:
+                    _restart_all()
+                    raise ServiceControlError(
+                        f"could not stop '{svc.name}' within {verify_timeout:.0f}s - "
+                        f"refusing to continue, because flashing while it holds the "
+                        f"serial port is unsafe. Under the moonraker backend, check "
+                        f"that '{svc.name}' is listed in ~/printer_data/moonraker.asvc. "
+                        f"Under the systemd backend, check passwordless sudo is set up "
+                        f"for it - add these lines to /etc/sudoers.d/mcu-updater:\n"
+                        f"    <user> ALL=(root) NOPASSWD: /bin/systemctl stop {svc.name}\n"
+                        f"    <user> ALL=(root) NOPASSWD: /bin/systemctl start {svc.name}",
+                        service=svc.name,
+                    )
+                time.sleep(0.5)
+            reporter("info", f"{svc.name} confirmed stopped.")
 
     try:
         yield
     finally:
-        # Belt and braces: this is the single most important line in the project.
-        # Whatever happened above, klipper has to come back.
-        try:
-            svc.start(reporter)
-        finally:
-            journal.clear()
+        _restart_all()
 
 
 def assert_printer_idle(

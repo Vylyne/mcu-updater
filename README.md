@@ -96,9 +96,6 @@ of it. What is still open:
   structural `vue-tsc` incompatibility, not a version pin — read
   [docs/decisions.md](docs/decisions.md) before attempting it, and treat
   `npx vite build` as proving nothing about `.vue` script blocks meanwhile.
-- **Generalise `needs_klipper_stopped`** into a per-type "services to stop"
-  list — deferred until it can land together with that list, not as a bare
-  rename.
 - **Reproduce and fix the flaky teardown `RuntimeError`** in
   `test_an_unknown_inbound_method_gets_an_error_not_silence`.
 - **Revisit whether the API still needs an MCU/display distinction at all.**
@@ -213,7 +210,7 @@ enable_flashing: true      ; let the web UI flash boards. Off by default.
 make_jobs: 0               ; 0 = no -j flag, negative = one per CPU
 clean_before_build: true   ; leave on: a stale object mix flashes a wrong binary
 reseed_on_build: true      ; take a vendor's updated profile answers before building
-service: klipper           ; klipper-1, klipper-2... for KIAUH multi-instance
+stop_services: klipper     ; klipper-1, klipper-2... for KIAUH multi-instance
 
 # A firmware family: a source tree, how it is built, what it emits.
 [firmware klipper]
@@ -262,10 +259,72 @@ Per-type keys:
   has no way to add `src-y +=` lines from the command line, and a permanent edit
   would leak into every other type sharing that chipset and conflict on the next
   `git pull` of Klipper.
+- **`stop_services`** — units to stop before flashing this type, overriding
+  `[firmware ...]` and `[updater]`. See
+  [Which services stop before a write](#which-services-stop-before-a-write).
 
 Edit the existing `[updater]` section rather than appending a second one — a
 duplicate section is refused, because first-wins would make the settings in the
 later copy silently do nothing.
+
+### Which services stop before a write
+
+`stop_services:` names the systemd units that must be down before a write, at
+three levels — most granular wins, and setting it **replaces**, never merges:
+
+```ini
+[updater]
+stop_services: klipper
+
+[firmware knomi_serial]
+stop_services: klipper, knomi_serial     ; OVERRIDE - replaces, never merges
+
+[type bttebb36]
+stop_services: klipper                   ; OVERRIDE - only the last tier applies
+```
+
+`[type ...]`/`[display ...]` beats `[firmware ...]` beats `[updater]` beats the
+built-in default (`klipper` alone for a plain board; `klipper, knomi_serial`
+for a PlatformIO display). Absent inherits the next level out; a bare key with
+nothing after it means *stop nothing at all* for that level:
+
+```ini
+[type bttebb36]
+stop_services:                  ; deliberately empty - nothing to stop here
+```
+
+There is no `none` literal — the value space is systemd unit names, and this
+project does not own a word in it.
+
+⚠️ **Name everything a write needs, every time you override.** `knomi_serial`
+needs *both* klipper and its own watcher: the klippy module holds the
+display's tty, so a `stop_services: knomi_serial` that forgets klipper leaves
+klipper holding the port and the write interleaves with it — an intermittent
+handshake error or a partial write, not a clean "port busy". The line above,
+`stop_services: klipper, knomi_serial`, is the canonical override because it
+names everything the write needs.
+
+⚠️ **At `[updater]`, blank is a global off-switch** and the one setting here
+that makes a flash unsafe rather than merely inconvenient — klipper stays up
+holding the serial port for every board on the printer. Absent still falls
+back to the built-in default, so this is not reachable by accident.
+
+A unit that will not stop is a **hard failure**, not a best-effort skip: the
+write refuses rather than racing a service that still holds the port. If it
+fails, the error names the exact fix — either add the unit to
+`~/printer_data/moonraker.asvc` (moonraker backend), or add sudoers lines for
+it (systemd backend, mirroring `scripts/sudoers.d-mcu-updater`'s three lines
+for `klipper`). Widening either allowlist for a third-party unit is that
+unit's own installer's job, the same way `knomi_serial`'s would be — this
+project does not edit another project's allowlist on your behalf.
+
+**Three names, three meanings**, all visible in `printer_data/config` at once:
+
+| Name | Where | Means |
+| --- | --- | --- |
+| `stop_services:` | `mcu-updater.cfg` | Arbitrary systemd units this tool stops before a write. |
+| `managed_services:` | `moonraker.conf`'s `[update_manager]` | A restricted vocabulary: the section's own name, `klipper`, or `moonraker` only. |
+| `moonraker.asvc` | `printer_data/` | The allowlist gating whether `machine.services.*` — and so `stop_services:` under `service_backend: moonraker` — may touch a given unit at all. |
 
 `mcu-updater.cfg` at the repo root is a real example copied from a working printer.
 
@@ -420,7 +479,7 @@ neither the `PATH` nor `~/.platformio/penv/bin/pio` finds it.
 | `env` | The PlatformIO env to build. **Required, no default.** |
 | `source` | This display's own source tree, overriding the firmware family's |
 | `klipper_section` | The `printer.cfg` prefix its displays are declared under. Default `knomi_serial` |
-| `service` | The systemd unit watching its ports, paused while flashing. Default `knomi_serial`; blank means nothing to pause |
+| `stop_services` | Units stopped before flashing this display, overriding `[firmware ...]`/`[updater]`. Default `klipper, knomi_serial`. See [Which services stop before a write](#which-services-stop-before-a-write) |
 | `device_map` | Where that watcher writes its id → port map, relative to `printer_data`. Default `knomi/devices.json` |
 
 Every key but `env` defaults to what a Knomi needs — the three that usually

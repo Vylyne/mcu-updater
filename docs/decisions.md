@@ -82,14 +82,15 @@ Removed deliberately in `9ebbaef`. This is an updater, not an asset tracker —
 which port a board sat on last time is not a fact worth persisting, and keeping
 it invites writes addressed to a remembered port rather than a confirmed one.
 
-### Do not rename `needs_klipper_stopped`
+### Do not rename `needs_ports_free`
 
-It wants generalising to a per-type service list, and the rename must land
-*with* that list or the new name is less true than the current one. Tracked in
-the README TODO.
-
-The same rule applies to `needs_ports_free` on `discovery.spec.Source`: do not
-rename either to match the other.
+`discovery.spec.Source.needs_ports_free` is a distinct question from
+`flashers.spec.Flasher.needs_services_stopped` - one asks whether a discovery
+pass needs the bus quiet, the other whether a write needs its device's
+holders released - and the two must not be renamed to match each other. The
+flasher side generalised to a per-type `stop_services` list in the
+`stop_services` module; this one did not need the same treatment and is
+unrelated to it.
 
 ### Do not rename `STATE_KLIPPER`
 
@@ -99,8 +100,9 @@ state, so a Cartographer sights as `STATE_KLIPPER`. That inversion is the point:
 it stops every vendor fork being a case to handle.
 
 The constant is what every flasher's `states` tuple matches on, so per the
-`needs_klipper_stopped` precedent the rename lands with the thing that makes it
-true, or not at all. The meaning is documented where it is defined.
+`needs_services_stopped` precedent (it was `needs_klipper_stopped` until the
+`stop_services` list landed with it) the rename lands with the thing that
+makes it true, or not at all. The meaning is documented where it is defined.
 
 ### Do not delete `src/updatefw.py` or 'mcu-updater.py'
 
@@ -126,6 +128,41 @@ Three tones and a tri-state `safe_to_write`, built the way `states.py` is. A
 `safe_to_write` is never `True` on absent evidence, for the reason
 `DeviceStatus.needs_flash` already enforces: absence of evidence is not
 evidence.
+
+### Do not spell the stop-list key `managed_services:`
+
+`docs/backlog.md` sketched `managed_services:`, borrowed from Moonraker's
+`[update_manager] managed_services:` next door in the same file. Rejected when
+the list actually landed, for two reasons.
+
+It drops the false cognate: Moonraker's key accepts only a restricted
+vocabulary (the section's own name, `klipper`, or `moonraker`), while ours
+takes arbitrary systemd unit names - two files, open in the same Mainsail
+editor, using the same word for different rules is the kind of thing a user
+copies from one into the other and gets a silent refusal or a silent no-op.
+
+And `stop_services:` is imperative rather than declarative: *stop these*
+reads as an instruction, and instructions replace - which is what makes
+`stop_services.py`'s override-never-merges resolution rule self-evident
+instead of a rule to memorise. A declarative name invites the merge the
+design specifically rejects.
+
+### Do not widen sudoers for an arbitrary `stop_services` unit
+
+`scripts/sudoers.d-mcu-updater` grants NOPASSWD for exactly three commands on
+the literal unit `klipper` - "three exact commands for one unit, no
+wildcards," deliberately. A `stop_services` list can name any unit, and
+`install.sh` does not go editing that file to widen it for one.
+
+A unit missing from sudoers (systemd backend) or `moonraker.asvc` (moonraker
+backend) hard-fails instead: `service.services_stopped` verifies every stop
+and raises `ServiceControlError`, naming the exact sudoers lines to add,
+before any write happens. This is deliberately not best-effort the way
+`service.paused()` is - a firmware write racing a service that still holds
+the port is not a clean failure, it is a corrupted flash. Widening the
+allowlist for a third-party unit (a display's own watcher, say) is that
+project's own installer's job, the same way `knomi_serial`'s would be -
+not ours to do on their behalf, and not `install.sh`'s to guess at.
 
 ### Do not move the cancellation boundary
 

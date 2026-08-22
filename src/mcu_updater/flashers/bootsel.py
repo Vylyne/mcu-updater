@@ -9,7 +9,7 @@ write through: it mounts as mass storage
 or not), and the "write" is a plain file copy - a `.uf2` dropped on the volume
 is what makes the board flash itself and reboot.
 
-`needs_klipper_stopped = False`, same reasoning as `DfuUtil`: by the time this
+`needs_services_stopped = False`, same reasoning as `DfuUtil`: by the time this
 runs the board is already in BOOTSEL, which means either it was never on the
 Klipper bus or whatever put it there already dealt with Klipper.
 """
@@ -34,11 +34,12 @@ class Bootsel:
     label = "BOOTSEL (mass storage)"
     chipsets: tuple[str, ...] = ("rp2040",)
     states: tuple[str, ...] = (STATE_BOOTSEL,)
-    #: False, for the same reason `DfuUtil.needs_klipper_stopped` is. The board
-    #: is already in BOOTSEL by the time this is called - today that means the
-    #: user held the button and replugged. The moment this tool routes a board
-    #: into BOOTSEL itself, over a port Klipper may be holding, this flips.
-    needs_klipper_stopped = False
+    #: False, for the same reason `DfuUtil.needs_services_stopped` is. The
+    #: board is already in BOOTSEL by the time this is called - today that
+    #: means the user held the button and replugged. The moment this tool
+    #: routes a board into BOOTSEL itself, over a port Klipper may be
+    #: holding, this flips.
+    needs_services_stopped = False
 
     @contextlib.contextmanager
     def prepared(

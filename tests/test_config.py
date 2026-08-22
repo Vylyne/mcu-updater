@@ -214,6 +214,56 @@ def test_a_patch_added_programmatically_round_trips(paths):
     assert reloaded[0].line == "src-y += buffer.c"
 
 
+# --------------------------------------------------------------------------
+# stop_services: absent/blank/set, at the type level
+# --------------------------------------------------------------------------
+
+
+def test_stop_services_absent_at_the_type_level(paths):
+    _write(paths, "[type a]\nchipset: x\nfirmware: klipper\nserials:\n")
+    assert Registry.load(paths).get("a").stop_services is None
+
+
+def test_stop_services_blank_at_the_type_level(paths):
+    _write(paths, "[type a]\nchipset: x\nfirmware: klipper\nstop_services:\nserials:\n")
+    assert Registry.load(paths).get("a").stop_services == []
+
+
+def test_stop_services_set_at_the_type_level(paths):
+    _write(
+        paths,
+        "[type a]\nchipset: x\nfirmware: klipper\nstop_services: klipper, knomi_serial\n"
+        "serials:\n",
+    )
+    assert Registry.load(paths).get("a").stop_services == ["klipper", "knomi_serial"]
+
+
+def test_an_unset_stop_services_is_not_restated_in_the_file(paths):
+    reg = Registry.load(paths)
+    reg.add_type("a", "rp2040")
+    reg.save(paths)
+    assert "stop_services" not in _read(paths)
+
+
+def test_stop_services_round_trips_through_save_and_load(paths):
+    reg = Registry.load(paths)
+    mcu = reg.add_type("a", "rp2040")
+    mcu.stop_services = ["klipper", "knomi_serial"]
+    reg.save(paths)
+    assert Registry.load(paths).get("a").stop_services == ["klipper", "knomi_serial"]
+
+
+def test_clearing_stop_services_removes_the_key(paths):
+    _write(
+        paths,
+        "[type a]\nchipset: x\nfirmware: klipper\nstop_services: klipper\nserials:\n",
+    )
+    reg = Registry.load(paths)
+    reg.get("a").stop_services = None
+    reg.save(paths)
+    assert "stop_services" not in _read(paths)
+
+
 def test_a_fresh_install_with_no_files_at_all_is_empty(paths):
     assert len(Registry.load(paths)) == 0
 

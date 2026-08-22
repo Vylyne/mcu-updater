@@ -1,6 +1,6 @@
 """dfu-util: the first firmware a bare board ever receives.
 
-The odd one out, and the reason `needs_klipper_stopped` is a property of the
+The odd one out, and the reason `needs_services_stopped` is a property of the
 *flasher's work* rather than of the device. There is no bootloader here to speak
 flashtool's protocol and no Klipper to ask for a reboot - the board is holding
 BOOT0 because somebody fitted a jumper and replugged it.
@@ -37,7 +37,7 @@ class DfuUtil:
     #: The conflict is not the write, it is the *transition*. The moment this
     #: tool routes a board into DFU itself rather than asking - over the serial
     #: port Klipper may be holding - this becomes True.
-    needs_klipper_stopped = False
+    needs_services_stopped = False
 
     @contextlib.contextmanager
     def prepared(

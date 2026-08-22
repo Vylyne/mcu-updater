@@ -6,7 +6,7 @@ import dataclasses
 import os
 from typing import Any
 
-from ... import firmware, flashers, providers
+from ... import firmware, flashers, providers, stop_services
 from ...build import read_sidecar
 from ...config import Registry
 from ...devices import (
@@ -28,8 +28,14 @@ def _board_target(board: dict) -> flashers.FlashTarget:
     A one-line alias so the two bulk callers say the same thing, and so the
     board selection's dict shape - which is on the wire - stays the selection's
     business rather than leaking a second copy into each of them.
+
+    `stop_services` rides inside the same dict (set by `_boards_to_flash`,
+    resolved once per type) rather than as a second argument here, since
+    `board` is already the one place that selection's per-target facts live.
     """
-    return flashers.flashtool.target_for(board)
+    return flashers.flashtool.target_for(
+        board, stop_services=tuple(board.get("stop_services") or ())
+    )
 
 
 def _screen_json(target: flashers.FlashTarget) -> dict[str, Any]:
@@ -113,6 +119,7 @@ class BulkMixin(_Base):
 
         versions = self.mcu_info()
         families = firmware.load(self.paths)
+        settings = self.settings()
         # Resolved per type below: a board running cartographer must be
         # compared against its own fork, not upstream klipper.
         flashlog = FlashLog(self.paths)
@@ -128,6 +135,9 @@ class BulkMixin(_Base):
             fw_head = git_head(
                 firmware.resolve(self.paths, application, families).source_dir(self.paths)
             )
+            # Once per type, not per serial - every board of this type shares
+            # the same resolved list.
+            units = stop_services.for_mcu(self.paths, mcu, settings, families)
             artifact_sha = (read_sidecar(self.paths, name, application) or {}).get("bin_sha256")
             for serial in mcu.serials:
                 state, _ = device_state(self.paths, mcu.chipset, serial)
@@ -150,6 +160,7 @@ class BulkMixin(_Base):
                             # Carried so the flash writes the family this board
                             # runs rather than assuming klipper.
                             "fw": application,
+                            "stop_services": list(units),
                             "state": state,
                             "reason": info["reason"] if scope != "all" else "forced",
                         }
@@ -172,6 +183,7 @@ class BulkMixin(_Base):
         physics.
         """
         known = self.pio_types()
+        settings = self.settings()
         out: list[flashers.FlashTarget] = []
         for payload in self.pio_status():
             if only is not None and payload["name"] != only:
@@ -182,13 +194,14 @@ class BulkMixin(_Base):
             # wire projection and reversing it is the thing this codebase keeps
             # deciding not to do.
             display = known[payload["name"]]
+            units = stop_services.for_display(self.paths, display, settings)
             for screen in payload["screens"]:
                 if not screen["present"]:
                     continue
                 status = self._screen_device_status(screen)
                 if scope != "all" and status.needs_flash is not True:
                     continue
-                target = flashers.esptool.target_for(display, screen)
+                target = flashers.esptool.target_for(display, screen, stop_services=units)
                 out.append(
                     dataclasses.replace(
                         target,

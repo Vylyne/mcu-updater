@@ -15,7 +15,7 @@ about katapult, `display_flash` grew a second loop that knew about screens, and
 Three members carry the whole difference between them, and each replaces
 something that is currently hand-written inside one of those loops:
 
-**`needs_klipper_stopped`** - so a batch groups by *requirement* rather than by
+**`needs_services_stopped`** - so a batch groups by *requirement* rather than by
 kind, and one stop covers boards and screens without either knowing the other
 exists.
 
@@ -88,6 +88,12 @@ class FlashTarget:
     #: What identifies the device: a serial for a board, a configured port for a
     #: screen.
     id: str
+    #: Units to stop before this write, resolved by whoever selected the
+    #: device - same shape as `flasher`, a uniform-slice fact rather than
+    #: something a batch works out for itself. Empty for a flasher whose
+    #: `needs_services_stopped` is `False`: the list is then never consulted,
+    #: so there is nothing to resolve.
+    stop_services: tuple[str, ...] = ()
     detail: Mapping[str, Any] = dataclasses.field(default_factory=dict)
 
     def to_json(self) -> dict[str, Any]:
@@ -117,7 +123,7 @@ class Flasher(Protocol):
     #: way. A bare board in DFU is a different flasher entirely, even though
     #: it may be the same chipset.
     states: tuple[str, ...]
-    #: Does *this flasher's own work* need Klipper down?
+    #: Does *this flasher's own work* need its device's holders released?
     #:
     #: Scoped to the write and to any state transition the flasher performs
     #: itself - not to the device's lifetime. flashtool needs it not because the
@@ -125,23 +131,16 @@ class Flasher(Protocol):
     #: request goes over the serial port Klipper is holding. esptool needs it
     #: because the klippy module holds the port for the write itself.
     #:
-    #: dfu-util does not, and that is the one worth watching. It holds only
-    #: while entering DFU is somebody else's problem - today the user fits the
-    #: boot jumper and replugs, so by the time we are called the board is
-    #: already there, which means either it was never on the Klipper bus or
-    #: whatever put it there already dealt with Klipper. The moment this tool
-    #: routes a board into DFU itself, that transition goes over a port Klipper
-    #: may be holding and this flips to True.
-    #:
-    #: TODO: this wants generalising to "which services must be stopped", with
-    #: a per-type list in config defaulting to klipper. Klipper is only the
-    #: right answer because most boards here are Klipper MCUs; a display already
-    #: needs its port watcher paused as well, and that is currently hardcoded in
-    #: the esptool flasher rather than configured. Not renamed yet on purpose -
-    #: `needs_service_stopped` without the list behind it would be *less* true
-    #: than this name, since only Klipper is actually stopped. The two land
-    #: together or not at all.
-    needs_klipper_stopped: bool
+    #: `False` means `FlashTarget.stop_services` is never consulted at all -
+    #: not "resolves to an empty list", genuinely not looked at. dfu-util is
+    #: the one worth watching: it holds only while entering DFU is somebody
+    #: else's problem - today the user fits the boot jumper and replugs, so by
+    #: the time we are called the board is already there, which means either
+    #: it was never on the Klipper bus or whatever put it there already dealt
+    #: with Klipper. The moment this tool routes a board into DFU itself, that
+    #: transition goes over a port Klipper may be holding and this flips to
+    #: True.
+    needs_services_stopped: bool
 
     def prepared(
         self, bench: Bench, targets: list[FlashTarget], ctx: Any

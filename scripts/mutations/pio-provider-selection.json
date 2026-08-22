@@ -46,11 +46,11 @@
       "replace": "        if False:"
     },
     {
-      "_comment": "Absent takes the default watcher; present-but-empty means this family has no watcher to pause. Easy to flatten into a single `or` that treats both the same, which would either pause a watcher that does not exist or fail to pause one that does.",
+      "_comment": "Absent inherits the next level out (the built-in default, klipper plus the watcher); present-but-empty still means klipper alone, never nothing. Easy to flatten into a single falsy check that treats both the same, which would wrongly inherit for a deliberate blank or wrongly override for an absent key.",
       "name": "an absent service: key is not the same as a blank one",
       "file": "src/mcu_updater/providers/pio.py",
-      "find": "            service=(\"knomi_serial\" if watcher is None else watcher).strip(),",
-      "replace": "            service=(watcher or \"knomi_serial\").strip(),"
+      "find": "            legacy = doc.get(section, \"service\")\n            if legacy is None:\n                stop_services = None  # no key at all: inherit the next level\n            else:",
+      "replace": "            legacy = doc.get(section, \"service\")\n            if not legacy:\n                stop_services = None  # no key at all: inherit the next level\n            else:"
     }
   ]
 }

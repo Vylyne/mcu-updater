@@ -123,8 +123,8 @@ of it. What is still open:
 ## Usage
 
 ```bash
-~/mcu-updater/src/updatefw.py            # interactive menu
-~/mcu-updater/src/updatefw.py status     # what's tracked, built, and online
+~/mcu-updater/mcu-updater.py            # interactive menu
+~/mcu-updater/mcu-updater.py status     # what's tracked, built, and online
 ```
 
 | Command | What it does |
@@ -326,8 +326,8 @@ stamps that literal string onto the board instead of a git describe, so there
 is no commit in it to compare against the source tree.
 
 ```bash
-updatefw.py profiles -t carto_v4
-updatefw.py apply-profile -t carto_v4 -p config.CartoV4USB
+./mcu-updater.py profiles -t carto_v4
+./mcu-updater.py apply-profile -t carto_v4 -p config.CartoV4USB
 ```
 
 **The answers come from the firmware tree, not from this repo.** Cartographer
@@ -463,8 +463,8 @@ A few things to know:
 Files are split by what they are — see [docs/layout.md](docs/layout.md) for the
 reasoning.
 
-```
-~/mcu-updater/src/updatefw.py        entry point (a shim onto the package)
+```bash
+~/mcu-updater/mcu-updater.py        entry point (a shim onto the package)
 
 ~/printer_data/config/mcu-updater/   hand-edited, backed up, editable in Mainsail
     mcu-updater.cfg                      settings + the MCU registry

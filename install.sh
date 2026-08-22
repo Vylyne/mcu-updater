@@ -503,7 +503,7 @@ function print_next_steps {
           downloadable through Moonraker's file manager)
  Status: sudo systemctl status ${SERVICE_NAME}
 
- The CLI is unchanged and still works:  ${INSTALL_PATH}/src/updatefw.py status
+ The CLI is unchanged and still works:  ${INSTALL_PATH}/mcu-updater.py status
 
  The systemd unit is 'mcu-updater', deliberately not 'klipper-*': KIAUH
  matches ^klipper(-[0-9a-zA-Z]+)?.service$ and would mistake it for a Klipper

@@ -102,9 +102,9 @@ The constant is what every flasher's `states` tuple matches on, so per the
 `needs_klipper_stopped` precedent the rename lands with the thing that makes it
 true, or not at all. The meaning is documented where it is defined.
 
-### Do not delete `src/updatefw.py`
+### Do not delete `src/updatefw.py` or 'mcu-updater.py'
 
-It is the documented entry point.
+they are the documented entry points.
 
 ### Do not fold `scripts/usb_topology.py` into the package
 

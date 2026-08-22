@@ -19,7 +19,7 @@
     },
     {
       "name": "a platformio-only type is excluded from this registry",
-      "find": "            if raw and builders == {\"platformio\"}:",
+      "find": "            if declared_fws and builders == {\"platformio\"}:",
       "replace": "            if False:"
     },
     {

@@ -207,30 +207,41 @@ class CfgDocument:
         return default if opt is None else opt.value
 
     def get_list(self, section: str, key: str) -> list[str]:
-        """A multi-line value as a list, blank entries dropped."""
+        """A multi-line value as a list, blank entries dropped.
+
+        Newline-delimited only, never comma or whitespace - deliberately
+        stricter than `get_csv`, because entries here can contain spaces
+        (a `<fw>_makefile_patches` line is `<file> -> <line>`) and splitting
+        on whitespace would shred them.
+        """
         raw = self.get(section, key)
         if not raw:
             return []
         return [part.strip() for part in raw.splitlines() if part.strip()]
 
     def get_csv(self, section: str, key: str) -> list[str] | None:
-        """A one-line, comma-separated value - the absent/blank/values
+        """A one-line list of whitespace-safe entries - the absent/blank/values
         trichotomy in one return type.
 
         `None` when the key is not present at all (inherit whatever the next
         level out says); `[]` when it is present but empty, i.e. a bare
-        `key:` (explicitly nothing); the split, stripped items otherwise. A
-        blank entry does not mean the same as an absent one - the caller
-        decides what "explicitly nothing" means, this only reports it.
+        `key:` (explicitly nothing); the split items otherwise. A blank entry
+        does not mean the same as an absent one - the caller decides what
+        "explicitly nothing" means, this only reports it.
 
-        Distinct from `get_list`, which is one item per line: this is for a
-        single comma-separated line, matching Moonraker's own spelling for
-        `[update_manager] managed_services:`.
+        Entries may be separated by commas, whitespace, or both - `a, b`,
+        `a b`, and a multi-line `a`/`b` continuation all yield the same two
+        items - matching both Moonraker's comma spelling for
+        `[update_manager] managed_services:` and the whitespace spelling
+        Moonraker and Klipper configs also use elsewhere. Distinct from
+        `get_list` in what an entry may contain, not in line count: use this
+        for entries that must never contain whitespace (a unit name, a
+        firmware family), `get_list` for entries that may.
         """
         raw = self.get(section, key)
         if raw is None:
             return None
-        return [part.strip() for part in raw.split(",") if part.strip()]
+        return [part for part in re.split(r"[,\s]+", raw) if part]
 
     def options(self, section: str) -> list[str]:
         sec = self.sections.get(section)

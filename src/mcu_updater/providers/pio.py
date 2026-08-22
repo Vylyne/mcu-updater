@@ -155,10 +155,10 @@ def load(paths: Paths) -> dict[str, PioType]:
     out: dict[str, PioType] = {}
     for declared in sections.read(doc):
         name, section = declared.name, declared.section
-        raw_firmware = (doc.get(section, "firmware") or "").strip()
-        if not raw_firmware:
+        declared_fws = doc.get_csv(section, "firmware") or []
+        if not declared_fws:
             continue
-        first_fw = raw_firmware.split(",")[0].strip()
+        first_fw = declared_fws[0]
         family = firmware.resolve(paths, first_fw, families_map)
         if family.builder != "platformio":
             continue

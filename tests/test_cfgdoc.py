@@ -100,6 +100,26 @@ def test_get_csv_drops_blank_items_between_commas():
     assert doc.get_csv("a", "key") == ["klipper", "knomi_serial"]
 
 
+def test_get_csv_accepts_space_separated_values():
+    doc = CfgDocument("[a]\nkey: klipper knomi_serial\n")
+    assert doc.get_csv("a", "key") == ["klipper", "knomi_serial"]
+
+
+def test_get_csv_accepts_mixed_comma_and_space_separators():
+    doc = CfgDocument("[a]\nkey: klipper, knomi_serial extra\n")
+    assert doc.get_csv("a", "key") == ["klipper", "knomi_serial", "extra"]
+
+
+def test_get_csv_accepts_a_multi_line_continuation():
+    doc = CfgDocument("[a]\nkey:\n    klipper\n    knomi_serial\n")
+    assert doc.get_csv("a", "key") == ["klipper", "knomi_serial"]
+
+
+def test_get_csv_accepts_tab_separated_values():
+    doc = CfgDocument("[a]\nkey: klipper\tknomi_serial\n")
+    assert doc.get_csv("a", "key") == ["klipper", "knomi_serial"]
+
+
 def test_a_value_containing_a_colon_survives():
     """Makefile lines and paths contain colons; only the first separator counts."""
     doc = CfgDocument("[a]\nline: src/Makefile -> foo: bar\n")

@@ -253,6 +253,31 @@ def test_stop_services_round_trips_through_save_and_load(paths):
     assert Registry.load(paths).get("a").stop_services == ["klipper", "knomi_serial"]
 
 
+def test_stop_services_accepts_space_separated_values(paths):
+    """A whitespace-delimited stop_services: (the Moonraker managed_services
+    spelling) must resolve to the same list as the comma form - not one
+    mangled entry."""
+    _write(
+        paths,
+        "[type a]\nchipset: x\nfirmware: klipper\nstop_services: klipper knomi_serial\n"
+        "serials:\n",
+    )
+    assert Registry.load(paths).get("a").stop_services == ["klipper", "knomi_serial"]
+
+
+def test_a_space_separated_stop_services_round_trips_as_comma_separated(paths):
+    """Read-tolerant, write-canonical: whatever spelling is read back in, the
+    file is rewritten with the comma form."""
+    _write(
+        paths,
+        "[type a]\nchipset: x\nfirmware: klipper\nstop_services: klipper knomi_serial\n"
+        "serials:\n",
+    )
+    reg = Registry.load(paths)
+    reg.save(paths)
+    assert "stop_services: klipper, knomi_serial" in _read(paths)
+
+
 def test_clearing_stop_services_removes_the_key(paths):
     _write(
         paths,
@@ -373,6 +398,14 @@ def test_a_type_with_no_firmware_key_is_refused(paths):
         Registry.load(paths)
     assert "a" in str(exc.value)
     assert "firmware" in str(exc.value)
+
+
+def test_firmware_accepts_space_separated_families(paths):
+    """`firmware:` used to require a comma; a Moonraker-style space-separated
+    list must load the same families, not be misread as one bad family name."""
+    _write(paths, "[type a]\nchipset: x\nfirmware: klipper katapult\nserials:\n")
+    mcu = Registry.load(paths).get("a")
+    assert mcu.firmwares == ["klipper", "katapult"]
 
 
 def test_firmware_klipper_alone_means_no_bootloader(paths):

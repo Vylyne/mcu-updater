@@ -18,7 +18,7 @@ Per-type keys, and that is all:
 ``serials``
     One tracked board per line.
 ``firmware``
-    Required. Which families this board runs, comma-separated - an
+    Required. Which families this board runs, comma- or space-separated - an
     application and, for a board with one, its bootloader, e.g.
     ``cartographer, katapult``. A type with no bootloader simply omits one.
 ``profile``
@@ -108,13 +108,10 @@ def _is_platformio_only(
     platformio - meaning the type belongs to `providers/pio.py`'s registry,
     not this one.
     """
-    raw = (doc.get(section, "firmware") or "").strip()
-    if not raw:
+    declared_fws = doc.get_csv(section, "firmware") or []
+    if not declared_fws:
         # Vacuously false, not "defaults to klipper" - load() refuses a
         # section with no firmware: key before this is ever reachable for one.
-        return False
-    declared_fws = [f.strip() for f in raw.split(",") if f.strip()]
-    if not declared_fws:
         return False
     return all(
         firmware.resolve(paths, fw, families_map).builder == "platformio"
@@ -339,8 +336,7 @@ class Registry:
             mcu = McuType(name=name, chipset=(doc.get(section, "chipset") or "").strip())
             mcu.serials = doc.get_list(section, "serials")
 
-            raw = (doc.get(section, "firmware") or "").strip()
-            declared_fws = [f.strip() for f in raw.split(",") if f.strip()]
+            declared_fws = doc.get_csv(section, "firmware") or []
             if not declared_fws:
                 # Refused, not defaulted to klipper - silence used to mean
                 # klipper (kconfig_make), which is exactly the implicit
@@ -369,7 +365,7 @@ class Registry:
             builders = {
                 firmware.resolve(paths, fw, families_map).builder for fw in declared_fws
             }
-            if raw and builders == {"platformio"}:
+            if declared_fws and builders == {"platformio"}:
                 # A type whose only declared firmware is built by platformio
                 # belongs to providers/pio.py's registry, not this one - a
                 # type with no explicit firmware: at all defaults to klipper

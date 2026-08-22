@@ -247,8 +247,8 @@ Per-type keys:
   input to flasher selection.
 - **`serials`** — one tracked board per line.
 - **`firmware`** — a **list** of the families this board actually runs, e.g.
-  `cartographer, katapult`. A type that uses no bootloader simply omits it. See
-  [Firmware families](#firmware-families).
+  `cartographer, katapult` (comma- or space-separated). A type that uses no
+  bootloader simply omits it. See [Firmware families](#firmware-families).
 - **`profile`** — the vendor answer file this type's config is seeded from, e.g.
   `config.CartoV4USB`. Names a file in that firmware's *own source tree*, not
   one shipped here. See [Profiles](#profiles).
@@ -270,7 +270,9 @@ later copy silently do nothing.
 ### Which services stop before a write
 
 `stop_services:` names the systemd units that must be down before a write, at
-three levels — most granular wins, and setting it **replaces**, never merges:
+three levels — most granular wins, and setting it **replaces**, never merges.
+Entries may be comma-separated, space-separated, or both — `klipper,
+knomi_serial` and `klipper knomi_serial` mean the same thing:
 
 ```ini
 [updater]

@@ -32,6 +32,12 @@ def test_values_are_parsed_with_the_right_types(paths):
     assert s.service_backend == "systemd"
 
 
+def test_stop_services_accepts_space_separated_values_at_the_updater_level(paths):
+    with open(paths.settings_file, "w", encoding="utf-8") as fh:
+        fh.write("[updater]\nstop_services = klipper knomi_serial\n")
+    assert load_settings(paths.settings_file).stop_services == ["klipper", "knomi_serial"]
+
+
 def test_a_bare_legacy_service_key_becomes_a_one_element_stop_services(paths):
     """Retired in favour of `stop_services`, but a KIAUH multi-instance cfg
     that still says `service: klipper-1` must not silently stop the wrong

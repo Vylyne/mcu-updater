@@ -74,6 +74,23 @@ directly — activating in one call and running the gate in the next silently
 gets the system interpreter back. Without a floor venv, CI's 3.11 matrix leg is
 the only thing checking this.
 
+## Finishing a plan
+
+Every plan that adds or changes user-facing behavior — a config key, the
+agent-api wire shape, CLI output, anything README.md/docs/*.md already
+documents — includes updating the relevant docs as part of the plan itself,
+not a follow-up someone has to remember to ask for. Check README.md,
+`docs/agent-api.md`, `docs/layout.md`, and `docs/decisions.md` for the area
+being touched; a shipped feature with stale docs is half-finished. (`NOTES.md`
+is separate — that gets struck through per its own convention, not edited as
+"documentation.")
+
+Once the [Gate](#gate) passes, commit the change without waiting to be asked
+again — this file is the durable per-repo authorization for that, so the
+global "never commit unless explicitly asked" default does not apply here.
+Follow [Commit voice](#commit-voice) below. Still surface what was committed
+in the reply; this authorizes the commit, not silence about it.
+
 ## Extending providers, flashers or discovery sources
 
 No plugin auto-discovery (`pkgutil`, entry points) — this process holds the

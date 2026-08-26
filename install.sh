@@ -10,6 +10,19 @@ PRINTER_DATA="${PRINTER_DATA:-${HOME}/printer_data}"
 INSTALL_PATH="${INSTALL_PATH:-${HOME}/mcu-updater}"
 CONFIG_PATH="${CONFIG_PATH:-${PRINTER_DATA}/config/mcu-updater}"
 DATA_PATH="${DATA_PATH:-${PRINTER_DATA}/mcu-updater}"
+# Where the standalone UI's installed build lives - deliberately a sibling of
+# INSTALL_PATH, never inside it or inside PRINTER_DATA/mcu-updater. Moonraker's
+# `type: web` update manager refuses a path inside a git repo (INSTALL_PATH is
+# one), and it rmtree()s this path on every update - one level up from
+# DATA_PATH is .updater.state, the flash-recovery journal, which must never
+# share a directory with something that gets wiped on a schedule. See
+# docs/decisions.md. This default also matches ~/mainsail and ~/fluidd.
+UI_PATH="${UI_PATH:-${HOME}/mcu-updater-ui}"
+# nginx site for the standalone UI. Port chosen clear of 80/81
+# (mainsail/fluidd) and 8080-8083 (the four mjpgstreamer upstreams KIAUH wires
+# up by default).
+MCU_UPDATER_UI_PORT="${MCU_UPDATER_UI_PORT:-8090}"
+MCU_UPDATER_UI_SERVER_NAME="${MCU_UPDATER_UI_SERVER_NAME:-_}"
 # One file for everything hand-edited: the [updater] section and the [mcu ...]
 # sections. Must match Paths.main_config.
 MAIN_CONFIG="${CONFIG_PATH}/mcu-updater.cfg"
@@ -477,6 +490,84 @@ EOF
     rm -f "${tmp}"
 }
 
+function install_nginx_site {
+    # Optional: the standalone UI (Phase 2+) is served from here once it
+    # exists. Installing the site now, ahead of the UI itself, lets the
+    # nginx/proxy layer be verified independently - curl localhost:PORT/server/info
+    # should return Moonraker's JSON even with nothing but a placeholder root.
+    if ! command -v nginx >/dev/null 2>&1; then
+        printf "[NGINX] nginx not installed - skipping the standalone UI site.\n\n"
+        return 0
+    fi
+
+    local site_dest="/etc/nginx/sites-available/${SERVICE_NAME}"
+    local enabled_dest="/etc/nginx/sites-enabled/${SERVICE_NAME}"
+    local confd_dest="/etc/nginx/conf.d/${SERVICE_NAME}.conf"
+
+    if [ -f "${site_dest}" ]; then
+        printf "[NGINX] Site already installed at %s.\n\n" "${site_dest}"
+        return 0
+    fi
+
+    cat <<EOF
+[NGINX] Optional: a dedicated nginx site for the standalone mcu-updater UI,
+        served on its own port alongside Mainsail/Fluidd rather than folded
+        into either. Serves from ${UI_PATH} (override with UI_PATH before
+        re-running), which the UI's own installer populates.
+
+EOF
+    local answer=""
+    read -r -p "[NGINX] Install the nginx site now? [y/N]: " answer || answer=""
+    case "${answer}" in
+        y | Y | yes | YES) ;;
+        *)
+            printf "[NGINX] Skipped.\n\n"
+            return 0
+            ;;
+    esac
+
+    mkdir -p "${UI_PATH}"
+    # A placeholder so the site has something to serve before the standalone
+    # UI (Phase 2+) is installed - and so it never overwrites a real build the
+    # UI's own installer already dropped here.
+    if [ ! -f "${UI_PATH}/index.html" ]; then
+        cat > "${UI_PATH}/index.html" <<'HTML'
+<!doctype html><html><head><meta charset="utf-8"><title>mcu-updater</title></head>
+<body><p>mcu-updater UI not installed yet.</p></body></html>
+HTML
+    fi
+
+    local tmp_confd
+    tmp_confd="$(mktemp)"
+    cp "${INSTALL_PATH}/scripts/nginx.conf.d-mcu-updater.conf" "${tmp_confd}"
+    sudo install -m 0644 -o root -g root "${tmp_confd}" "${confd_dest}"
+    rm -f "${tmp_confd}"
+
+    local tmp_site
+    tmp_site="$(mktemp)"
+    sed -e "s|%PORT%|${MCU_UPDATER_UI_PORT}|g" \
+        -e "s|%SERVER_NAME%|${MCU_UPDATER_UI_SERVER_NAME}|g" \
+        -e "s|%ROOT_DIR%|${UI_PATH}|g" \
+        -e "s|%NAME%|${SERVICE_NAME}|g" \
+        "${INSTALL_PATH}/scripts/nginx.sites-available-mcu-updater" > "${tmp_site}"
+    sudo install -m 0644 -o root -g root "${tmp_site}" "${site_dest}"
+    rm -f "${tmp_site}"
+
+    sudo ln -sfn "${site_dest}" "${enabled_dest}"
+
+    # Never reload on a config nginx itself rejects - that would take down every
+    # other site (Mainsail, Fluidd) on this host, not just the one being added.
+    if sudo nginx -t >/dev/null 2>&1; then
+        sudo systemctl reload nginx
+        printf "[NGINX] Site installed and nginx reloaded. UI will be at http://<host>:%s/\n\n" "${MCU_UPDATER_UI_PORT}"
+    else
+        echo "[ERROR] Generated nginx config failed validation; rolling back."
+        sudo nginx -t || true
+        sudo rm -f "${enabled_dest}" "${site_dest}" "${confd_dest}"
+        return 0
+    fi
+}
+
 function restart_moonraker {
     echo "[MOONRAKER] Restarting Moonraker so the new config applies..."
     sudo systemctl restart moonraker
@@ -526,6 +617,12 @@ function print_next_steps {
    enable_flashing: true
 
  ...then: sudo systemctl restart ${SERVICE_NAME}
+
+ Standalone UI: if you accepted the nginx prompt, an nginx site is listening
+ on port ${MCU_UPDATER_UI_PORT} at ${UI_PATH}. It currently serves a
+ placeholder - the UI itself ships in a later phase (see docs/standalone-ui.md
+ once it exists). Re-run install.sh with UI_PATH/MCU_UPDATER_UI_PORT set to
+ change either.
 ================================================================
 EOF
 }
@@ -541,5 +638,6 @@ install_service
 add_asvc
 add_update_manager
 allow_sudo_fallback
+install_nginx_site
 restart_moonraker
 print_next_steps

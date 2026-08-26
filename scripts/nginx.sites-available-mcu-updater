@@ -1,0 +1,92 @@
+# Rendered by install.sh - %PLACEHOLDERS% are substituted there.
+# Installed to /etc/nginx/sites-available/mcu-updater, symlinked from
+# sites-enabled. Requires /etc/nginx/conf.d/mcu-updater.conf (see
+# nginx.conf.d-mcu-updater.conf) for the upstream and map it references.
+#
+# Modelled on KIAUH's own webui site template (klipper_webui_nginx.cfg) so this
+# behaves the way Mainsail's and Fluidd's sites already do - gzip, no-cache on
+# index.html, the same proxy headers - but on its own port, in its own file,
+# touching neither of theirs. See docs/decisions.md: do not edit Mainsail's
+# site file to add a subpath; this server block is the supported way to run the
+# UI alongside it.
+#
+# %ROOT_DIR% is the *installed UI's* directory (type: web, e.g. ~/mcu-updater-ui
+# by default - see UI_PATH), never the git checkout: Moonraker refuses to manage
+# a path inside a git repo, and nginx would otherwise be serving the checkout's
+# working tree instead of a release build.
+
+server {
+    listen %PORT%;
+    # Uncomment for IPv6:
+    # listen [::]:%PORT%;
+
+    # Uncomment and point at your own cert (e.g. acme.sh) to serve over TLS.
+    # An iframe embed (see docs/standalone-ui.md) needs this when the page
+    # embedding it - Mainsail, Fluidd - is itself served over https, or the
+    # browser blocks it as mixed content.
+    # listen %PORT% ssl;
+    # ssl_certificate     /path/to/fullchain.pem;
+    # ssl_certificate_key /path/to/privkey.pem;
+
+    server_name %SERVER_NAME%;
+
+    access_log /var/log/nginx/%NAME%-access.log;
+    error_log  /var/log/nginx/%NAME%-error.log;
+
+    gzip on;
+    gzip_vary on;
+    gzip_proxied any;
+    gzip_proxied expired no-cache no-store private auth;
+    gzip_comp_level 4;
+    gzip_buffers 16 8k;
+    gzip_http_version 1.1;
+    gzip_types text/plain text/css text/xml text/javascript application/javascript application/x-javascript application/json application/xml;
+
+    root %ROOT_DIR%;
+    index index.html;
+
+    # No size cap and no request buffering: a firmware .bin/.uf2 goes through
+    # Moonraker's own file manager, not this root, but the proxied API calls
+    # below (build/flash job submission, log fetches) should not be held up by
+    # nginx guessing at a body size.
+    client_max_body_size 0;
+    proxy_request_buffering off;
+
+    location / {
+        try_files $uri $uri/ /index.html;
+    }
+
+    # A cached index.html would keep serving a stale asset manifest after an
+    # update - this is a single-page app, so the shell itself must always be
+    # revalidated even though the hashed assets it references are fine to cache
+    # forever under their default headers.
+    location = /index.html {
+        add_header Cache-Control "no-store, no-cache, must-revalidate";
+    }
+
+    # Same-origin with the API is what avoids CORS and a cors_domains edit in
+    # moonraker.conf entirely - the UI talks to "itself", and nginx forwards.
+    location /websocket {
+        proxy_pass http://mcu_updater_apiserver/websocket;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $mcu_updater_connection_upgrade;
+        proxy_set_header Host $http_host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        # A build or flash job can run for minutes; Moonraker's own RPC calls
+        # (see docs/agent-api.md) have no timeout of their own either, so this
+        # side must not close the socket out from under a long job.
+        proxy_read_timeout 86400;
+    }
+
+    location ~ ^/(printer|api|access|machine|server)/ {
+        proxy_pass http://mcu_updater_apiserver$request_uri;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Host $http_host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Scheme $scheme;
+    }
+}

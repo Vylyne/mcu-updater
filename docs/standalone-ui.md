@@ -94,6 +94,40 @@ Unlike the Mainsail fork's release workflow, there is no upstream version to
 sort under here — this repo owns its tags outright, so a plain ascending
 `v0.1.0`, `v0.2.0`, … is enough.
 
+## Talking to Moonraker (Phase 3)
+
+`ui/src/api/` is the whole communication layer: `moonraker.ts` (the websocket
+transport - JSON-RPC id correlation, a 15s client-side timeout per call since
+Moonraker's own `call_method_with_response` has none, and reconnect with
+backoff), `agent.ts` (the `server.extensions.request` funnel every `fw.*` call
+goes through, plus error normalisation to `{code, message, data}`), and
+`events.ts` (the `notify_agent_event` router for `state`/`bus`/`job`/`log` and
+Moonraker's own `connected`/`disconnected`). `ui/src/store/agent.ts` is a plain
+`reactive()` singleton wired to all three - no store library, matching this
+repo's dependency-frugal default.
+
+The UI refuses to render above `SUPPORTED_API_VERSION` (currently 3, must
+equal `mcu_updater.API_VERSION` - `tests/test_ui_contract.py` asserts this on
+every commit, no npm involved) and derives every control from `fw.ping`'s
+`capabilities`, never from `phase`.
+
+**Auth is intentionally partial in this phase.** The UI reads `/access/info`
+and supports an API key from `localStorage`
+(`mcu-updater-ui:apiKey`, sent as `X-Api-Key` over HTTP and as a `?token=`
+query param on the websocket). It does **not** implement Moonraker's login
+flow, so an install with `force_logins` enabled is not yet supported - a
+trusted-client LAN install needs neither. The login form is deferred to a
+later phase, not silently dropped.
+
+`ui/src/App.vue` is currently a debug harness (connection state, the live
+`fw.ping`/`fw.status` JSON, a rolling event log) rather than the real
+`targets[]` view - that's Phase 4.
+
+`scripts/fake_moonraker.py` fakes the agent's *unix socket* connection to
+Moonraker, not a browser websocket, so it cannot drive this layer. Phase 3's
+own tests (`ui/src/api/*.spec.ts`) mock the `WebSocket` transport instead; a
+real Moonraker/agent pair is still the only way to verify this end to end.
+
 ## Building locally
 
 ```bash

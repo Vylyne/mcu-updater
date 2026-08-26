@@ -279,7 +279,9 @@ def status_cmd(args: argparse.Namespace) -> None:
         # running cartographer carries klipper config keys too, and listing them
         # as "not built" is noise about firmware nobody intends to build for it.
         for fw in mcu.families():
-            status = artifact_status(c.paths, name, fw)
+            status = artifact_status(
+                c.paths, name, fw, extra_repos=mcu.fw_get(fw).extra_repos
+            )
             if status.reason == NEVER_BUILT:
                 print(f"  {fw}: not built")
             elif not status.is_current:

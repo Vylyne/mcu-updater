@@ -397,6 +397,11 @@ class BuildResult:
     #: than a git describe, so it corroborates a release rather than a commit -
     #: see states.VERSION_ONLY.
     version: str | None = None
+    #: git SHA of each configured `extra_repos` path at build time, keyed by
+    #: that path. Lets artifact_status() notice a secondary source tree (e.g.
+    #: a buffer_manager-style extra file pulled in by a makefile patch)
+    #: moving on even when the main tree's fw_sha has not.
+    extra_repo_shas: dict[str, str | None] = dataclasses.field(default_factory=dict)
 
     def to_sidecar(self) -> dict[str, Any]:
         return {
@@ -408,6 +413,7 @@ class BuildResult:
             "config_rewritten": self.config_rewritten,
             "app_address": self.app_address,
             "version": self.version,
+            "extra_repo_shas": self.extra_repo_shas,
         }
 
 
@@ -426,6 +432,7 @@ def artifact_status(
     fw: str,
     *,
     config_sha: str | None = None,
+    extra_repos: list[str] | None = None,
 ) -> ArtifactStatus:
     """Does this type's built image still match the inputs that produced it?
 
@@ -437,6 +444,13 @@ def artifact_status(
     breath, and one `fw.status` used to read every saved config twice for it.
     None means "read it here", and reads as identical either way: a config that
     is not there hashes to None whoever asks.
+
+    `extra_repos` is the type's currently configured `<fw>_extra_repos` list
+    (`FwConfig.extra_repos`) - secondary source trees tracked the same way as
+    the main one. A sidecar built before a path was added, or before this
+    field existed at all, has no recorded SHA for it; that path is then
+    silently skipped rather than flagged, same as an absent `fw_sha` - absence
+    of evidence is not evidence.
     """
     if not os.path.exists(paths.bin_file(mcu_type, fw)):
         return ArtifactStatus(NEVER_BUILT)
@@ -457,6 +471,13 @@ def artifact_status(
     head = git_head(firmware.resolve(paths, fw).source_dir(paths))
     if head and side.get("fw_sha") and head != side["fw_sha"]:
         return ArtifactStatus(SOURCE_CHANGED)
+
+    recorded_repo_shas = side.get("extra_repo_shas") or {}
+    for repo_path in extra_repos or []:
+        repo_head = git_head(repo_path)
+        recorded = recorded_repo_shas.get(repo_path)
+        if repo_head and recorded and repo_head != recorded:
+            return ArtifactStatus(SOURCE_CHANGED)
 
     return ArtifactStatus()
 
@@ -685,6 +706,7 @@ def build(
         reseeded=reseeded,
         app_address=_read_app_address(config_file),
         version=profiles.stamped_version(config_file),
+        extra_repo_shas={p: git_head(p) for p in mcu.fw_get(fw).extra_repos},
     )
     try:
         with open(paths.sidecar_file(mcu_type, fw), "w", encoding="utf-8") as fh:

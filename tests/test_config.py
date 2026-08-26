@@ -69,6 +69,16 @@ def test_a_patch_line_containing_an_arrow_or_colon_survives(paths):
     assert patch.line == "src-y += a->b:c.c"
 
 
+def test_extra_repos_parse_one_path_per_line(paths):
+    _write(
+        paths,
+        "[type a]\nchipset: x\nfirmware: klipper\nklipper_extra_repos:\n"
+        "    /home/pi/buffer_manager\nserials:\n",
+    )
+    repos = Registry.load(paths).get("a").fw("klipper").extra_repos
+    assert repos == ["/home/pi/buffer_manager"]
+
+
 def test_a_malformed_patch_is_refused_rather_than_silently_dropped(paths):
     """Silently ignoring it means a board quietly builds without its extra source
     file - which is exactly the class of bug this whole key exists to fix."""
@@ -177,6 +187,7 @@ def test_defaults_are_not_restated_in_the_file(paths):
     assert "katapult_installed" not in out
     assert "extra_args" not in out
     assert "makefile_patches" not in out
+    assert "extra_repos" not in out
 
 
 def test_katapult_installed_false_leaves_no_bootloader_in_firmwares(paths):
@@ -212,6 +223,29 @@ def test_a_patch_added_programmatically_round_trips(paths):
     reloaded = Registry.load(paths).get("a").fw("klipper").makefile_patches
     assert reloaded[0].file == "src/Makefile"
     assert reloaded[0].line == "src-y += buffer.c"
+
+
+def test_an_extra_repo_added_programmatically_round_trips(paths):
+    reg = Registry.load(paths)
+    mcu = reg.add_type("a", "stm32f072xb")
+    mcu.fw("klipper").extra_repos = ["/home/pi/buffer_manager"]
+    reg.save(paths)
+    assert "/home/pi/buffer_manager" in _read(paths)
+
+    reloaded = Registry.load(paths).get("a").fw("klipper").extra_repos
+    assert reloaded == ["/home/pi/buffer_manager"]
+
+
+def test_clearing_extra_repos_removes_the_key(paths):
+    _write(
+        paths,
+        "[type a]\nchipset: x\nfirmware: klipper\n"
+        "klipper_extra_repos:\n    /home/pi/buffer_manager\nserials:\n",
+    )
+    reg = Registry.load(paths)
+    reg.get("a").fw("klipper").extra_repos = []
+    reg.save(paths)
+    assert "klipper_extra_repos" not in _read(paths)
 
 
 # --------------------------------------------------------------------------

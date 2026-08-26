@@ -82,6 +82,7 @@ klipper_makefile_patches:
 | `profile` | The vendor answer file the config was seeded from, e.g. `config.CartoV4USB`. |
 | `<fw>_extra_args` | Appended to the `make` command line. |
 | `<fw>_makefile_patches` | `<file> -> <line>`, appended to that Makefile for one build then reverted. |
+| `<fw>_extra_repos` | Secondary source trees whose git SHA is tracked alongside the main tree; a commit in any of them is reported the same as a change in the main source. |
 
 `<fw>` is any family named in `firmware:`.
 

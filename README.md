@@ -259,6 +259,12 @@ Per-type keys:
   has no way to add `src-y +=` lines from the command line, and a permanent edit
   would leak into every other type sharing that chipset and conflict on the next
   `git pull` of Klipper.
+- **`<fw>_extra_repos`** — one directory per line. Secondary source trees whose
+  git SHA is tracked alongside the main tree, so a type is reported stale if
+  *either* the main source or one of these has moved — e.g. `flylllplusbuffer`
+  above pulls `buffer.c` in via a makefile patch, but that file actually lives
+  in a separate `buffer_manager` checkout; without `klipper_extra_repos:
+  ~/buffer_manager` a commit there goes unnoticed.
 - **`stop_services`** — units to stop before flashing this type, overriding
   `[firmware ...]` and `[updater]`. See
   [Which services stop before a write](#which-services-stop-before-a-write).

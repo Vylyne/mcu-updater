@@ -237,8 +237,15 @@ class StatusMixin(_Base):
         # used to read it for itself, so one fw.status read every saved config
         # on every printer twice.
         config_sha = sha256_file(cfg)
+        mcu = self.registry().get(mcu_type)
 
-        status = artifact_status(self.paths, mcu_type, fw, config_sha=config_sha)
+        status = artifact_status(
+            self.paths,
+            mcu_type,
+            fw,
+            config_sha=config_sha,
+            extra_repos=mcu.fw_get(fw).extra_repos,
+        )
 
         return {
             "has_config": os.path.exists(cfg),
@@ -345,6 +352,7 @@ class StatusMixin(_Base):
             block: dict[str, Any] = {
                 "extra_args": cfg.extra_args,
                 "makefile_patches": [p.to_json() for p in cfg.makefile_patches],
+                "extra_repos": list(cfg.extra_repos),
             }
             if fw == "katapult":
                 block["installed"] = mcu.bootloader(families) is not None

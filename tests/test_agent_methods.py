@@ -124,6 +124,18 @@ def test_status_surfaces_makefile_patches(api):
     assert patches == [{"file": "src/Makefile", "line": "src-y += buffer.c"}]
 
 
+def test_status_surfaces_extra_repos(api, paths):
+    from mcu_updater.config import Registry
+
+    reg = Registry.load(paths)
+    reg.get("flylllplusbuffer").fw("klipper").extra_repos = ["/home/pi/buffer_manager"]
+    reg.save(paths)
+
+    types = {t["name"]: t for t in api.dispatch("fw.type.list")["types"]}
+    assert types["flylllplusbuffer"]["klipper"]["extra_repos"] == ["/home/pi/buffer_manager"]
+    assert types["bttebb36"]["klipper"]["extra_repos"] == []
+
+
 def test_status_reports_device_state_from_the_bus(api, paths, fake_root):
     make_device(fake_root / "bus", "klipper", "stm32f072xb", "4B0036000A53594731383520-if00")
     types = {t["name"]: t for t in api.dispatch("fw.type.list")["types"]}

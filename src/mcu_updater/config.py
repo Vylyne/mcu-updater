@@ -93,11 +93,18 @@ class MakefilePatch:
 class FwConfig:
     extra_args: str = ""
     makefile_patches: list[MakefilePatch] = dataclasses.field(default_factory=list)
+    #: Secondary source trees whose git SHA is tracked alongside the main
+    #: source tree, e.g. a buffer_manager-style extra file pulled in by a
+    #: makefile patch above. A commit in any of these is reported the same
+    #: as a change in the main source - see build.artifact_status().
+    extra_repos: list[str] = dataclasses.field(default_factory=list)
 
     def to_json(self) -> dict[str, Any]:
         out: dict[str, Any] = {"extra_args": self.extra_args}
         if self.makefile_patches:
             out["makefile_patches"] = [p.to_json() for p in self.makefile_patches]
+        if self.extra_repos:
+            out["extra_repos"] = list(self.extra_repos)
         return out
 
 
@@ -407,6 +414,7 @@ class Registry:
                             value=raw_patch,
                         )
                     cfg.makefile_patches.append(patch)
+                cfg.extra_repos = doc.get_list(section, f"{fw}_extra_repos")
             types[name] = mcu
 
         return cls(types, doc)
@@ -495,6 +503,13 @@ class Registry:
                     doc.set(section, patch_key, [p.render() for p in valid])
                 else:
                     doc.remove_option(section, patch_key)
+
+                repos_key = f"{fw}_extra_repos"
+                repos = cfg.extra_repos if cfg else []
+                if repos:
+                    doc.set(section, repos_key, list(repos))
+                else:
+                    doc.remove_option(section, repos_key)
 
         os.makedirs(os.path.dirname(paths.registry_file), exist_ok=True)
         tmp = paths.registry_file + ".tmp"

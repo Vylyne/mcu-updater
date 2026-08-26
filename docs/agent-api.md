@@ -160,7 +160,8 @@ update the panel.
 `targets` is `TypeStatus` and `DisplayStatus` said in one shape - see below.
 Those two originals are not embedded here; fetch them with `fw.type.list` and
 `fw.device.list` when a caller needs the full per-type detail `targets`
-projects away (extra_args, makefile_patches, serial-by-serial version info).
+projects away (extra_args, makefile_patches, extra_repos, serial-by-serial
+version info).
 
 `kconfig_available` is keyed by family name, `true` when that family's tree has
 a parseable Kconfig - it is what a picker uses to decide whether "configure"
@@ -182,8 +183,9 @@ shape doesn't change when jobs arrive. `klipper_service`, `printing` and
  "firmware": "klipper",
  "katapult_installed": true,
  "needs_flash": false,
- "klipper":  {"extra_args": "", "makefile_patches": []},
- "katapult": {"extra_args": "", "makefile_patches": [], "installed": true},
+ "klipper":  {"extra_args": "", "makefile_patches": [], "extra_repos": []},
+ "katapult": {"extra_args": "", "makefile_patches": [], "extra_repos": [],
+              "installed": true},
  "serials": [
    {"serial": "290055001850304158373620-if00", "state": "klipper",
     "path": "/dev/serial/by-id/usb-Klipper_stm32g0b1xx_290055001850304158373620-if00",

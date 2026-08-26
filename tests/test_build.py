@@ -168,6 +168,42 @@ def test_artifact_status_detects_a_changed_source_tree(paths, settings):
         assert status.is_current
 
 
+def test_artifact_status_detects_a_changed_extra_repo(paths, settings):
+    """A commit in a secondary tracked tree (e.g. buffer_manager) must be
+    reported the same way as a commit in the main source."""
+    settings.dry_run = True
+    reg = _registry(paths)
+    _write_config(paths)
+    build(paths, reg, settings, "board", "klipper")
+
+    extra_repo = paths.fw_dir("klipper")
+    side_path = paths.sidecar_file("board", "klipper")
+    side = json.load(open(side_path, encoding="utf-8"))
+    side.setdefault("extra_repo_shas", {})[extra_repo] = "deadbee"
+    with open(side_path, "w", encoding="utf-8") as fh:
+        json.dump(side, fh)
+
+    status = artifact_status(paths, "board", "klipper", extra_repos=[extra_repo])
+    if _has_git(paths):
+        assert status.reason == "source_changed"
+    else:
+        assert status.is_current
+
+
+def test_an_extra_repo_absent_from_the_sidecar_does_not_false_flag(paths, settings):
+    """A sidecar built before this extra_repos path was configured has no
+    recorded sha for it - that must not read as stale."""
+    settings.dry_run = True
+    reg = _registry(paths)
+    _write_config(paths)
+    build(paths, reg, settings, "board", "klipper")
+
+    status = artifact_status(
+        paths, "board", "klipper", extra_repos=[paths.fw_dir("klipper")]
+    )
+    assert status.is_current
+
+
 def _has_git(paths) -> bool:
     from mcu_updater.build import git_head
 

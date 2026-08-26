@@ -78,7 +78,11 @@ class KconfigMake:
         return None
 
     def artifact_status(self, install: Install, target: BuildTarget) -> ArtifactStatus:
-        return build_mod.artifact_status(install.paths, target.name, self._family(target))
+        fw = self._family(target)
+        mcu = install.registry.get(target.name)
+        return build_mod.artifact_status(
+            install.paths, target.name, fw, extra_repos=mcu.fw_get(fw).extra_repos
+        )
 
     def build(
         self,

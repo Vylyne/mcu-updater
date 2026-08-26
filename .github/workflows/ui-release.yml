@@ -1,0 +1,169 @@
+# Publishes a Release that Moonraker's `type: web` update manager for
+# `[update_manager mcu-updater-ui]` can consume. Mirrors the pattern proven in
+# Vylyne/mainsail's .github/workflows/mu-release.yml, but simpler: this repo
+# owns its own tags outright, so there is no upstream version to sort under
+# and no "-vylyne.N" prerelease scheme to encode it. A plain ascending
+# `vX.Y.Z` is enough - see docs/decisions.md for why the fork needs more.
+#
+# Moonraker requires, for `type: web`:
+#   * a published Release whose *title* equals release_info.json's version
+#     (net_deploy.py compares result['name'], not tag_name)
+#   * an asset named after release_info.json's asset_name - never assets[0],
+#     which GitHub picks by sorting names, and _extract_release() rmtree()s
+#     the install directory before it discovers that was the wrong one
+#   * release_info.json inside that asset, with project_owner/project_name
+#     matching `repo:` and version matching the tag
+#
+# CHANNELS. Moonraker's type: web reads one of two endpoints, and neither is
+# version-ordered (net_deploy.py):
+#
+#   channel: stable  ->  /releases/latest      newest non-prerelease, by date
+#   channel: beta    ->  /releases?per_page=1  newest of any kind, by date
+#
+# So publishing out of order can offer a beta host an apparent downgrade, and
+# promoting an older release to stable (flipping its prerelease flag by hand)
+# does not move the beta pointer - a beta host correctly stays on whatever is
+# newer there. The guard below asks the channel's own question rather than
+# using one baseline for both.
+#
+# Mainsail's Update Manager panel additionally hides anything that does not
+# satisfy `semver.gt(remote, local)` client-side - so the guard uses the same
+# semver package and the same comparison, and can't drift from what it
+# protects.
+
+name: ui-release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to build and release, e.g. v0.1.0"
+        type: string
+        required: true
+      stable:
+        description: "Publish to the stable channel (leave off for beta only)"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+
+defaults:
+  run:
+    working-directory: ui
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag || github.ref }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: npm
+          cache-dependency-path: ui/package-lock.json
+
+      - run: npm ci
+
+      # Fail fast, before spending time on a build that would publish a
+      # release Mainsail's UI (or the agent's own docs/decisions.md-linked
+      # semver expectations) would silently refuse to offer.
+      - name: Refuse a tag the UI would hide
+        env:
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+          RELEASE_STABLE: ${{ inputs.stable || false }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eu
+          if [ "$RELEASE_STABLE" = "true" ]; then
+            CHANNEL="stable"; ONLY_STABLE="true"
+          else
+            CHANNEL="beta"; ONLY_STABLE="false"
+          fi
+          # Newest release on this tag's own channel, excluding this tag's own
+          # release (the promotion path re-runs this job against a tag that is
+          # already published, so comparing against itself would always fail).
+          PREV_TAG="$(gh release list --repo "$GITHUB_REPOSITORY" --limit 30 \
+            --json tagName,isPrerelease -q \
+            "[.[] | select(.tagName != \"$RELEASE_TAG\") | select($ONLY_STABLE == false or .isPrerelease == false) | .tagName] | .[0] // empty" \
+            2>/dev/null || true)"
+          export PREV_TAG
+          echo "publishing to $CHANNEL; newest there (excluding $RELEASE_TAG): ${PREV_TAG:-<none>}"
+          node -e '
+            const semver = require("semver");
+            const tag = process.env.RELEASE_TAG;
+            const opts = { loose: true };
+            if (!semver.valid(tag, opts)) {
+              console.error(`tag ${tag} is not valid semver; the UI requires semver.valid()`);
+              process.exit(1);
+            }
+            const prev = process.env.PREV_TAG;
+            if (prev && semver.valid(prev, opts) && !semver.gt(tag, prev, opts)) {
+              console.error(
+                `tag ${tag} does not sort above the published ${prev}, so nobody on that ` +
+                `channel would ever be offered it. Pick a higher version.`
+              );
+              process.exit(1);
+            }
+            console.log(`tag ${tag} sorts above ${prev || "(no prior release on this channel)"}`);
+          '
+
+      - name: Lint
+        run: npm run lint
+      - name: Type check
+        run: npm run typecheck
+      - name: Format check
+        run: npm run format:check
+      - name: Unit tests
+        run: npm run test
+
+      - name: Build
+        run: npm run build
+
+      - name: Write release_info.json
+        env:
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          set -eu
+          node -e '
+            const fs = require("fs");
+            const info = {
+              project_name: "mcu-updater",
+              project_owner: process.env.GITHUB_REPOSITORY.split("/")[0],
+              version: process.env.RELEASE_TAG,
+              // Explicit, never assets[0] - see the header comment.
+              asset_name: "mcu-updater-ui.zip",
+            };
+            fs.writeFileSync("dist/release_info.json", JSON.stringify(info));
+            console.log("release_info.json ->", JSON.stringify(info));
+          '
+
+      - name: Package
+        run: (cd dist && zip -r ../mcu-updater-ui.zip .)
+
+      - name: Sanity-check the archive
+        run: |
+          set -eu
+          test -f mcu-updater-ui.zip
+          unzip -p mcu-updater-ui.zip release_info.json
+          echo
+          unzip -l mcu-updater-ui.zip | tail -1
+
+      - name: Publish
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.tag || github.ref_name }}
+          # The release TITLE, not tag_name, is what net_deploy.py compares
+          # against release_info.json's version - see the header comment.
+          name: ${{ inputs.tag || github.ref_name }}
+          files: ui/mcu-updater-ui.zip
+          # Default true: a tag push reaches only the beta channel; promoting
+          # to stable is an explicit workflow_dispatch with `stable` ticked.
+          prerelease: ${{ !(inputs.stable || false) }}
+          generate_release_notes: true

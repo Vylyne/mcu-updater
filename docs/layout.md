@@ -153,6 +153,26 @@ Every path derives from one `Paths` object, so nothing is hardcoded elsewhere:
 | `MCU_UPDATER_DATA_DIR` | `…/mcu-updater` |
 | `MCU_UPDATER_FAKE_BUS` | `/dev/serial/by-id` |
 
+## The standalone UI lives outside all of this
+
+`~/mcu-updater-ui` (the installed build of `ui/`) and its nginx site are
+deliberately outside the `Paths` object above and outside `~/printer_data/`
+entirely — see [docs/standalone-ui.md](standalone-ui.md) for the full runbook
+and [docs/decisions.md](decisions.md) for why. In short: Moonraker's
+`type: web` update manager refuses a path inside a git repository, and
+`rmtree()`s its path on every update — sharing a directory with
+`.updater.state` (the flash-recovery journal, one level up from `DATA_PATH`)
+would put a routinely-wiped directory next to state that must never be wiped.
+
+Set with `install.sh` env vars, not `Paths` overrides — these are install-time
+choices, not something the agent itself reads at runtime:
+
+| Variable | Default | Replaces |
+| --- | --- | --- |
+| `UI_PATH` | `~/mcu-updater-ui` | Where the installed UI build lives, and nginx's `root` |
+| `MCU_UPDATER_UI_PORT` | `8090` | The nginx site's `listen` port |
+| `MCU_UPDATER_UI_SERVER_NAME` | `_` (any host) | The nginx site's `server_name` |
+
 ## Coming from the old layout
 
 **Historical.** Both migrations below predate the schema-first rebuild

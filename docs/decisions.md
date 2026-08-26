@@ -164,6 +164,33 @@ allowlist for a third-party unit (a display's own watcher, say) is that
 project's own installer's job, the same way `knomi_serial`'s would be -
 not ours to do on their behalf, and not `install.sh`'s to guess at.
 
+### Do not serve the standalone UI from inside the agent's git checkout
+
+`~/mcu-updater-ui` (`UI_PATH`), never `~/mcu-updater/ui/dist`. Moonraker's
+`type: web` update manager (`net_deploy.py`, `_validate_release_info`) refuses
+a `path` inside a git repository — the install is marked invalid and never
+updates. See [docs/standalone-ui.md](standalone-ui.md).
+
+### Do not move the standalone UI under `~/printer_data/mcu-updater/`
+
+It would technically work — Moonraker does not forbid it — but
+`_extract_release()` `rmtree()`s a `type: web` path before every update, and
+one directory up from there is `.updater.state`, the flash-recovery journal.
+A Moonraker-managed directory that gets wiped on a schedule has no business
+sharing a parent with state that must survive every update. `UI_PATH`
+defaults to `~/mcu-updater-ui`, a sibling of `~/mcu-updater` itself, matching
+what `~/mainsail` and `~/fluidd` already do.
+
+### Do not edit Mainsail's own nginx site file to add the standalone UI as a subpath
+
+nginx has no Caddy-style `import` that lets one server block inject a
+`location` into another from the outside. The only way to run the standalone
+UI as a Mainsail subpath is hand-editing the file KIAUH/mainsail-config owns
+and rewrites on update — fragile, and not something `install.sh` does on a
+user's behalf. The supported path is the UI's own nginx site on its own port
+or FQDN (`scripts/nginx.sites-available-mcu-updater`); an iframe embed
+(planned) is the supported way to fold it back into Mainsail visually.
+
 ### Do not move the cancellation boundary
 
 It stays *between* targets, in `flashers/batch.py`. Cancellation is never

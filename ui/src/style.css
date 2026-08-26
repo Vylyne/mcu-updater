@@ -1,0 +1,11 @@
+/* Visual scheme (tone map, panel colours, spacing) is lifted from the
+   Mainsail panel in Phase 4, once there is a target row to style. */
+
+:root {
+  color-scheme: light dark;
+}
+
+body {
+  margin: 0;
+  font-family: system-ui, sans-serif;
+}

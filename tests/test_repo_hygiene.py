@@ -233,3 +233,41 @@ def test_pyserial_is_declared_because_discovery_shells_out_for_it():
         deps = json.load(fh)
 
     assert "python3-serial" in deps.get("debian", [])
+
+
+def test_install_sh_names_every_scripts_file_it_needs_at_runtime():
+    """install.sh installs several scripts/ files by name (sed template ->
+    sudo install), not by globbing the directory. A rename that forgets to
+    update install.sh fails silently on a fresh host: the function that
+    installs it just never finds the file, and the symptom is "nginx site
+    missing" or "no mcu-updater-ui update_manager entry" with no error in
+    between.
+    """
+    install_sh = (REPO_ROOT / "install.sh").read_text(encoding="utf-8")
+    for relative in (
+        "scripts/nginx.conf.d-mcu-updater.conf",
+        "scripts/nginx.sites-available-mcu-updater",
+        "scripts/moonraker-update-manager-ui.conf",
+    ):
+        assert relative in install_sh, f"install.sh no longer references {relative}"
+        assert (REPO_ROOT / relative).is_file(), f"{relative} does not exist"
+
+
+def test_the_ui_update_manager_conf_agrees_with_install_sh_defaults():
+    """scripts/moonraker-update-manager-ui.conf hardcodes `path:` and `repo:`
+    rather than being templated, so nothing keeps it in sync with install.sh's
+    UI_PATH default or this repo's own origin automatically. If either drifts,
+    Moonraker's update manager points at a directory nginx is not serving, or
+    a fork's release, and the failure is silent - `path` just does not exist,
+    or the update never matches what nginx is showing.
+    """
+    conf = (
+        REPO_ROOT / "scripts" / "moonraker-update-manager-ui.conf"
+    ).read_text(encoding="utf-8")
+    install_sh = (REPO_ROOT / "install.sh").read_text(encoding="utf-8")
+
+    assert 'UI_PATH="${UI_PATH:-${HOME}/mcu-updater-ui}"' in install_sh
+    assert "path: ~/mcu-updater-ui" in conf
+
+    assert "repo: Vylyne/mcu-updater" in conf
+    assert "type: web" in conf

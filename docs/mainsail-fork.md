@@ -275,3 +275,13 @@ upstream would want it.
 contributor's PR. Open an issue describing the agent and panel *before* writing
 the PR, and treat a merge as upside rather than the plan. The fork has to stand on
 its own — which is what the 4-file edit budget buys.
+
+## A second client
+
+This fork is no longer the only front end. `ui/` (see
+[docs/standalone-ui.md](standalone-ui.md)) is a standalone, framework-free
+UI that talks to the same agent through Moonraker and needs no fork of
+anything — it is the answer for anyone who does not want to run a forked
+Mainsail. This document, and the fork itself, are unaffected: the panel keeps
+working exactly as before, and stays the richer of the two clients (menuconfig
+in the browser) until the standalone UI catches up.

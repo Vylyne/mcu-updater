@@ -441,6 +441,76 @@ function add_update_manager {
     fi
 }
 
+function add_update_manager_ui {
+    local conf="${PRINTER_DATA}/config/moonraker.conf"
+    if [ ! -f "${conf}" ]; then
+        echo "[MOONRAKER] ${conf} not found, skipping mcu-updater-ui update_manager entry."
+        return 0
+    fi
+    if grep -q "^\[update_manager mcu-updater-ui\]" "${conf}"; then
+        printf "[MOONRAKER] mcu-updater-ui update_manager entry already present.\n\n"
+    else
+        echo "[MOONRAKER] Adding mcu-updater-ui update_manager entry to moonraker.conf..."
+        {
+            printf "\n"
+            cat "${INSTALL_PATH}/scripts/moonraker-update-manager-ui.conf"
+        } >> "${conf}"
+        printf "[MOONRAKER] Added. Restart Moonraker for it to take effect.\n\n"
+    fi
+}
+
+function install_ui_release {
+    # Moonraker will not bootstrap an empty `type: web` directory - no
+    # release_info.json means _is_valid=False, and it never downloads (see
+    # docs/decisions.md). This performs that first fetch so the update
+    # manager has something to compare against from the start.
+    if [ -f "${UI_PATH}/release_info.json" ]; then
+        printf "[UI] %s already has a release installed.\n\n" "${UI_PATH}"
+        return 0
+    fi
+
+    if ! command -v curl >/dev/null 2>&1 || ! command -v unzip >/dev/null 2>&1; then
+        printf "[UI] curl and unzip are required to fetch the UI release - skipping.\n\n"
+        return 0
+    fi
+
+    echo "[UI] Fetching the latest mcu-updater-ui release..."
+    local asset_url
+    asset_url="$(curl -fsSL "https://api.github.com/repos/Vylyne/mcu-updater/releases/latest" \
+        | grep -o '"browser_download_url": *"[^"]*mcu-updater-ui\.zip"' \
+        | grep -o 'https://[^"]*' || true)"
+    if [ -z "${asset_url}" ]; then
+        printf "[UI] No release published yet (or the fetch failed) - leaving the placeholder.\n       Re-run install.sh once a release exists.\n\n"
+        return 0
+    fi
+
+    mkdir -p "${UI_PATH}"
+    local tmp_zip
+    tmp_zip="$(mktemp)"
+    if ! curl -fsSL "${asset_url}" -o "${tmp_zip}"; then
+        echo "[UI] Download failed - leaving the placeholder."
+        rm -f "${tmp_zip}"
+        return 0
+    fi
+
+    # Unzip to a scratch directory first: a partial unzip must never leave
+    # UI_PATH half-populated, since nginx may already be serving it.
+    local tmp_dir
+    tmp_dir="$(mktemp -d)"
+    if ! unzip -q -o "${tmp_zip}" -d "${tmp_dir}"; then
+        echo "[UI] Unzip failed - leaving the placeholder."
+        rm -f "${tmp_zip}"
+        rm -rf "${tmp_dir}"
+        return 0
+    fi
+    rm -f "${tmp_zip}"
+
+    find "${UI_PATH}" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
+    cp -r "${tmp_dir}/." "${UI_PATH}/"
+    rm -rf "${tmp_dir}"
+    printf "[UI] Installed to %s.\n\n" "${UI_PATH}"
+}
+
 function allow_sudo_fallback {
     # The normal path needs no sudo: the agent stops klipper through Moonraker's
     # machine.services API. This is purely the safety net for Moonraker dying
@@ -618,11 +688,13 @@ function print_next_steps {
 
  ...then: sudo systemctl restart ${SERVICE_NAME}
 
- Standalone UI: if you accepted the nginx prompt, an nginx site is listening
- on port ${MCU_UPDATER_UI_PORT} at ${UI_PATH}. It currently serves a
- placeholder - the UI itself ships in a later phase (see docs/standalone-ui.md
- once it exists). Re-run install.sh with UI_PATH/MCU_UPDATER_UI_PORT set to
- change either.
+ Standalone UI: [update_manager mcu-updater-ui] tracks the latest release at
+ ${UI_PATH} (see docs/standalone-ui.md). If none has been published yet, or
+ the fetch failed, it still serves the placeholder - Moonraker's Update
+ Manager will offer the real thing once a release exists; re-run install.sh
+ to fetch it immediately instead of waiting for that panel. If you accepted
+ the nginx prompt, it is reachable on port ${MCU_UPDATER_UI_PORT}. Re-run
+ install.sh with UI_PATH/MCU_UPDATER_UI_PORT set to change either.
 ================================================================
 EOF
 }
@@ -637,6 +709,8 @@ migrate_legacy_service
 install_service
 add_asvc
 add_update_manager
+add_update_manager_ui
+install_ui_release
 allow_sudo_fallback
 install_nginx_site
 restart_moonraker

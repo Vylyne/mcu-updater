@@ -98,6 +98,11 @@ of it. What is still open:
   `npx vite build` as proving nothing about `.vue` script blocks meanwhile.
 - **Reproduce and fix the flaky teardown `RuntimeError`** in
   `test_an_unknown_inbound_method_gets_an_error_not_silence`.
+- **Standalone UI: infrastructure only so far.** The nginx site, the release
+  pipeline, and the `[update_manager mcu-updater-ui]` entry all work end to
+  end (see [docs/standalone-ui.md](docs/standalone-ui.md)), but `ui/` is still
+  a blank page — the communication layer and the actual `targets[]` view are
+  the next phases.
 - **Revisit whether the API still needs an MCU/display distinction at all.**
   Unscoped. Raised while putting `confidence` on the wire. The concrete half is
   done — a display flash now records the `Confidence` it computes, keyed by

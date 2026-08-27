@@ -475,10 +475,25 @@ function install_ui_release {
     fi
 
     echo "[UI] Fetching the latest mcu-updater-ui release..."
+    # This is only the *bootstrap* fetch - it just needs to land some
+    # release_info.json so Moonraker's own update_manager stops refusing to
+    # ever check (see the comment above). That check then follows whatever
+    # `channel:` is actually configured, so it does not matter which channel
+    # seeded this file. Every tag push publishes to beta first (see
+    # .github/workflows/ui-release.yml) and promotion to stable is a
+    # deliberate, separate step - so a fresh repo can go a long time with
+    # nothing on the stable channel at all. Try stable first since that is
+    # this conf's default, then fall back to beta rather than leaving a
+    # perfectly installable release invisible to a first-time install.
     local asset_url
     asset_url="$(curl -fsSL "https://api.github.com/repos/Vylyne/mcu-updater/releases/latest" \
         | grep -o '"browser_download_url": *"[^"]*mcu-updater-ui\.zip"' \
         | grep -o 'https://[^"]*' || true)"
+    if [ -z "${asset_url}" ]; then
+        asset_url="$(curl -fsSL "https://api.github.com/repos/Vylyne/mcu-updater/releases?per_page=1" \
+            | grep -o '"browser_download_url": *"[^"]*mcu-updater-ui\.zip"' \
+            | grep -o 'https://[^"]*' || true)"
+    fi
     if [ -z "${asset_url}" ]; then
         printf "[UI] No release published yet (or the fetch failed) - leaving the placeholder.\n       Re-run install.sh once a release exists.\n\n"
         return 0

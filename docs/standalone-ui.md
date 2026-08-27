@@ -38,9 +38,13 @@ see [docs/decisions.md](decisions.md).
 2. Fetches the latest published release into `UI_PATH` if nothing is installed
    there yet. Moonraker's own update manager will not do this itself — an empty
    `type: web` directory has no `release_info.json`, which it reads as an
-   invalid install and never touches. If no release has been published yet
-   (or the fetch fails), a placeholder page is left in place and `install.sh`
-   says so; re-run it once a release exists.
+   invalid install and never touches. This bootstrap fetch tries the stable
+   channel first, then falls back to beta — a fresh repo can go a long time
+   with nothing promoted to stable (see "Releasing" below), and the point here
+   is only to unblock Moonraker's own check, which then follows whatever
+   `channel:` is actually configured in `moonraker.conf`. If no release has
+   been published yet at all (or the fetch fails), a placeholder page is left
+   in place and `install.sh` says so; re-run it once a release exists.
 3. Optionally installs the nginx site — prompted, skipped cleanly if `nginx`
    is not present. Env vars: `MCU_UPDATER_UI_PORT` (default `8090`, chosen
    clear of Mainsail/Fluidd's 80/81 and the four `mjpgstreamer` ports

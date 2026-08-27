@@ -111,14 +111,20 @@ function onText(event: Event): void {
 
         <!-- int/hex/string. Committed on change, not on every keystroke:
              each set is a round trip that can rewrite the whole menu. -->
-        <input
-          v-else
-          type="text"
-          :value="node.value ?? ''"
-          :disabled="!node.editable || busy"
-          :placeholder="rangeHint"
-          @change="onText"
-        />
+        <template v-else>
+          <input
+            type="text"
+            :value="node.value ?? ''"
+            :disabled="!node.editable || busy"
+            @change="onText"
+          />
+          <!-- A placeholder only shows on an empty field, and these are
+               essentially never empty - the bound stays invisible unless it
+               is its own element. -->
+          <span v-if="rangeHint" class="muted kconfig-range">{{
+            rangeHint
+          }}</span>
+        </template>
       </span>
     </template>
   </div>

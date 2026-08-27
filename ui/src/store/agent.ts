@@ -338,6 +338,11 @@ export async function openKconfig(
   force = false,
 ): Promise<boolean> {
   if (client === null) return false;
+  // Opening a second session while one is already held locally would
+  // orphan the first on the agent - never closed, and dirty edits in it
+  // would then raise kconfig_session_conflict against a session this UI
+  // itself can no longer reach.
+  if (state.kconfig !== null) closeKconfig();
   try {
     const menu = await callAgent<KconfigMenu>(client, "fw.kconfig.open", {
       name,

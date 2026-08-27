@@ -353,6 +353,65 @@ describe("kconfig", () => {
     expect(state.kconfig?.revision).toBe(1);
   });
 
+  it("closes a still-open session before opening a second one", async () => {
+    let socket!: FakeWebSocket;
+    connect("ws://test/websocket", () => {
+      socket = new FakeWebSocket();
+      return socket;
+    });
+    socket.open();
+    await drainHandshake(socket);
+
+    state.kconfig = {
+      session: "sess-old",
+      revision: 0,
+      type: "carto_v4",
+      fw: "klipper",
+      dirty: false,
+      breadcrumb: [{ id: "root", prompt: "Configuration" }],
+      nodes: [],
+      search: null,
+      help: null,
+    };
+
+    const before = socket.sent.length;
+    const call = openKconfig("bttebb36", "klipper");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    // Two calls went out: the close of the stale session, then the new
+    // open - never just the open, which would orphan sess-old on the agent.
+    const sentMethods = socket.sent
+      .slice(before)
+      .map((raw) => JSON.parse(raw).params.method);
+    expect(sentMethods).toContain("fw.kconfig.close");
+    const closeRequest = socket.sent
+      .slice(before)
+      .map((raw) => JSON.parse(raw))
+      .find((req) => req.params.method === "fw.kconfig.close");
+    expect(closeRequest.params.arguments).toEqual({ session: "sess-old" });
+
+    const openRequest = socket.sent
+      .slice(before)
+      .map((raw) => JSON.parse(raw))
+      .find((req) => req.params.method === "fw.kconfig.open");
+    socket.message({
+      jsonrpc: "2.0",
+      id: openRequest.id,
+      result: {
+        session: "sess-new",
+        revision: 0,
+        type: "bttebb36",
+        fw: "klipper",
+        dirty: false,
+        breadcrumb: [{ id: "root", prompt: "Configuration" }],
+        nodes: [],
+      },
+    });
+
+    expect(await call).toBe(true);
+    expect(state.kconfig?.session).toBe("sess-new");
+  });
+
   it("clears the session locally and fires the close call without waiting", async () => {
     let socket!: FakeWebSocket;
     connect("ws://test/websocket", () => {

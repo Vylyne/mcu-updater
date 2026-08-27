@@ -74,3 +74,31 @@ body {
   opacity: 0.7;
   font-size: 0.9rem;
 }
+
+/* Without this the dialog is a plain in-flow div: the targets[] rows behind
+   it (including every other "Configure" button) stay clickable, which is
+   how a second session gets opened - and orphans the first, see
+   store/agent.ts's openKconfig(). Also what makes the discard-confirm and
+   help overlays land in front of a long node list instead of below it. */
+.kconfig-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 100;
+  padding: 1rem;
+}
+
+.kconfig-dialog {
+  background: Canvas;
+  color: CanvasText;
+  border: 1px solid rgba(128, 128, 128, 0.6);
+  border-radius: 4px;
+  padding: 1rem;
+  max-width: 640px;
+  width: 100%;
+  max-height: 90vh;
+  overflow-y: auto;
+}

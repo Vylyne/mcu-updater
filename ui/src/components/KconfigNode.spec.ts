@@ -97,4 +97,18 @@ describe("KconfigNode", () => {
     await wrapper.get("select").setValue("MACH_RP2040");
     expect(wrapper.emitted("set")?.[0]).toEqual([choiceNode, "MACH_RP2040"]);
   });
+
+  it("shows the range on a populated numeric field, not just as a placeholder", () => {
+    const rangedNode: KconfigNodeType = {
+      ...boolNode,
+      id: "CONFIG_TIMEOUT",
+      kind: "int",
+      value: "30",
+      range: { min: "1", max: "64" },
+    };
+    const wrapper = mount(KconfigNode, { props: { node: rangedNode } });
+    // A placeholder only renders on an empty field, and this one has a
+    // value - the hint must be its own visible element.
+    expect(wrapper.text()).toContain("1..64");
+  });
 });

@@ -2,7 +2,7 @@
 // "The log, and its sequence numbers" sections.
 
 export type JobKind =
-  "build" | "build_all" | "flash" | "flash_all" | "update_all";
+  "build" | "build_all" | "flash" | "flash_all" | "update_all" | "add_mcu";
 
 export type JobState =
   "queued" | "running" | "succeeded" | "failed" | "cancelled";
@@ -46,11 +46,18 @@ export interface LogLine {
 /** `fw.job.cancel`'s kinds that only take effect between devices, never mid-
  * write - docs/agent-api.md's "Cancellation is not uniform" table. Kept in
  * exactly one place so nothing has to re-derive it, and so
- * tests/test_ui_contract.py's fw.* scan sees it. */
+ * tests/test_ui_contract.py's fw.* scan sees it.
+ *
+ * `add_mcu` writes a bootloader over DFU/BOOTSEL with no checkpoint inside
+ * that single write (flash.py's `add_mcu_start` `run()` has none), so it
+ * belongs here for the same reason `flash` does - CLAUDE.md's "never
+ * interrupt a firmware write" applies just as hard to a bootloader as to an
+ * application image. */
 const DEFERRED_CANCEL_KINDS: ReadonlySet<JobKind> = new Set([
   "flash",
   "flash_all",
   "update_all",
+  "add_mcu",
 ]);
 
 /** What to tell the user a cancel request will actually do, from the job's

@@ -8,6 +8,9 @@ import { connect, disconnect, state } from "./store/agent";
 import TargetsView from "./components/TargetsView.vue";
 import JobPanel from "./components/JobPanel.vue";
 import KconfigDialog from "./components/KconfigDialog.vue";
+import BusPanel from "./components/BusPanel.vue";
+import AddMcuWizard from "./components/AddMcuWizard.vue";
+import SettingsPanel from "./components/SettingsPanel.vue";
 import type { Target } from "./api/targets";
 
 const API_KEY_STORAGE_KEY = "mcu-updater-ui:apiKey";
@@ -120,9 +123,13 @@ function reconnect(): void {
     </section>
 
     <TargetsView :targets="targets" />
+    <BusPanel />
+    <AddMcuWizard />
 
     <JobPanel />
     <KconfigDialog />
+
+    <SettingsPanel v-if="!isEmbed" />
 
     <template v-if="!isEmbed">
       <section>

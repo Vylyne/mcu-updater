@@ -115,17 +115,23 @@ of it. What is still open:
   session — menu navigation, search, per-symbol help, save/save-and-build,
   and a `kconfig_session_conflict` force-takeover prompt, all driven by a
   single `state.kconfig` slice `ActionButton.vue` opens when its method is
-  `fw.kconfig.open`) and `?embed=1` (drops the debug chrome, sizes to the
+  `fw.kconfig.open`), `?embed=1` (drops the debug chrome, sizes to the
   iframe's own box instead of the viewport, for use as a Mainsail "HTML
-  Iframe" webcam service) all work end to end (see
+  Iframe" webcam service), `SettingsPanel.vue` (edits `fw.settings.set`'s
+  `SETTABLE` subset, with a note when a toggle needs the agent to reconnect
+  before it takes effect), `BusPanel.vue` (adopts an untracked bus device
+  under an existing MCU type via `fw.serial.add`), and `AddMcuWizard.vue`
+  (the DFU/BOOTSEL bare-board flow — scan, `fw.add_mcu.start`, then adopt
+  whatever `JobPanel.vue` reports came back) all work end to end (see
   [docs/standalone-ui.md](docs/standalone-ui.md)) — verified with `vitest`/
   `vue-tsc`/`vite build`, and confirmed live against a real printer through
   Phase 4's `targets[]` view. **The action/job renderer, the Kconfig
-  dialog, and embed mode are not yet verified in a real browser** — no
-  build, flash, cancel, menuconfig save, or Mainsail iframe embed has been
-  run against a printer through them, and CLAUDE.md's flashing rules (bench
-  board only, never interrupt a write) make that verification something to
-  do deliberately, not incidentally.
+  dialog, embed mode, settings, bus adoption, and the add-MCU wizard are not
+  yet verified in a real browser** — no build, flash, cancel, menuconfig
+  save, Mainsail iframe embed, settings save, device adoption, or DFU/BOOTSEL
+  write has been run against a printer through them, and CLAUDE.md's flashing
+  rules (bench board only, never interrupt a write) make that verification
+  something to do deliberately, not incidentally.
   `ui/src/App.vue` is still a debug harness around the real views rather
   than the shipped UI shell outside of embed mode.
   **Auth is partial:** an API key from `localStorage` works, but Moonraker's

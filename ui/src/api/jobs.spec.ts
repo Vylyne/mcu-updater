@@ -15,4 +15,8 @@ describe("cancelIsImmediate", () => {
     expect(cancelIsImmediate("flash_all")).toBe(false);
     expect(cancelIsImmediate("update_all")).toBe(false);
   });
+
+  it("is deferred for add_mcu - a bootloader write has no checkpoint either", () => {
+    expect(cancelIsImmediate("add_mcu")).toBe(false);
+  });
 });

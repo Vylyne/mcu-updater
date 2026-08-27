@@ -95,10 +95,15 @@ export function hasCapability(name: string): boolean {
 async function refreshStatus(): Promise<void> {
   if (client === null) return;
   try {
-    state.status = await callAgent<Record<string, unknown>>(
+    const status = await callAgent<Record<string, unknown>>(
       client,
       "fw.status",
     );
+    state.status = status;
+    // Seeds the untracked-device list from the initial load - the `bus`
+    // notify_agent_event (onBus below) only fires on a later change, so
+    // without this state.bus stays [] until something is unplugged/replugged.
+    state.bus = (status.bus as unknown[] | undefined) ?? state.bus;
     state.error = null;
   } catch (error) {
     state.error = error as NormalizedAgentError;
@@ -312,6 +317,92 @@ export async function cancelJob(): Promise<boolean> {
   if (client === null || state.job === null) return false;
   try {
     await callAgent(client, "fw.job.cancel", { job_id: state.job.id });
+    state.error = null;
+    return true;
+  } catch (error) {
+    state.error = error as NormalizedAgentError;
+    return false;
+  }
+}
+
+/** Change tool settings. `patch` carries only the SETTABLE keys being
+ * changed - registry.py's `settings_set` refuses anything else. The reply's
+ * `settings` is the full current set, so it replaces `state.status.settings`
+ * outright rather than merging. Returns `changed` for a caller that wants to
+ * say what actually moved (e.g. flagging a reconnect-required key). */
+export async function updateSettings(
+  patch: Record<string, unknown>,
+): Promise<{ ok: boolean; changed: string[] }> {
+  if (client === null) return { ok: false, changed: [] };
+  try {
+    const result = await callAgent<{
+      settings: Record<string, unknown>;
+      changed: string[];
+    }>(client, "fw.settings.set", { settings: patch });
+    if (state.status) state.status.settings = result.settings;
+    state.error = null;
+    return { ok: true, changed: result.changed };
+  } catch (error) {
+    state.error = error as NormalizedAgentError;
+    return { ok: false, changed: [] };
+  }
+}
+
+/** Track a physical board on the bus under an existing type - the
+ * "new board, want to track it?" case docs/agent-api.md's BusDevice section
+ * describes for a `tracked_by: null` entry, and also how an add_mcu job's
+ * `candidates[]` get adopted afterwards. */
+export async function adoptSerial(
+  name: string,
+  serial: string,
+): Promise<boolean> {
+  if (client === null) return false;
+  try {
+    await callAgent(client, "fw.serial.add", { name, serial });
+    state.error = null;
+    return true;
+  } catch (error) {
+    state.error = error as NormalizedAgentError;
+    return false;
+  }
+}
+
+/** Read-only report of what is sitting in DFU/BOOTSEL right now - the first
+ * step of the add-a-bare-board flow, docs/agent-api.md's "Setting up a
+ * brand-new board". Returns null (routed into state.error) on failure rather
+ * than throwing, matching every other store call. */
+export async function scanBareBoard(
+  mechanism: "dfu" | "bootsel",
+): Promise<Record<string, unknown> | null> {
+  if (client === null) return null;
+  try {
+    const result = await callAgent<Record<string, unknown>>(
+      client,
+      mechanism === "dfu" ? "fw.dfu.scan" : "fw.bootsel.scan",
+    );
+    state.error = null;
+    return result;
+  } catch (error) {
+    state.error = error as NormalizedAgentError;
+    return null;
+  }
+}
+
+/** Write Katapult to a bare board over DFU/BOOTSEL. Returns immediately with
+ * a job - the running/succeeded/failed state, including the eventual
+ * `candidates`/`already_tracked` result, arrives the normal way through the
+ * `job` notify_agent_event JobPanel already renders, since job submission
+ * emits its own state (agent/jobs.py's `on_job_change`). */
+export async function startAddMcu(
+  name: string,
+  dfuSerial?: string,
+): Promise<boolean> {
+  if (client === null) return false;
+  try {
+    await callAgent(client, "fw.add_mcu.start", {
+      name,
+      ...(dfuSerial ? { dfu_serial: dfuSerial } : {}),
+    });
     state.error = null;
     return true;
   } catch (error) {

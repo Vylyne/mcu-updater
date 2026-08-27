@@ -81,3 +81,15 @@ export interface Target {
 export function targetKey(target: Pick<Target, "provider" | "name">): string {
   return `${target.provider}:${target.name}`;
 }
+
+/** One entry of `fw.status`'s `bus` - docs/agent-api.md's "BusDevice".
+ * `tracked_by` is `null` for a device on the bus that no MCU type has
+ * claimed yet - the "new board, want to track it?" case. */
+export interface BusDevice {
+  fw: string;
+  chipset: string | null;
+  serial: string;
+  path: string;
+  state: string;
+  tracked_by: string | null;
+}

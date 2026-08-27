@@ -117,6 +117,8 @@ application error (see `data.code`), `-32603` internal.
 | `fw.add_mcu.start` | `name`, `dfu_serial?` (STM32 only) | `{job_id, job, dfu_serial, bootsel_id}` — **off by default** |
 | `fw.artifacts` | `name` (required) | `{<fw>: Artifact, ...}`, one key per family the type declares |
 | `fw.settings.get` | — | `{settings: Settings}` |
+| `fw.settings.set` | `settings` (required, non-empty) | `{settings: Settings, changed: [key]}` — only the `SETTABLE` keys |
+| `fw.serial.add` | `name`, `serial` (required) | `{name, serial, added, chipset}` — track a bus device under an existing type |
 | `fw.build` | `name`, `fw`, `jobs?`, `clean?`, `reseed?` | `{job_id, job}` — returns immediately |
 | `fw.flash` | `serial\|port`, `name?`, `force?` | `{job_id, job}` — **off by default**, see below |
 | `fw.build_all` | `fw?`, `scope?` | `{job_id, job, types, builds, skipped}` — builds only, touches no board |
@@ -426,6 +428,28 @@ A display carries one extra key, `extra`, holding the facts only a screen has
 `reachable`). A reader that never opens it renders both kinds.
 `firmware` is `null` for a display: PlatformIO builds from its own tree rather
 than from a `[firmware ...]` family, and naming one would be a guess.
+
+### Settings
+
+`fw.status`'s `settings` key and `fw.settings.get` both return the full
+`Settings` dataclass (settings.py) as-is. `fw.settings.set {settings: {...}}`
+only accepts registry.py's `SETTABLE` subset - `make_jobs`,
+`clean_before_build`, `reseed_on_build`, `dry_run`, `enable_flashing`,
+`allow_flash_while_printing`, `log_ring_size` - and refuses anything else with
+`setting_not_settable`, whose `data.settable` names the keys it does accept.
+`stop_services` and `service_backend` describe how this host is wired, not a
+behaviour preference, and are deliberately absent - editing them from a
+browser risks a real flash proceeding with Klipper never stopped. They stay a
+cfg-file-only edit.
+
+**Toggling `enable_flashing` or `allow_flash_while_printing` does not take
+effect until the agent's next reconnect.** `fw.ping`'s `capabilities` is
+computed live from `available_methods()`, but what Moonraker will actually
+dispatch is fixed at `connection.register_remote_method` time, in
+`_handshake` - once per connection, not once per setting. So a save can
+leave `fw.ping` reporting `fw.flash` as available while calling it still
+answers `-32601` until the agent reconnects. A client offering this toggle
+should say so rather than hand over a button that fails.
 
 ### `Family`
 

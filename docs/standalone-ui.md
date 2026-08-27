@@ -319,6 +319,67 @@ added to a webcam grid and loaded against a live printer - this phase ships
 `vitest`/`vue-tsc`/`vite build` clean, same caveat Phases 4-6 carried before
 their own printer verification.
 
+## Settings, adoption and the DFU/BOOTSEL wizard (Phase 8)
+
+Three pieces, sharing one theme: every one of them was already possible
+through the CLI or a config-file edit, and this phase just gives a browser
+the same doors.
+
+**`SettingsPanel.vue`** edits `fw.settings.set`'s `SETTABLE` subset -
+`make_jobs`, `log_ring_size`, `clean_before_build`, `reseed_on_build`,
+`dry_run`, `enable_flashing`, `allow_flash_while_printing` - and nothing
+else; `stop_services`/`service_backend` are shown nowhere, matching
+registry.py's own reasoning (docs/agent-api.md's "Settings" section) that
+those describe how the host is wired, not a preference. `state.status.settings`
+already carries the current values (`fw.status` embeds them), so there is no
+separate load call - only `fw.settings.set` on save, replacing
+`state.status.settings` wholesale from the reply rather than trusting the
+draft.
+
+**A saved `enable_flashing`/`allow_flash_while_printing` toggle does not
+immediately unlock (or lock) the flash buttons elsewhere in this UI.**
+docs/agent-api.md's "Settings" section explains why: Moonraker only registers
+`fw.flash` et al. at handshake, so `fw.ping`'s live `capabilities` and what
+Moonraker will actually dispatch can disagree until the agent reconnects.
+`SettingsPanel` says this in a note rather than silently handing over a
+button that 404s.
+
+**`BusPanel.vue`** renders `state.bus` - every serial device on the host,
+`tracked_by: null` ones offered a "Adopt as…" picker of existing MCU types,
+calling `fw.serial.add`. The one bug worth flagging for anyone touching this
+again: `state.bus` used to only ever get written by the `bus`
+notify_agent_event, so the panel rendered empty on every fresh page load
+until something was physically unplugged and replugged. `store/agent.ts`'s
+`refreshStatus` now also seeds it from `fw.status`'s own `bus` key, which is
+present on every load.
+
+**`AddMcuWizard.vue`** is docs/agent-api.md's "Setting up a brand-new board"
+flow, minus the two steps that already existed: pick an MCU type from
+`targets[]`, scan (`fw.dfu.scan`/`fw.bootsel.scan`, chosen from whether the
+type's chipset starts `stm32`/`rp2040`), then `fw.add_mcu.start`. It does not
+poll or await the job itself - job submission emits its own `job` event
+(agent/jobs.py's `on_job_change`), so `JobPanel` picks it up the same way it
+picks up a build or a flash, with no extra wiring. What `JobPanel` adds for
+`add_mcu` specifically is rendering the succeeded job's `candidates`/
+`already_tracked` result with its own "Adopt" button per candidate - the
+`fw.serial.add` step that closes the loop the wizard itself deliberately does
+not take, mirroring why there is no `fw.add_mcu.confirm` on the wire either.
+
+`add_mcu` was also missing from `api/jobs.ts`'s `JobKind` union, and its
+cancel wording defaulted to "immediate" by falling outside
+`DEFERRED_CANCEL_KINDS`. It is added to that set: `flash_initial_bootloader`
+has no cancellation checkpoint inside a single DFU/BOOTSEL write, so
+promising an immediate stop about a bootloader write would contradict
+CLAUDE.md's "never interrupt a firmware write" the same way `flash` already
+respects.
+
+**Not yet verified against a real printer.** No settings change, adoption,
+or DFU/BOOTSEL write has been exercised through this UI on hardware -
+CLAUDE.md's "bench board only" rule applies hardest here, since
+`fw.add_mcu.start` writes a bootloader. This phase ships
+`vitest`/`vue-tsc`/`vite build` clean, same caveat every prior phase carried
+before its own printer verification.
+
 ## Building locally
 
 ```bash

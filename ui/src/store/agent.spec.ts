@@ -2,6 +2,7 @@ import { afterEach, describe, expect, it } from "vitest";
 import type { WebSocketLike } from "../api/moonraker";
 import type { Action } from "../api/targets";
 import {
+  adoptSerial,
   cancelJob,
   closeKconfig,
   connect,
@@ -10,7 +11,10 @@ import {
   invokeAction,
   kconfigEnter,
   openKconfig,
+  scanBareBoard,
+  startAddMcu,
   state,
+  updateSettings,
 } from "./agent";
 
 class FakeWebSocket implements WebSocketLike {
@@ -450,6 +454,193 @@ describe("cancelJob", () => {
 
   it("does nothing without a running job", async () => {
     expect(await cancelJob()).toBe(false);
+  });
+});
+
+describe("Phase 8: settings, bus adoption, add_mcu", () => {
+  afterEach(() => {
+    disconnect();
+    state.status = null;
+  });
+
+  it("updateSettings replaces state.status.settings from the reply", async () => {
+    let socket!: FakeWebSocket;
+    connect("ws://test/websocket", () => {
+      socket = new FakeWebSocket();
+      return socket;
+    });
+    socket.open();
+    await drainHandshake(socket);
+    state.status = { settings: { make_jobs: 0 } };
+
+    const before = socket.sent.length;
+    const call = updateSettings({ make_jobs: 4 });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const request = JSON.parse(socket.sent[before]);
+    expect(request.params.method).toBe("fw.settings.set");
+    expect(request.params.arguments).toEqual({ settings: { make_jobs: 4 } });
+
+    socket.message({
+      jsonrpc: "2.0",
+      id: request.id,
+      result: { settings: { make_jobs: 4 }, changed: ["make_jobs"] },
+    });
+    expect(await call).toEqual({ ok: true, changed: ["make_jobs"] });
+    expect(state.status.settings).toEqual({ make_jobs: 4 });
+  });
+
+  it("updateSettings routes a refusal into state.error", async () => {
+    let socket!: FakeWebSocket;
+    connect("ws://test/websocket", () => {
+      socket = new FakeWebSocket();
+      return socket;
+    });
+    socket.open();
+    await drainHandshake(socket);
+
+    const before = socket.sent.length;
+    const call = updateSettings({ stop_services: ["klipper"] });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const request = JSON.parse(socket.sent[before]);
+    socket.message({
+      jsonrpc: "2.0",
+      id: request.id,
+      error: {
+        code: -32000,
+        message: "cannot set stop_services from here",
+        data: { code: "setting_not_settable", message: "not settable" },
+      },
+    });
+    expect(await call).toEqual({ ok: false, changed: [] });
+    expect(state.error?.code).toBe("setting_not_settable");
+  });
+
+  it("adoptSerial calls fw.serial.add with the type and serial", async () => {
+    let socket!: FakeWebSocket;
+    connect("ws://test/websocket", () => {
+      socket = new FakeWebSocket();
+      return socket;
+    });
+    socket.open();
+    await drainHandshake(socket);
+
+    const before = socket.sent.length;
+    const call = adoptSerial("bttebb36", "1100...-if00");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const request = JSON.parse(socket.sent[before]);
+    expect(request.params.method).toBe("fw.serial.add");
+    expect(request.params.arguments).toEqual({
+      name: "bttebb36",
+      serial: "1100...-if00",
+    });
+    socket.message({ jsonrpc: "2.0", id: request.id, result: {} });
+    expect(await call).toBe(true);
+  });
+
+  it("scanBareBoard picks fw.dfu.scan or fw.bootsel.scan by mechanism", async () => {
+    let socket!: FakeWebSocket;
+    connect("ws://test/websocket", () => {
+      socket = new FakeWebSocket();
+      return socket;
+    });
+    socket.open();
+    await drainHandshake(socket);
+
+    const before = socket.sent.length;
+    const call = scanBareBoard("bootsel");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const request = JSON.parse(socket.sent[before]);
+    expect(request.params.method).toBe("fw.bootsel.scan");
+    socket.message({
+      jsonrpc: "2.0",
+      id: request.id,
+      result: { ready: true, reason: null, devices: [] },
+    });
+    expect(await call).toEqual({ ready: true, reason: null, devices: [] });
+  });
+
+  it("startAddMcu passes dfu_serial only when given one", async () => {
+    let socket!: FakeWebSocket;
+    connect("ws://test/websocket", () => {
+      socket = new FakeWebSocket();
+      return socket;
+    });
+    socket.open();
+    await drainHandshake(socket);
+
+    const before = socket.sent.length;
+    const call = startAddMcu("bttebb36");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const request = JSON.parse(socket.sent[before]);
+    expect(request.params.method).toBe("fw.add_mcu.start");
+    expect(request.params.arguments).toEqual({ name: "bttebb36" });
+    socket.message({ jsonrpc: "2.0", id: request.id, result: {} });
+    expect(await call).toBe(true);
+  });
+
+  it("seeds state.bus from fw.status on connect, not just from a later bus event", async () => {
+    let socket!: FakeWebSocket;
+    connect("ws://test/websocket", () => {
+      socket = new FakeWebSocket();
+      return socket;
+    });
+    socket.open();
+
+    const answered = new Set<number>();
+    let sawStatus = false;
+    for (let round = 0; round < 8 && !sawStatus; round++) {
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      for (const raw of socket.sent) {
+        const msg = JSON.parse(raw);
+        if (answered.has(msg.id)) continue;
+        answered.add(msg.id);
+        if (msg.method === "server.extensions.list") {
+          socket.message({
+            jsonrpc: "2.0",
+            id: msg.id,
+            result: { agents: [{ name: "mcu_updater" }] },
+          });
+        } else if (msg.params?.method === "fw.status") {
+          socket.message({
+            jsonrpc: "2.0",
+            id: msg.id,
+            result: {
+              bus: [
+                { fw: "Klipper", serial: "1100...-if00", tracked_by: null },
+              ],
+            },
+          });
+          sawStatus = true;
+        } else {
+          socket.message({ jsonrpc: "2.0", id: msg.id, result: {} });
+        }
+      }
+    }
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(state.bus).toEqual([
+      { fw: "Klipper", serial: "1100...-if00", tracked_by: null },
+    ]);
+  });
+
+  it("startAddMcu includes dfu_serial when one was chosen", async () => {
+    let socket!: FakeWebSocket;
+    connect("ws://test/websocket", () => {
+      socket = new FakeWebSocket();
+      return socket;
+    });
+    socket.open();
+    await drainHandshake(socket);
+
+    const before = socket.sent.length;
+    const call = startAddMcu("bttebb36", "3941335F3434");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const request = JSON.parse(socket.sent[before]);
+    expect(request.params.arguments).toEqual({
+      name: "bttebb36",
+      dfu_serial: "3941335F3434",
+    });
+    socket.message({ jsonrpc: "2.0", id: request.id, result: {} });
+    expect(await call).toBe(true);
   });
 });
 

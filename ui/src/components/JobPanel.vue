@@ -2,11 +2,35 @@
 // The one job the agent ever runs at a time (docs/agent-api.md's "Jobs":
 // "One job at a time, and it is not a queue"), rendered from store state
 // that the event handlers in store/agent.ts already keep current.
-import { computed, ref } from "vue";
-import { cancelJob, state } from "../store/agent";
+import { computed, reactive, ref } from "vue";
+import { adoptSerial, cancelJob, state } from "../store/agent";
 import { cancelIsImmediate } from "../api/jobs";
 
 const cancelling = ref(false);
+const adopting = reactive<Record<string, boolean>>({});
+
+// add_mcu's own result - see flash.py's add_mcu_start. `candidates` are
+// boards that appeared and are not yet in the registry; `already_tracked`
+// appeared but the registry already knows them (a re-bootloadered board),
+// so there is nothing left to adopt for those.
+interface AddMcuResult {
+  type: string;
+  candidates: { serial: string; path: string; state: string }[];
+  already_tracked: { serial: string; path: string; state: string }[];
+}
+
+const addMcuResult = computed<AddMcuResult | null>(() => {
+  if (state.job?.kind !== "add_mcu" || state.job.state !== "succeeded") {
+    return null;
+  }
+  return (state.job.result as AddMcuResult | undefined) ?? null;
+});
+
+async function adoptCandidate(serial: string, type: string): Promise<void> {
+  adopting[serial] = true;
+  await adoptSerial(type, serial);
+  adopting[serial] = false;
+}
 
 const progressText = computed(() => {
   const progress = state.job?.progress;
@@ -50,6 +74,36 @@ async function onCancel(): Promise<void> {
         <p class="muted">{{ cancelWording }}</p>
       </template>
     </template>
+
+    <div v-if="addMcuResult && addMcuResult.candidates.length" class="picker">
+      <p>New board(s) appeared and are not tracked yet:</p>
+      <ul class="devices">
+        <li
+          v-for="candidate in addMcuResult.candidates"
+          :key="candidate.serial"
+        >
+          <span>{{ candidate.path }}</span>
+          <button
+            type="button"
+            :disabled="adopting[candidate.serial]"
+            @click="adoptCandidate(candidate.serial, addMcuResult.type)"
+          >
+            {{ adopting[candidate.serial] ? "Adopting…" : "Adopt" }}
+          </button>
+        </li>
+      </ul>
+    </div>
+    <p
+      v-else-if="addMcuResult && !addMcuResult.already_tracked.length"
+      class="muted"
+    >
+      No board appeared. Check /dev/serial/by-id/ - if it is there, adopt it
+      directly once bus devices show it.
+    </p>
+    <p v-else-if="addMcuResult" class="muted">
+      The board that appeared is already tracked - nothing to adopt. Flash
+      Klipper onto it when ready.
+    </p>
 
     <div v-if="state.log && state.log.job_id === state.job.id" class="log">
       <p v-if="state.logOmitted" class="muted">

@@ -3,10 +3,13 @@ import type { WebSocketLike } from "../api/moonraker";
 import type { Action } from "../api/targets";
 import {
   cancelJob,
+  closeKconfig,
   connect,
   disconnect,
   fetchTargetDetail,
   invokeAction,
+  kconfigEnter,
+  openKconfig,
   state,
 } from "./agent";
 
@@ -212,6 +215,172 @@ describe("invokeAction", () => {
 
     expect(await call).toBe(false);
     expect(state.error?.code).toBe("busy");
+  });
+});
+
+describe("kconfig", () => {
+  afterEach(() => {
+    disconnect();
+    state.kconfig = null;
+  });
+
+  it("opens a session and stores its menu, with search and help cleared", async () => {
+    let socket!: FakeWebSocket;
+    connect("ws://test/websocket", () => {
+      socket = new FakeWebSocket();
+      return socket;
+    });
+    socket.open();
+    await drainHandshake(socket);
+
+    const before = socket.sent.length;
+    const call = openKconfig("carto_v4", "klipper");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const request = JSON.parse(socket.sent[before]);
+    expect(request.params.method).toBe("fw.kconfig.open");
+    expect(request.params.arguments).toEqual({
+      name: "carto_v4",
+      fw: "klipper",
+      force: false,
+    });
+
+    socket.message({
+      jsonrpc: "2.0",
+      id: request.id,
+      result: {
+        session: "sess-1",
+        revision: 0,
+        type: "carto_v4",
+        fw: "klipper",
+        dirty: false,
+        breadcrumb: [{ id: "root", prompt: "Configuration" }],
+        nodes: [],
+      },
+    });
+
+    expect(await call).toBe(true);
+    expect(state.kconfig?.session).toBe("sess-1");
+    expect(state.kconfig?.search).toBeNull();
+    expect(state.kconfig?.help).toBeNull();
+  });
+
+  it("routes a session conflict into state.error without opening", async () => {
+    let socket!: FakeWebSocket;
+    connect("ws://test/websocket", () => {
+      socket = new FakeWebSocket();
+      return socket;
+    });
+    socket.open();
+    await drainHandshake(socket);
+
+    const before = socket.sent.length;
+    const call = openKconfig("carto_v4", "klipper");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const request = JSON.parse(socket.sent[before]);
+
+    socket.message({
+      jsonrpc: "2.0",
+      id: request.id,
+      error: {
+        code: -32000,
+        message: "another session has unsaved changes",
+        data: {
+          code: "kconfig_session_conflict",
+          message: "another session has unsaved changes",
+          data: { session: "sess-0", type: "carto_v4", fw: "klipper" },
+        },
+      },
+    });
+
+    expect(await call).toBe(false);
+    expect(state.kconfig).toBeNull();
+    expect(state.error?.code).toBe("kconfig_session_conflict");
+  });
+
+  it("does nothing without an open session", async () => {
+    expect(await kconfigEnter("id")).toBe(false);
+  });
+
+  it("sends the open session's id on every navigation call", async () => {
+    let socket!: FakeWebSocket;
+    connect("ws://test/websocket", () => {
+      socket = new FakeWebSocket();
+      return socket;
+    });
+    socket.open();
+    await drainHandshake(socket);
+
+    state.kconfig = {
+      session: "sess-1",
+      revision: 0,
+      type: "carto_v4",
+      fw: "klipper",
+      dirty: false,
+      breadcrumb: [{ id: "root", prompt: "Configuration" }],
+      nodes: [],
+      search: null,
+      help: null,
+    };
+
+    const before = socket.sent.length;
+    const call = kconfigEnter("menu:board");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const request = JSON.parse(socket.sent[before]);
+    expect(request.params.method).toBe("fw.kconfig.enter");
+    expect(request.params.arguments).toEqual({
+      session: "sess-1",
+      id: "menu:board",
+    });
+
+    socket.message({
+      jsonrpc: "2.0",
+      id: request.id,
+      result: {
+        session: "sess-1",
+        revision: 1,
+        type: "carto_v4",
+        fw: "klipper",
+        dirty: false,
+        breadcrumb: [
+          { id: "root", prompt: "Configuration" },
+          { id: "menu:board", prompt: "Board" },
+        ],
+        nodes: [],
+      },
+    });
+
+    expect(await call).toBe(true);
+    expect(state.kconfig?.revision).toBe(1);
+  });
+
+  it("clears the session locally and fires the close call without waiting", async () => {
+    let socket!: FakeWebSocket;
+    connect("ws://test/websocket", () => {
+      socket = new FakeWebSocket();
+      return socket;
+    });
+    socket.open();
+    await drainHandshake(socket);
+
+    state.kconfig = {
+      session: "sess-1",
+      revision: 0,
+      type: "carto_v4",
+      fw: "klipper",
+      dirty: false,
+      breadcrumb: [{ id: "root", prompt: "Configuration" }],
+      nodes: [],
+      search: null,
+      help: null,
+    };
+
+    const before = socket.sent.length;
+    closeKconfig();
+    expect(state.kconfig).toBeNull();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const request = JSON.parse(socket.sent[before]);
+    expect(request.params.method).toBe("fw.kconfig.close");
+    expect(request.params.arguments).toEqual({ session: "sess-1" });
   });
 });
 

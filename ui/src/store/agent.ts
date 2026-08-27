@@ -24,6 +24,12 @@ import {
 } from "../api/events";
 import type { Action } from "../api/targets";
 import type { Job } from "../api/jobs";
+import type {
+  KconfigHelp,
+  KconfigMenu,
+  KconfigSearchResult,
+  KconfigState,
+} from "../api/kconfig";
 
 export interface EventLogEntry {
   at: number;
@@ -44,6 +50,11 @@ export interface AgentStoreState {
    * its sequence numbers": tell the user rather than renumber silently. */
   logOmitted: boolean;
   events: EventLogEntry[];
+  /** The one open fw.kconfig.* session, or null. A "Configure {family}"
+   * action (fw.kconfig.open) opens it; docs/decisions.md's targets[]
+   * projection never embeds this - it is fetched on demand the same way
+   * fw.target.get's detail is. */
+  kconfig: KconfigState | null;
   error: NormalizedAgentError | null;
   /** Set when the agent's api_version exceeds SUPPORTED_API_VERSION - the
    * gate from docs/agent-api.md's fw.ping section. Non-null means "refuse to
@@ -61,6 +72,7 @@ export const state: AgentStoreState = reactive({
   log: null,
   logOmitted: false,
   events: [],
+  kconfig: null,
   error: null,
   unsupportedApiVersion: null,
 });
@@ -306,6 +318,160 @@ export async function cancelJob(): Promise<boolean> {
     state.error = error as NormalizedAgentError;
     return false;
   }
+}
+
+function applyKconfigMenu(menu: KconfigMenu): void {
+  // A menu-changing reply (open/enter/up/set/reset) replaces the screen
+  // outright - search and help are stale the moment the tree underneath
+  // them can have moved.
+  state.kconfig = { ...menu, search: null, help: null };
+}
+
+/** Open a configuration session for one family. `force: true` takes over a
+ * session another tab left with unsaved changes - docs/agent-api.md's
+ * kconfig_session_conflict. Returns false (and routes the refusal into
+ * state.error, whose `data.session`/`data.type`/`data.fw` name the
+ * conflicting session) rather than throwing. */
+export async function openKconfig(
+  name: string,
+  fw: string,
+  force = false,
+): Promise<boolean> {
+  if (client === null) return false;
+  try {
+    const menu = await callAgent<KconfigMenu>(client, "fw.kconfig.open", {
+      name,
+      fw,
+      force,
+    });
+    applyKconfigMenu(menu);
+    state.error = null;
+    return true;
+  } catch (error) {
+    state.error = error as NormalizedAgentError;
+    return false;
+  }
+}
+
+async function kconfigCall(
+  method: string,
+  extra: Record<string, unknown> = {},
+): Promise<boolean> {
+  if (client === null || state.kconfig === null) return false;
+  try {
+    const menu = await callAgent<KconfigMenu>(client, method, {
+      session: state.kconfig.session,
+      ...extra,
+    });
+    applyKconfigMenu(menu);
+    state.error = null;
+    return true;
+  } catch (error) {
+    state.error = error as NormalizedAgentError;
+    return false;
+  }
+}
+
+export function kconfigEnter(id: string): Promise<boolean> {
+  return kconfigCall("fw.kconfig.enter", { id });
+}
+
+export function kconfigUp(): Promise<boolean> {
+  return kconfigCall("fw.kconfig.up");
+}
+
+/** Assign one symbol. The reply is the whole current menu, because one
+ * assignment can rewrite the screen - picking a different architecture
+ * replaces essentially every row. */
+export function kconfigSet(id: string, value: string): Promise<boolean> {
+  return kconfigCall("fw.kconfig.set", { id, value });
+}
+
+/** Discard unsaved edits by reparsing from disk. */
+export function kconfigReset(): Promise<boolean> {
+  return kconfigCall("fw.kconfig.reset");
+}
+
+/** Help is fetched per symbol rather than shipped with the tree - Klipper's
+ * full help is several hundred KB against 40-80 KB for the tree without it. */
+export async function kconfigHelp(id: string): Promise<boolean> {
+  if (client === null || state.kconfig === null) return false;
+  try {
+    const help = await callAgent<KconfigHelp>(client, "fw.kconfig.help", {
+      session: state.kconfig.session,
+      id,
+    });
+    state.kconfig.help = help;
+    state.error = null;
+    return true;
+  } catch (error) {
+    state.error = error as NormalizedAgentError;
+    return false;
+  }
+}
+
+export function closeKconfigHelp(): void {
+  if (state.kconfig !== null) state.kconfig.help = null;
+}
+
+/** Search replaces the node list while active; an empty query clears it
+ * locally without a round trip. */
+export async function kconfigSearch(query: string): Promise<boolean> {
+  if (client === null || state.kconfig === null) return false;
+  if (!query.trim()) {
+    state.kconfig.search = null;
+    return true;
+  }
+  try {
+    const result = await callAgent<KconfigSearchResult>(
+      client,
+      "fw.kconfig.search",
+      { session: state.kconfig.session, query },
+    );
+    state.kconfig.search = result;
+    state.error = null;
+    return true;
+  } catch (error) {
+    state.error = error as NormalizedAgentError;
+    return false;
+  }
+}
+
+export function clearKconfigSearch(): void {
+  if (state.kconfig !== null) state.kconfig.search = null;
+}
+
+/** Write the answers, optionally building straight afterwards. The agent
+ * takes the *build* lock for this and can refuse with `busy` while a build
+ * runs - the unsaved edits survive that, so retrying later loses nothing.
+ * A started build's job/log events arrive the normal way; nothing here
+ * needs to adopt them. */
+export async function kconfigSave(build: boolean): Promise<boolean> {
+  if (client === null || state.kconfig === null) return false;
+  try {
+    const result = await callAgent<{ menu?: KconfigMenu }>(
+      client,
+      "fw.kconfig.save",
+      { session: state.kconfig.session, build },
+    );
+    if (result.menu) applyKconfigMenu(result.menu);
+    state.error = null;
+    return true;
+  } catch (error) {
+    state.error = error as NormalizedAgentError;
+    return false;
+  }
+}
+
+/** Fire-and-forget: the session expires on its own, so a failure here is
+ * not worth reporting to someone who already closed the dialog. */
+export function closeKconfig(): void {
+  const session = state.kconfig?.session;
+  state.kconfig = null;
+  if (client === null || session === undefined) return;
+  void callAgent(client, "fw.kconfig.close", { session }).catch(() => {
+    /* see comment above */
+  });
 }
 
 export function connect(url: string, wsFactory?: WebSocketFactory): void {

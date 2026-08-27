@@ -124,4 +124,44 @@ describe("ActionButton", () => {
       profile: "config.CartoV4USB",
     });
   });
+
+  it("opens a kconfig session directly, with no confirmation", async () => {
+    const spy = vi.spyOn(store, "openKconfig").mockResolvedValue(true);
+    const action: Action = {
+      ...buildAction,
+      id: "configure:klipper",
+      label: "Configure klipper",
+      method: "fw.kconfig.open",
+      params: { name: "carto_v4", fw: "klipper" },
+    };
+    const wrapper = mount(ActionButton, { props: { action } });
+    await wrapper.get("button").trigger("click");
+    expect(spy).toHaveBeenCalledWith("carto_v4", "klipper", false);
+    expect(wrapper.text()).not.toContain("Confirm");
+  });
+
+  it("offers a force takeover on a kconfig session conflict", async () => {
+    const spy = vi.spyOn(store, "openKconfig").mockResolvedValue(false);
+    store.state.error = {
+      code: "kconfig_session_conflict",
+      message: "another session has unsaved changes",
+    };
+    const action: Action = {
+      ...buildAction,
+      id: "configure:klipper",
+      label: "Configure klipper",
+      method: "fw.kconfig.open",
+      params: { name: "carto_v4", fw: "klipper" },
+    };
+    const wrapper = mount(ActionButton, { props: { action } });
+    await wrapper.get("button").trigger("click");
+    expect(wrapper.text()).toContain("Another session has unsaved changes");
+
+    await wrapper
+      .findAll("button")
+      .find((b) => b.text() === "Take over anyway")
+      ?.trigger("click");
+    expect(spy).toHaveBeenLastCalledWith("carto_v4", "klipper", true);
+    store.state.error = null;
+  });
 });

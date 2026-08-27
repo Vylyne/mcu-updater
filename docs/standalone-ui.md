@@ -211,6 +211,77 @@ cancelling mid-run are all still to confirm on the bench board, per CLAUDE.md's
 ships `vitest`/`vue-tsc`/`vite build` clean, same caveat as Phase 4 carried
 before its own printer verification.
 
+## Kconfig in the browser (Phase 6)
+
+A "Configure {family}" action (`method: "fw.kconfig.open"`, one per
+configurable family a type declares - see `status.py`'s `kconfig_open` wiring)
+rides on `targets[].actions[]` like any other action, but it does not fit
+`ActionButton`'s normal invoke-and-done flow: opening one leaves a **session**
+behind on the agent (a parsed Kconfig tree, held in memory because a full
+parse is a few hundred milliseconds on a Pi), and everything after that talks
+to the same session by its opaque id rather than re-sending `name`/`fw`.
+`ActionButton.vue` special-cases `fw.kconfig.open` - on click it calls
+`openKconfig(name, fw)` directly, no confirmation and no `choices` dance,
+because opening a session is not destructive and has nothing to pick from
+until the tree is in hand.
+
+**One state slice, `state.kconfig`, is the whole session.** `store/agent.ts`
+adds `KconfigState = KconfigMenu & {search, help}` (`api/kconfig.ts`), where
+`KconfigMenu` (`session`, `revision`, `type`, `fw`, `dirty`, `breadcrumb`,
+`nodes`) is exactly what `fw.kconfig.open`/`.enter`/`.up`/`.set`/`.reset` all
+return - every one of those calls fully replaces the screen, so
+`applyKconfigMenu()` is the one place that writes it, and it always resets
+`search`/`help` to `null`: both are stale the instant the tree under them can
+have moved. `search` and `help` are never part of the agent's own payload -
+`api/kconfig.ts` says so explicitly - they are populated by their own calls
+(`fw.kconfig.search`, `fw.kconfig.help`) layered onto the last menu, the same
+approach `mainsail/src/store/server/fwUpdater/types.ts`'s `FwKconfigState`
+uses.
+
+**`KconfigDialog.vue`** is the session UI: breadcrumb (click any ancestor to
+climb there - there is no direct-jump call, so `climbTo()` just calls
+`fw.kconfig.up` the right number of times), a search box that replaces the
+node list while active, the node list itself via `KconfigNode.vue`, and a
+footer with Up / Discard (`fw.kconfig.reset`) / Save / Save & Build
+(`fw.kconfig.save {build}`). Closing with unsaved edits (`dirty: true`) asks
+for confirmation first - a save is the one thing here that cannot be
+regenerated, so a stray click must not be able to lose it silently. A save
+that also builds hands back nothing the dialog has to adopt itself: the
+started job's `job`/`log` events arrive through the normal event path exactly
+like a build kicked off any other way.
+
+**`KconfigNode.vue`** renders one row by `kind`: `menu` (or any node with
+`enterable: true`) is a destination, not a value, so it is a button that
+emits `enter`; `bool` is a checkbox sending `y`/`n`; `choice` is a `<select>`
+whose options carry the tree's own prompts as labels but send the option's
+*symbol name*, not its label, as the value; `tristate` is a `<select>` over
+raw `assignable` (`y`/`n`/`m`) since a tristate has no prompts to show;
+everything else (`string`/`int`/`hex`) is a text input, committed on change
+rather than per keystroke because each `set` is a round trip that can rewrite
+the whole menu (`fw.kconfig.set`'s reply is the full current menu, for exactly
+that reason - flipping the architecture symbol replaces nearly every row).
+`editable: false` disables the control and shows a lock, rather than a control
+that silently refuses to move: it means kconfiglib will not accept a change
+right now, either because another symbol's `select` holds this one, or its
+dependencies are unmet - and it is deliberately not the same signal as an
+empty `assignable`.
+
+**`kconfig_session_conflict` gets its own retry path in `ActionButton.vue`,
+not in the dialog.** Opening a session with `force` unset fails if another
+session already has unsaved changes to the same `(type, fw)` - two tabs
+editing the same tree risks one save silently discarding the other's work.
+The refusal's `data.code` is `kconfig_session_conflict`; `ActionButton`
+recognises it after a failed `openKconfig()` and offers "Take over anyway",
+which retries with `force: true`. This lives on the button that tried to
+open, not inside `KconfigDialog`, because the dialog does not exist yet at
+the point the conflict is discovered - there is no session to hold state in.
+
+**Not yet verified against a real printer.** No menuconfig session has been
+opened, edited, or saved through this UI on hardware - CLAUDE.md's "bench
+board only" rule applies here too, since Save & Build can kick off a real
+build. This phase ships `vitest`/`vue-tsc`/`vite build` clean, same caveat as
+Phases 4 and 5 carried before their own printer verification.
+
 ## Building locally
 
 ```bash

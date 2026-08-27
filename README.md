@@ -99,26 +99,32 @@ of it. What is still open:
 - **Reproduce and fix the flaky teardown `RuntimeError`** in
   `test_an_unknown_inbound_method_gets_an_error_not_silence`.
 - **Standalone UI: infrastructure, the communication layer, a `targets[]`
-  row view, and the action/job renderer are done.** The nginx site, the
-  release pipeline, the `[update_manager mcu-updater-ui]` entry, the
+  row view, the action/job renderer, and the Kconfig session dialog are
+  done.** The nginx site, the release pipeline, the
+  `[update_manager mcu-updater-ui]` entry, the
   `moonraker.ts`/`agent.ts`/`events.ts` connection layer,
   `TargetsView.vue`/`TargetRow.vue` (one row component for an MCU or a
   display, tone/label read from the payload, detail fetched on demand via
   `fw.target.get {name, provider}`), `ActionButton.vue` (the generic
   `{id, label, method, params, blocked, choices?}` renderer, gated on
   `blocked` plus a transient busy-from-`state.job` check, with a
-  client-computed device preview before a flashing method runs) and
-  `JobPanel.vue` (state, progress, streaming log with the gap-heal, and a
-  cancel button worded from the job's own `kind` rather than assuming every
-  cancel is immediate) all work end to end (see
+  client-computed device preview before a flashing method runs), `JobPanel.vue`
+  (state, progress, streaming log with the gap-heal, and a cancel button
+  worded from the job's own `kind` rather than assuming every cancel is
+  immediate), and `KconfigDialog.vue`/`KconfigNode.vue` (the `fw.kconfig.*`
+  session — menu navigation, search, per-symbol help, save/save-and-build,
+  and a `kconfig_session_conflict` force-takeover prompt, all driven by a
+  single `state.kconfig` slice `ActionButton.vue` opens when its method is
+  `fw.kconfig.open`) all work end to end (see
   [docs/standalone-ui.md](docs/standalone-ui.md)) — verified with `vitest`/
   `vue-tsc`/`vite build`, and confirmed live against a real printer through
-  Phase 4's `targets[]` view. **The action/job renderer itself is not yet
-  verified in a real browser** — no build, flash, or cancel has been run
-  against a printer through it, and CLAUDE.md's flashing rules (bench board
-  only, never interrupt a write) make that verification something to do
-  deliberately, not incidentally. `ui/src/App.vue` is still a debug harness
-  around the real views rather than the shipped UI shell.
+  Phase 4's `targets[]` view. **The action/job renderer and the Kconfig
+  dialog are not yet verified in a real browser** — no build, flash, cancel,
+  or menuconfig save has been run against a printer through them, and
+  CLAUDE.md's flashing rules (bench board only, never interrupt a write)
+  make that verification something to do deliberately, not incidentally.
+  `ui/src/App.vue` is still a debug harness around the real views rather
+  than the shipped UI shell.
   **Auth is partial:** an API key from `localStorage` works, but Moonraker's
   login flow (`force_logins` installs) is not implemented yet.
 - **Revisit whether the API still needs an MCU/display distinction at all.**

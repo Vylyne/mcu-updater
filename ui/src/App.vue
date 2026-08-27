@@ -5,6 +5,8 @@
 import { computed, onMounted, onUnmounted, ref } from "vue";
 import { httpGetJson } from "./api/moonraker";
 import { connect, disconnect, state } from "./store/agent";
+import TargetsView from "./components/TargetsView.vue";
+import type { Target } from "./api/targets";
 
 const API_KEY_STORAGE_KEY = "mcu-updater-ui:apiKey";
 
@@ -30,6 +32,7 @@ const accessError = ref<string | null>(null);
 
 const statusText = computed(() => JSON.stringify(state.status, null, 2));
 const pingText = computed(() => JSON.stringify(state.ping, null, 2));
+const targets = computed(() => state.status?.targets as Target[] | undefined);
 
 async function loadAccessInfo(): Promise<void> {
   try {
@@ -97,8 +100,10 @@ function reconnect(): void {
       <pre>{{ pingText }}</pre>
     </section>
 
+    <TargetsView :targets="targets" />
+
     <section>
-      <h2>fw.status</h2>
+      <h2>fw.status (raw)</h2>
       <pre>{{ statusText }}</pre>
     </section>
 

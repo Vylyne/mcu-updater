@@ -120,13 +120,43 @@ trusted-client LAN install needs neither. The login form is deferred to a
 later phase, not silently dropped.
 
 `ui/src/App.vue` is currently a debug harness (connection state, the live
-`fw.ping`/`fw.status` JSON, a rolling event log) rather than the real
-`targets[]` view - that's Phase 4.
+`fw.ping` JSON, a rolling event log, the raw `fw.status` JSON) rather than the
+real UI - most of the debug surface is still there, but `targets[]` itself
+now renders through `ui/src/components/TargetsView.vue`/`TargetRow.vue`
+instead of only appearing in the raw JSON dump.
+
+## Rendering `targets[]` (Phase 4)
+
+One row component (`TargetRow.vue`) renders an MCU type and a display alike -
+name, provider, the artifact's tone/label, and each device's tone/label/
+presence - reading tone and label from the payload rather than re-deriving
+them from `reason`, per `docs/agent-api.md`'s "one vocabulary, not four colour
+maps" rationale. Rows are keyed on `provider:name` (`targetKey()` in
+`ui/src/api/targets.ts`), not `name` alone, for the same reason the Mainsail
+panel does: nothing stops an MCU type and a display sharing a name across
+their separate config files.
+
+The one place the row still reads `provider`-shaped state is deliberately
+narrow: the empty-devices hint checks for `target.extra` (present only on a
+display) rather than branching on `provider` directly, so the row stays
+generic to whatever a third provider might add later.
+
+**No actions yet.** `targets[].actions` is not rendered - the
+`{id, label, method, params, blocked, choices?}` renderer, and the decision
+about where MCU-only type management (edit/remove a type) lives without a
+`provider` branch, are Phase 5's work.
+
+**Row detail is on demand**, via the new `fw.target.get {name, provider}`
+(`fetchTargetDetail()` in `ui/src/store/agent.ts`) - "Show detail" on a row
+fetches its full `fw.type.list`/`fw.device.list`-equivalent payload only when
+opened, not for every row on every `fw.status` poll (the display branch of
+that call is as expensive as a full `fw.status`, see `docs/agent-api.md`).
 
 `scripts/fake_moonraker.py` fakes the agent's *unix socket* connection to
-Moonraker, not a browser websocket, so it cannot drive this layer. Phase 3's
-own tests (`ui/src/api/*.spec.ts`) mock the `WebSocket` transport instead; a
-real Moonraker/agent pair is still the only way to verify this end to end.
+Moonraker, not a browser websocket, so it cannot drive this layer. Phase 3
+and 4's own tests (`ui/src/**/*.spec.ts`) mock the `WebSocket` transport
+instead; a real Moonraker/agent pair is still the only way to verify this,
+and the visual result, end to end.
 
 ## Building locally
 

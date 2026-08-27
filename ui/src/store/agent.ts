@@ -201,6 +201,27 @@ function handleNotification(method: string, params: unknown): void {
   });
 }
 
+/** One target row's full detail, on demand - the row itself never needs
+ * this, only a caller opening it. Returns null on any failure, having
+ * already routed it through `state.error` the same way every other call
+ * here does. */
+export async function fetchTargetDetail(
+  name: string,
+  provider: string,
+): Promise<Record<string, unknown> | null> {
+  if (client === null) return null;
+  try {
+    const result = await callAgent<{
+      provider: string;
+      target: Record<string, unknown>;
+    }>(client, "fw.target.get", { name, provider });
+    return result.target;
+  } catch (error) {
+    state.error = error as NormalizedAgentError;
+    return null;
+  }
+}
+
 export function connect(url: string, wsFactory?: WebSocketFactory): void {
   client?.close();
   client = new MoonrakerClient(url, wsFactory);

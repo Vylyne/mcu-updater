@@ -1,11 +1,76 @@
-/* Visual scheme (tone map, panel colours, spacing) is lifted from the
-   Mainsail panel in Phase 4, once there is a target row to style. */
+/* Tone map lifted from the Mainsail panel (docs/agent-api.md's targets[]
+   tone/label convention): ok/unknown/attention, one vocabulary for both an
+   artifact's staleness and a device's presence. */
 
 :root {
   color-scheme: light dark;
+  --tone-ok: #4caf50;
+  --tone-unknown: #9e9e9e;
+  --tone-attention: #ff9800;
 }
 
 body {
   margin: 0;
   font-family: system-ui, sans-serif;
+}
+
+.target {
+  border: 1px solid rgba(128, 128, 128, 0.6);
+  border-radius: 4px;
+  padding: 0.75rem 1rem;
+  margin-bottom: 0.75rem;
+}
+
+.target header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.chip {
+  display: inline-block;
+  padding: 0.1rem 0.5rem;
+  border-radius: 999px;
+  background: rgba(128, 128, 128, 0.2);
+  font-size: 0.72rem;
+}
+
+[data-tone="ok"] {
+  border-color: var(--tone-ok);
+}
+[data-tone="unknown"] {
+  border-color: var(--tone-unknown);
+}
+[data-tone="attention"] {
+  border-color: var(--tone-attention);
+}
+.chip[data-tone="ok"] {
+  background: var(--tone-ok);
+  color: #fff;
+}
+.chip[data-tone="unknown"] {
+  background: var(--tone-unknown);
+  color: #fff;
+}
+.chip[data-tone="attention"] {
+  background: var(--tone-attention);
+  color: #fff;
+}
+
+.devices {
+  list-style: none;
+  padding: 0;
+  margin: 0.5rem 0 0;
+}
+
+.devices li {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.25rem 0;
+}
+
+.muted {
+  opacity: 0.7;
+  font-size: 0.9rem;
 }

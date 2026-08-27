@@ -98,15 +98,18 @@ of it. What is still open:
   `npx vite build` as proving nothing about `.vue` script blocks meanwhile.
 - **Reproduce and fix the flaky teardown `RuntimeError`** in
   `test_an_unknown_inbound_method_gets_an_error_not_silence`.
-- **Standalone UI: infrastructure and the communication layer are done; no
-  view yet.** The nginx site, the release pipeline, the
-  `[update_manager mcu-updater-ui]` entry, and the `moonraker.ts`/`agent.ts`/
-  `events.ts` connection layer all work end to end (see
-  [docs/standalone-ui.md](docs/standalone-ui.md)), but `ui/src/App.vue` is
-  still a debug harness — the real `targets[]` view is the next phase.
-  `fw.target.get {name, provider}` has landed agent-side (one per-target
-  detail call replacing the old fw.type.list/fw.device.list two-call dance —
-  see docs/agent-api.md), but no client calls it yet.
+- **Standalone UI: infrastructure, the communication layer and a `targets[]`
+  row view are done; no actions yet.** The nginx site, the release pipeline,
+  the `[update_manager mcu-updater-ui]` entry, the `moonraker.ts`/`agent.ts`/
+  `events.ts` connection layer, and `TargetsView.vue`/`TargetRow.vue`
+  (one row component for an MCU or a display, tone/label read from the
+  payload, detail fetched on demand via the new `fw.target.get {name,
+  provider}`) all work end to end (see
+  [docs/standalone-ui.md](docs/standalone-ui.md)) — but nothing calls
+  `targets[].actions` yet, and `ui/src/App.vue` is still a debug harness
+  around the real view rather than the shipped UI shell. **Not yet verified
+  in a real browser against a printer** — everything above is `vitest`/
+  `vue-tsc`/`vite build` clean only.
   **Auth is partial:** an API key from `localStorage` works, but Moonraker's
   login flow (`force_logins` installs) is not implemented yet.
 - **Revisit whether the API still needs an MCU/display distinction at all.**

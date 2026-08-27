@@ -65,7 +65,11 @@ jobs:
 
       - uses: actions/setup-node@v4
         with:
-          node-version: 20
+          # jsdom 30's engines field is ^22.22.2 || ^24.15.0 || >=26.0.0 - 20
+          # is not in that range at all, and fails at test time with
+          # "webidl.util.markAsUncloneable is not a function" from undici's
+          # Cache implementation, not at install time, so npm ci looks fine.
+          node-version: 22
           cache: npm
           cache-dependency-path: ui/package-lock.json
 

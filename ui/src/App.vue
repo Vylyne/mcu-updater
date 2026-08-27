@@ -32,6 +32,14 @@ const socketUrl = ref(defaultSocketUrl());
 const accessInfo = ref<Record<string, unknown> | null>(null);
 const accessError = ref<string | null>(null);
 
+// ?embed=1 is the Mainsail "HTML Iframe" webcam service - see
+// docs/standalone-ui.md. It drops everything that is only useful standing
+// alone at a full page (title, connection debug, the raw JSON dumps, the
+// event log) and keeps only the functional surface, inside a box the iframe
+// itself sizes - never the viewport, which inside an iframe is Mainsail's.
+const isEmbed =
+  new URLSearchParams(window.location.search).get("embed") === "1";
+
 const statusText = computed(() => JSON.stringify(state.status, null, 2));
 const pingText = computed(() => JSON.stringify(state.ping, null, 2));
 const targets = computed(() => state.status?.targets as Target[] | undefined);
@@ -52,6 +60,13 @@ async function loadAccessInfo(): Promise<void> {
 }
 
 onMounted(() => {
+  if (isEmbed) {
+    // Sizes main.embed to the iframe's own box rather than the viewport -
+    // #app and body still need height:100% for that percentage to resolve
+    // to anything, and Vue 3 leaves #app itself in the DOM after mounting.
+    document.documentElement.classList.add("mcu-updater-embed");
+    document.body.classList.add("mcu-updater-embed");
+  }
   void loadAccessInfo();
   connect(socketUrl.value);
 });
@@ -66,23 +81,25 @@ function reconnect(): void {
 </script>
 
 <template>
-  <main>
-    <h1>mcu-updater</h1>
+  <main :class="{ embed: isEmbed }">
+    <template v-if="!isEmbed">
+      <h1>mcu-updater</h1>
 
-    <section>
-      <h2>Connection</h2>
-      <p>state: {{ state.connection }}</p>
-      <p>agent available: {{ state.agentAvailable }}</p>
-      <button type="button" @click="reconnect">Reconnect</button>
-      <p v-if="accessError">access/info: {{ accessError }}</p>
-      <p v-else-if="accessInfo">
-        access/info: {{ accessInfo.default_source ?? "trusted" }}
-        <span v-if="(accessInfo.default_source ?? null) !== null">
-          (force_logins installs need the login flow, not yet supported by this
-          UI)
-        </span>
-      </p>
-    </section>
+      <section>
+        <h2>Connection</h2>
+        <p>state: {{ state.connection }}</p>
+        <p>agent available: {{ state.agentAvailable }}</p>
+        <button type="button" @click="reconnect">Reconnect</button>
+        <p v-if="accessError">access/info: {{ accessError }}</p>
+        <p v-else-if="accessInfo">
+          access/info: {{ accessInfo.default_source ?? "trusted" }}
+          <span v-if="(accessInfo.default_source ?? null) !== null">
+            (force_logins installs need the login flow, not yet supported by
+            this UI)
+          </span>
+        </p>
+      </section>
+    </template>
 
     <section v-if="state.unsupportedApiVersion !== null">
       <h2>Update required</h2>
@@ -97,7 +114,7 @@ function reconnect(): void {
       <p>{{ state.error.code }}: {{ state.error.message }}</p>
     </section>
 
-    <section>
+    <section v-if="!isEmbed">
       <h2>fw.ping</h2>
       <pre>{{ pingText }}</pre>
     </section>
@@ -107,18 +124,20 @@ function reconnect(): void {
     <JobPanel />
     <KconfigDialog />
 
-    <section>
-      <h2>fw.status (raw)</h2>
-      <pre>{{ statusText }}</pre>
-    </section>
+    <template v-if="!isEmbed">
+      <section>
+        <h2>fw.status (raw)</h2>
+        <pre>{{ statusText }}</pre>
+      </section>
 
-    <section>
-      <h2>Events</h2>
-      <ul>
-        <li v-for="(entry, index) in state.events" :key="index">
-          {{ new Date(entry.at).toLocaleTimeString() }} - {{ entry.event }}
-        </li>
-      </ul>
-    </section>
+      <section>
+        <h2>Events</h2>
+        <ul>
+          <li v-for="(entry, index) in state.events" :key="index">
+            {{ new Date(entry.at).toLocaleTimeString() }} - {{ entry.event }}
+          </li>
+        </ul>
+      </section>
+    </template>
   </main>
 </template>

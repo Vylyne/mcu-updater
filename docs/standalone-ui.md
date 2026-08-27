@@ -282,6 +282,43 @@ board only" rule applies here too, since Save & Build can kick off a real
 build. This phase ships `vitest`/`vue-tsc`/`vite build` clean, same caveat as
 Phases 4 and 5 carried before their own printer verification.
 
+## Embed mode (Phase 7)
+
+`?embed=1` is for Mainsail's own **HTML Iframe** webcam service
+(`service: iframe`, upstream since #2384) - it lets the standalone UI sit
+inside Mainsail's webcam grid as a stream URL:
+`http://<printer>:8090/?embed=1`, aspect ratio `4:3`.
+
+`App.vue` reads the flag once, from `window.location.search`, and uses it to
+skip everything that only earns its keep at a full page: the `<h1>`, the
+"Connection" debug section, the raw `fw.ping`/`fw.status` JSON dumps, and the
+rolling event log - all still there for a direct page load, all gone under
+`embed`. What stays is the functional surface: the "Update required" and
+"Error" gates, `TargetsView`, `JobPanel`, and `KconfigDialog`.
+
+**The box is the iframe's, never the viewport's.** `HtmlIframe.vue` gives the
+embedded page a fixed-aspect box it does not control the size of; assuming
+`100vh` inside that box would size against Mainsail's own window instead.
+`main.embed` gets `height: 100%; overflow-y: auto` so it fills and scrolls
+*inside* whatever box it is handed - which only resolves to something
+non-zero because `App.vue`'s `onMounted` also adds a `mcu-updater-embed`
+class to `<html>` and `<body>` (and `style.css` gives both, plus the `#app`
+div Vue 3 leaves behind after mounting, `height: 100%` in turn). All three
+rules are scoped to that class, so a normal full-page load is untouched.
+
+**Two known traps, not yet exercised against a real Mainsail:**
+`HtmlIframe.vue` applies the webcam's rotate/flip transform to whatever it
+embeds - leave both at their defaults (0) when adding the stream, since
+nothing here expects to be shown upside down. And an `http://` iframe inside
+an `https://` Mainsail is blocked as mixed content, so if Mainsail has TLS
+the standalone UI needs it too (the commented `listen 443 ssl` block in
+`scripts/nginx.sites-available-mcu-updater` is exactly for this).
+
+**Not yet verified against a real Mainsail.** No iframe has actually been
+added to a webcam grid and loaded against a live printer - this phase ships
+`vitest`/`vue-tsc`/`vite build` clean, same caveat Phases 4-6 carried before
+their own printer verification.
+
 ## Building locally
 
 ```bash

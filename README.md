@@ -115,16 +115,19 @@ of it. What is still open:
   session — menu navigation, search, per-symbol help, save/save-and-build,
   and a `kconfig_session_conflict` force-takeover prompt, all driven by a
   single `state.kconfig` slice `ActionButton.vue` opens when its method is
-  `fw.kconfig.open`) all work end to end (see
+  `fw.kconfig.open`) and `?embed=1` (drops the debug chrome, sizes to the
+  iframe's own box instead of the viewport, for use as a Mainsail "HTML
+  Iframe" webcam service) all work end to end (see
   [docs/standalone-ui.md](docs/standalone-ui.md)) — verified with `vitest`/
   `vue-tsc`/`vite build`, and confirmed live against a real printer through
-  Phase 4's `targets[]` view. **The action/job renderer and the Kconfig
-  dialog are not yet verified in a real browser** — no build, flash, cancel,
-  or menuconfig save has been run against a printer through them, and
-  CLAUDE.md's flashing rules (bench board only, never interrupt a write)
-  make that verification something to do deliberately, not incidentally.
+  Phase 4's `targets[]` view. **The action/job renderer, the Kconfig
+  dialog, and embed mode are not yet verified in a real browser** — no
+  build, flash, cancel, menuconfig save, or Mainsail iframe embed has been
+  run against a printer through them, and CLAUDE.md's flashing rules (bench
+  board only, never interrupt a write) make that verification something to
+  do deliberately, not incidentally.
   `ui/src/App.vue` is still a debug harness around the real views rather
-  than the shipped UI shell.
+  than the shipped UI shell outside of embed mode.
   **Auth is partial:** an API key from `localStorage` works, but Moonraker's
   login flow (`force_logins` installs) is not implemented yet.
 - **Revisit whether the API still needs an MCU/display distinction at all.**

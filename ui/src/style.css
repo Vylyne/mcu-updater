@@ -102,3 +102,24 @@ body {
   max-height: 90vh;
   overflow-y: auto;
 }
+
+/* Phase 7 (?embed=1, the Mainsail "HTML Iframe" webcam service): the box the
+   iframe sits in is fixed-aspect and sized by Mainsail, not by our viewport,
+   so main.embed fills *that* box and scrolls internally instead of assuming
+   a viewport height of its own. height:100% only resolves once every
+   ancestor up to html also has one - App.vue adds these two classes only in
+   embed mode, so a full-page load is completely unaffected. */
+html.mcu-updater-embed,
+body.mcu-updater-embed {
+  height: 100%;
+  margin: 0;
+}
+body.mcu-updater-embed > #app {
+  height: 100%;
+}
+main.embed {
+  height: 100%;
+  overflow-y: auto;
+  box-sizing: border-box;
+  padding: 0.5rem;
+}

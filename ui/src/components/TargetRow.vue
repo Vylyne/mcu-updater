@@ -21,11 +21,18 @@ const detailText = computed(() =>
 // `extra` at all. Reading that presence, not `target.provider`, is what
 // keeps this row generic - the provider branch the fork has here is exactly
 // the one this file exists to not repeat.
-const noDevicesHint = computed(() =>
-  props.target.extra
-    ? `No screens found under [${props.target.extra.klipper_section} ...].`
-    : "No serial devices are tracked for this type yet.",
-);
+//
+// `extra.reachable` gets its own branch first: docs/agent-api.md's
+// fw.device.list section is explicit that "no displays configured" and "we
+// could not ask Klipper" must not look the same, because the module that
+// would otherwise report a screen missing is exactly the thing an
+// unreachable Klipper takes down too.
+const noDevicesHint = computed(() => {
+  const extra = props.target.extra;
+  if (!extra) return "No serial devices are tracked for this type yet.";
+  if (!extra.reachable) return "Could not reach Klipper to check for screens.";
+  return `No screens found under [${extra.klipper_section} ...].`;
+});
 
 async function toggle(): Promise<void> {
   if (expanded.value) {

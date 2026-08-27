@@ -70,6 +70,18 @@ describe("TargetRow", () => {
     expect(wrapper.text()).not.toContain("No serial devices");
   });
 
+  it("says Klipper was unreachable rather than implying a confirmed empty list", () => {
+    // docs/agent-api.md's fw.device.list section: "no displays configured"
+    // and "we could not ask Klipper" must not look the same.
+    const target: Target = {
+      ...displayTarget,
+      extra: { ...displayTarget.extra!, reachable: false },
+    };
+    const wrapper = mount(TargetRow, { props: { target } });
+    expect(wrapper.text()).toContain("Could not reach Klipper");
+    expect(wrapper.text()).not.toContain("No screens found");
+  });
+
   it("shows the MCU-generic hint when there are no devices and no extra", () => {
     const target: Target = { ...mcuTarget, devices: [] };
     const wrapper = mount(TargetRow, { props: { target } });

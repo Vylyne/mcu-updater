@@ -1,7 +1,9 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { mount } from "@vue/test-utils";
 import TargetRow from "./TargetRow.vue";
-import type { Target } from "../api/targets";
+import type { Action, Target } from "../api/targets";
+import { state } from "../store/agent";
+import type { Job } from "../api/jobs";
 
 const mcuTarget: Target = {
   provider: "kconfig_make",
@@ -54,7 +56,57 @@ const displayTarget: Target = {
   },
 };
 
+const flashAction: Action = {
+  id: "flash",
+  label: "Flash",
+  method: "fw.flash_all",
+  params: { name: "bttebb36", scope: "stale" },
+  blocked: null,
+};
+
+const runningBuild: Job = {
+  id: "job-1",
+  kind: "build",
+  params: {},
+  state: "running",
+  created: 0,
+  started: 0,
+  finished: null,
+  duration: null,
+  progress: null,
+  result: null,
+  error: null,
+  cancel_requested: false,
+  log_next: 0,
+  log_dropped: 0,
+};
+
 describe("TargetRow", () => {
+  afterEach(() => {
+    state.job = null;
+  });
+
+  it("renders target-level actions and previews the devices a flash would write", () => {
+    const target: Target = { ...mcuTarget, actions: [flashAction] };
+    const wrapper = mount(TargetRow, { props: { target } });
+    const flashButton = wrapper
+      .findAll("button")
+      .find((b) => b.text() === "Flash");
+    expect(flashButton).toBeTruthy();
+    expect(flashButton?.attributes("disabled")).toBeUndefined();
+  });
+
+  it("disables row actions while a job is running, without touching blocked", () => {
+    state.job = runningBuild;
+    const target: Target = { ...mcuTarget, actions: [flashAction] };
+    const wrapper = mount(TargetRow, { props: { target } });
+    const actionButtons = wrapper
+      .findAll("button")
+      .filter((b) => b.text() === "Flash");
+    expect(actionButtons[0]?.attributes("disabled")).toBeDefined();
+    expect(wrapper.text()).toContain("build is already running");
+  });
+
   it("renders an MCU target's name, provider and device", () => {
     const wrapper = mount(TargetRow, { props: { target: mcuTarget } });
     expect(wrapper.text()).toContain("bttebb36");

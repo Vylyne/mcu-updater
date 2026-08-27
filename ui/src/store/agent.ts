@@ -22,6 +22,8 @@ import {
   type LogBatch,
   type LogCursor,
 } from "../api/events";
+import type { Action } from "../api/targets";
+import type { Job } from "../api/jobs";
 
 export interface EventLogEntry {
   at: number;
@@ -34,9 +36,13 @@ export interface AgentStoreState {
   agentAvailable: boolean | null;
   ping: Record<string, unknown> | null;
   status: Record<string, unknown> | null;
-  job: unknown | null;
+  job: Job | null;
   bus: unknown[];
   log: { job_id: string; lines: { i: number; s: string; t: string }[] } | null;
+  /** Set when the last resync learned the ring buffer had already evicted
+   * lines we asked for, or dropped some - docs/agent-api.md's "The log, and
+   * its sequence numbers": tell the user rather than renumber silently. */
+  logOmitted: boolean;
   events: EventLogEntry[];
   error: NormalizedAgentError | null;
   /** Set when the agent's api_version exceeds SUPPORTED_API_VERSION - the
@@ -53,6 +59,7 @@ export const state: AgentStoreState = reactive({
   job: null,
   bus: [],
   log: null,
+  logOmitted: false,
   events: [],
   error: null,
   unsupportedApiVersion: null,
@@ -102,6 +109,7 @@ async function ping(): Promise<void> {
     // docs/agent-api.md's "A job outlives the connection" note.
     logCursor.current = 0;
     state.log = null;
+    state.logOmitted = false;
     await refreshStatus();
   } catch (error) {
     state.error = error as NormalizedAgentError;
@@ -148,15 +156,31 @@ function resetOnDisconnect(): void {
 
 async function resyncLog(jobId: string): Promise<void> {
   if (client === null) return;
+  // routeAgentEvent has not yet advanced the cursor when this runs (it does
+  // so synchronously, after this fire-and-forget call is dispatched), so
+  // `logCursor.current` here is still "how many lines of this job we have
+  // already rendered" - the boundary to keep, not to discard.
+  const cursorBeforeGap = logCursor.current;
   try {
     const result = await callAgent<{
       log: { i: number; s: string; t: string }[];
+      log_from: number;
       log_next: number;
+      log_dropped: number;
     }>(client, "fw.job.get", {
       job_id: jobId,
-      log_from: logCursor.current,
+      log_from: cursorBeforeGap,
     });
-    state.log = { job_id: jobId, lines: result.log };
+    const kept =
+      state.log !== null && state.log.job_id === jobId
+        ? state.log.lines.filter((line) => line.i < cursorBeforeGap)
+        : [];
+    // `log_from` can be higher than asked for - the log is a ring buffer and
+    // a long build evicts its own beginning. Surface that rather than
+    // silently renumbering, per docs/agent-api.md.
+    state.logOmitted =
+      result.log_from > cursorBeforeGap || result.log_dropped > 0;
+    state.log = { job_id: jobId, lines: [...kept, ...result.log] };
     logCursor.current = result.log_next;
   } catch (error) {
     state.error = error as NormalizedAgentError;
@@ -183,7 +207,7 @@ function handleNotification(method: string, params: unknown): void {
       state.bus = devices;
     },
     onJob: (job) => {
-      state.job = job;
+      state.job = job as Job | null;
     },
     onLog: (batch, isGap) => {
       if (isGap) {
@@ -219,6 +243,68 @@ export async function fetchTargetDetail(
   } catch (error) {
     state.error = error as NormalizedAgentError;
     return null;
+  }
+}
+
+/** Run an action from a `targets[]`/device `actions[]` entry. `extraParams`
+ * carries a `choices` pick, merged under `choices.param` by the caller before
+ * this is called - this function never knows an action has choices, only
+ * that `params` is whatever was decided. Returns false (and routes the
+ * failure into `state.error`) rather than throwing, so a component can
+ * `if (!(await invokeAction(...))) return` without its own try/catch. */
+export async function invokeAction(
+  action: Action,
+  extraParams: Record<string, unknown> = {},
+): Promise<boolean> {
+  if (client === null) return false;
+  try {
+    await callAgent(client, action.method, {
+      ...action.params,
+      ...extraParams,
+    });
+    state.error = null;
+    return true;
+  } catch (error) {
+    state.error = error as NormalizedAgentError;
+    return false;
+  }
+}
+
+/** Fetches the option list for an action's `choices`, e.g.
+ * `fw.profile.list`'s `available`. The renderer stays generic over the
+ * result - see docs/agent-api.md's "An action may carry `choices`". */
+export async function fetchChoices(
+  choicesMethod: string,
+  choicesParams: Record<string, unknown>,
+): Promise<Record<string, unknown> | null> {
+  if (client === null) return null;
+  try {
+    const result = await callAgent<Record<string, unknown>>(
+      client,
+      choicesMethod,
+      choicesParams,
+    );
+    state.error = null;
+    return result;
+  } catch (error) {
+    state.error = error as NormalizedAgentError;
+    return null;
+  }
+}
+
+/** Cancel whatever job is currently running. The wording of what this
+ * actually does belongs to the caller (jobs.ts's cancelIsImmediate, keyed on
+ * job.kind so it still reads correctly after a page reload) - this just
+ * makes the call. */
+export async function cancelJob(): Promise<boolean> {
+  if (client === null || state.job === null) return false;
+  try {
+    await callAgent(client, "fw.job.cancel", { job_id: state.job.id });
+    state.error = null;
+    return true;
+  } catch (error) {
+    state.error = error as NormalizedAgentError;
+    return false;
   }
 }
 

@@ -141,10 +141,10 @@ narrow: the empty-devices hint checks for `target.extra` (present only on a
 display) rather than branching on `provider` directly, so the row stays
 generic to whatever a third provider might add later.
 
-**No actions yet.** `targets[].actions` is not rendered - the
-`{id, label, method, params, blocked, choices?}` renderer, and the decision
+`targets[].actions` and each device's own `actions[]` now render too, through
+`ActionButton.vue` - see "Actions and jobs (Phase 5)" below. The decision
 about where MCU-only type management (edit/remove a type) lives without a
-`provider` branch, are Phase 5's work.
+`provider` branch is still unscheduled.
 
 **Row detail is on demand**, via the new `fw.target.get {name, provider}`
 (`fetchTargetDetail()` in `ui/src/store/agent.ts`) - "Show detail" on a row
@@ -157,6 +157,59 @@ Moonraker, not a browser websocket, so it cannot drive this layer. Phase 3
 and 4's own tests (`ui/src/**/*.spec.ts`) mock the `WebSocket` transport
 instead; a real Moonraker/agent pair is still the only way to verify this,
 and the visual result, end to end.
+
+## Actions and jobs (Phase 5)
+
+`ActionButton.vue` renders one entry from a `targets[]`/`devices[]` `actions[]`
+array: a button whose `method`/`params` it never has to be taught, `blocked`
+(the same `{code, message, data}` shape a failed call carries) shown as the
+button's disabled title, and an optional `choices` (`{method, params, param}`)
+that fetches its option list only when opened and puts the pick into
+`params[param]` before invoking - it never learns what a profile, or anything
+else offering `choices`, actually is.
+
+**`blocked` is not the only gate.** `docs/agent-api.md` is explicit that a job
+already running is deliberately *not* encoded in `blocked` - that is what
+`job`/`locked_by` are for. `TargetRow.vue` derives a separate `busyReason` from
+`state.job` and passes it down as `disabled`/`disabled-reason`, so a greyed
+button from "something else is running" and a greyed button from "the payload
+refused this" read differently, and neither one fakes the other's shape.
+
+**A flashing method always confirms first, and the confirmation names real
+devices.** `fw.flash`/`fw.flash_all` return their actual selection
+(`boards`/`displays`) only *after* the job has already started - there is no
+preview endpoint - so the confirmation dialog is built client-side instead,
+from `targets[].devices[]`'s own `needs_flash`/`present` fields under the
+action's own `scope` (`TargetRow.previewFor()`). If no target/device data is
+available to name, the dialog says so and refuses to let the click through
+rather than guessing. `ActionButton`'s `DESTRUCTIVE_METHODS` set is the one
+place naming which methods this applies to.
+
+**`JobPanel.vue`** renders the single job the agent ever runs at once: state,
+0-based `progress.index` shown as `index + 1` of `total`, the streaming log
+(via the store's existing gap-heal - see below), and a cancel button worded
+from the job's own `kind` through `api/jobs.ts`'s `cancelIsImmediate()` -
+`build`/`build_all` read "stops immediately", `flash`/`flash_all`/`update_all`
+read "cancels after the current board or build finishes", per
+`docs/agent-api.md`'s "Cancellation is not uniform" table. Deriving the
+wording from `kind` rather than from `fw.job.cancel`'s own `immediate` return
+means it still reads correctly after a page reload, when that return value is
+long gone but the job (and its `kind`) is still live.
+
+**The log gap-heal had a real bug, fixed in this phase.** `resyncLog()` in
+`store/agent.ts` used to replace the entire rendered log with only the resync
+tail, silently dropping every line rendered before the gap; it now keeps
+lines up to the cursor and appends the resync's lines after them. It also now
+tracks `state.logOmitted`, set when `fw.job.get`'s `log_from` comes back higher
+than asked (the ring buffer already evicted the beginning) or `log_dropped >
+0`, and `JobPanel.vue` shows an explicit "some earlier lines were dropped"
+marker rather than letting the log renumber without comment.
+
+**Not yet verified against a real printer.** Building, flashing, and
+cancelling mid-run are all still to confirm on the bench board, per CLAUDE.md's
+"Never interrupt a firmware write" and "bench board only" rules - this phase
+ships `vitest`/`vue-tsc`/`vite build` clean, same caveat as Phase 4 carried
+before its own printer verification.
 
 ## Building locally
 

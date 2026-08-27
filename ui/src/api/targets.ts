@@ -13,6 +13,32 @@ export interface ArtifactSummary {
   reason: string | null;
 }
 
+/** Same shape a failed call's `error` carries - docs/agent-api.md's "A
+ * requirement is only visible as `blocked`" note. `null` means go. */
+export interface Blocked {
+  code: string;
+  message: string;
+  data?: unknown;
+}
+
+/** "This action takes an option, fetch them when you open it." Call `method`
+ * with `params` to get the list; put what the user picks into `params[param]`
+ * before invoking the action itself. */
+export interface Choices {
+  method: string;
+  params: Record<string, unknown>;
+  param: string;
+}
+
+export interface Action {
+  id: string;
+  label: string;
+  method: string;
+  params: Record<string, unknown>;
+  blocked: Blocked | null;
+  choices?: Choices;
+}
+
 export interface TargetDevice {
   id: string;
   name: string | null;
@@ -25,10 +51,7 @@ export interface TargetDevice {
   tone: Tone;
   label: string;
   reason: string | null;
-  // fw.build/fw.flash/etc, {id, label, method, params, blocked, choices?} -
-  // the Phase 5 action renderer's shape. Left untyped here since Phase 4
-  // renders targets[] only and does not read into an action yet.
-  actions: unknown[];
+  actions: Action[];
 }
 
 /** One `targets[]` row - `TypeStatus` and `DisplayStatus` in one shape.
@@ -43,7 +66,7 @@ export interface Target {
   profile: Record<string, unknown> | null;
   needs_flash: boolean | null;
   devices: TargetDevice[];
-  actions: unknown[];
+  actions: Action[];
   extra?: {
     module_version: string | null;
     source_version: string | null;

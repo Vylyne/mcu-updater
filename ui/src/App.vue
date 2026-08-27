@@ -6,6 +6,7 @@ import { computed, onMounted, onUnmounted, ref } from "vue";
 import { httpGetJson } from "./api/moonraker";
 import { connect, disconnect, state } from "./store/agent";
 import TargetsView from "./components/TargetsView.vue";
+import JobPanel from "./components/JobPanel.vue";
 import type { Target } from "./api/targets";
 
 const API_KEY_STORAGE_KEY = "mcu-updater-ui:apiKey";
@@ -101,6 +102,8 @@ function reconnect(): void {
     </section>
 
     <TargetsView :targets="targets" />
+
+    <JobPanel />
 
     <section>
       <h2>fw.status (raw)</h2>

@@ -255,6 +255,56 @@ def test_settings_get_is_serialisable(api):
 
 
 # --------------------------------------------------------------------------
+# fw.target.get
+# --------------------------------------------------------------------------
+
+
+def test_target_get_requires_name_and_provider(api):
+    with pytest.raises(RpcError) as exc:
+        api.dispatch("fw.target.get", {"name": "bttebb36"})
+    assert exc.value.code == ERR_INVALID_PARAMS
+
+    with pytest.raises(RpcError) as exc:
+        api.dispatch("fw.target.get", {"provider": "kconfig_make"})
+    assert exc.value.code == ERR_INVALID_PARAMS
+
+
+def test_target_get_rejects_an_unknown_provider(api):
+    with pytest.raises(RpcError) as exc:
+        api.dispatch("fw.target.get", {"name": "bttebb36", "provider": "nope"})
+    assert exc.value.code == ERR_INVALID_PARAMS
+
+
+def test_target_get_returns_the_same_detail_as_type_list_for_an_mcu(api):
+    from_list = {t["name"]: t for t in api.dispatch("fw.type.list")["types"]}["bttebb36"]
+    res = api.dispatch("fw.target.get", {"name": "bttebb36", "provider": "kconfig_make"})
+    assert res["provider"] == "kconfig_make"
+    assert res["target"] == from_list
+
+
+def test_target_get_for_an_unknown_mcu_carries_the_stable_code(api):
+    with pytest.raises(RpcError) as exc:
+        api.dispatch("fw.target.get", {"name": "nope", "provider": "kconfig_make"})
+    assert exc.value.data["code"] == "unknown_target"
+
+
+def test_target_get_returns_the_same_detail_as_device_list_for_a_display(api):
+    from_status = next(
+        t for t in api.dispatch("fw.status")["targets"] if t["provider"] == "platformio"
+    )
+    res = api.dispatch("fw.target.get", {"name": from_status["name"], "provider": "platformio"})
+    assert res["provider"] == "platformio"
+    assert res["target"]["name"] == from_status["name"]
+    assert res["target"]["env"] == from_status["descriptor"]
+
+
+def test_target_get_for_an_unknown_display_carries_the_stable_code(api):
+    with pytest.raises(RpcError) as exc:
+        api.dispatch("fw.target.get", {"name": "nope", "provider": "platformio"})
+    assert exc.value.data["code"] == "unknown_target"
+
+
+# --------------------------------------------------------------------------
 # dispatch
 # --------------------------------------------------------------------------
 

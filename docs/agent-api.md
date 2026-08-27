@@ -89,12 +89,16 @@ API; the prose is not. Most come from `errors.py`: `config_corrupt`,
 `print_in_progress`, `cancelled`, `profile`, `profile_not_found`,
 `profile_customised`, `offset_mismatch`, `kconfig`, `no_session`. A few are
 built inline at the call site rather than from a typed exception -
-`no_artifact`, `nothing_to_do`, the `dfu_<reason>` family (`dfu_none`,
-`dfu_no_tool`, `dfu_permission_denied`, `dfu_ambiguous`) `fw.add_mcu.start`
-derives from `fw.dfu.scan`'s own `reason`, and the `bootsel_<reason>` family
-(`bootsel_none`, `bootsel_not_mounted`, `bootsel_ambiguous`) it derives from
-`fw.bootsel.scan`'s the same way - documented where each is raised rather than
-repeated here.
+`no_artifact`, `nothing_to_do`, `unknown_job` (`fw.job.get`/`fw.job.cancel`),
+`unknown_target` (`fw.target.get` - one code for either provider, deliberately;
+an unknown MCU name through `fw.artifacts` still reports `unknown_type`
+because that path raises `UnknownTypeError` directly, but `fw.target.get`
+pre-checks the name against both registries itself so it never does), the
+`dfu_<reason>` family (`dfu_none`, `dfu_no_tool`, `dfu_permission_denied`,
+`dfu_ambiguous`) `fw.add_mcu.start` derives from `fw.dfu.scan`'s own `reason`,
+and the `bootsel_<reason>` family (`bootsel_none`, `bootsel_not_mounted`,
+`bootsel_ambiguous`) it derives from `fw.bootsel.scan`'s the same way -
+documented where each is raised rather than repeated here.
 
 JSON-RPC codes: `-32601` unknown method, `-32602` bad params, `-32000`
 application error (see `data.code`), `-32603` internal.
@@ -106,6 +110,7 @@ application error (see `data.code`), `-32603` internal.
 | `fw.ping` | — | version/capability handshake |
 | `fw.status` | — | everything the panel needs, in one call |
 | `fw.type.list` | — | `{types: [TypeStatus]}` |
+| `fw.target.get` | `name`, `provider` (required) | `{provider, target}` — one `targets[]` entry's full detail |
 | `fw.bus.scan` | `only_untracked?`, `chipset?` | `{devices: [BusDevice]}` |
 | `fw.dfu.scan` | — | `{devices, count, ready, reason, message}` — read-only |
 | `fw.bootsel.scan` | — | `{devices, count, mounts, mount_count, ready, reason, message}` — read-only |
@@ -158,10 +163,19 @@ update the panel.
 ```
 
 `targets` is `TypeStatus` and `DisplayStatus` said in one shape - see below.
-Those two originals are not embedded here; fetch them with `fw.type.list` and
-`fw.device.list` when a caller needs the full per-type detail `targets`
-projects away (extra_args, makefile_patches, extra_repos, serial-by-serial
-version info).
+Those two originals are not embedded here; fetch one with
+`fw.target.get {name, provider}` when a caller needs the full per-target
+detail `targets` projects away (extra_args, makefile_patches, extra_repos,
+serial-by-serial version info). `provider` is required alongside `name`,
+not inferred - nothing stops an MCU type and a display sharing a name across
+their separate config files, which is exactly why a client keys a target row
+on `provider:name` rather than `name` alone. The response is
+`{provider, target}`, where `target` is the same per-item shape as the
+matching entry in `fw.type.list`'s `types[]` (`provider: "kconfig_make"`) or
+`fw.device.list`'s `displays[]` (`provider: "platformio"`). `fw.type.list`
+and `fw.device.list` still exist for a caller that wants every target of one
+kind in a single round trip; `fw.target.get` is for the common case of a row
+the user is already looking at.
 
 `kconfig_available` is keyed by family name, `true` when that family's tree has
 a parseable Kconfig - it is what a picker uses to decide whether "configure"
@@ -1012,6 +1026,32 @@ starts happily with a blank display. Nothing else in the system notices.
 
 `reachable` is distinct from an empty list: "no displays configured" and "we
 could not ask Klipper" must not look the same.
+
+### `fw.target.get`
+
+```json
+// request: {"name": "bttebb36", "provider": "kconfig_make"}
+{"provider": "kconfig_make",
+ "target": {"name": "bttebb36", "chipset": "stm32g0b1xx", "firmware": "klipper",
+            "serials": [...], "artifacts": {...}}}
+```
+
+One `targets[]` row's full detail — the same per-item shape `fw.type.list`'s
+`types[]` or `fw.device.list`'s `displays[]` would give the matching entry, in
+one call instead of "fetch the right list and find the row in it". `name` and
+`provider` are both required; `provider` is not inferred from `name` because
+nothing stops an MCU type and a display sharing a name across their separate
+config files (the same reason a client keys a target row on `provider:name`,
+not `name` alone). An unknown `name` for the given `provider` raises
+`unknown_target`; an unrecognised `provider` raises `-32602`.
+
+**Not cheaper than `fw.status` for a display.** The `kconfig_make` branch is
+genuinely single-target (`type_status` takes a name). The `platformio` branch
+is not: displays are built and staled per-*type*, sharing one `printer.cfg`
+query and one `git`/artifact read across every screen of that type, so
+answering for one display type costs the same `pio_status()` pass `fw.status`
+already pays and throws away every other type's result. Fine for "the user
+opened this row's detail"; do not poll it per row.
 
 ### The watcher's map — the source that answers with Klipper down
 

@@ -104,6 +104,9 @@ of it. What is still open:
   `events.ts` connection layer all work end to end (see
   [docs/standalone-ui.md](docs/standalone-ui.md)), but `ui/src/App.vue` is
   still a debug harness — the real `targets[]` view is the next phase.
+  `fw.target.get {name, provider}` has landed agent-side (one per-target
+  detail call replacing the old fw.type.list/fw.device.list two-call dance —
+  see docs/agent-api.md), but no client calls it yet.
   **Auth is partial:** an API key from `localStorage` works, but Moonraker's
   login flow (`force_logins` installs) is not implemented yet.
 - **Revisit whether the API still needs an MCU/display distinction at all.**

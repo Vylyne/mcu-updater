@@ -1147,6 +1147,50 @@ class StatusMixin(_Base):
         versions = self.mcu_info()
         return {"types": [self.type_status(reg, n, versions) for n in reg.names()]}
 
+    def target_get(self, args: dict) -> dict[str, Any]:
+        """One target's full detail - what a caller used to need two separate
+        calls, and knowledge of which one to make, to get.
+
+        `provider` is required alongside `name`, not inferred: nothing stops
+        an MCU type and a display sharing a name across their separate config
+        files, which is exactly why the panel keys targets on `provider:name`
+        rather than `name` alone. Additive - `targets[]` still carries no more
+        than the projection it always has, this just gives a caller wanting
+        more than a row a single place to ask for it.
+        """
+        name = args.get("name")
+        provider = args.get("provider")
+        if not name or not provider:
+            raise RpcError("'name' and 'provider' are required", ERR_INVALID_PARAMS)
+
+        if provider == providers.KconfigMake.name:
+            reg = self.registry()
+            if str(name) not in reg.names():
+                raise RpcError(
+                    f"no such type: {name}",
+                    data={
+                        "code": "unknown_target",
+                        "message": "target not found",
+                        "data": {"name": name, "provider": provider},
+                    },
+                )
+            return {"provider": provider, "target": self.type_status(reg, str(name))}
+
+        if provider == providers.PlatformIO.name:
+            for payload in self.pio_status():
+                if payload["name"] == name:
+                    return {"provider": provider, "target": payload}
+            raise RpcError(
+                f"no such display: {name}",
+                data={
+                    "code": "unknown_target",
+                    "message": "target not found",
+                    "data": {"name": name, "provider": provider},
+                },
+            )
+
+        raise RpcError(f"unknown provider: {provider}", ERR_INVALID_PARAMS)
+
     def bus_scan(self, args: dict) -> dict[str, Any]:
         """Everything on the bus, plus the subset worth offering to track.
 
@@ -1350,6 +1394,7 @@ class StatusMixin(_Base):
         "fw.ping": "ping",
         "fw.status": "status",
         "fw.type.list": "type_list",
+        "fw.target.get": "target_get",
         "fw.bus.scan": "bus_scan",
         "fw.dfu.scan": "dfu_scan",
         "fw.bootsel.scan": "bootsel_scan",

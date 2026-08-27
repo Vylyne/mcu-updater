@@ -39,7 +39,11 @@ function onText(event: Event): void {
 </script>
 
 <template>
-  <div class="kconfig-node" :style="{ paddingLeft: `${node.depth * 16}px` }">
+  <div
+    class="kconfig-node"
+    :data-tone="node.editable === false ? 'unknown' : undefined"
+    :style="{ paddingLeft: `${node.depth * 16}px` }"
+  >
     <template v-if="node.kind === 'menu' || node.enterable">
       <button type="button" class="kconfig-enter" @click="emit('enter', node)">
         {{ node.prompt }} ›
@@ -47,15 +51,18 @@ function onText(event: Event): void {
     </template>
 
     <template v-else-if="node.kind === 'comment'">
-      <span class="muted">{{ node.prompt }}</span>
+      <span class="muted text-caption">{{ node.prompt }}</span>
     </template>
 
     <template v-else>
-      <span :class="{ muted: !node.editable }">{{ node.prompt }}</span>
+      <span :class="{ 'text--disabled': !node.editable }">{{
+        node.prompt
+      }}</span>
       <button
         v-if="node.has_help"
         type="button"
-        class="kconfig-help-btn"
+        class="btn-icon btn-icon--small kconfig-help-btn"
+        title="Help"
         @click="emit('help', node)"
       >
         ?
@@ -70,7 +77,9 @@ function onText(event: Event): void {
       >
         🔒
       </span>
-      <span v-if="node.name" class="muted kconfig-symbol">{{ node.name }}</span>
+      <span v-if="node.name" class="muted text-caption kconfig-symbol">{{
+        node.name
+      }}</span>
 
       <span class="kconfig-control">
         <input
@@ -129,3 +138,31 @@ function onText(event: Event): void {
     </template>
   </div>
 </template>
+
+<style scoped>
+.kconfig-node {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding: 3px 0;
+  border-bottom: 1px solid var(--color-divider);
+}
+
+.kconfig-enter {
+  background: none;
+  border: none;
+  color: var(--color-primary);
+  cursor: pointer;
+  padding: 2px 0;
+  font: inherit;
+  text-align: left;
+}
+
+.kconfig-control {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+</style>

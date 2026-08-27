@@ -39,6 +39,32 @@ export interface Action {
   choices?: Choices;
 }
 
+export type ProfileReason = null | "unmanaged" | "customised" | "seed_moved";
+
+export interface ProfileChange {
+  symbol: string;
+  was: string | null;
+  now: string | null;
+  line: string;
+}
+
+/** Mirrors the fork's `FwProfileVerdict`
+ * (mainsail/src/store/server/fwUpdater/types.ts) - the third verdict a row
+ * can carry: do the inputs still say what the profile said. `managed: false`
+ * (every type predating profiles) means no chip at all, not a chip saying
+ * "unmanaged" on every row. */
+export interface ProfileVerdict {
+  state: string;
+  tone: Tone;
+  label: string;
+  reason: ProfileReason;
+  managed: boolean;
+  profile: string | null;
+  custom: boolean;
+  parent: string | null;
+  changes?: ProfileChange[];
+}
+
 export interface TargetDevice {
   id: string;
   name: string | null;
@@ -63,7 +89,7 @@ export interface Target {
   descriptor: string;
   firmware: string | null;
   artifact: ArtifactSummary;
-  profile: Record<string, unknown> | null;
+  profile: ProfileVerdict | null;
   needs_flash: boolean | null;
   devices: TargetDevice[];
   actions: Action[];

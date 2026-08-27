@@ -380,6 +380,87 @@ CLAUDE.md's "bench board only" rule applies hardest here, since
 `vitest`/`vue-tsc`/`vite build` clean, same caveat every prior phase carried
 before its own printer verification.
 
+## Looking like the panel (Phase 9)
+
+Phases 4-8 got the functional surface working; nothing had restyled it away
+from browser defaults. This phase makes the standalone UI read as the same
+product as the Mainsail fork's `FirmwareUpdaterPanel` - same palette, same
+panel chrome, same row layout - **without adding a UI framework**:
+`ui/package.json` still has exactly one runtime dependency (`vue`).
+
+**The palette is copied out of the fork's own checkout, not invented.**
+`ui/src/style.css` now carries CSS custom properties (`--color-surface`,
+`--color-toolbar`, `--tone-attention`, etc.) read directly from Vuetify 2's
+default dark/light theme presets and `mainsail/src/store/variables.ts` -
+dark values live on bare `:root` (Mainsail defaults to dark), with a
+`prefers-color-scheme: light` block overriding only the tokens, so light
+mode (already supported via `color-scheme`) keeps working rather than
+regressing to dark-only.
+
+**Icons are copied, not depended on.** `ui/src/icons.ts` holds the SVG path
+`d` strings for the ~20 glyphs `FirmwareUpdaterPanel*.vue` actually uses,
+lifted from Material Design Icons (Apache License 2.0, via the fork's own
+`@mdi/js` checkout) with an attribution header - so both clients render the
+identical glyph without this one taking on `@mdi/js`'s several-thousand-icon
+dependency for the handful it needs. `UiIcon.vue` renders one path at one of
+three sizes.
+
+**Two small layout primitives carry the rest:** `UiPanel.vue` (a titled card
+with a 48px toolbar, an optional icon, a `#buttons` slot, and an optional
+collapse toggle persisted to `localStorage` - the fork's equivalent persists
+to Vuex) and `UiDialog.vue` (a backdrop + card + footer-actions pair,
+generalising what used to be duplicated `.kconfig-backdrop`/`.kconfig-dialog`
+markup in `KconfigDialog.vue` and `AddMcuWizard.vue`). Every panel in the UI
+(`TargetsView`, `JobPanel`, `BusPanel`, `SettingsPanel`, the "Connection" /
+`fw.ping` / raw-status / event-log sections in `App.vue`) is now a `UiPanel`;
+every overlay (`ActionButton`'s choice picker, kconfig-conflict retry and
+destructive confirm; `AddMcuWizard`; `KconfigDialog` and its nested
+help/discard-confirm overlays) is now a `UiDialog`.
+
+**`TargetRow.vue` adopts `FirmwareUpdaterPanelTarget.vue`'s layout exactly:**
+a header line (name, descriptor, module version, device count, spacer,
+artifact chip, profile chip, header actions, `⋮` overflow menu for
+everything else), then one sub-row per device (a tone-coloured state icon,
+truncating identity, spacer, version, verdict, device actions, detail
+expander), then a trailing divider - replacing the old bordered `.target`
+box. Actions themselves gained a `variant` prop on `ActionButton.vue`: `icon`
+(the default, a row's own small icon buttons, coloured `primary` and
+swapping glyph when an action *wants* doing - the same
+build/flash/profile-primary logic `FirmwareUpdaterPanelTarget.vue` uses) or
+`text` (dialog footers, the wizard). A blocked or busy icon action carries
+its reason as a native `title` tooltip rather than inline visible text,
+matching the fork's own `v-tooltip` behaviour.
+
+**The profile chip is included** - `ProfileVerdict`/`ProfileChange` in
+`ui/src/api/targets.ts` mirror the fork's `FwProfileVerdict`/
+`FwProfileChange` (`mainsail/src/store/server/fwUpdater/types.ts`), replacing
+the previous untyped `profile: Record<string, unknown> | null`. It renders
+only for a managed profile, same as the fork - a type predating profiles
+gets no chip at all, not a chip saying "unmanaged" on every row.
+
+**Deliberately not in this phase:** the fork's summary chip row (stale /
+unprovable / all-flashed / needs-flash / board / offline counts across the
+panel's top) is new derived logic, not appearance, and the fork's own
+comments record a real bug that kind of counting caused before - it is
+scoped for its own approval rather than folded in here. Bulk actions
+(`build_all`/`flash_all`) are likewise not wired into this UI at all yet, so
+nothing was added to fake matching that part of the fork's toolbar - only
+the Refresh-equivalent (Reconnect, in the Connection panel) and the existing
+"Add new board…" launcher moved into the Firmware panel's own toolbar.
+
+**Embed mode is unaffected by design, not by luck.** Page chrome (max-width,
+padding) lives on `main` itself; `main.embed` clears the max-width and keeps
+`height: 100%; overflow-y: auto`, so the `html.mcu-updater-embed` →
+`body.mcu-updater-embed` → `#app` → `main.embed` chain Phase 7 built still
+resolves - panel margins come from `.panel` itself, not from a page wrapper
+that would break that chain.
+
+**Not yet verified against a real printer or a real Mainsail iframe.** No
+side-by-side comparison against a live `FirmwareUpdaterPanel` has happened
+on hardware - this phase ships `vitest`/`vue-tsc`/`vite build`/`eslint`/
+`prettier` clean, same caveat every prior phase carried before its own
+verification.
+
 ## Building locally
 
 ```bash

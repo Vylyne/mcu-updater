@@ -9,8 +9,8 @@ import TargetsView from "./components/TargetsView.vue";
 import JobPanel from "./components/JobPanel.vue";
 import KconfigDialog from "./components/KconfigDialog.vue";
 import BusPanel from "./components/BusPanel.vue";
-import AddMcuWizard from "./components/AddMcuWizard.vue";
 import SettingsPanel from "./components/SettingsPanel.vue";
+import UiPanel from "./components/UiPanel.vue";
 import type { Target } from "./api/targets";
 
 const API_KEY_STORAGE_KEY = "mcu-updater-ui:apiKey";
@@ -88,8 +88,7 @@ function reconnect(): void {
     <template v-if="!isEmbed">
       <h1>mcu-updater</h1>
 
-      <section>
-        <h2>Connection</h2>
+      <UiPanel title="Connection" collapsible storage-key="connection">
         <p>state: {{ state.connection }}</p>
         <p>agent available: {{ state.agentAvailable }}</p>
         <button type="button" @click="reconnect">Reconnect</button>
@@ -101,30 +100,24 @@ function reconnect(): void {
             this UI)
           </span>
         </p>
-      </section>
+      </UiPanel>
     </template>
 
-    <section v-if="state.unsupportedApiVersion !== null">
-      <h2>Update required</h2>
-      <p>
-        The agent speaks api_version {{ state.unsupportedApiVersion }}, which
-        this UI does not understand yet. Update mcu-updater-ui.
-      </p>
-    </section>
+    <p v-if="state.unsupportedApiVersion !== null" class="alert alert--warning">
+      The agent speaks api_version {{ state.unsupportedApiVersion }}, which this
+      UI does not understand yet. Update mcu-updater-ui.
+    </p>
 
-    <section v-if="state.error">
-      <h2>Error</h2>
-      <p>{{ state.error.code }}: {{ state.error.message }}</p>
-    </section>
+    <p v-if="state.error" class="alert alert--error">
+      {{ state.error.code }}: {{ state.error.message }}
+    </p>
 
-    <section v-if="!isEmbed">
-      <h2>fw.ping</h2>
-      <pre>{{ pingText }}</pre>
-    </section>
+    <UiPanel v-if="!isEmbed" title="fw.ping" collapsible storage-key="ping">
+      <pre class="detail-block">{{ pingText }}</pre>
+    </UiPanel>
 
     <TargetsView :targets="targets" />
     <BusPanel />
-    <AddMcuWizard />
 
     <JobPanel />
     <KconfigDialog />
@@ -132,19 +125,30 @@ function reconnect(): void {
     <SettingsPanel v-if="!isEmbed" />
 
     <template v-if="!isEmbed">
-      <section>
-        <h2>fw.status (raw)</h2>
-        <pre>{{ statusText }}</pre>
-      </section>
+      <UiPanel title="fw.status (raw)" collapsible storage-key="status">
+        <pre class="detail-block">{{ statusText }}</pre>
+      </UiPanel>
 
-      <section>
-        <h2>Events</h2>
-        <ul>
+      <UiPanel title="Events" collapsible storage-key="events">
+        <ul class="devices">
           <li v-for="(entry, index) in state.events" :key="index">
             {{ new Date(entry.at).toLocaleTimeString() }} - {{ entry.event }}
           </li>
         </ul>
-      </section>
+      </UiPanel>
     </template>
   </main>
 </template>
+
+<style scoped>
+.detail-block {
+  margin: 2px 0 6px;
+  padding: 6px 8px;
+  border-radius: 4px;
+  background-color: var(--color-inset);
+  white-space: pre-wrap;
+  font-size: 0.75rem;
+  max-height: 320px;
+  overflow: auto;
+}
+</style>

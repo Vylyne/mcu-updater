@@ -12,6 +12,9 @@ import {
   state,
 } from "../store/agent";
 import type { Target } from "../api/targets";
+import UiIcon from "./UiIcon.vue";
+import UiDialog from "./UiDialog.vue";
+import { mdiDeveloperBoard } from "../icons";
 
 const open = ref(false);
 const scanning = ref(false);
@@ -77,17 +80,18 @@ async function start(): Promise<void> {
 </script>
 
 <template>
-  <button v-if="canStart && mcuTargets.length" type="button" @click="show">
-    Add new board…
-  </button>
+  <span class="add-mcu-wizard">
+    <button
+      v-if="canStart && mcuTargets.length"
+      type="button"
+      class="btn-icon"
+      title="Add new board…"
+      @click="show"
+    >
+      <UiIcon :path="mdiDeveloperBoard" size="small" />
+    </button>
 
-  <div v-if="open" class="kconfig-backdrop">
-    <div class="kconfig-dialog">
-      <header>
-        <h2>Add a new board</h2>
-        <button type="button" @click="close">Close</button>
-      </header>
-
+    <UiDialog v-if="open" title="Add a new board" @close="close">
       <label>
         Type
         <select v-model="chosenName" @change="scan = null">
@@ -154,6 +158,6 @@ async function start(): Promise<void> {
           </button>
         </div>
       </template>
-    </div>
-  </div>
+    </UiDialog>
+  </span>
 </template>

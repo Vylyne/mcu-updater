@@ -6,6 +6,7 @@
 import { computed, reactive } from "vue";
 import { adoptSerial, hasCapability, state } from "../store/agent";
 import type { BusDevice, Target } from "../api/targets";
+import UiPanel from "./UiPanel.vue";
 
 const devices = computed(() => state.bus as unknown as BusDevice[]);
 const untracked = computed(() => devices.value.filter((d) => !d.tracked_by));
@@ -34,8 +35,7 @@ async function adopt(device: BusDevice): Promise<void> {
 </script>
 
 <template>
-  <section v-if="untracked.length" class="bus">
-    <h2>Untracked devices</h2>
+  <UiPanel v-if="untracked.length" title="Untracked devices">
     <p class="muted">
       On the bus, but no MCU type claims them yet - pick a type to adopt one
       under.
@@ -61,5 +61,5 @@ async function adopt(device: BusDevice): Promise<void> {
         </template>
       </li>
     </ul>
-  </section>
+  </UiPanel>
 </template>

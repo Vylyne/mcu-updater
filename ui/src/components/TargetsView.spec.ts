@@ -41,6 +41,6 @@ describe("TargetsView", () => {
     const wrapper = mount(TargetsView, { props: { targets } });
     expect(wrapper.text()).toContain("bttebb36");
     expect(wrapper.text()).toContain("knomi");
-    expect(wrapper.findAll("article.target")).toHaveLength(2);
+    expect(wrapper.findAll("article.target-row")).toHaveLength(2);
   });
 });

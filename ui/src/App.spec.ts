@@ -19,7 +19,7 @@ describe("App", () => {
     expect(wrapper.text()).not.toContain("fw.ping");
     expect(wrapper.text()).not.toContain("fw.status (raw)");
     expect(wrapper.text()).not.toContain("Events");
-    expect(wrapper.text()).toContain("Targets");
+    expect(wrapper.text()).toContain("Firmware");
     expect(wrapper.get("main").classes()).toContain("embed");
     expect(
       document.documentElement.classList.contains("mcu-updater-embed"),

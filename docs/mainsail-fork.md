@@ -284,4 +284,7 @@ UI that talks to the same agent through Moonraker and needs no fork of
 anything — it is the answer for anyone who does not want to run a forked
 Mainsail. This document, and the fork itself, are unaffected: the panel keeps
 working exactly as before, and stays the richer of the two clients (menuconfig
-in the browser) until the standalone UI catches up.
+in the browser) until the standalone UI catches up. As of Phase 9
+(docs/standalone-ui.md's "Looking like the panel"), the two clients share a
+palette and panel layout copied from this fork's own checkout, so they read as
+one product even though the fork remains the richer one.

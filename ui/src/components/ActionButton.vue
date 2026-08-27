@@ -9,16 +9,45 @@
 import { computed, ref } from "vue";
 import { fetchChoices, invokeAction, openKconfig, state } from "../store/agent";
 import type { Action } from "../api/targets";
+import UiIcon from "./UiIcon.vue";
+import UiDialog from "./UiDialog.vue";
+import {
+  mdiCloseCircleOutline,
+  mdiCogOutline,
+  mdiFlash,
+  mdiHammer,
+  mdiTrayArrowUp,
+  mdiTuneVariant,
+  mdiUndoVariant,
+  mdiUpdate,
+} from "../icons";
 
-const props = defineProps<{
-  action: Action;
-  disabled?: boolean;
-  disabledReason?: string | null;
-  /** Devices this action would actually write, for a confirmation prompt on
-   * a flashing method - never re-derived from a guess, always the caller's
-   * own targets[]/devices[] data. Absent for a non-destructive action. */
-  previewDevices?: { id: string; name: string | null }[];
-}>();
+const props = withDefaults(
+  defineProps<{
+    action: Action;
+    disabled?: boolean;
+    disabledReason?: string | null;
+    /** Devices this action would actually write, for a confirmation prompt on
+     * a flashing method - never re-derived from a guess, always the caller's
+     * own targets[]/devices[] data. Absent for a non-destructive action. */
+    previewDevices?: { id: string; name: string | null }[];
+    /** "icon" (default) is a row's own [build]/[flash]/... buttons, matching
+     * the fork panel's icon-only actions - "text" is a labelled button for
+     * contexts without a row to sit in (dialog footers, the wizard). */
+    variant?: "icon" | "text";
+    /** Whether this action currently *wants* doing, not just whether it
+     * *can* be done - the same swap FirmwareUpdaterPanelTarget.vue makes for
+     * flash's icon and colour. Ignored outside variant="icon". */
+    wanted?: boolean;
+  }>(),
+  {
+    disabled: false,
+    disabledReason: null,
+    previewDevices: undefined,
+    variant: "icon",
+    wanted: false,
+  },
+);
 
 // Exactly one place naming which methods write to hardware, so a "Flash"
 // label can never reach fw.flash/fw.flash_all without this prompt - and so
@@ -48,6 +77,32 @@ const choiceOptions = ref<{ name: string; hint: string }[] | null>(null);
 const choiceLoading = ref(false);
 const running = ref(false);
 const kconfigConflict = ref(false);
+
+// Icons by action id, same table FirmwareUpdaterPanelTarget.vue keeps - an
+// action id this row does not recognise falls back to a plain cog rather
+// than a gap.
+const ICONS: Record<string, string> = {
+  build: mdiHammer,
+  flash: mdiFlash,
+  update: mdiUpdate,
+  untrack: mdiCloseCircleOutline,
+  profile: mdiTuneVariant,
+  "profile:revert": mdiUndoVariant,
+};
+
+const icon = computed(() => {
+  if (props.action.id === "flash")
+    return props.wanted ? mdiTrayArrowUp : mdiFlash;
+  if (props.action.id.startsWith("configure")) return mdiCogOutline;
+  return ICONS[props.action.id] ?? mdiCogOutline;
+});
+
+const isPrimary = computed(() => {
+  if (isBlocked.value) return false;
+  if (props.action.id === "build") return true;
+  if (props.action.id === "flash") return props.wanted;
+  return false;
+});
 
 function optionHint(entry: unknown): string {
   const distinguishing = (entry as { distinguishing?: unknown }).distinguishing;
@@ -126,6 +181,18 @@ function onClick(): void {
 <template>
   <span class="action">
     <button
+      v-if="variant === 'icon'"
+      type="button"
+      class="btn-icon btn-icon--small"
+      :class="{ 'btn-icon--primary': isPrimary }"
+      :disabled="isDisabled || running"
+      :title="blockedMessage ?? action.label"
+      @click="onClick"
+    >
+      <UiIcon :path="icon" size="x-small" />
+    </button>
+    <button
+      v-else
       type="button"
       :disabled="isDisabled || running"
       :title="blockedMessage ?? undefined"
@@ -134,33 +201,53 @@ function onClick(): void {
       {{ running ? "Working…" : action.label }}
     </button>
 
-    <span v-if="blockedMessage" class="muted">{{ blockedMessage }}</span>
+    <span v-if="blockedMessage && variant === 'text'" class="muted">{{
+      blockedMessage
+    }}</span>
 
-    <span v-if="pickingChoice" class="picker">
+    <UiDialog
+      v-if="pickingChoice"
+      :title="action.label"
+      @close="pickingChoice = false"
+    >
       <p v-if="choiceLoading">Loading options…</p>
-      <ul v-else-if="choiceOptions">
+      <ul v-else-if="choiceOptions" class="devices">
         <li v-for="option in choiceOptions" :key="option.name">
           <button type="button" :disabled="running" @click="pick(option.name)">
             {{ option.name }}
           </button>
-          <span v-if="option.hint" class="muted">{{ option.hint }}</span>
+          <span v-if="option.hint" class="muted text-caption">{{
+            option.hint
+          }}</span>
         </li>
       </ul>
-      <button type="button" @click="pickingChoice = false">Cancel</button>
-    </span>
+      <template #actions>
+        <button type="button" @click="pickingChoice = false">Cancel</button>
+      </template>
+    </UiDialog>
 
-    <span v-if="kconfigConflict" class="picker">
+    <UiDialog
+      v-if="kconfigConflict"
+      title="Configuration in use"
+      @close="kconfigConflict = false"
+    >
       <p>
         Another session has unsaved changes to this configuration. Opening a
         second one risks one save discarding the other's work.
       </p>
-      <button type="button" :disabled="running" @click="openConfigure(true)">
-        Take over anyway
-      </button>
-      <button type="button" @click="kconfigConflict = false">Cancel</button>
-    </span>
+      <template #actions>
+        <button type="button" @click="kconfigConflict = false">Cancel</button>
+        <button type="button" :disabled="running" @click="openConfigure(true)">
+          Take over anyway
+        </button>
+      </template>
+    </UiDialog>
 
-    <span v-if="confirming" class="picker">
+    <UiDialog
+      v-if="confirming"
+      :title="action.label"
+      @close="confirming = false"
+    >
       <p>
         {{ action.label }} will write to:
         <template v-if="previewDevices && previewDevices.length">
@@ -172,14 +259,16 @@ function onClick(): void {
           >an unknown set of devices - refusing to guess</template
         >
       </p>
-      <button
-        type="button"
-        :disabled="!previewDevices || previewDevices.length === 0"
-        @click="run"
-      >
-        Confirm
-      </button>
-      <button type="button" @click="confirming = false">Cancel</button>
-    </span>
+      <template #actions>
+        <button type="button" @click="confirming = false">Cancel</button>
+        <button
+          type="button"
+          :disabled="!previewDevices || previewDevices.length === 0"
+          @click="run"
+        >
+          Confirm
+        </button>
+      </template>
+    </UiDialog>
   </span>
 </template>

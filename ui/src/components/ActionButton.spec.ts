@@ -26,8 +26,12 @@ describe("ActionButton", () => {
       blocked: { code: "no_artifact", message: "Build it first." },
     };
     const wrapper = mount(ActionButton, { props: { action } });
-    expect(wrapper.get("button").attributes("disabled")).toBeDefined();
-    expect(wrapper.text()).toContain("Build it first.");
+    const button = wrapper.get("button");
+    expect(button.attributes("disabled")).toBeDefined();
+    // Icon variant (the default, matching a row's own icon-only actions)
+    // carries the blocked message as the button's title rather than visible
+    // text - see ActionButton.vue's `title="blockedMessage ?? action.label"`.
+    expect(button.attributes("title")).toContain("Build it first.");
   });
 
   it("disables the button on transient busy state without touching blocked", () => {
@@ -38,8 +42,9 @@ describe("ActionButton", () => {
         disabledReason: "build is already running",
       },
     });
-    expect(wrapper.get("button").attributes("disabled")).toBeDefined();
-    expect(wrapper.text()).toContain("build is already running");
+    const button = wrapper.get("button");
+    expect(button.attributes("disabled")).toBeDefined();
+    expect(button.attributes("title")).toContain("build is already running");
   });
 
   it("invokes a non-destructive action directly, with no confirmation", async () => {
@@ -81,7 +86,9 @@ describe("ActionButton", () => {
     const wrapper = mount(ActionButton, { props: { action } });
     await wrapper.get("button").trigger("click");
     expect(wrapper.text()).toContain("refusing to guess");
-    const confirmButton = wrapper.findAll("button")[1];
+    const confirmButton = wrapper
+      .findAll("button")
+      .find((b) => b.text() === "Confirm");
     expect(confirmButton?.attributes("disabled")).toBeDefined();
   });
 

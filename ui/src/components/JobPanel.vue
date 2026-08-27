@@ -5,6 +5,7 @@
 import { computed, reactive, ref } from "vue";
 import { adoptSerial, cancelJob, state } from "../store/agent";
 import { cancelIsImmediate } from "../api/jobs";
+import UiPanel from "./UiPanel.vue";
 
 const cancelling = ref(false);
 const adopting = reactive<Record<string, boolean>>({});
@@ -39,6 +40,12 @@ const progressText = computed(() => {
   return `${progress.step} (${progress.index + 1}/${progress.total})`;
 });
 
+const progressPercent = computed(() => {
+  const progress = state.job?.progress;
+  if (!progress || progress.total <= 0) return null;
+  return Math.min(100, ((progress.index + 1) / progress.total) * 100);
+});
+
 const cancelWording = computed(() => {
   if (!state.job) return "";
   return cancelIsImmediate(state.job.kind)
@@ -46,6 +53,13 @@ const cancelWording = computed(() => {
     : "This will cancel after the current board or build finishes - " +
         "interrupting a write mid-way leaves it half-written.";
 });
+
+const showCancel = computed(
+  () =>
+    state.job !== null &&
+    (state.job.state === "queued" || state.job.state === "running") &&
+    !state.job.cancel_requested,
+);
 
 async function onCancel(): Promise<void> {
   cancelling.value = true;
@@ -55,25 +69,37 @@ async function onCancel(): Promise<void> {
 </script>
 
 <template>
-  <section v-if="state.job" class="job">
-    <h2>Job: {{ state.job.kind }}</h2>
-    <p>state: {{ state.job.state }}</p>
-    <p v-if="progressText">{{ progressText }}</p>
-    <p v-if="state.job.error">
-      error: {{ state.job.error.code }} - {{ state.job.error.message }}
+  <UiPanel v-if="state.job" :title="`Job: ${state.job.kind}`">
+    <template #buttons>
+      <button
+        v-if="showCancel"
+        type="button"
+        :disabled="cancelling"
+        @click="onCancel"
+      >
+        Cancel
+      </button>
+    </template>
+
+    <p class="text-caption text--secondary">state: {{ state.job.state }}</p>
+
+    <div v-if="progressPercent !== null" class="progress-track">
+      <div class="progress-bar" :style="{ width: `${progressPercent}%` }" />
+    </div>
+    <p v-if="progressText" class="text-caption">
+      {{ progressText }}
     </p>
 
-    <template
-      v-if="state.job.state === 'queued' || state.job.state === 'running'"
-    >
-      <p v-if="state.job.cancel_requested">Cancelling… {{ cancelWording }}</p>
-      <template v-else>
-        <button type="button" :disabled="cancelling" @click="onCancel">
-          Cancel
-        </button>
-        <p class="muted">{{ cancelWording }}</p>
-      </template>
-    </template>
+    <p v-if="state.job.error" class="alert alert--error">
+      {{ state.job.error.code }} - {{ state.job.error.message }}
+    </p>
+
+    <p v-if="state.job.cancel_requested" class="alert alert--info">
+      Cancelling… {{ cancelWording }}
+    </p>
+    <p v-else-if="showCancel" class="muted">
+      {{ cancelWording }}
+    </p>
 
     <div v-if="addMcuResult && addMcuResult.candidates.length" class="picker">
       <p>New board(s) appeared and are not tracked yet:</p>
@@ -109,12 +135,40 @@ async function onCancel(): Promise<void> {
       <p v-if="state.logOmitted" class="muted">
         Some earlier lines were dropped from the buffer and are not shown.
       </p>
-      <pre><span
+      <pre class="detail-block"><span
         v-for="line in state.log.lines"
         :key="line.i"
         :data-stream="line.s"
         >{{ line.t }}
 </span></pre>
     </div>
-  </section>
+  </UiPanel>
 </template>
+
+<style scoped>
+.progress-track {
+  height: 4px;
+  border-radius: 2px;
+  background: var(--color-divider);
+  overflow: hidden;
+  margin-bottom: 4px;
+}
+
+.progress-bar {
+  height: 100%;
+  background: var(--color-primary);
+  transition: width 200ms ease;
+}
+
+.detail-block {
+  margin: 2px 0 6px;
+  padding: 6px 8px;
+  border-radius: 4px;
+  background-color: var(--color-inset);
+  user-select: text;
+  white-space: pre-wrap;
+  font-size: 0.75rem;
+  max-height: 320px;
+  overflow: auto;
+}
+</style>

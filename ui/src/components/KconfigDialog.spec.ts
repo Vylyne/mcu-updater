@@ -43,7 +43,7 @@ afterEach(() => {
 describe("KconfigDialog", () => {
   it("renders nothing without an open session", () => {
     const wrapper = mount(KconfigDialog);
-    expect(wrapper.find(".kconfig-backdrop").exists()).toBe(false);
+    expect(wrapper.find(".dialog-backdrop").exists()).toBe(false);
   });
 
   it("renders the breadcrumb and current menu's nodes", () => {
@@ -66,10 +66,10 @@ describe("KconfigDialog", () => {
     state.kconfig = menu;
     const wrapper = mount(KconfigDialog);
     const save = wrapper
-      .findAll("footer button")
+      .findAll(".dialog-actions button")
       .find((b) => b.text() === "Save");
     const discard = wrapper
-      .findAll("footer button")
+      .findAll(".dialog-actions button")
       .find((b) => b.text() === "Discard");
     expect(save?.attributes("disabled")).toBeDefined();
     expect(discard?.attributes("disabled")).toBeDefined();
@@ -79,7 +79,7 @@ describe("KconfigDialog", () => {
     state.kconfig = menu;
     const spy = vi.spyOn(store, "closeKconfig");
     const wrapper = mount(KconfigDialog);
-    await wrapper.get("header button").trigger("click");
+    await wrapper.get('[aria-label="Close"]').trigger("click");
     expect(spy).toHaveBeenCalled();
   });
 
@@ -87,14 +87,20 @@ describe("KconfigDialog", () => {
     state.kconfig = { ...menu, dirty: true };
     const spy = vi.spyOn(store, "closeKconfig");
     const wrapper = mount(KconfigDialog);
-    await wrapper.get("header button").trigger("click");
+    await wrapper.get('[aria-label="Close"]').trigger("click");
     expect(spy).not.toHaveBeenCalled();
     expect(wrapper.text()).toContain("Discard unsaved changes");
 
+    // Two "Discard" buttons exist: the confirm-overlay's (discards the
+    // *close*, i.e. closeKconfig) and the main footer's (discards the
+    // *edits*, i.e. kconfigReset - still open afterwards). The confirm
+    // overlay is nested inside the outer dialog's body, so it renders
+    // before the outer footer in document order - the first match is the
+    // one this test means to click.
     const discardButtons = wrapper
       .findAll("button")
       .filter((b) => b.text() === "Discard");
-    await discardButtons[discardButtons.length - 1]?.trigger("click");
+    await discardButtons[0]?.trigger("click");
     expect(spy).toHaveBeenCalled();
   });
 

@@ -10,6 +10,7 @@ import {
   type SettableKey,
   type UpdaterSettings,
 } from "../api/settings";
+import UiPanel from "./UiPanel.vue";
 
 const settings = computed(
   () => state.status?.settings as UpdaterSettings | undefined,
@@ -61,56 +62,61 @@ function discard(): void {
 </script>
 
 <template>
-  <section v-if="settings" class="settings">
-    <h2>Settings</h2>
+  <UiPanel v-if="settings" title="Settings" collapsible storage-key="settings">
+    <div class="settings-grid">
+      <label>
+        make_jobs (-1 = one per CPU, 0 = no -j flag)
+        <input
+          v-model.number="draft.make_jobs"
+          type="number"
+          min="-1"
+          max="64"
+        />
+      </label>
 
-    <label>
-      <input v-model.number="draft.make_jobs" type="number" min="-1" max="64" />
-      make_jobs (-1 = one per CPU, 0 = no -j flag)
-    </label>
+      <label>
+        log_ring_size (lines kept per job)
+        <input
+          v-model.number="draft.log_ring_size"
+          type="number"
+          min="100"
+          max="100000"
+        />
+      </label>
 
-    <label>
-      <input
-        v-model.number="draft.log_ring_size"
-        type="number"
-        min="100"
-        max="100000"
-      />
-      log_ring_size (lines kept per job)
-    </label>
+      <label>
+        clean_before_build
+        <input v-model="draft.clean_before_build" type="checkbox" />
+      </label>
 
-    <label>
-      <input v-model="draft.clean_before_build" type="checkbox" />
-      clean_before_build
-    </label>
+      <label>
+        reseed_on_build
+        <input v-model="draft.reseed_on_build" type="checkbox" />
+      </label>
 
-    <label>
-      <input v-model="draft.reseed_on_build" type="checkbox" />
-      reseed_on_build
-    </label>
+      <label>
+        dry_run
+        <input v-model="draft.dry_run" type="checkbox" />
+      </label>
 
-    <label>
-      <input v-model="draft.dry_run" type="checkbox" />
-      dry_run
-    </label>
+      <label>
+        enable_flashing
+        <input v-model="draft.enable_flashing" type="checkbox" />
+      </label>
 
-    <label>
-      <input v-model="draft.enable_flashing" type="checkbox" />
-      enable_flashing
-    </label>
+      <label>
+        allow_flash_while_printing
+        <input v-model="draft.allow_flash_while_printing" type="checkbox" />
+      </label>
+    </div>
 
-    <label>
-      <input v-model="draft.allow_flash_while_printing" type="checkbox" />
-      allow_flash_while_printing
-    </label>
-
-    <p class="muted">
+    <p class="alert alert--info">
       stop_services and service_backend describe how this host is wired, not a
       behaviour preference, and are edited in the cfg file directly rather than
       from here.
     </p>
 
-    <p v-if="reconnectNote" class="muted">
+    <p v-if="reconnectNote" class="alert alert--info">
       enable_flashing / allow_flash_while_printing take effect once the agent
       reconnects to Moonraker - Moonraker only registers the flashing methods at
       handshake, so a flash button here can stay unusable (or stay usable) until
@@ -121,5 +127,5 @@ function discard(): void {
       {{ saving ? "Saving…" : "Save" }}
     </button>
     <button type="button" :disabled="!dirty" @click="discard">Discard</button>
-  </section>
+  </UiPanel>
 </template>

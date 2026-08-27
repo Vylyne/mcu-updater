@@ -89,9 +89,11 @@ describe("TargetRow", () => {
   it("renders target-level actions and previews the devices a flash would write", () => {
     const target: Target = { ...mcuTarget, actions: [flashAction] };
     const wrapper = mount(TargetRow, { props: { target } });
+    // Header actions render icon-only (see ActionButton.vue's default
+    // variant), so a flash action is found by its title, not its text.
     const flashButton = wrapper
       .findAll("button")
-      .find((b) => b.text() === "Flash");
+      .find((b) => b.attributes("title") === "Flash");
     expect(flashButton).toBeTruthy();
     expect(flashButton?.attributes("disabled")).toBeUndefined();
   });
@@ -100,11 +102,12 @@ describe("TargetRow", () => {
     state.job = runningBuild;
     const target: Target = { ...mcuTarget, actions: [flashAction] };
     const wrapper = mount(TargetRow, { props: { target } });
-    const actionButtons = wrapper
+    // Icon actions carry their reason as a title (a tooltip on hover, same
+    // as FirmwareUpdaterPanelTarget.vue's actionHint), not as visible text.
+    const flashButton = wrapper
       .findAll("button")
-      .filter((b) => b.text() === "Flash");
-    expect(actionButtons[0]?.attributes("disabled")).toBeDefined();
-    expect(wrapper.text()).toContain("build is already running");
+      .find((b) => b.attributes("title") === "build is already running");
+    expect(flashButton?.attributes("disabled")).toBeDefined();
   });
 
   it("renders an MCU target's name, provider and device", () => {

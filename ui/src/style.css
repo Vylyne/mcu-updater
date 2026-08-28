@@ -107,7 +107,13 @@ main h1 {
   gap: 8px;
 }
 
-.panel-toolbar .spacer {
+/* A global utility, not a toolbar-only one: TargetRow's header and device
+   rows both push their trailing half (chips, version, verdict, actions) to
+   the right edge with this, which is what makes those columns line up row to
+   row the way FirmwareUpdaterPanelTarget.vue's <v-spacer> does. Scoped to
+   .panel-toolbar it silently did nothing there, and every row ended wherever
+   its own content ran out. */
+.spacer {
   flex: 1 1 auto;
 }
 

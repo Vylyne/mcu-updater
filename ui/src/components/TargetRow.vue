@@ -335,9 +335,10 @@ async function toggle(): Promise<void> {
             device.name
           }}</span>
         </span>
-        <span v-if="!device.present" class="muted text-caption"
-          >not present</span
-        >
+        <!-- No separate "not present" flag: the agent's own `label` already
+             says "Not connected" for exactly that case, and rendering both
+             put a second, ragged column in the middle of the row saying the
+             same thing twice. -->
         <span class="spacer" />
         <span v-if="device.version" class="text--disabled text-caption mr">
           {{ shortVersion(device.version) }}

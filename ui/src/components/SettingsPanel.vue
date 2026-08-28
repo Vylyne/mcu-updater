@@ -86,27 +86,35 @@ function discard(): void {
 
       <label>
         clean_before_build
-        <input v-model="draft.clean_before_build" type="checkbox" />
+        <input
+          v-model="draft.clean_before_build"
+          type="checkbox"
+          class="switch"
+        />
       </label>
 
       <label>
         reseed_on_build
-        <input v-model="draft.reseed_on_build" type="checkbox" />
+        <input v-model="draft.reseed_on_build" type="checkbox" class="switch" />
       </label>
 
       <label>
         dry_run
-        <input v-model="draft.dry_run" type="checkbox" />
+        <input v-model="draft.dry_run" type="checkbox" class="switch" />
       </label>
 
       <label>
         enable_flashing
-        <input v-model="draft.enable_flashing" type="checkbox" />
+        <input v-model="draft.enable_flashing" type="checkbox" class="switch" />
       </label>
 
       <label>
         allow_flash_while_printing
-        <input v-model="draft.allow_flash_while_printing" type="checkbox" />
+        <input
+          v-model="draft.allow_flash_while_printing"
+          type="checkbox"
+          class="switch"
+        />
       </label>
     </div>
 

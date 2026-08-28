@@ -234,7 +234,7 @@ const patchLines = computed(() => {
         <input v-model="katapultExtraArgs" />
       </label>
       <label class="checkbox-row">
-        <input v-model="katapultInstalled" type="checkbox" />
+        <input v-model="katapultInstalled" type="checkbox" class="switch" />
         Katapult installed
       </label>
 
@@ -265,7 +265,7 @@ label {
   margin-bottom: 10px;
 }
 
-label input,
+label input:not(.switch),
 label select {
   display: block;
   width: 100%;
@@ -279,7 +279,7 @@ label select {
   gap: 6px;
 }
 
-.checkbox-row input {
+.checkbox-row input:not(.switch) {
   width: auto;
 }
 

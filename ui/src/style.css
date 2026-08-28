@@ -367,6 +367,64 @@ main.embed {
   padding: 0.25rem 0;
 }
 
+/* -- switches (SettingsPanel's toggles, TypeDialog's katapult_installed) --
+   Same <input type="checkbox">, same v-model, same label association and
+   keyboard behaviour - this only restyles it, with no extra wrapper element
+   and no JS. Kconfig's own BOOL checkboxes (KconfigNode.vue) deliberately
+   keep the plain checkbox look: those render a menuconfig [*] symbol, and a
+   switch there would read as a preference toggle instead. ------------- */
+
+.switch {
+  appearance: none;
+  -webkit-appearance: none;
+  position: relative;
+  width: 34px;
+  height: 20px;
+  margin: 0;
+  border-radius: 999px;
+  background: var(--color-btn-disabled);
+  cursor: pointer;
+  transition: background 150ms;
+}
+
+.switch::after {
+  content: "";
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 16px;
+  height: 16px;
+  border-radius: 50%;
+  background: #fff;
+  transition: transform 150ms;
+}
+
+.switch:checked {
+  background: var(--color-primary);
+}
+
+.switch:checked::after {
+  transform: translateX(14px);
+}
+
+.switch:focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+.switch:disabled {
+  cursor: default;
+  opacity: 0.5;
+}
+
+/* .settings-grid's second column is `auto`, sized to its widest item - the
+   number inputs. Left alone, a fixed-width switch would start-align inside
+   that wider column and sit ragged against them; same right-edge alignment
+   fix as 10f74b9, applied here instead of widening .switch itself. */
+.settings-grid .switch {
+  justify-self: end;
+}
+
 /* -- dropdown menus (TargetsView's toolbar `⋮`, AddMcuWizard's menu variant,
    TargetRow's per-row overflow) --------------------------------------- */
 

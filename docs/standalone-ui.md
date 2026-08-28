@@ -289,12 +289,20 @@ Phases 4 and 5 carried before their own printer verification.
 inside Mainsail's webcam grid as a stream URL:
 `http://<printer>:8090/?embed=1`, aspect ratio `4:3`.
 
-`App.vue` reads the flag once, from `window.location.search`, and uses it to
-skip everything that only earns its keep at a full page: the `<h1>`, the
-"Connection" debug section, the raw `fw.ping`/`fw.status` JSON dumps, and the
-rolling event log - all still there for a direct page load, all gone under
-`embed`. What stays is the functional surface: the "Update required" and
-"Error" gates, `TargetsView`, `JobPanel`, and `KconfigDialog`.
+`App.vue` reads **two** independent flags from `window.location.search`, not
+one - `?embed=1` used to also mean "hide the debug harness", which forced
+anyone loading the page directly to see it. `isEmbed` now means only "this page
+is sitting inside a box it does not own" (the iframe layout below); a separate
+`showDebug` (`?debug=1`) gates the `<h1>`, the "Connection" debug section, the
+raw `fw.ping`/`fw.status` JSON dumps, and the rolling event log. **Neither is
+implied by the other.** A direct page load and an embedded iframe both default
+to `showDebug: false` - the debug harness was only ever useful for verifying
+the agent connection during Phases 3-6, not for daily use - and either can add
+`?debug=1` to bring it back. What always stays, in both modes: the "Update
+required" and "Error" gates, `TargetsView`, `SettingsPanel`, `JobPanel`, and
+`KconfigDialog`. `SettingsPanel` in particular used to be hidden under embed;
+it now renders there too, since a Mainsail webcam tile is exactly a place
+someone would want to flip `dry_run` without leaving the dashboard.
 
 **The box is the iframe's, never the viewport's.** `HtmlIframe.vue` gives the
 embedded page a fixed-aspect box it does not control the size of; assuming
@@ -334,7 +342,12 @@ those describe how the host is wired, not a preference. `state.status.settings`
 already carries the current values (`fw.status` embeds them), so there is no
 separate load call - only `fw.settings.set` on save, replacing
 `state.status.settings` wholesale from the reply rather than trusting the
-draft.
+draft. The five boolean fields render as switches (`.switch` in
+`style.css`, applied to the plain `<input type="checkbox">` itself - no extra
+DOM, same `v-model`) rather than checkboxes; `TypeDialog.vue`'s
+`katapult_installed` uses the same class. Kconfig's own BOOL symbols
+(`KconfigNode.vue`) deliberately keep the checkbox look, since those are
+menuconfig `[*]` answers, not preferences.
 
 **A saved `enable_flashing`/`allow_flash_while_printing` toggle does not
 immediately unlock (or lock) the flash buttons elsewhere in this UI.**

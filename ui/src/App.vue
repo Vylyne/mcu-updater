@@ -35,13 +35,22 @@ const socketUrl = ref(defaultSocketUrl());
 const accessInfo = ref<Record<string, unknown> | null>(null);
 const accessError = ref<string | null>(null);
 
-// ?embed=1 is the Mainsail "HTML Iframe" webcam service - see
-// docs/standalone-ui.md. It drops everything that is only useful standing
-// alone at a full page (title, connection debug, the raw JSON dumps, the
-// event log) and keeps only the functional surface, inside a box the iframe
-// itself sizes - never the viewport, which inside an iframe is Mainsail's.
-const isEmbed =
-  new URLSearchParams(window.location.search).get("embed") === "1";
+// Two independent flags, deliberately not one. They used to be the same
+// boolean, which is why the debug harness was only removable by claiming to
+// be an iframe - see docs/standalone-ui.md's "Embed mode" section.
+const params = new URLSearchParams(window.location.search);
+
+// Layout: is this page sitting inside a box it does not own? ?embed=1 is the
+// Mainsail "HTML Iframe" webcam service, and this stays opt-in - the
+// height:100% chain it switches on would take a full-page load's scrolling
+// away from the document and hand it an internal scroll region instead.
+const isEmbed = params.get("embed") === "1";
+
+// Content: the Phase 3 debug harness (title, connection state, the raw
+// ping/status dumps, the event log). Off unless asked for, at a full page as
+// much as in an iframe - nobody wants it by default, and ?embed=1 no longer
+// implies it.
+const showDebug = params.get("debug") === "1";
 
 const statusText = computed(() => JSON.stringify(state.status, null, 2));
 const pingText = computed(() => JSON.stringify(state.ping, null, 2));
@@ -86,7 +95,7 @@ function reconnect(): void {
 
 <template>
   <main :class="{ embed: isEmbed }">
-    <template v-if="!isEmbed">
+    <template v-if="showDebug">
       <h1>mcu-updater</h1>
 
       <UiPanel title="Connection" collapsible storage-key="connection">
@@ -122,7 +131,7 @@ function reconnect(): void {
       Busy on the host: {{ lockedByLabel }}
     </p>
 
-    <UiPanel v-if="!isEmbed" title="fw.ping" collapsible storage-key="ping">
+    <UiPanel v-if="showDebug" title="fw.ping" collapsible storage-key="ping">
       <pre class="detail-block">{{ pingText }}</pre>
     </UiPanel>
 
@@ -132,9 +141,9 @@ function reconnect(): void {
     <JobPanel />
     <KconfigDialog />
 
-    <SettingsPanel v-if="!isEmbed" />
+    <SettingsPanel />
 
-    <template v-if="!isEmbed">
+    <template v-if="showDebug">
       <UiPanel title="fw.status (raw)" collapsible storage-key="status">
         <pre class="detail-block">{{ statusText }}</pre>
       </UiPanel>

@@ -115,9 +115,10 @@ of it. What is still open:
   session — menu navigation, search, per-symbol help, save/save-and-build,
   and a `kconfig_session_conflict` force-takeover prompt, all driven by a
   single `state.kconfig` slice `ActionButton.vue` opens when its method is
-  `fw.kconfig.open`), `?embed=1` (drops the debug chrome, sizes to the
-  iframe's own box instead of the viewport, for use as a Mainsail "HTML
-  Iframe" webcam service), `SettingsPanel.vue` (edits `fw.settings.set`'s
+  `fw.kconfig.open`), `?embed=1` (sizes to the iframe's own box instead of
+  the viewport, for use as a Mainsail "HTML Iframe" webcam service — the
+  debug chrome is a separate `?debug=1` flag, off by default in both modes),
+  `SettingsPanel.vue` (edits `fw.settings.set`'s
   `SETTABLE` subset, with a note when a toggle needs the agent to reconnect
   before it takes effect), `BusPanel.vue` (adopts an untracked bus device
   under an existing MCU type via `fw.serial.add`), and `AddMcuWizard.vue`

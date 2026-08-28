@@ -461,6 +461,107 @@ on hardware - this phase ships `vitest`/`vue-tsc`/`vite build`/`eslint`/
 `prettier` clean, same caveat every prior phase carried before its own
 verification.
 
+## Bulk operations, type management and the safety gates (Phase 10)
+
+Phases 4-9 built one row at a time and made it look right; nothing yet
+answered "build/flash everything" or let a board model be created, edited or
+removed without hand-editing `mcu-updater.cfg`. This phase closes both gaps,
+plus three safety gates the fork already had and this UI didn't: `locked_by`
+in the row busy-gate, `printing`/`idle_state` on every destructive confirm,
+and `result.*.failures`/`skipped[]` actually rendering. **Zero new runtime
+dependencies** — `ui/package.json` still has exactly one (`vue`).
+
+**Fleet-wide only, deliberately.** `fw.build_all` takes `fw?, scope?` and no
+`name` (docs/agent-api.md's methods table); a per-type sweep is already
+reachable as a row's own `flash` action (`fw.flash_all {name, scope}`), so
+nothing is added to duplicate it. `ui/src/api/bulk.ts` holds the selection as
+pure functions - `bulkBuildTargets`/`bulkFlashTargets`/`bulkHasWork` mirror the
+fork's own getters, including the two rules recorded there and worth
+repeating: read the actions' own `blocked` rather than re-derive from
+`artifact.state` (what keeps a preview and the agent's actual batch in step),
+and `scope: "all"` overrides the recorded *judgement*, never the physics - an
+offline device is excluded either way. `TargetRow`'s own flash preview now
+calls the same `devicesToFlash()` this module exports, so a single row and a
+fleet-wide batch can never disagree about what "needs flashing" means.
+
+**`BulkDialog.vue`** is the confirmation for `build_all`/`flash_all`/
+`update_all` - a scope toggle that resets to "stale" on every open (an
+occasional "everything" must never latch as the next reader's default), the
+build and flash preview lists (`update_all` shows both, since needing only the
+flash is the normal case right after a rebuild and showing the build list
+alone would say "nothing to do" to a fleet that is entirely behind), a note
+that the flash list is a floor and not a forecast for `update_all` (boards are
+chosen *after* the build), and a hard stop when the printer is busy.
+
+**The printer-busy gate is new, and fails open on purpose.** `fw.status`'s
+`printing`/`idle_state` are documented best-effort - `null` when Moonraker
+can't be reached - and "never treat them as load-bearing", so
+`store/agent.ts`'s `printerBusy()` reads `null` as *not busy* rather than
+refusing to know. This is a courtesy gate: the agent re-checks the same thing
+when the call actually arrives (`update_all` checks it twice), and stays the
+authority either way. It now gates both `BulkDialog` and `ActionButton`'s
+existing destructive confirm, which previously only checked whether preview
+devices were known.
+
+**`locked_by` now feeds the row busy-gate.** `TargetRow`'s `busyReason` used
+to read `state.job` only, so a CLI build already holding the host lock left
+every row's action buttons live. It now checks `lockedBy()` first, same
+`Lock` shape `fw.status` has always carried.
+
+**`result.*.failures` and a bulk call's `skipped[]` are read, not discarded.**
+agent-api.md is explicit that a job with failures still ends `succeeded` and
+that this is the thing to render, not the job state - a fleet build where one
+of eight fails used to render as plain success. `JobPanel.vue` renders both,
+plus `result.config_rewritten` (Klipper's `olddefconfig` silently rewriting
+menuconfig answers after a `src/Kconfig` change) as its own warning.
+`store/agent.ts`'s `runBulk()` keeps `skipped[]` from the submission reply -
+or from a `nothing_to_do` refusal's own data, the same shape - clearing it at
+the start of the next call rather than the next job event, so a stale list
+never lingers across an unrelated build.
+
+**`SummaryChips.vue`** is the fork's summary row, said over `targets[]` rather
+than `types` - the fork's own comments record the bug that distinction avoids:
+counting `types` alone let "all up to date" go green with a screen three
+commits behind, because displays were left out and a type's verdict was read
+from an artifact it would never build.
+
+**`TypeDialog.vue`** is `fw.type.add`/`.update`/`.remove` - the MCU *type*
+editor (a board model: name, chipset, firmware family, extra make args,
+`katapult_installed`), not a device or display editor; displays have no write
+path here at all. Gated on all three capabilities together, matching the
+fork's `canManageTypes`. Editing fetches the same on-demand detail
+`fw.target.get` already gives "Show detail", rather than adding a second wire
+shape for the same data. Client-side name validation mirrors `config.py`'s
+`TYPE_NAME_RE`/`TYPE_NAME_MAX` exactly - the agent stays the authority, this
+only spares a round trip. Renaming stays unsupported (the name is also the
+directory holding saved menuconfig answers); an edit sends only the keys the
+form shows, with the extra-args key resolved dynamically off the *saved*
+application family rather than fixed to `klipper_extra_args`, which was a
+real bug in the fork this dialog mirrors - a fixed key silently no-ops on any
+type whose application isn't klipper. Three entry points: the Firmware
+panel's own `⋮` menu ("New type…"), an "Edit type…"/"Remove type…" pair in a
+`kconfig_make` row's own overflow menu, and `BusPanel`'s untracked list
+("New type from this…", pre-filling the chipset and adopting the serial once
+the type exists - mirroring the fork's `createTypeAndTrack`, sequenced as two
+calls rather than one, since a type created without its board is recoverable
+in one tap and the reverse is not).
+
+**Two more small safety gates, both direct fork parity.** `ActionButton.vue`'s
+`untrack` (`fw.serial.remove`) now confirms before firing, with the same
+reassuring copy the fork gives it - the board keeps its firmware, the type
+keeps its config and artifacts, re-adding it costs nothing. And a `build` on
+a target whose profile is `seed_moved` now offers "take the vendor's update"
+vs. "build as is" before running, preselected from `settings.reseed_on_build`
+so a click agrees with what a CLI or fleet build would already do by default.
+
+**Not yet verified against a real printer.** No `build_all`/`flash_all`/
+`update_all` has run against a real fleet, and no type has been created,
+edited or removed through this UI on hardware - CLAUDE.md's "bench board
+only" and "never interrupt a firmware write" rules apply hardest to this
+phase, since it is the first client-side surface that writes to every board
+at once. This phase ships `vitest`/`vue-tsc`/`vite build`/`eslint`/`prettier`
+clean, same caveat every prior phase carried before its own verification.
+
 ## Building locally
 
 ```bash

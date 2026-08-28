@@ -22,7 +22,7 @@ import {
   type LogBatch,
   type LogCursor,
 } from "../api/events";
-import type { Action } from "../api/targets";
+import type { Action, Lock } from "../api/targets";
 import type { Job } from "../api/jobs";
 import type {
   KconfigHelp,
@@ -30,6 +30,8 @@ import type {
   KconfigSearchResult,
   KconfigState,
 } from "../api/kconfig";
+import type { BulkOperation, BulkScope } from "../api/bulk";
+import type { TypeDraft } from "../api/mcutype";
 
 export interface EventLogEntry {
   at: number;
@@ -60,6 +62,22 @@ export interface AgentStoreState {
    * gate from docs/agent-api.md's fw.ping section. Non-null means "refuse to
    * render the printer state", not just "show a warning". */
   unsupportedApiVersion: number | null;
+  /** `skipped[]` from the last fw.build_all/flash_all/update_all submission
+   * (or from a `nothing_to_do` refusal's own data) - agent-api.md is explicit
+   * that a batch dropping something and reporting success is the failure
+   * this whole area exists to make impossible, so this is read, not just
+   * logged. Cleared at the start of the next bulk call. */
+  bulkSkipped: BulkSkipped[];
+}
+
+/** One entry of fw.build_all's `skipped` - a target the batch could not
+ * touch at all (never configured, no source tree), with the agent's own
+ * reason. */
+export interface BulkSkipped {
+  type: string;
+  fw: string | null;
+  provider: string;
+  reason: string;
 }
 
 export const state: AgentStoreState = reactive({
@@ -75,6 +93,7 @@ export const state: AgentStoreState = reactive({
   kconfig: null,
   error: null,
   unsupportedApiVersion: null,
+  bulkSkipped: [],
 });
 
 const MAX_EVENT_LOG = 50;
@@ -90,6 +109,42 @@ function pushEventLog(event: string): void {
 export function hasCapability(name: string): boolean {
   const caps = state.ping?.capabilities as string[] | undefined;
   return Array.isArray(caps) && caps.includes(name);
+}
+
+/** `fw.status`'s `locked_by` - a CLI build or flash holding the host lock,
+ * which this UI did not start and cannot cancel. */
+export function lockedBy(): Lock | null {
+  return (state.status?.locked_by as Lock | null | undefined) ?? null;
+}
+
+/**
+ * Whether the printer must not be interrupted right now.
+ *
+ * `printing`/`idle_state` are documented best-effort - null when Moonraker
+ * can't be reached - and must never be treated as load-bearing, so null
+ * reads as "not busy" here rather than "refuse to know". This gate is a
+ * courtesy: the agent re-checks the same thing when the call actually
+ * arrives (fw.update_all checks it twice, once before submission and again
+ * after the builds finish) and is the authority either way.
+ *
+ * idle_state matters beside printing because print_stats stays "standby"
+ * through a manual home or a QGL, and stopping Klipper mid-motion shuts the
+ * MCU down regardless of what print_stats says.
+ */
+export function printerBusy(): boolean {
+  return (
+    state.status?.printing === true || state.status?.idle_state === "Printing"
+  );
+}
+
+/** A CLI build/flash on the host, or a job of ours already running - either
+ * way the agent would refuse a new one, so don't offer. */
+export function isBusy(): boolean {
+  if (lockedBy() !== null) return true;
+  return (
+    state.job !== null &&
+    (state.job.state === "queued" || state.job.state === "running")
+  );
 }
 
 async function refreshStatus(): Promise<void> {
@@ -108,6 +163,13 @@ async function refreshStatus(): Promise<void> {
   } catch (error) {
     state.error = error as NormalizedAgentError;
   }
+}
+
+/** The toolbar's Refresh button - refreshStatus itself stays module-private
+ * so every other caller goes through the store's own reactions rather than
+ * polling; this is the one deliberate manual re-fetch. */
+export function refresh(): Promise<void> {
+  return refreshStatus();
 }
 
 async function ping(): Promise<void> {
@@ -359,6 +421,105 @@ export async function adoptSerial(
   if (client === null) return false;
   try {
     await callAgent(client, "fw.serial.add", { name, serial });
+    state.error = null;
+    return true;
+  } catch (error) {
+    state.error = error as NormalizedAgentError;
+    return false;
+  }
+}
+
+/** Run a fleet-wide build_all/flash_all/update_all. Deliberately no `name`
+ * (agent-api.md's methods table gives fw.build_all only `fw?, scope?`) and no
+ * `force` - overriding the print gate stays reachable through the API but
+ * must never be one click away in a browser, especially on the operation
+ * that writes to every board at once. `skipped[]` is kept from the reply (or
+ * from a `nothing_to_do` refusal's own data, which carries the same shape)
+ * rather than discarded - a batch that drops a target and reports success is
+ * exactly the failure this area exists to make impossible. Cleared at the
+ * start of every call, so a stale list from a previous run never lingers. */
+export async function runBulk(
+  operation: BulkOperation,
+  scope: BulkScope,
+): Promise<boolean> {
+  if (client === null) return false;
+  state.bulkSkipped = [];
+  try {
+    const result = await callAgent<{ skipped?: BulkSkipped[] }>(
+      client,
+      `fw.${operation}`,
+      { scope },
+    );
+    state.bulkSkipped = result.skipped ?? [];
+    state.error = null;
+    return true;
+  } catch (error) {
+    const normalized = error as NormalizedAgentError;
+    state.error = normalized;
+    const skipped = (normalized.data as { skipped?: BulkSkipped[] } | undefined)
+      ?.skipped;
+    if (skipped) state.bulkSkipped = skipped;
+    return false;
+  }
+}
+
+/** Register a new board model - no hardware has to be present, which is how
+ * a probe still in the post gets a saved menuconfig answer before it
+ * arrives. `serial` (from the untracked-devices list) is adopted afterwards
+ * as a separate fw.serial.add call, mirroring the fork's
+ * createTypeAndTrack: a type created without its board is recoverable in one
+ * tap, the reverse is not, so the two calls are sequenced rather than one
+ * request doing both. */
+export async function addType(draft: TypeDraft): Promise<boolean> {
+  if (client === null) return false;
+  try {
+    await callAgent(client, "fw.type.add", {
+      name: draft.name,
+      chipset: draft.chipset,
+      firmware: draft.firmware,
+      klipper_extra_args: draft.applicationExtraArgs,
+      katapult_extra_args: draft.katapultExtraArgs,
+      katapult_installed: draft.katapultInstalled,
+    });
+    state.error = null;
+  } catch (error) {
+    state.error = error as NormalizedAgentError;
+    return false;
+  }
+  if (draft.serial) return adoptSerial(draft.name, draft.serial);
+  return true;
+}
+
+/** Edit a type in place. `patch` carries only the keys the form actually
+ * showed - the agent treats a missing key as "leave alone", so sending
+ * everything would clobber fields a future version of this form doesn't
+ * know about. */
+export async function updateType(
+  name: string,
+  patch: Record<string, unknown>,
+): Promise<boolean> {
+  if (client === null) return false;
+  try {
+    await callAgent(client, "fw.type.update", { name, ...patch });
+    state.error = null;
+    return true;
+  } catch (error) {
+    state.error = error as NormalizedAgentError;
+    return false;
+  }
+}
+
+/** Stop tracking a board model. `force` overrides the type_has_serials
+ * refusal - the caller is expected to have already shown the serials that
+ * refusal names, the same retry pattern ActionButton.vue uses for
+ * kconfig_session_conflict. */
+export async function removeType(
+  name: string,
+  force = false,
+): Promise<boolean> {
+  if (client === null) return false;
+  try {
+    await callAgent(client, "fw.type.remove", { name, force });
     state.error = null;
     return true;
   } catch (error) {

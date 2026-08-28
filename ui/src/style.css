@@ -360,3 +360,45 @@ main.embed {
   gap: 0.5rem;
   padding: 0.25rem 0;
 }
+
+/* -- dropdown menus (TargetsView's toolbar `⋮`, AddMcuWizard's menu variant,
+   TargetRow's per-row overflow) --------------------------------------- */
+
+.menu-list {
+  position: absolute;
+  right: 0;
+  top: 100%;
+  z-index: 10;
+  background: var(--color-surface);
+  border-radius: 4px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  min-width: 200px;
+}
+
+.menu-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  padding: 6px 10px;
+  border: none;
+  background: none;
+  color: inherit;
+  font-size: 0.85rem;
+  text-align: left;
+  cursor: pointer;
+  border-radius: 4px;
+  white-space: nowrap;
+}
+
+.menu-item:hover:not(:disabled) {
+  background: var(--color-btn-hover);
+}
+
+.menu-item:disabled {
+  color: var(--color-text-disabled);
+  cursor: default;
+}

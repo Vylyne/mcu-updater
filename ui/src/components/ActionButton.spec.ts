@@ -51,7 +51,9 @@ describe("ActionButton", () => {
     const spy = vi.spyOn(store, "invokeAction").mockResolvedValue(true);
     const wrapper = mount(ActionButton, { props: { action: buildAction } });
     await wrapper.get("button").trigger("click");
-    expect(spy).toHaveBeenCalledWith(buildAction);
+    // run() always passes an extra-params object (used for the reseed
+    // prompt's { reseed } on other actions) - {} here, not omitted.
+    expect(spy).toHaveBeenCalledWith(buildAction, {});
     expect(wrapper.text()).not.toContain("Confirm");
   });
 

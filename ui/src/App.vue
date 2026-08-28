@@ -4,7 +4,7 @@
 // docs/plan called for before there is a real targets[] view (Phase 4).
 import { computed, onMounted, onUnmounted, ref } from "vue";
 import { httpGetJson } from "./api/moonraker";
-import { connect, disconnect, state } from "./store/agent";
+import { connect, disconnect, lockedBy, state } from "./store/agent";
 import TargetsView from "./components/TargetsView.vue";
 import JobPanel from "./components/JobPanel.vue";
 import KconfigDialog from "./components/KconfigDialog.vue";
@@ -46,6 +46,7 @@ const isEmbed =
 const statusText = computed(() => JSON.stringify(state.status, null, 2));
 const pingText = computed(() => JSON.stringify(state.ping, null, 2));
 const targets = computed(() => state.status?.targets as Target[] | undefined);
+const lockedByLabel = computed(() => lockedBy()?.label ?? null);
 
 async function loadAccessInfo(): Promise<void> {
   try {
@@ -110,6 +111,15 @@ function reconnect(): void {
 
     <p v-if="state.error" class="alert alert--error">
       {{ state.error.code }}: {{ state.error.message }}
+    </p>
+
+    <p v-if="state.ping?.dry_run === true" class="alert alert--info">
+      dry_run is on - build/flash calls report what they would do without
+      actually writing.
+    </p>
+
+    <p v-if="lockedByLabel" class="alert alert--info">
+      Busy on the host: {{ lockedByLabel }}
     </p>
 
     <UiPanel v-if="!isEmbed" title="fw.ping" collapsible storage-key="ping">

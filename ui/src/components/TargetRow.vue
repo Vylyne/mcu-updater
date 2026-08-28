@@ -12,16 +12,28 @@
 // device (state icon, identity, spacer, version, verdict, device actions,
 // detail expander), then a trailing divider.
 import { computed, ref } from "vue";
-import { fetchTargetDetail, state } from "../store/agent";
+import {
+  fetchTargetDetail,
+  hasCapability,
+  lockedBy,
+  removeType,
+  state,
+} from "../store/agent";
 import type { Target, TargetDevice } from "../api/targets";
+import { devicesToFlash } from "../api/bulk";
 import ActionButton from "./ActionButton.vue";
 import UiIcon from "./UiIcon.vue";
+import UiDialog from "./UiDialog.vue";
+import TypeDialog from "./TypeDialog.vue";
+import type { Family } from "../api/mcutype";
 import {
   mdiAlertOutline,
   mdiCheckCircleOutline,
+  mdiCloseCircleOutline,
   mdiDotsVertical,
   mdiHelpCircleOutline,
   mdiProgressWrench,
+  mdiTuneVariant,
 } from "../icons";
 
 const props = defineProps<{ target: Target }>();
@@ -30,6 +42,8 @@ const expanded = ref(false);
 const loading = ref(false);
 const detail = ref<Record<string, unknown> | null>(null);
 const menuOpen = ref(false);
+const typeDialogOpen = ref(false);
+const removing = ref(false);
 
 const detailText = computed(() =>
   detail.value ? JSON.stringify(detail.value, null, 2) : "",
@@ -60,22 +74,23 @@ const deviceSummary = computed(() => {
 // Actions are gated on `blocked` from the payload plus this transient state
 // on top - docs/agent-api.md is explicit that a job already running belongs
 // to `job`/`locked_by`, not to `blocked`, so it is not baked into the row.
+// `locked_by` (a CLI build/flash holding the host lock) gates the same way a
+// job of ours does: either way a new one would be refused.
 const busyReason = computed(() => {
+  const lock = lockedBy();
+  if (lock) return lock.label;
   const job = state.job;
   if (!job || (job.state !== "queued" && job.state !== "running")) return null;
   return `${job.kind} is already running`;
 });
 
 /** Devices a flash action on this row would actually write, for
- * ActionButton's confirmation prompt. `scope` (default "stale") comes off
- * the action's own params, mirroring the agent's own selection in
- * bulk.py's _boards_to_flash/_screens_to_flash - "all" means every present
- * device, otherwise only the ones the payload already marked needing one. */
+ * ActionButton's confirmation prompt - delegates to api/bulk.ts's
+ * devicesToFlash so a single-row preview and a fleet-wide one can never
+ * disagree about what "needs flashing" means. */
 function previewFor(action: Target["actions"][number]): TargetDevice[] {
   const scope = (action.params.scope as string | undefined) ?? "stale";
-  return props.target.devices.filter((device) =>
-    scope === "all" ? device.present : device.needs_flash === true,
-  );
+  return devicesToFlash(props.target, scope === "all" ? "all" : "stale");
 }
 
 /** The ones that belong in the header itself; everything else goes in the
@@ -102,6 +117,21 @@ function wants(action: Target["actions"][number]): boolean {
   return action.id === "flash" && props.target.needs_flash === true;
 }
 
+// The vendor updated the profile this config came from, and the saved
+// answers still match what the profile put there (reason === "seed_moved") -
+// a customised config is never offered this, and the agent refuses it there
+// anyway. ActionButton never learns what a profile is; this is the one place
+// that does, per its own doc comment.
+function offersReseed(action: Target["actions"][number]): boolean {
+  return action.id === "build" && props.target.profile?.reason === "seed_moved";
+}
+
+const reseedDefault = computed(
+  () =>
+    (state.status?.settings as { reseed_on_build?: boolean } | undefined)
+      ?.reseed_on_build !== false,
+);
+
 /** The profile chip, or nothing - nothing for a display (no answers to
  * seed) and nothing for an unmanaged type (every type predating profiles).
  * A moved seed names the profile rather than saying "profile updated",
@@ -126,6 +156,53 @@ const profileHint = computed(() => {
     ? `${profile.label} - ${profile.profile}`
     : profile.label;
 });
+
+// MCU-type management (fw.type.add/.update/.remove) applies to a
+// kconfig_make target only - a display has no registry entry of this kind
+// to edit. Kept here rather than a provider branch on the row's rendering:
+// this is the one place docs/standalone-ui.md records as "still unscheduled"
+// before this phase, and it stays additive - two extra menu rows, not a
+// change to how the row itself renders.
+const canManageType = computed(
+  () =>
+    props.target.provider === "kconfig_make" &&
+    hasCapability("fw.type.add") &&
+    hasCapability("fw.type.update") &&
+    hasCapability("fw.type.remove"),
+);
+
+const families = computed(
+  () => (state.status?.firmware_families as Family[] | undefined) ?? [],
+);
+
+function openEditType(): void {
+  typeDialogOpen.value = true;
+  menuOpen.value = false;
+}
+
+const removeConfirming = ref(false);
+// Set from a type_has_serials refusal's data.data.serials - registry.py
+// refuses removing a type that still tracks boards unless forced, since that
+// is far more often a misclick than an intention.
+const removeConflictSerials = ref<string[] | null>(null);
+
+function openRemoveType(): void {
+  removeConflictSerials.value = null;
+  removeConfirming.value = true;
+  menuOpen.value = false;
+}
+
+async function doRemoveType(force = false): Promise<void> {
+  removing.value = true;
+  const ok = await removeType(props.target.name, force);
+  removing.value = false;
+  if (ok) {
+    removeConfirming.value = false;
+    return;
+  }
+  const data = state.error?.data as { serials?: string[] } | undefined;
+  removeConflictSerials.value = data?.serials ?? null;
+}
 
 function stateIcon(device: TargetDevice): string {
   if (device.state === "klipper" || device.state === "online") {
@@ -206,9 +283,11 @@ async function toggle(): Promise<void> {
         :disabled-reason="busyReason"
         :preview-devices="previewFor(action)"
         :wanted="wants(action)"
+        :offers-reseed="offersReseed(action)"
+        :reseed-default="reseedDefault"
       />
 
-      <span v-if="menuActions.length" class="target-menu">
+      <span v-if="menuActions.length || canManageType" class="target-menu">
         <button
           type="button"
           class="btn-icon btn-icon--small"
@@ -227,6 +306,17 @@ async function toggle(): Promise<void> {
             :disabled-reason="busyReason"
             :preview-devices="previewFor(action)"
           />
+          <template v-if="canManageType">
+            <hr v-if="menuActions.length" class="divider" />
+            <button type="button" class="menu-item" @click="openEditType">
+              <UiIcon :path="mdiTuneVariant" size="x-small" />
+              Edit type…
+            </button>
+            <button type="button" class="menu-item" @click="openRemoveType">
+              <UiIcon :path="mdiCloseCircleOutline" size="x-small" />
+              Remove type…
+            </button>
+          </template>
         </div>
       </span>
     </div>
@@ -278,6 +368,51 @@ async function toggle(): Promise<void> {
     }}</pre>
 
     <hr class="divider" />
+
+    <TypeDialog
+      v-if="typeDialogOpen"
+      :type-name="target.name"
+      :existing-names="[]"
+      :families="families"
+      @close="typeDialogOpen = false"
+    />
+
+    <UiDialog
+      v-if="removeConfirming"
+      title="Remove type"
+      @close="removeConfirming = false"
+    >
+      <template v-if="removeConflictSerials">
+        <p>
+          '{{ target.name }}' still tracks {{ removeConflictSerials.length }}
+          board(s):
+        </p>
+        <ul class="devices">
+          <li v-for="serial in removeConflictSerials" :key="serial">
+            {{ serial }}
+          </li>
+        </ul>
+        <p class="muted">
+          Remove them first, or confirm to remove the type and its serials
+          together.
+        </p>
+      </template>
+      <p v-else>
+        Removes the registry section only. The saved menuconfig answers for '{{
+          target.name
+        }}' stay on disk - re-adding the same name restores them.
+      </p>
+      <template #actions>
+        <button type="button" @click="removeConfirming = false">Cancel</button>
+        <button
+          type="button"
+          :disabled="removing"
+          @click="doRemoveType(removeConflictSerials !== null)"
+        >
+          {{ removing ? "Working…" : "Remove" }}
+        </button>
+      </template>
+    </UiDialog>
   </article>
 </template>
 

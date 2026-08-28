@@ -283,8 +283,11 @@ This fork is no longer the only front end. `ui/` (see
 UI that talks to the same agent through Moonraker and needs no fork of
 anything — it is the answer for anyone who does not want to run a forked
 Mainsail. This document, and the fork itself, are unaffected: the panel keeps
-working exactly as before, and stays the richer of the two clients (menuconfig
-in the browser) until the standalone UI catches up. As of Phase 9
-(docs/standalone-ui.md's "Looking like the panel"), the two clients share a
-palette and panel layout copied from this fork's own checkout, so they read as
-one product even though the fork remains the richer one.
+working exactly as before. As of Phase 9 (docs/standalone-ui.md's "Looking
+like the panel"), the two clients share a palette and panel layout copied from
+this fork's own checkout, so they read as one product rather than two.
+Neither is simply "the richer one" any more: the fork still has menuconfig in
+the browser, which this panel is not planning to give up, while the
+standalone UI's Phase 10 renders `result.*.failures` and a bulk operation's
+`skipped[]` that this panel does not yet surface. Treat the two as converging
+rather than ranked.

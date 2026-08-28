@@ -1,7 +1,12 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "vitest";
 import { mount } from "@vue/test-utils";
 import TargetsView from "./TargetsView.vue";
 import type { Target } from "../api/targets";
+import { state } from "../store/agent";
+
+afterEach(() => {
+  state.ping = null;
+});
 
 function makeTarget(provider: Target["provider"], name: string): Target {
   return {
@@ -42,5 +47,28 @@ describe("TargetsView", () => {
     expect(wrapper.text()).toContain("bttebb36");
     expect(wrapper.text()).toContain("knomi");
     expect(wrapper.findAll("article.target-row")).toHaveLength(2);
+  });
+
+  it("hides the fleet toolbar without the matching capabilities", () => {
+    const targets = [makeTarget("kconfig_make", "bttebb36")];
+    const wrapper = mount(TargetsView, { props: { targets } });
+    expect(
+      wrapper.find('[title="Build everything that needs it"]').exists(),
+    ).toBe(false);
+    expect(
+      wrapper.find('[title="Flash everything that needs it"]').exists(),
+    ).toBe(false);
+  });
+
+  it("shows build/flash-all once the agent advertises them", () => {
+    state.ping = { capabilities: ["fw.build_all", "fw.flash_all"] };
+    const targets = [makeTarget("kconfig_make", "bttebb36")];
+    const wrapper = mount(TargetsView, { props: { targets } });
+    expect(
+      wrapper.find('[title="Build everything that needs it"]').exists(),
+    ).toBe(true);
+    expect(
+      wrapper.find('[title="Flash everything that needs it"]').exists(),
+    ).toBe(true);
   });
 });

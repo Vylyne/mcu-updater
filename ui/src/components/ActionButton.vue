@@ -7,7 +7,13 @@
 // deliberately excludes ("that is what `job` and `locked_by` are"). Both
 // gate the same button, but only one of them is this row's business to know.
 import { computed, ref } from "vue";
-import { fetchChoices, invokeAction, openKconfig, state } from "../store/agent";
+import {
+  fetchChoices,
+  invokeAction,
+  openKconfig,
+  printerBusy,
+  state,
+} from "../store/agent";
 import type { Action } from "../api/targets";
 import UiIcon from "./UiIcon.vue";
 import UiDialog from "./UiDialog.vue";
@@ -39,6 +45,16 @@ const props = withDefaults(
      * *can* be done - the same swap FirmwareUpdaterPanelTarget.vue makes for
      * flash's icon and colour. Ignored outside variant="icon". */
     wanted?: boolean;
+    /** True for a `build` action on a target whose saved config still
+     * matches its profile but the vendor's seed has moved
+     * (profile.reason === "seed_moved") - the caller (TargetRow) knows what
+     * a profile is so this component never has to. Offers a choice before
+     * running rather than silently taking (or silently skipping) the
+     * vendor's update. */
+    offersReseed?: boolean;
+    /** Preselected answer for the reseed prompt, from settings.reseed_on_build -
+     * agreeing with what a CLI or fleet build would do by default. */
+    reseedDefault?: boolean;
   }>(),
   {
     disabled: false,
@@ -46,6 +62,8 @@ const props = withDefaults(
     previewDevices: undefined,
     variant: "icon",
     wanted: false,
+    offersReseed: false,
+    reseedDefault: true,
   },
 );
 
@@ -71,12 +89,27 @@ const isDestructive = computed(() =>
   DESTRUCTIVE_METHODS.has(props.action.method),
 );
 
+// Untracking is reversible - it keeps the type's saved config and every
+// built artifact, only the registry's serial entry goes away - so it gets
+// its own reassuring confirm rather than either the flash confirm's warning
+// framing or no confirm at all.
+const isUntrack = computed(() => props.action.id === "untrack");
+
 const confirming = ref(false);
+const untrackConfirming = ref(false);
+const reseedPrompting = ref(false);
+const reseed = ref(true);
 const pickingChoice = ref(false);
 const choiceOptions = ref<{ name: string; hint: string }[] | null>(null);
 const choiceLoading = ref(false);
 const running = ref(false);
 const kconfigConflict = ref(false);
+
+const busyMessage = computed(() =>
+  state.status?.printing === true
+    ? "The printer is printing - flashing would shut the MCU down mid-print."
+    : "The printer is moving - flashing would shut the MCU down mid-motion.",
+);
 
 // Icons by action id, same table FirmwareUpdaterPanelTarget.vue keeps - an
 // action id this row does not recognise falls back to a plain cog rather
@@ -137,11 +170,13 @@ async function pick(name: string): Promise<void> {
   choiceOptions.value = null;
 }
 
-async function run(): Promise<void> {
+async function run(extra: Record<string, unknown> = {}): Promise<void> {
   running.value = true;
-  await invokeAction(props.action);
+  await invokeAction(props.action, extra);
   running.value = false;
   confirming.value = false;
+  untrackConfirming.value = false;
+  reseedPrompting.value = false;
 }
 
 /** `force` retries after a kconfig_session_conflict refusal - another tab
@@ -172,6 +207,15 @@ function onClick(): void {
   }
   if (isDestructive.value) {
     confirming.value = true;
+    return;
+  }
+  if (isUntrack.value) {
+    untrackConfirming.value = true;
+    return;
+  }
+  if (props.offersReseed) {
+    reseed.value = props.reseedDefault;
+    reseedPrompting.value = true;
     return;
   }
   void run();
@@ -259,16 +303,78 @@ function onClick(): void {
           >an unknown set of devices - refusing to guess</template
         >
       </p>
+      <p v-if="printerBusy()" class="alert alert--error">{{ busyMessage }}</p>
       <template #actions>
         <button type="button" @click="confirming = false">Cancel</button>
         <button
           type="button"
-          :disabled="!previewDevices || previewDevices.length === 0"
-          @click="run"
+          :disabled="
+            !previewDevices || previewDevices.length === 0 || printerBusy()
+          "
+          @click="run()"
         >
           Confirm
         </button>
       </template>
     </UiDialog>
+
+    <UiDialog
+      v-if="untrackConfirming"
+      :title="action.label"
+      @close="untrackConfirming = false"
+    >
+      <p>
+        Stop tracking
+        <strong v-if="previewDevices && previewDevices.length">{{
+          previewDevices[0].name ?? previewDevices[0].id
+        }}</strong>
+        <template v-else>this board</template>?
+      </p>
+      <p class="alert alert--info">
+        The board keeps its firmware, the type keeps its saved configuration and
+        built artifacts, and re-adding it later makes it flashable again with
+        nothing to rebuild.
+      </p>
+      <template #actions>
+        <button type="button" @click="untrackConfirming = false">Cancel</button>
+        <button type="button" :disabled="running" @click="run()">
+          Confirm
+        </button>
+      </template>
+    </UiDialog>
+
+    <UiDialog
+      v-if="reseedPrompting"
+      :title="action.label"
+      @close="reseedPrompting = false"
+    >
+      <p>
+        This board's saved config still matches its profile, and the vendor's
+        seed has moved since.
+      </p>
+      <label class="radio-row">
+        <input v-model="reseed" type="radio" :value="true" />
+        Take the vendor's update first
+      </label>
+      <label class="radio-row">
+        <input v-model="reseed" type="radio" :value="false" />
+        Build as is
+      </label>
+      <template #actions>
+        <button type="button" @click="reseedPrompting = false">Cancel</button>
+        <button type="button" :disabled="running" @click="run({ reseed })">
+          {{ running ? "Working…" : action.label }}
+        </button>
+      </template>
+    </UiDialog>
   </span>
 </template>
+
+<style scoped>
+.radio-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 4px 0;
+}
+</style>

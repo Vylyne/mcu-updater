@@ -119,3 +119,12 @@ export interface BusDevice {
   state: string;
   tracked_by: string | null;
 }
+
+/** `fw.status`'s `locked_by` - non-null while a CLI build or flash holds the
+ * host lock. Distinct from `state.job`: this is activity this UI did not
+ * start and cannot cancel, only wait out. */
+export interface Lock {
+  pid: number;
+  label: string;
+  since: number;
+}

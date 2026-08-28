@@ -16,6 +16,17 @@ import UiIcon from "./UiIcon.vue";
 import UiDialog from "./UiDialog.vue";
 import { mdiDeveloperBoard } from "../icons";
 
+const props = withDefaults(
+  defineProps<{
+    /** "icon" (default) is the standalone launcher this used to always be.
+     * "menu" renders as a row inside TargetsView's own `⋮` menu instead,
+     * alongside "New type…" - same dialog, same state, just a different
+     * trigger element so the two launchers can share one menu. */
+    variant?: "icon" | "menu";
+  }>(),
+  { variant: "icon" },
+);
+
 const open = ref(false);
 const scanning = ref(false);
 const starting = ref(false);
@@ -82,13 +93,22 @@ async function start(): Promise<void> {
 <template>
   <span class="add-mcu-wizard">
     <button
-      v-if="canStart && mcuTargets.length"
+      v-if="canStart && mcuTargets.length && props.variant === 'icon'"
       type="button"
       class="btn-icon"
       title="Add new board…"
       @click="show"
     >
       <UiIcon :path="mdiDeveloperBoard" size="small" />
+    </button>
+    <button
+      v-if="canStart && mcuTargets.length && props.variant === 'menu'"
+      type="button"
+      class="menu-item"
+      @click="show"
+    >
+      <UiIcon :path="mdiDeveloperBoard" size="small" />
+      Add new board…
     </button>
 
     <UiDialog v-if="open" title="Add a new board" @close="close">
@@ -161,3 +181,12 @@ async function start(): Promise<void> {
     </UiDialog>
   </span>
 </template>
+
+<style scoped>
+/* Only needed for variant="menu": the span wrapper otherwise stays inline
+   and shrinks to fit, which would leave its menu-item button narrower than
+   the other rows in the same .menu-list column. */
+.add-mcu-wizard {
+  display: block;
+}
+</style>

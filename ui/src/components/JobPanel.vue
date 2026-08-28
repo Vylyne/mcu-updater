@@ -7,6 +7,42 @@ import { adoptSerial, cancelJob, state } from "../store/agent";
 import { cancelIsImmediate } from "../api/jobs";
 import UiPanel from "./UiPanel.vue";
 
+interface BulkFailure {
+  type?: string;
+  id?: string;
+  error?: string;
+}
+
+/** `result.*.failures` from a build_all/flash_all/update_all job -
+ * agent-api.md is explicit that a job with failures still ends `succeeded`,
+ * and that this is the thing to render, not the job state: "a batch that
+ * drops something and reports success is the failure this whole area exists
+ * to make impossible". build_all/flash_all carry `failures` at the top of
+ * `result`; update_all nests it under `build`/`flash` since it composes both. */
+const failures = computed<BulkFailure[]>(() => {
+  const result = state.job?.result as Record<string, unknown> | undefined;
+  if (!result) return [];
+  const collected: BulkFailure[] = [];
+  if (Array.isArray(result.failures)) {
+    collected.push(...(result.failures as BulkFailure[]));
+  }
+  for (const key of ["build", "flash"] as const) {
+    const half = result[key] as { failures?: BulkFailure[] } | undefined;
+    if (Array.isArray(half?.failures)) collected.push(...half.failures);
+  }
+  return collected;
+});
+
+// Klipper reruns olddefconfig when src/Kconfig is newer than the saved
+// .config, which silently rewrites menuconfig answers - invisible unless
+// this is checked explicitly. Only a single fw.build job's result carries
+// this key; other kinds simply don't have it.
+const configRewritten = computed(
+  () =>
+    (state.job?.result as { config_rewritten?: boolean } | undefined)
+      ?.config_rewritten === true,
+);
+
 const cancelling = ref(false);
 const adopting = reactive<Record<string, boolean>>({});
 
@@ -92,6 +128,29 @@ async function onCancel(): Promise<void> {
 
     <p v-if="state.job.error" class="alert alert--error">
       {{ state.job.error.code }} - {{ state.job.error.message }}
+    </p>
+
+    <!-- A bulk job with failures still ends "succeeded" - the state alone
+         would read as a clean run, so this renders regardless of state. -->
+    <div v-if="failures.length" class="alert alert--error">
+      <div>
+        <strong>{{ failures.length }}</strong> of the batch failed:
+      </div>
+      <div v-for="(failure, index) in failures" :key="index">
+        {{ failure.type ?? failure.id ?? "?" }} - {{ failure.error }}
+      </div>
+    </div>
+
+    <div v-if="state.bulkSkipped.length" class="alert alert--warning">
+      <div>{{ state.bulkSkipped.length }} target(s) could not be touched:</div>
+      <div v-for="(entry, index) in state.bulkSkipped" :key="index">
+        {{ entry.type }} - {{ entry.reason }}
+      </div>
+    </div>
+
+    <p v-if="configRewritten" class="alert alert--warning">
+      Klipper rewrote the saved config for this build (olddefconfig ran because
+      src/Kconfig changed) - some menuconfig answers may have moved.
     </p>
 
     <p v-if="state.job.cancel_requested" class="alert alert--info">

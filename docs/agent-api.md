@@ -110,6 +110,9 @@ application error (see `data.code`), `-32603` internal.
 | `fw.ping` | — | version/capability handshake |
 | `fw.status` | — | everything the panel needs, in one call |
 | `fw.type.list` | — | `{types: [TypeStatus]}` |
+| `fw.type.add` | `name`, `chipset` (required), `firmware?`, `<fw>_extra_args?`, `katapult_extra_args?`, `katapult_installed?` | `{name, chipset, firmware}` — declares a board model, no hardware required |
+| `fw.type.update` | `name` (required), any of the `fw.type.add` fields | `{name, chipset, firmware, warnings}` — only the keys supplied are touched |
+| `fw.type.remove` | `name` (required), `force?` | `{name, removed_serials, kept_config_dir}` — refuses while boards are still tracked unless forced |
 | `fw.target.get` | `name`, `provider` (required) | `{provider, target}` — one `targets[]` entry's full detail |
 | `fw.bus.scan` | `only_untracked?`, `chipset?` | `{devices: [BusDevice]}` |
 | `fw.dfu.scan` | — | `{devices, count, ready, reason, message}` — read-only |

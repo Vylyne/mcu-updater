@@ -25,6 +25,14 @@ afterEach(() => {
   state.status = null;
 });
 
+describe("SettingsPanel default collapsed state", () => {
+  it("mounts with the panel body collapsed (hidden)", () => {
+    state.status = { settings: { ...settings } };
+    const wrapper = mount(SettingsPanel);
+    expect(wrapper.get(".panel-body").isVisible()).toBe(false);
+  });
+});
+
 describe("SettingsPanel accent colour", () => {
   it("shows the theme default swatch when no colour is saved", () => {
     state.status = { settings: { ...settings } };

@@ -78,7 +78,13 @@ function discard(): void {
 </script>
 
 <template>
-  <UiPanel v-if="settings" title="Settings" collapsible storage-key="settings">
+  <UiPanel
+    v-if="settings"
+    title="Settings"
+    collapsible
+    storage-key="settings"
+    :default-expanded="false"
+  >
     <div class="settings-grid">
       <label>
         make_jobs (-1 = one per CPU, 0 = no -j flag)

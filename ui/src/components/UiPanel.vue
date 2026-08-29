@@ -19,11 +19,23 @@ const props = withDefaults(
     /** localStorage key suffix. Required when collapsible - unique per panel
      * so two collapsible panels don't fight over one stored value. */
     storageKey?: string;
+    /** Initial expanded state when nothing is stored yet. */
+    defaultExpanded?: boolean;
   }>(),
-  { icon: null, collapsible: false, storageKey: undefined },
+  {
+    icon: null,
+    collapsible: false,
+    storageKey: undefined,
+    defaultExpanded: true,
+  },
 );
 
-const STORAGE_PREFIX = "mcu-updater-ui:panel:";
+// Bumped from "mcu-updater-ui:panel:" - SettingsPanel's default flipped to
+// collapsed, and localStorage always beats a default, so anyone with a
+// previously stored "expanded" value would otherwise see no change. Bumping
+// the prefix is a deliberate one-time invalidation of every panel's stored
+// collapse state (not just Settings), accepted as the cost of the fix.
+const STORAGE_PREFIX = "mcu-updater-ui:panel2:";
 
 function readStoredExpanded(): boolean | null {
   if (!props.collapsible || !props.storageKey) return null;
@@ -35,7 +47,7 @@ function readStoredExpanded(): boolean | null {
   }
 }
 
-const expanded = ref(readStoredExpanded() ?? true);
+const expanded = ref(readStoredExpanded() ?? props.defaultExpanded);
 
 function toggle(): void {
   if (!props.collapsible) return;

@@ -270,6 +270,8 @@ serials:
     3F0037000957465331323720-if00
 klipper_makefile_patches:
     src/Makefile -> src-y += buffer.c
+klipper_extra_repos:
+    ~/buffer_manager
 ```
 
 `[firmware ...]` names a build system's own tree — `builder:` lives there, not

@@ -15,6 +15,7 @@ session, so it is kept to live work. Removed entries stay in git history
 ### theming
 
 - apply theme to dropdown/select boxes.
+- restore green device checks at beginning of the device rows.
 
 ### untracked devices on bus
 
@@ -29,4 +30,3 @@ session, so it is kept to live work. Removed entries stay in git history
 
 - we are moving down to the joblog when a new job starts, but i don't think its fully there yet, as we don't get it fully scrolled into view.
 - joblog is not rendering coloured text.
-

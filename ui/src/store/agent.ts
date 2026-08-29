@@ -455,6 +455,37 @@ export async function adoptSerial(
   }
 }
 
+/** Flag a bus device so it stops appearing among the untracked/adoptable
+ * ones - the flip side of adoptSerial for a device nobody wants tracked
+ * (e.g. a USB-serial adapter sharing the same chipset as a real board).
+ * Idempotent on the agent side; the updated `bus[]` (with `ignored: true`)
+ * arrives the normal way through the `bus` notify_agent_event this store
+ * already listens for, so there is nothing to patch locally here. */
+export async function ignoreSerial(serial: string): Promise<boolean> {
+  if (client === null) return false;
+  try {
+    await callAgent(client, "fw.bus.ignore", { serial });
+    state.error = null;
+    return true;
+  } catch (error) {
+    state.error = error as NormalizedAgentError;
+    return false;
+  }
+}
+
+/** Reverse of ignoreSerial - restores a device to the untracked list. */
+export async function unignoreSerial(serial: string): Promise<boolean> {
+  if (client === null) return false;
+  try {
+    await callAgent(client, "fw.bus.unignore", { serial });
+    state.error = null;
+    return true;
+  } catch (error) {
+    state.error = error as NormalizedAgentError;
+    return false;
+  }
+}
+
 /** Run a fleet-wide build_all/flash_all/update_all. Deliberately no `name`
  * (agent-api.md's methods table gives fw.build_all only `fw?, scope?`) and no
  * `force` - overriding the print gate stays reachable through the API but

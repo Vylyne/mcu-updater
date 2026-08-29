@@ -3,15 +3,31 @@
 // a type claims it. `tracked_by: null` is docs/agent-api.md's "new board,
 // want to track it?" case; this is where that gets a UI. See store/agent.ts's
 // refreshStatus for why state.bus is not empty on first load.
-import { computed, reactive, ref } from "vue";
-import { adoptSerial, hasCapability, state } from "../store/agent";
+//
+// A device can also be `ignored` (fw.bus.ignore/.unignore) - flagged, not
+// filtered server-side, so a mis-ignored board is always recoverable from the
+// disclosure section below rather than only by hand-editing the cfg.
+import { computed, reactive, ref, type ComponentPublicInstance } from "vue";
+import { useClickOutsideToClose } from "../clickOutside";
+import {
+  adoptSerial,
+  hasCapability,
+  ignoreSerial,
+  state,
+  unignoreSerial,
+} from "../store/agent";
 import type { BusDevice, Target } from "../api/targets";
 import type { Family } from "../api/mcutype";
 import UiPanel from "./UiPanel.vue";
+import UiIcon from "./UiIcon.vue";
 import TypeDialog from "./TypeDialog.vue";
+import { mdiClose, mdiPlusCircleOutline, mdiUndoVariant } from "../icons";
 
 const devices = computed(() => state.bus as unknown as BusDevice[]);
-const untracked = computed(() => devices.value.filter((d) => !d.tracked_by));
+const untracked = computed(() =>
+  devices.value.filter((d) => !d.tracked_by && !d.ignored),
+);
+const ignored = computed(() => devices.value.filter((d) => d.ignored));
 
 // Only MCU types can adopt a serial (fw.serial.add) - a display is a
 // separate provider with its own port config, not a bus device to claim.
@@ -31,19 +47,91 @@ const canManageTypes = computed(
     hasCapability("fw.type.remove"),
 );
 
+const showAdoptItems = computed(
+  () => canAdopt.value && mcuTypeNames.value.length > 0,
+);
+const showNewTypeItem = computed(() => canManageTypes.value);
+// Whether the `+` trigger itself is worth showing at all - an empty dropdown
+// (neither capability present) offers nothing, so the button is omitted
+// entirely rather than opening onto a blank menu.
+const showPlusMenu = computed(
+  () => showAdoptItems.value || showNewTypeItem.value,
+);
+
 const families = computed(
   () => (state.status?.firmware_families as Family[] | undefined) ?? [],
 );
 
-const chosen = reactive<Record<string, string>>({});
-const adopting = reactive<Record<string, boolean>>({});
+// Keyed by serial - shared across adopt/ignore/unignore so a double click on
+// any of a row's async actions can't double-fire, matching the busy-state
+// pattern the rest of this app uses per row.
+const busy = reactive<Record<string, boolean>>({});
 
-async function adopt(device: BusDevice): Promise<void> {
-  const name = chosen[device.serial];
-  if (!name) return;
-  adopting[device.serial] = true;
-  await adoptSerial(name, device.serial);
-  adopting[device.serial] = false;
+// Only one row's `+` dropdown is open at a time. `useClickOutsideToClose`
+// wants one container ref and one open ref (the same pair TargetRow.vue and
+// TargetsView.vue use for their own single dropdown); rowRefs holds every
+// row's wrapping element so the container ref can be pointed at whichever
+// row is currently open.
+const rowRefs: Record<string, HTMLElement | null> = {};
+function setRowRef(
+  serial: string,
+  el: Element | ComponentPublicInstance | null,
+): void {
+  rowRefs[serial] = el as HTMLElement | null;
+}
+const menuOpenFor = ref<string | null>(null);
+const menuContainer = ref<HTMLElement | null>(null);
+const menuOpen = computed<boolean>({
+  get: () => menuOpenFor.value !== null,
+  set: (value) => {
+    if (!value) menuOpenFor.value = null;
+  },
+});
+useClickOutsideToClose(menuContainer, menuOpen);
+
+function toggleMenu(serial: string): void {
+  if (menuOpenFor.value === serial) {
+    menuOpenFor.value = null;
+    return;
+  }
+  menuOpenFor.value = serial;
+  menuContainer.value = rowRefs[serial] ?? null;
+}
+
+// The `busy[serial]` check up front is a synchronous re-entrancy guard, not
+// just UI decoration: `:disabled` only reaches the DOM on Vue's next patch,
+// so two clicks landing in the same tick (no await between them, e.g. an
+// impatient double-click) would otherwise both pass the disabled check and
+// both fire the call.
+async function adopt(device: BusDevice, name: string): Promise<void> {
+  if (busy[device.serial]) return;
+  menuOpenFor.value = null;
+  busy[device.serial] = true;
+  try {
+    await adoptSerial(name, device.serial);
+  } finally {
+    busy[device.serial] = false;
+  }
+}
+
+async function ignore(device: BusDevice): Promise<void> {
+  if (busy[device.serial]) return;
+  busy[device.serial] = true;
+  try {
+    await ignoreSerial(device.serial);
+  } finally {
+    busy[device.serial] = false;
+  }
+}
+
+async function unignore(device: BusDevice): Promise<void> {
+  if (busy[device.serial]) return;
+  busy[device.serial] = true;
+  try {
+    await unignoreSerial(device.serial);
+  } finally {
+    busy[device.serial] = false;
+  }
 }
 
 // "Declare a board model with nothing plugged in" was only reachable from the
@@ -51,42 +139,99 @@ async function adopt(device: BusDevice): Promise<void> {
 // that has no type yet - the chipset it reported gets pre-filled, and it is
 // adopted automatically once the type exists (TypeDraft.serial).
 const newTypeFor = ref<BusDevice | null>(null);
+
+function openNewType(device: BusDevice): void {
+  newTypeFor.value = device;
+  menuOpenFor.value = null;
+}
 </script>
 
 <template>
-  <UiPanel v-if="untracked.length" title="Untracked devices">
+  <UiPanel v-if="untracked.length || ignored.length" title="Untracked devices">
     <p class="muted">
       On the bus, but no MCU type claims them yet - pick a type to adopt one
       under.
     </p>
     <ul class="devices">
-      <li v-for="device in untracked" :key="device.serial">
+      <li
+        v-for="device in untracked"
+        :key="device.serial"
+        :class="{ muted: device.is_mcu === false }"
+      >
         <span>{{ device.fw }}</span>
         <span class="muted">{{ device.path }}</span>
-        <template v-if="canAdopt && mcuTypeNames.length">
-          <select v-model="chosen[device.serial]">
-            <option value="" disabled>Adopt as…</option>
-            <option v-for="name in mcuTypeNames" :key="name" :value="name">
-              {{ name }}
-            </option>
-          </select>
+        <span class="spacer" />
+
+        <span
+          v-if="device.is_mcu !== false && showPlusMenu"
+          :ref="(el) => setRowRef(device.serial, el)"
+          class="target-menu"
+        >
           <button
             type="button"
-            :disabled="!chosen[device.serial] || adopting[device.serial]"
-            @click="adopt(device)"
+            class="btn-icon"
+            title="Track this device…"
+            :disabled="busy[device.serial]"
+            @click="toggleMenu(device.serial)"
           >
-            {{ adopting[device.serial] ? "Adopting…" : "Adopt" }}
+            <UiIcon :path="mdiPlusCircleOutline" size="small" />
           </button>
-        </template>
+          <div v-if="menuOpenFor === device.serial" class="menu-list">
+            <template v-if="showAdoptItems">
+              <button
+                v-for="name in mcuTypeNames"
+                :key="name"
+                type="button"
+                class="menu-item"
+                :disabled="busy[device.serial]"
+                @click="adopt(device, name)"
+              >
+                {{ name }}
+              </button>
+            </template>
+            <hr v-if="showAdoptItems && showNewTypeItem" class="divider" />
+            <button
+              v-if="showNewTypeItem"
+              type="button"
+              class="menu-item"
+              @click="openNewType(device)"
+            >
+              New type from this…
+            </button>
+          </div>
+        </span>
+
         <button
-          v-if="canManageTypes"
           type="button"
-          @click="newTypeFor = device"
+          class="btn-icon"
+          title="Ignore"
+          :disabled="busy[device.serial]"
+          @click="ignore(device)"
         >
-          New type from this…
+          <UiIcon :path="mdiClose" size="small" />
         </button>
       </li>
     </ul>
+
+    <details v-if="ignored.length" class="ignored-devices">
+      <summary>Ignored ({{ ignored.length }})</summary>
+      <ul class="devices">
+        <li v-for="device in ignored" :key="device.serial">
+          <span>{{ device.fw }}</span>
+          <span class="muted">{{ device.path }}</span>
+          <span class="spacer" />
+          <button
+            type="button"
+            class="btn-icon"
+            title="Restore"
+            :disabled="busy[device.serial]"
+            @click="unignore(device)"
+          >
+            <UiIcon :path="mdiUndoVariant" size="small" />
+          </button>
+        </li>
+      </ul>
+    </details>
 
     <TypeDialog
       v-if="newTypeFor"
@@ -98,3 +243,18 @@ const newTypeFor = ref<BusDevice | null>(null);
     />
   </UiPanel>
 </template>
+
+<style scoped>
+/* .menu-list (style.css) is position: absolute against its nearest
+   positioned ancestor - without this the dropdown would jump to whatever
+   ancestor outside this panel happens to be positioned, rather than sitting
+   under its own `+` button. Same rule TargetRow.vue/TargetsView.vue carry for
+   their own single dropdown. */
+.target-menu {
+  position: relative;
+}
+
+.ignored-devices summary {
+  cursor: pointer;
+}
+</style>

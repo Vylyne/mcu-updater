@@ -118,6 +118,8 @@ export interface BusDevice {
   path: string;
   state: string;
   tracked_by: string | null;
+  is_mcu: boolean;
+  ignored: boolean;
 }
 
 /** `fw.status`'s `locked_by` - non-null while a CLI build or flash holds the

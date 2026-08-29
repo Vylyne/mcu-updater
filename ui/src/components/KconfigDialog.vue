@@ -255,6 +255,10 @@ function forceClose(): void {
   margin-bottom: 8px;
 }
 
+.kconfig-search input {
+  flex: 1;
+}
+
 .detail-block {
   margin: 2px 0 6px;
   padding: 6px 8px;

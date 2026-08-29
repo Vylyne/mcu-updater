@@ -4,6 +4,8 @@
 // gets a button instead of an input.
 import { computed } from "vue";
 import type { KconfigNode } from "../api/kconfig";
+import { mdiChevronDown, mdiDeveloperBoard } from "../icons";
+import UiIcon from "./UiIcon.vue";
 
 const props = defineProps<{
   node: KconfigNode;
@@ -50,7 +52,13 @@ function onText(event: Event): void {
         :style="{ paddingLeft: `${node.depth * 16}px` }"
         @click="emit('enter', node)"
       >
-        {{ node.prompt }} ›
+        <UiIcon :path="mdiDeveloperBoard" size="small" />
+        <span class="kconfig-enter-label">{{ node.prompt }}</span>
+        <UiIcon
+          :path="mdiChevronDown"
+          size="small"
+          class="kconfig-enter-chevron"
+        />
       </button>
     </template>
 
@@ -67,27 +75,29 @@ function onText(event: Event): void {
         class="kconfig-label"
         :style="{ paddingLeft: `${node.depth * 16}px` }"
       >
-        <span :class="{ 'text--disabled': !node.editable }">{{
-          node.prompt
-        }}</span>
-        <button
-          v-if="node.has_help"
-          type="button"
-          class="btn-icon btn-icon--small kconfig-help-btn"
-          title="Help"
-          @click="emit('help', node)"
-        >
-          ?
-        </button>
-        <!-- `editable` false means kconfiglib will not accept a change:
-             another symbol's `select` holds it, or its dependencies are
-             unmet. Saying so beats a control that refuses to move. -->
-        <span
-          v-if="!node.editable"
-          class="muted"
-          title="Fixed by another setting"
-        >
-          🔒
+        <span class="kconfig-label-line">
+          <span :class="{ 'text--disabled': !node.editable }">{{
+            node.prompt
+          }}</span>
+          <button
+            v-if="node.has_help"
+            type="button"
+            class="btn-icon btn-icon--small kconfig-help-btn"
+            title="Help"
+            @click="emit('help', node)"
+          >
+            ?
+          </button>
+          <!-- `editable` false means kconfiglib will not accept a change:
+               another symbol's `select` holds it, or its dependencies are
+               unmet. Saying so beats a control that refuses to move. -->
+          <span
+            v-if="!node.editable"
+            class="muted"
+            title="Fixed by another setting"
+          >
+            🔒
+          </span>
         </span>
         <span v-if="node.name" class="muted text-caption kconfig-symbol">{{
           node.name
@@ -98,6 +108,7 @@ function onText(event: Event): void {
         <input
           v-if="node.kind === 'bool'"
           type="checkbox"
+          class="switch"
           :checked="node.value === 'y'"
           :disabled="!node.editable || busy"
           @change="onCheckbox"
@@ -162,14 +173,30 @@ function onText(event: Event): void {
   display: contents;
 }
 
+/* No divider here - row rhythm comes from padding alone (below). A
+   border-bottom on every row read as noisier than the Mainsail-side panel
+   it's matching, which spaces its list purely with padding. */
 .kconfig-label,
 .kconfig-control,
 .kconfig-span-all {
-  padding: 6px 0;
-  border-bottom: 1px solid var(--color-divider);
+  padding: 10px 0;
 }
 
+/* Column layout, not a single wrapping flex row: a long prompt used to eat
+   line 1 and push the `?` help button and the 🔒 lock onto a line of their
+   own, wrapping separately from the text they annotate. Now only
+   .kconfig-label-line (prompt + help + lock) wraps together; the CONFIG_FOO
+   symbol is a caption on its own line below, never sharing a wrap point
+   with them. */
 .kconfig-label {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  min-width: 0;
+}
+
+.kconfig-label-line {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
@@ -181,13 +208,36 @@ function onText(event: Event): void {
   grid-column: 1 / -1;
 }
 
+/* A full clickable row, not a link - it used to be a borderless button
+   coloured var(--color-primary) (the user's own accent colour), which made
+   a submenu entry like "USB ids" shout like a hyperlink next to plain rows.
+   Leading device icon, label in the ordinary text colour, trailing chevron
+   at the right edge to read as "drill in", the same way a folder or a
+   breadcrumb does. */
 .kconfig-enter {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
   background: none;
   border: none;
-  color: var(--color-primary);
+  color: var(--color-text);
   cursor: pointer;
   font: inherit;
   text-align: left;
+}
+
+.kconfig-enter-label {
+  flex: 1;
+  min-width: 0;
+}
+
+/* Reuses mdiChevronDown rotated -90deg rather than adding a right-pointing
+   chevron to icons.ts - same in-repo precedent as
+   .panel-collapse-btn[aria-expanded="false"] svg above. */
+.kconfig-enter-chevron {
+  flex-shrink: 0;
+  transform: rotate(-90deg);
 }
 
 .kconfig-control {
@@ -195,5 +245,14 @@ function onText(event: Event): void {
   align-items: center;
   justify-self: end;
   gap: 6px;
+}
+
+/* Each control used to size to its own content, so the shared grid column
+   (.kconfig-node-list in KconfigDialog.vue) still left a ragged right edge
+   from row to row. .switch is excluded - it's a fixed 34x20px pill and a
+   100% width would stretch it out of shape. */
+.kconfig-control select,
+.kconfig-control input:not(.switch) {
+  width: 100%;
 }
 </style>

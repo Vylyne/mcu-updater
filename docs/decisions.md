@@ -196,6 +196,15 @@ or FQDN (`scripts/nginx.sites-available-mcu-updater`); an iframe embed
 It stays *between* targets, in `flashers/batch.py`. Cancellation is never
 checked inside a single write, because half an image is a brick.
 
+### Do not revert Kconfig bools to a bare checkbox
+
+Tried, reversed on 2026-08-29. A bare `<input type="checkbox">` was meant to
+read as menuconfig's `[*]` symbol rather than a preference toggle, but the
+standalone UI is not menuconfig - visual consistency with the rest of the
+panel's `.switch` toggles won. Tristate nodes are unaffected: they render
+through a `<select>` (y/n/m), not a checkbox, so no third state is lost by
+this.
+
 ## Conclusions that close an avenue
 
 ### `vue-tsc` cannot type-check the Mainsail fork, at any version

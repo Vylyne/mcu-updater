@@ -222,6 +222,45 @@ button:disabled {
   cursor: default;
 }
 
+/* Same problem as the button rule above, same fix: a bare <select>/<input>/
+   <textarea> rendered in the browser's own OS chrome instead of matching the
+   surface it sits on. One rule covers all three - TypeDialog has selects and
+   text inputs and textareas side by side in the same dialog, so styling only
+   one of them would make it look worse, not better. Carved out: `.switch`
+   (its own appearance: none restyle, below) and plain checkbox/radio/color
+   inputs, which stay native deliberately - see the exclusions inline. */
+select,
+textarea,
+input:not(.switch):not([type="checkbox"]):not([type="radio"]):not(
+    [type="color"]
+  ) {
+  box-sizing: border-box;
+  padding: 6px 10px;
+  border: 1px solid var(--color-divider);
+  border-radius: 4px;
+  background: var(--color-surface);
+  color: var(--color-text);
+  font: inherit;
+}
+
+select:focus-visible,
+textarea:focus-visible,
+input:not(.switch):not([type="checkbox"]):not([type="radio"]):not(
+    [type="color"]
+  ):focus-visible {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 2px;
+}
+
+select:disabled,
+textarea:disabled,
+input:not(.switch):not([type="checkbox"]):not([type="radio"]):not(
+    [type="color"]
+  ):disabled {
+  color: var(--color-btn-disabled);
+  cursor: default;
+}
+
 /* The one affirmative action a dialog is *for* - TypeDialog's Save/Create,
    KconfigDialog's Save & Build. Not every dialog gets one: most read fine as
    a row of equally-weighted default buttons. */
@@ -433,12 +472,16 @@ main.embed {
   padding: 0.25rem 0;
 }
 
-/* -- switches (SettingsPanel's toggles, TypeDialog's katapult_installed) --
-   Same <input type="checkbox">, same v-model, same label association and
-   keyboard behaviour - this only restyles it, with no extra wrapper element
-   and no JS. Kconfig's own BOOL checkboxes (KconfigNode.vue) deliberately
-   keep the plain checkbox look: those render a menuconfig [*] symbol, and a
-   switch there would read as a preference toggle instead. ------------- */
+/* -- switches (SettingsPanel's toggles, TypeDialog's katapult_installed,
+   Kconfig's own BOOL checkboxes) -- Same <input type="checkbox">, same
+   v-model, same label association and keyboard behaviour - this only
+   restyles it, with no extra wrapper element and no JS. Kconfig's BOOL
+   checkboxes (KconfigNode.vue) used to stay a bare checkbox on purpose: the
+   reasoning was that they render a menuconfig [*] symbol, and a switch would
+   read as a preference toggle instead. Reversed 2026-08-29 - visual
+   consistency with the rest of the panel's toggles won. Do not flip this
+   back silently; see docs/decisions.md's "Do not revert Kconfig bools to a
+   bare checkbox" for why. ---------------------------------------------- */
 
 .switch {
   appearance: none;

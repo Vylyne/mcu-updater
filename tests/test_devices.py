@@ -181,13 +181,35 @@ def test_a_ch340_adapter_parses_as_a_device_but_is_not_an_mcu(paths, fake_root):
     """usb-1a86_USB_Serial-if00 splits into three parts and so parses cleanly.
     It is a Knomi's serial adapter, not a board - and once the panel offers
     one-tap "track this", listing it is one tap from building Klipper firmware
-    for a display."""
+    for a display.
+
+    This is the module's own documented CH340 example, traced through the
+    rewritten `parse_entry` (Bug 1): stripped of `usb-` and `rsplit("_", 1)`,
+    it's name_blob="1a86_USB", serial="Serial-if00"; that blob has exactly one
+    underscore, so it gets the ordinary fw/chipset split - fw="1a86",
+    chipset="USB". The `is_mcu` denylist catches it on the bare vendor-ID hex.
+    """
     bus = fake_root / "bus"
     (bus / "usb-1a86_USB_Serial-if00").write_text("", encoding="utf-8")
 
     found = scan(paths)
     assert len(found) == 1
+    assert found[0].fw == "1a86"
+    assert found[0].chipset == "USB"
     assert found[0].is_mcu is False
+
+
+def test_a_custom_firmware_board_is_now_adoptable(paths, fake_root):
+    """The bug this whole section exists to fix: a Pico (or any other
+    custom-firmware board) is not on the old allowlist, but it is also not a
+    known USB-serial-bridge chip, so the denylist must let it through."""
+    bus = fake_root / "bus"
+    (bus / "usb-Raspberry_Pi_Pico_4250305031363918-if00").write_text("", encoding="utf-8")
+
+    found = scan(paths)
+    assert len(found) == 1
+    assert found[0].fw == "Raspberry_Pi_Pico"
+    assert found[0].is_mcu is True
 
 
 @pytest.mark.parametrize(
@@ -199,11 +221,16 @@ def test_a_ch340_adapter_parses_as_a_device_but_is_not_an_mcu(paths, fake_root):
         ("Katapult", True),
         ("CanBoot", True),  # pre-rename bootloaders are still out there
         ("1a86", False),
-        ("Prolific", False),
+        ("PL2303", False),  # Prolific's chip name, not the brand "Prolific"
         ("FTDI", False),
     ],
 )
-def test_only_klipper_and_katapult_devices_are_adoptable(paths, fake_root, fw, expected):
+def test_only_serial_bridge_chips_are_refused_adoption(paths, fake_root, fw, expected):
+    """Inverted from an allowlist to a denylist: `is_mcu` no longer requires a
+    recognised firmware name, it only refuses a recognised bridge-chip
+    identifier. "Prolific" the brand name isn't in the denylist (only its
+    vendor-ID hex `067b` and chip name `pl2303` are, since that's what a real
+    descriptor string actually contains) - see KNOWN_SERIAL_BRIDGE_NAMES."""
     make_device(fake_root / "bus", fw, "stm32g0b1xx", "AAAA1111-if00")
     found = scan(paths)
     assert len(found) == 1

@@ -104,6 +104,19 @@ The constant is what every flasher's `states` tuple matches on, so per the
 `stop_services` list landed with it) the rename lands with the thing that
 makes it true, or not at all. The meaning is documented where it is defined.
 
+### Do not revert `is_mcu` to a firmware-name allowlist
+
+Inverted to a denylist on 2026-08-29: `is_klipper or is_katapult` refused
+every board this tool didn't already know the firmware name of, which
+blocked legitimate custom-firmware boards (a Raspberry Pi Pico was the
+motivating case) from ever being tracked. `is_mcu` now denies a short list
+of known USB-serial-bridge chip identifiers (`KNOWN_SERIAL_BRIDGE_NAMES` in
+discovery/byid.py) instead - the actual thing it exists to protect against
+(a Knomi's CH340 offered as if it were a trackable board). This matches the
+`STATE_KLIPPER` decision above: any firmware name this tool doesn't
+recognise is presumed to plausibly be a board, not refused for being
+unfamiliar.
+
 ### Do not delete `src/updatefw.py` or 'mcu-updater.py'
 
 they are the documented entry points.

@@ -38,6 +38,23 @@ _PREFIX = "usb-"
 KATAPULT_NAMES = ("katapult", "canboot")
 KLIPPER_NAMES = ("klipper",)
 
+# USB-serial bridge chips, not MCUs - these are the devices `is_mcu` exists to
+# keep off the "track this" affordance. `1a86` (WCH) is the motivating case
+# from this module's own by-id example above: a cheap CH340 clone with no
+# string descriptors enumerates by raw USB vendor-ID hex, not a chip name, so
+# the denylist has to catch both forms. Anything else - a recognised
+# Klipper/Katapult descriptor, or a board whose firmware we've never heard of
+# - is presumed to plausibly be a board, matching the STATE_KLIPPER decision
+# (docs/decisions.md): any non-bootloader firmware name reads as "an
+# application is running," not as a vendor list to maintain.
+KNOWN_SERIAL_BRIDGE_NAMES = (
+    "1a86", "ch340", "ch341",      # WCH - vendor-ID hex and chip-name forms
+    "10c4", "cp210",               # Silicon Labs
+    "0403", "ft232", "ftdi",       # FTDI
+    "067b", "pl2303",              # Prolific
+    "usb_serial",                  # generic "USB Serial"/"USB2.0-Serial" iProduct text
+)
+
 #: Display-only. Never use these to build a path you then test for existence.
 KLIPPER_FW_NAME = "Klipper"
 KATAPULT_FW_NAME = "katapult"
@@ -85,13 +102,19 @@ class BusDevice:
     def is_mcu(self) -> bool:
         """Could this plausibly be a board we manage firmware for?
 
-        The by-id name format is generic enough that anything with two
-        underscores parses. A CH340 serial adapter enumerates as
-        ``usb-1a86_USB_Serial-if00``, which splits into fw=``1a86``,
-        chipset=``USB``, serial=``Serial-if00`` - a perfectly well-formed
-        `BusDevice` that is not a board at all.
+        Inverted from an allowlist on 2026-08-29: a hardcoded list of known
+        firmware names refused every board this tool doesn't already know
+        about, which is backwards for a tool whose whole point is tracking
+        *arbitrary* board types (a Raspberry Pi Pico running its own custom
+        firmware was the motivating case). What actually needs blocking is the
+        much shorter list of generic USB-serial bridge chips that aren't
+        boards at all - see `KNOWN_SERIAL_BRIDGE_NAMES` for why it matches on
+        both vendor-ID hex and chip-name text.
 
-        That mattered once the panel grew a one-tap "track this" next to the
+        A CH340 serial adapter enumerates as ``usb-1a86_USB_Serial-if00``,
+        which `parse_entry` parses to fw=``1a86``, chipset=``USB`` - a
+        perfectly well-formed `BusDevice` that is not a board at all. That
+        mattered once the panel grew a one-tap "track this" next to the
         untracked list: a Knomi display sitting in that list is one tap from
         being added to the registry and having Klipper firmware built and
         flashed at it.
@@ -100,7 +123,12 @@ class BusDevice:
         is the single most likely thing to want adopting - that is exactly what
         `add-mcu` leaves behind on success.
         """
-        return self.is_klipper or self.is_katapult
+        # Normalize separators before matching: by-id names join words with
+        # "_", but a real string descriptor can itself contain "-" or "."
+        # (e.g. "USB2.0-Serial"), and this must not depend on which one a
+        # given clone happened to use.
+        fw_norm = self.fw.lower().replace("-", "_").replace(".", "_")
+        return not any(bridge in fw_norm for bridge in KNOWN_SERIAL_BRIDGE_NAMES)
 
 
 class Byid:

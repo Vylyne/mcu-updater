@@ -48,6 +48,15 @@
 
     --color-btn-disabled: rgba(0, 0, 0, 0.26);
     --color-btn-hover: rgba(0, 0, 0, 0.06);
+
+    /* Darker than the dark-theme tones: the chip and [data-tone] text rules
+       below use these directly as text colour, and the dark-mode values
+       (picked for legibility on #1e1e1e) read as low as ~2.8:1 against a
+       white surface - well under WCAG AA's 4.5:1 for normal text. */
+    --tone-ok: #2e7d32;
+    --tone-unknown: #616161;
+    --tone-attention: #bf360c;
+    --color-error: #c62828;
   }
 }
 
@@ -169,17 +178,20 @@ main h1 {
 [data-tone="attention"] {
   color: var(--tone-attention);
 }
+/* A solid tone fill with white text read as barely 2.8:1 contrast - well
+   under WCAG AA's 4.5:1 for normal text. Same tinted-background-plus-
+   saturated-text pattern as .alert--* below, which already gets this right. */
 .chip[data-tone="ok"] {
-  background: var(--tone-ok);
-  color: #fff;
+  background: rgba(76, 175, 80, 0.18);
+  color: var(--tone-ok);
 }
 .chip[data-tone="unknown"] {
-  background: var(--tone-unknown);
-  color: #fff;
+  background: rgba(158, 158, 158, 0.18);
+  color: var(--tone-unknown);
 }
 .chip[data-tone="attention"] {
-  background: var(--tone-attention);
-  color: #fff;
+  background: rgba(251, 140, 0, 0.18);
+  color: var(--tone-attention);
 }
 .chip--outlined[data-tone] {
   background: transparent;
@@ -494,6 +506,12 @@ main.embed {
   display: flex;
   flex-direction: column;
   min-width: 200px;
+  /* A default text colour, not `inherit` - without this, a menu popped up
+     from a row an ancestor has coloured for status (a [data-tone] target
+     row, say) would inherit that colour into every non-overridden item,
+     which is how "Configure klipper" ended up green instead of the theme's
+     plain text colour. */
+  color: var(--color-text);
 }
 
 .menu-item {
@@ -501,7 +519,10 @@ main.embed {
   align-items: center;
   gap: 8px;
   width: 100%;
-  padding: 6px 10px;
+  /* Roomier than this app's icon-button spacing, closer to a real list item
+     (Vuetify's v-list-item defaults to 16px horizontal padding) - a dropdown
+     menu reads as a menu, not a toolbar. */
+  padding: 8px 16px;
   border: none;
   background: none;
   color: inherit;

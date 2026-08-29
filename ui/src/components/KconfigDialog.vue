@@ -154,15 +154,17 @@ function forceClose(): void {
 
     <p v-if="!rows.length" class="muted">Nothing here.</p>
 
-    <KconfigNode
-      v-for="node in rows"
-      :key="node.id"
-      :node="node"
-      :busy="busy"
-      @enter="onEnter"
-      @set="onSet"
-      @help="onHelp"
-    />
+    <div class="kconfig-node-list">
+      <KconfigNode
+        v-for="node in rows"
+        :key="node.id"
+        :node="node"
+        :busy="busy"
+        @enter="onEnter"
+        @set="onSet"
+        @help="onHelp"
+      />
+    </div>
 
     <template #actions>
       <button v-if="canGoUp" type="button" :disabled="busy" @click="kconfigUp">
@@ -221,6 +223,24 @@ function forceClose(): void {
 </template>
 
 <style scoped>
+/* The actual grid - KconfigNode.vue's own root is `display: contents`, so
+   each row's label/control land here as two items in this shared pair of
+   columns, which is what makes every row's control line up in one column
+   regardless of how wide any single row's own control is. */
+/* No `align-items: center` here on purpose: centering would size each grid
+   item to its own content height first, so a row whose label wraps (or
+   whose control is taller than plain text) would centre its border-bottom
+   at a different height than its neighbour in the same row - a doubled,
+   staggered separator line instead of one straight one. Stretching (the
+   grid default) keeps both cells the same height; KconfigNode.vue's own
+   .kconfig-label/.kconfig-control already centre their own content
+   vertically within that stretched cell. */
+.kconfig-node-list {
+  display: grid;
+  grid-template-columns: 1fr auto;
+  column-gap: 12px;
+}
+
 .kconfig-breadcrumb {
   display: flex;
   align-items: center;

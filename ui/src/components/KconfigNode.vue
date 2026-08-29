@@ -42,44 +42,57 @@ function onText(event: Event): void {
   <div
     class="kconfig-node"
     :data-tone="node.editable === false ? 'unknown' : undefined"
-    :style="{ paddingLeft: `${node.depth * 16}px` }"
   >
     <template v-if="node.kind === 'menu' || node.enterable">
-      <button type="button" class="kconfig-enter" @click="emit('enter', node)">
+      <button
+        type="button"
+        class="kconfig-enter kconfig-span-all"
+        :style="{ paddingLeft: `${node.depth * 16}px` }"
+        @click="emit('enter', node)"
+      >
         {{ node.prompt }} ›
       </button>
     </template>
 
     <template v-else-if="node.kind === 'comment'">
-      <span class="muted text-caption">{{ node.prompt }}</span>
+      <span
+        class="muted text-caption kconfig-span-all"
+        :style="{ paddingLeft: `${node.depth * 16}px` }"
+        >{{ node.prompt }}</span
+      >
     </template>
 
     <template v-else>
-      <span :class="{ 'text--disabled': !node.editable }">{{
-        node.prompt
-      }}</span>
-      <button
-        v-if="node.has_help"
-        type="button"
-        class="btn-icon btn-icon--small kconfig-help-btn"
-        title="Help"
-        @click="emit('help', node)"
-      >
-        ?
-      </button>
-      <!-- `editable` false means kconfiglib will not accept a change:
-           another symbol's `select` holds it, or its dependencies are
-           unmet. Saying so beats a control that refuses to move. -->
       <span
-        v-if="!node.editable"
-        class="muted"
-        title="Fixed by another setting"
+        class="kconfig-label"
+        :style="{ paddingLeft: `${node.depth * 16}px` }"
       >
-        🔒
+        <span :class="{ 'text--disabled': !node.editable }">{{
+          node.prompt
+        }}</span>
+        <button
+          v-if="node.has_help"
+          type="button"
+          class="btn-icon btn-icon--small kconfig-help-btn"
+          title="Help"
+          @click="emit('help', node)"
+        >
+          ?
+        </button>
+        <!-- `editable` false means kconfiglib will not accept a change:
+             another symbol's `select` holds it, or its dependencies are
+             unmet. Saying so beats a control that refuses to move. -->
+        <span
+          v-if="!node.editable"
+          class="muted"
+          title="Fixed by another setting"
+        >
+          🔒
+        </span>
+        <span v-if="node.name" class="muted text-caption kconfig-symbol">{{
+          node.name
+        }}</span>
       </span>
-      <span v-if="node.name" class="muted text-caption kconfig-symbol">{{
-        node.name
-      }}</span>
 
       <span class="kconfig-control">
         <input
@@ -140,13 +153,32 @@ function onText(event: Event): void {
 </template>
 
 <style scoped>
+/* No box of its own - KconfigDialog.vue's .kconfig-node-list is the actual
+   grid, so each row's own children (the label span, the control span) land
+   directly in its two shared columns. That sharing is what makes every
+   row's control line up in one column instead of each row sizing its own
+   control to its own content, the way a plain per-row flex row would. */
 .kconfig-node {
+  display: contents;
+}
+
+.kconfig-label,
+.kconfig-control,
+.kconfig-span-all {
+  padding: 6px 0;
+  border-bottom: 1px solid var(--color-divider);
+}
+
+.kconfig-label {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
   gap: 6px;
-  padding: 3px 0;
-  border-bottom: 1px solid var(--color-divider);
+  min-width: 0;
+}
+
+.kconfig-span-all {
+  grid-column: 1 / -1;
 }
 
 .kconfig-enter {
@@ -154,15 +186,14 @@ function onText(event: Event): void {
   border: none;
   color: var(--color-primary);
   cursor: pointer;
-  padding: 2px 0;
   font: inherit;
   text-align: left;
 }
 
 .kconfig-control {
-  margin-left: auto;
   display: flex;
   align-items: center;
+  justify-self: end;
   gap: 6px;
 }
 </style>

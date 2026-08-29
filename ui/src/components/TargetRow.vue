@@ -339,7 +339,7 @@ async function toggle(): Promise<void> {
         class="device-row"
         :data-tone="device.tone"
       >
-        <UiIcon :path="stateIcon(device)" size="x-small" />
+        <UiIcon :path="stateIcon(device)" size="x-small" :tone="device.tone" />
         <span class="device-identity">
           <span class="text--secondary">{{ device.id }}</span>
           <span v-if="device.name" class="text--disabled text-caption">{{

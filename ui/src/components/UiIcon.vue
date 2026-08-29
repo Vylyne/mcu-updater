@@ -6,8 +6,9 @@ const props = withDefaults(
   defineProps<{
     path: string;
     size?: "default" | "small" | "x-small";
+    tone?: string | null;
   }>(),
-  { size: "default" },
+  { size: "default", tone: null },
 );
 
 const PX: Record<string, number> = { default: 24, small: 18, "x-small": 14 };
@@ -19,6 +20,7 @@ const PX: Record<string, number> = { default: 24, small: 18, "x-small": 14 };
     :height="PX[props.size]"
     viewBox="0 0 24 24"
     fill="currentColor"
+    :data-tone="props.tone"
     aria-hidden="true"
     focusable="false"
   >

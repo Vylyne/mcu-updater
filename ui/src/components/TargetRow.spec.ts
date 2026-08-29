@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { mount } from "@vue/test-utils";
 import TargetRow from "./TargetRow.vue";
+import UiIcon from "./UiIcon.vue";
 import type { Action, Target } from "../api/targets";
 import { state } from "../store/agent";
 import type { Job } from "../api/jobs";
@@ -116,7 +117,11 @@ describe("TargetRow", () => {
     expect(wrapper.text()).toContain("kconfig_make");
     expect(wrapper.text()).toContain("Up to date");
     expect(wrapper.text()).toContain("mcu EBBT0");
-    expect(wrapper.find("[data-tone='ok']").exists()).toBe(true);
+    // The verdict span carries its own :data-tone and would pass this even
+    // if the leading status icon lost its tone (see 4068a92) - anchor to the
+    // icon itself rather than to any [data-tone='ok'] match in the row.
+    const deviceIcon = wrapper.findComponent(UiIcon);
+    expect(deviceIcon.find("svg").attributes("data-tone")).toBe("ok");
   });
 
   it("shows the display-specific hint when there are no devices", () => {

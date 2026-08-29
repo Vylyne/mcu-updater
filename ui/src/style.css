@@ -177,6 +177,7 @@ main h1 {
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.2);
   font-size: 0.78rem;
+  font-weight: bold;
   line-height: 1.6;
   white-space: nowrap;
 }

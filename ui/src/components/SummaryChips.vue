@@ -66,10 +66,7 @@ const allFlashed = computed(
 
 <template>
   <div class="summary-chips">
-    <span
-      class="chip"
-      :data-tone="staleCount ? 'attention' : 'ok'"
-    >
+    <span class="chip" :data-tone="staleCount ? 'attention' : 'ok'">
       {{
         staleCount
           ? `${staleCount}/${targets.length} need a rebuild`
@@ -79,9 +76,7 @@ const allFlashed = computed(
     <span v-if="unprovableCount" class="chip chip--outlined">
       {{ unprovableCount }} unprovable
     </span>
-    <span v-if="allFlashed" class="chip" data-tone="ok">
-      All flashed
-    </span>
+    <span v-if="allFlashed" class="chip" data-tone="ok"> All flashed </span>
     <span v-if="needsFlashCount" class="chip chip--outlined">
       {{ needsFlashCount }} need flashing
     </span>

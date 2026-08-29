@@ -245,9 +245,7 @@ async function toggle(): Promise<void> {
   <article class="target-row" :data-tone="target.artifact.tone">
     <div class="target-header">
       <span class="target-name">{{ target.name }}</span>
-      <span class="chip chip--outlined">{{
-        target.provider
-      }}</span>
+      <span class="chip chip--outlined">{{ target.provider }}</span>
       <span
         v-if="target.descriptor !== target.name"
         class="text-caption text--disabled"

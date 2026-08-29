@@ -12,6 +12,7 @@
 // device (state icon, identity, spacer, version, verdict, device actions,
 // detail expander), then a trailing divider.
 import { computed, ref } from "vue";
+import { useClickOutsideToClose } from "../clickOutside";
 import {
   fetchTargetDetail,
   hasCapability,
@@ -42,6 +43,8 @@ const expanded = ref(false);
 const loading = ref(false);
 const detail = ref<Record<string, unknown> | null>(null);
 const menuOpen = ref(false);
+const menuRef = ref<HTMLElement | null>(null);
+useClickOutsideToClose(menuRef, menuOpen);
 const typeDialogOpen = ref(false);
 const removing = ref(false);
 
@@ -287,7 +290,11 @@ async function toggle(): Promise<void> {
         :reseed-default="reseedDefault"
       />
 
-      <span v-if="menuActions.length || canManageType" class="target-menu">
+      <span
+        v-if="menuActions.length || canManageType"
+        ref="menuRef"
+        class="target-menu"
+      >
         <button
           type="button"
           class="btn-icon btn-icon--small"
@@ -296,7 +303,7 @@ async function toggle(): Promise<void> {
         >
           <UiIcon :path="mdiDotsVertical" size="x-small" />
         </button>
-        <div v-if="menuOpen" class="target-menu-list">
+        <div v-if="menuOpen" class="menu-list">
           <ActionButton
             v-for="action in menuActions"
             :key="action.id"
@@ -312,7 +319,11 @@ async function toggle(): Promise<void> {
               <UiIcon :path="mdiTuneVariant" size="x-small" />
               Edit type…
             </button>
-            <button type="button" class="menu-item" @click="openRemoveType">
+            <button
+              type="button"
+              class="menu-item menu-item--danger"
+              @click="openRemoveType"
+            >
               <UiIcon :path="mdiCloseCircleOutline" size="x-small" />
               Remove type…
             </button>
@@ -407,6 +418,7 @@ async function toggle(): Promise<void> {
         <button type="button" @click="removeConfirming = false">Cancel</button>
         <button
           type="button"
+          class="btn-danger"
           :disabled="removing"
           @click="doRemoveType(removeConflictSerials !== null)"
         >
@@ -432,20 +444,6 @@ async function toggle(): Promise<void> {
 
 .target-menu {
   position: relative;
-}
-
-.target-menu-list {
-  position: absolute;
-  right: 0;
-  top: 100%;
-  z-index: 10;
-  background: var(--color-surface);
-  border-radius: 4px;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
-  padding: 4px;
-  display: flex;
-  flex-direction: column;
-  min-width: 160px;
 }
 
 .device-row {

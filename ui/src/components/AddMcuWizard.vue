@@ -107,7 +107,7 @@ async function start(): Promise<void> {
       class="menu-item"
       @click="show"
     >
-      <UiIcon :path="mdiDeveloperBoard" size="small" />
+      <UiIcon :path="mdiDeveloperBoard" size="x-small" />
       Add new board…
     </button>
 

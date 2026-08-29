@@ -4,6 +4,7 @@
 // toolbar (build/flash/update all, refresh, new type) FirmwareUpdaterPanel.vue
 // carries and this UI didn't yet.
 import { computed, ref } from "vue";
+import { useClickOutsideToClose } from "../clickOutside";
 import TargetRow from "./TargetRow.vue";
 import AddMcuWizard from "./AddMcuWizard.vue";
 import UiPanel from "./UiPanel.vue";
@@ -66,6 +67,8 @@ const flashAllIcon = computed(() =>
 );
 
 const menuOpen = ref(false);
+const menuRef = ref<HTMLElement | null>(null);
+useClickOutsideToClose(menuRef, menuOpen);
 const bulkOperation = ref<BulkOperation | null>(null);
 const typeDialogOpen = ref(false);
 const refreshing = ref(false);
@@ -90,7 +93,7 @@ async function onRefresh(): Promise<void> {
 <template>
   <UiPanel title="Firmware" :icon="mdiChip">
     <template #buttons>
-      <span v-if="hasMenu" class="target-menu">
+      <span v-if="hasMenu" ref="menuRef" class="target-menu">
         <button
           type="button"
           class="btn-icon"
@@ -107,7 +110,7 @@ async function onRefresh(): Promise<void> {
             class="menu-item"
             @click="openBulk('update_all')"
           >
-            <UiIcon :path="mdiUpdate" size="small" />
+            <UiIcon :path="mdiUpdate" size="x-small" />
             Update everything…
           </button>
           <hr
@@ -120,7 +123,7 @@ async function onRefresh(): Promise<void> {
             class="menu-item"
             @click="openTypeDialog"
           >
-            <UiIcon :path="mdiPlusCircleOutline" size="small" />
+            <UiIcon :path="mdiPlusCircleOutline" size="x-small" />
             New type…
           </button>
           <AddMcuWizard

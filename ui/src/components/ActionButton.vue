@@ -38,8 +38,9 @@ const props = withDefaults(
      * own targets[]/devices[] data. Absent for a non-destructive action. */
     previewDevices?: { id: string; name: string | null }[];
     /** "icon" (default) is a row's own [build]/[flash]/... buttons, matching
-     * the fork panel's icon-only actions - "text" is a labelled button for
-     * contexts without a row to sit in (dialog footers, the wizard). */
+     * the fork panel's icon-only actions - "text" renders as a `.menu-item`
+     * row, for the one context that currently uses it: TargetRow's own
+     * overflow menu, alongside its "Edit type…"/"Remove type…" rows. */
     variant?: "icon" | "text";
     /** Whether this action currently *wants* doing, not just whether it
      * *can* be done - the same swap FirmwareUpdaterPanelTarget.vue makes for
@@ -238,10 +239,13 @@ function onClick(): void {
     <button
       v-else
       type="button"
+      class="menu-item"
+      :class="{ 'menu-item--danger': isDestructive }"
       :disabled="isDisabled || running"
       :title="blockedMessage ?? undefined"
       @click="onClick"
     >
+      <UiIcon :path="icon" size="x-small" />
       {{ running ? "Working…" : action.label }}
     </button>
 

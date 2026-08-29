@@ -168,13 +168,23 @@ function forceClose(): void {
       <button v-if="canGoUp" type="button" :disabled="busy" @click="kconfigUp">
         Up
       </button>
-      <button type="button" :disabled="!dirty || busy" @click="reset">
+      <button
+        type="button"
+        class="btn-danger"
+        :disabled="!dirty || busy"
+        @click="reset"
+      >
         Discard
       </button>
       <button type="button" :disabled="!dirty || busy" @click="save(false)">
         Save
       </button>
-      <button type="button" :disabled="busy" @click="save(true)">
+      <button
+        type="button"
+        class="btn-primary"
+        :disabled="busy"
+        @click="save(true)"
+      >
         Save & Build
       </button>
     </template>
@@ -202,7 +212,9 @@ function forceClose(): void {
       <p>Discard unsaved changes to this configuration?</p>
       <template #actions>
         <button type="button" @click="confirmDiscard = false">Cancel</button>
-        <button type="button" @click="forceClose">Discard</button>
+        <button type="button" class="btn-danger" @click="forceClose">
+          Discard
+        </button>
       </template>
     </UiDialog>
   </UiDialog>

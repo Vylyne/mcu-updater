@@ -185,6 +185,60 @@ main h1 {
   background: transparent;
 }
 
+/* -- buttons ------------------------------------------------------------- */
+
+/* A plain <button> had no rules of its own before this - every Cancel/Save/
+   Confirm in every dialog rendered as the browser's native, OS-themed
+   button, which is what made the dialogs read as inconsistent with the rest
+   of a otherwise fully dark-themed page. */
+button {
+  padding: 6px 14px;
+  border: 1px solid var(--color-divider);
+  border-radius: 4px;
+  background: var(--color-surface);
+  color: var(--color-text);
+  font: inherit;
+  cursor: pointer;
+}
+
+button:hover:not(:disabled) {
+  background: var(--color-btn-hover);
+}
+
+button:disabled {
+  color: var(--color-btn-disabled);
+  cursor: default;
+}
+
+/* The one affirmative action a dialog is *for* - TypeDialog's Save/Create,
+   KconfigDialog's Save & Build. Not every dialog gets one: most read fine as
+   a row of equally-weighted default buttons. */
+.btn-primary:not(:disabled) {
+  border-color: var(--color-primary);
+  background: var(--color-primary);
+  color: #fff;
+}
+
+.btn-primary:hover:not(:disabled) {
+  background: var(--color-primary);
+  filter: brightness(1.1);
+}
+
+/* Reserved for a button whose own label says it removes or discards
+   something (or whose codepath ActionButton.vue already calls
+   `isDestructive`) - never guessed at for a button that merely *causes* an
+   action, like a bulk build/flash confirm. */
+.btn-danger:not(:disabled) {
+  border-color: var(--color-error);
+  background: var(--color-error);
+  color: #fff;
+}
+
+.btn-danger:hover:not(:disabled) {
+  background: var(--color-error);
+  filter: brightness(1.1);
+}
+
 /* -- icon buttons ------------------------------------------------------ */
 
 .btn-icon {
@@ -465,4 +519,15 @@ main.embed {
 .menu-item:disabled {
   color: var(--color-text-disabled);
   cursor: default;
+}
+
+/* Remove/untrack-style rows - the fork panel's v-list-item color="error"
+   equivalent. Text-only red, not a filled background: this sits in a list
+   next to plain rows, not standing alone the way a .btn-danger does. */
+.menu-item--danger {
+  color: var(--color-error);
+}
+
+.menu-item--danger:hover:not(:disabled) {
+  background: rgba(255, 82, 82, 0.12);
 }

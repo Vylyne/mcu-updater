@@ -324,7 +324,12 @@ async function submit(): Promise<void> {
 
     <template #actions>
       <button type="button" @click="emit('close')">Cancel</button>
-      <button type="button" :disabled="!canSubmit || saving" @click="submit">
+      <button
+        type="button"
+        class="btn-primary"
+        :disabled="!canSubmit || saving"
+        @click="submit"
+      >
         {{ saving ? "Working…" : editing ? "Save" : "Create" }}
       </button>
     </template>

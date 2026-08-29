@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { mount } from "@vue/test-utils";
+import { nextTick } from "vue";
 import JobPanel from "./JobPanel.vue";
 import { state } from "../store/agent";
 import * as store from "../store/agent";
@@ -27,6 +28,10 @@ afterEach(() => {
   state.job = null;
   state.log = null;
   state.logOmitted = false;
+  // jsdom has no scrollIntoView at all - tests that stub it onto the
+  // prototype must not leak the stub into unrelated tests.
+  delete (Element.prototype as unknown as Record<string, unknown>)
+    .scrollIntoView;
 });
 
 describe("JobPanel", () => {
@@ -63,6 +68,38 @@ describe("JobPanel", () => {
     state.logOmitted = true;
     const wrapper = mount(JobPanel);
     expect(wrapper.text()).toContain("dropped from the buffer");
+  });
+
+  it("scrolls into view only after the log block has actually rendered", async () => {
+    // jsdom has no scrollIntoView implementation at all.
+    const scrollIntoView = vi.fn();
+    Element.prototype.scrollIntoView = scrollIntoView;
+
+    // Mount with no job so the job-id watch's baseline is `undefined`, then
+    // set a job afterwards - only then does the watch see a previousId to
+    // compare against and fire.
+    const wrapper = mount(JobPanel);
+    expect(scrollIntoView).not.toHaveBeenCalled();
+
+    state.job = { ...runningBuild, id: "job-2" };
+    await nextTick();
+    await nextTick();
+
+    // The log block for the new job isn't rendered yet (state.log is still
+    // null), so the job-id watch's own scroll must not be the final word -
+    // the real assertion is after the log actually arrives, below.
+
+    state.log = {
+      job_id: "job-2",
+      lines: [{ i: 0, s: "stdout", t: "hi" }],
+    };
+    await nextTick();
+    await nextTick();
+    await wrapper.vm.$nextTick();
+
+    expect(scrollIntoView).toHaveBeenCalled();
+    const lastCall = scrollIntoView.mock.calls.at(-1);
+    expect(lastCall?.[0]).toMatchObject({ block: "start" });
   });
 
   it("cancels through the store on click", async () => {

@@ -39,7 +39,14 @@ export interface Job {
 
 export interface LogLine {
   i: number;
-  s: "stdout" | "info" | "warn" | "error" | "cmd";
+  s:
+    | "stdout"
+    | "info"
+    | "warn"
+    | "error"
+    | "cmd"
+    | "stdout_warn"
+    | "stdout_error";
   t: string;
 }
 

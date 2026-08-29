@@ -1238,7 +1238,14 @@ index of its **first** line:
 ```
 
 Keys are short (`i`/`s`/`t`) because a build emits hundreds of these to every
-connected client. `s` is one of `stdout`, `info`, `warn`, `error`, `cmd`.
+connected client. `s` is one of `stdout`, `info`, `warn`, `error`, `cmd`,
+`stdout_warn`, `stdout_error`.
+
+`stdout_warn` and `stdout_error` are emitted only for classified subprocess
+output (build/flash tool stdout, with stderr merged in) - the agent's own
+messages still use plain `warn`/`error`. Keeping them separate means the
+CLI's stdout/stderr split (which only ever special-cases `warn`/`error`)
+doesn't accidentally re-route a compiler diagnostic to stderr.
 
 **Client contract.** Track the next index you expect, starting at 0. On a `log`
 event:

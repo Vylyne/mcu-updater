@@ -17,6 +17,12 @@ const logEl = ref<HTMLElement | null>(null);
 // scroll position on yet.
 const stickToBottom = ref(true);
 
+// Set when a new job starts, before its log block exists (state.log is
+// still null or the previous job's). The job-id watch can't scrollIntoView
+// against a panel that hasn't grown yet, so it defers the actual scroll to
+// the lines-length watch below, which fires once real content has rendered.
+const pendingScroll = ref(false);
+
 function isAtBottom(el: HTMLElement): boolean {
   return el.scrollHeight - el.scrollTop - el.clientHeight < 24;
 }
@@ -31,6 +37,16 @@ watch(
     if (!stickToBottom.value) return;
     void nextTick(() => {
       if (logEl.value) logEl.value.scrollTop = logEl.value.scrollHeight;
+      // The deferred scroll-into-view from a fresh job: the log block has
+      // now actually rendered with real content, so the panel has grown to
+      // its real height and this scroll targets a stable layout.
+      if (pendingScroll.value && state.log?.job_id === state.job?.id) {
+        panelRoot.value?.scrollIntoView?.({
+          behavior: "smooth",
+          block: "start",
+        });
+        pendingScroll.value = false;
+      }
     });
   },
 );
@@ -44,11 +60,16 @@ watch(
     if (!id || id === previousId) return;
     stickToBottom.value = true;
     panelRef.value?.expand();
+    pendingScroll.value = true;
     void nextTick(() => {
       // jsdom (unit tests) has no scrollIntoView implementation at all.
+      // The log block for a brand-new job isn't rendered yet at this point
+      // (state.log is still null or the previous job's), so this only gets
+      // the panel to its shortest layout - the real scroll-into-view is
+      // deferred to the lines-length watch above, once real content lands.
       panelRoot.value?.scrollIntoView?.({
         behavior: "smooth",
-        block: "nearest",
+        block: "start",
       });
       if (logEl.value) logEl.value.scrollTop = logEl.value.scrollHeight;
     });
@@ -286,5 +307,27 @@ async function onCancel(): Promise<void> {
   font-size: 0.75rem;
   max-height: 320px;
   overflow: auto;
+}
+
+/* stdout_warn/stdout_error are classified subprocess output (build.py's
+   classify_output); warn/error/info/cmd are the agent's own messages. Plain
+   stdout lines get no rule and inherit the default text color. */
+[data-stream="error"],
+[data-stream="stdout_error"] {
+  color: var(--color-error);
+}
+
+[data-stream="warn"],
+[data-stream="stdout_warn"] {
+  color: var(--tone-attention);
+}
+
+[data-stream="info"] {
+  color: var(--color-text-secondary);
+}
+
+[data-stream="cmd"] {
+  color: var(--color-primary);
+  font-weight: 600;
 }
 </style>

@@ -14,6 +14,7 @@ import hashlib
 import json
 import os
 import queue
+import re
 import shlex
 import shutil
 import signal
@@ -141,6 +142,27 @@ def _emit_fake_build_log(reporter: Reporter, delay: float, cancel: threading.Eve
                 time.sleep(delay)
 
 
+_ERROR_RE = re.compile(
+    r"\b(?:fatal )?error\b|^make(?:\[\d+\])?: \*\*\*|undefined reference to",
+    re.IGNORECASE,
+)
+_WARN_RE = re.compile(r"\bwarning\b", re.IGNORECASE)
+
+
+def classify_output(text: str) -> str:
+    """Classify one line of subprocess output for the joblog UI.
+
+    Conservative pattern match, not a real diagnostic parser - a false
+    negative just means the line stays plain "stdout"; a false positive is
+    worse (a clean line reads as an error), so keep the patterns tight.
+    """
+    if _ERROR_RE.search(text):
+        return "stdout_error"
+    if _WARN_RE.search(text):
+        return "stdout_warn"
+    return "stdout"
+
+
 def run_streamed(
     cmd: list[str],
     *,
@@ -224,7 +246,7 @@ def run_streamed(
             continue
         if item is _SENTINEL:
             break
-        reporter("stdout", item)
+        reporter(classify_output(item), item)
         if cancel is not None and cancel.is_set() and not cancelled:
             _terminate(proc, grace, reporter)
             cancelled = True

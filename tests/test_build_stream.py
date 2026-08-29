@@ -8,7 +8,7 @@ import time
 
 import pytest
 
-from mcu_updater.build import run_streamed
+from mcu_updater.build import classify_output, run_streamed
 from mcu_updater.errors import OperationCancelled
 
 from .conftest import cmd_tokens
@@ -183,3 +183,82 @@ def test_a_missing_executable_is_a_clean_tool_error(tmp_path):
         )
     assert exc.value.data["tool"] == "definitely-not-a-real-command-xyz"
     assert exc.value.code == "tool_missing"
+
+
+# classify_output - subprocess-output severity for the joblog UI. Only ever
+# applied to the merged stdout+stderr stream, never to the agent's own
+# warn/error/info/cmd messages.
+
+
+def test_classifies_a_compiler_error_line():
+    assert classify_output("src/stepper.c:42:5: error: expected ';'") == "stdout_error"
+
+
+def test_classifies_a_compiler_warning_line():
+    assert (
+        classify_output("src/stepper.c:42:5: warning: unused variable 'x'")
+        == "stdout_warn"
+    )
+
+
+def test_classifies_a_plain_build_line_as_stdout():
+    assert classify_output("  Compiling out/src/stepper.o") == "stdout"
+
+
+def test_werror_flag_does_not_false_positive_as_an_error():
+    """`-Werror` contains the substring "error" but not the word "error"."""
+    assert classify_output("gcc -Werror -c foo.c") == "stdout"
+
+
+def test_summary_line_with_zero_counts_does_not_classify_as_an_error():
+    """"0 errors, 0 warnings generated" contains "errors"/"warnings" (plural),
+    not the singular "error"/"warning" the regex looks for.
+
+    `\\berror\\b` requires a boundary immediately *after* "error" too, and
+    the trailing "s" in "errors" is a word character, so there is no
+    boundary there - the plural doesn't match. This isn't a workaround; it's
+    the word-boundary regex behaving exactly as documented, and it happens to
+    keep this common summary-line shape out of the classified streams.
+    """
+    assert classify_output("0 errors, 0 warnings generated") == "stdout"
+
+
+def test_make_failure_marker_classifies_as_an_error():
+    assert classify_output("make[1]: *** [Makefile:10: all] Error 2") == "stdout_error"
+
+
+def test_undefined_reference_classifies_as_an_error():
+    assert classify_output("undefined reference to `foo'") == "stdout_error"
+
+
+def test_run_streamed_classifies_subprocess_output_and_preserves_text(tmp_path):
+    """classify_output is wired into run_streamed's single reporter call site."""
+    got: list[tuple[str, str]] = []
+    child = (
+        "print('src/a.c: error: boom')\n"
+        "print('src/b.c: warning: careful')\n"
+        "print('  Compiling out/src/c.o')\n"
+    )
+    run_streamed(
+        [sys.executable, "-c", child],
+        cwd=str(tmp_path),
+        reporter=lambda stream, line: got.append((stream, line)),
+    )
+    by_text = {line: stream for stream, line in got}
+    assert by_text["src/a.c: error: boom"] == "stdout_error"
+    assert by_text["src/b.c: warning: careful"] == "stdout_warn"
+    assert by_text["  Compiling out/src/c.o"] == "stdout"
+
+
+def test_dry_run_log_stays_plain_stdout(tmp_path):
+    """_emit_fake_build_log's synthetic output is not classified."""
+    got: list[tuple[str, str]] = []
+    run_streamed(
+        [sys.executable, "-c", "pass"],
+        cwd=str(tmp_path),
+        reporter=lambda stream, line: got.append((stream, line)),
+        dry_run=True,
+        fake_delay=0.0,
+    )
+    streams = {stream for stream, _ in got if stream != "cmd"}
+    assert streams == {"stdout"}

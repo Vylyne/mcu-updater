@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mcu-updater"
-version = "0.2.0"
+version = "0.2.1"
 description = "Klipper/Katapult MCU firmware management with a Moonraker agent and Mainsail UI"
 readme = "README.md"
 requires-python = ">=3.11"

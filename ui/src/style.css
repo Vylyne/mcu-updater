@@ -104,7 +104,6 @@ main h1 {
   border-radius: 4px;
   box-shadow: 0 2px 4px rgba(0, 0, 0, 0.3);
   margin-bottom: 12px;
-  overflow: hidden;
 }
 
 @media (min-width: 768px) {
@@ -117,6 +116,12 @@ main h1 {
   display: flex;
   align-items: center;
   gap: 8px;
+  /* .panel used to clip this corner via its own overflow: hidden, which also
+     clipped any dropdown menu (e.g. BusPanel's "track this device") that
+     extends past a short panel's bottom edge. Rounding it directly here
+     instead - the only child with a background colour that would otherwise
+     visibly square off against the panel's own rounded top corners. */
+  border-radius: 4px 4px 0 0;
   height: var(--panel-toolbar-height);
   padding: 0 16px;
   background: var(--color-toolbar);

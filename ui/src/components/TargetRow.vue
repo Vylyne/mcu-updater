@@ -430,6 +430,16 @@ async function toggle(): Promise<void> {
 </template>
 
 <style scoped>
+/* :data-tone on the <article> itself is only there for the bare
+   [data-tone="ok"] etc. rule in style.css to match against - it was never
+   meant to colour the whole row. Without an explicit colour here, color's
+   default inheritance carries that tone down into every child that doesn't
+   set its own - the row's name, and every .btn-icon (which explicitly does
+   `color: inherit`), same leak style.css's .menu-list had before. */
+.target-row {
+  color: var(--color-text);
+}
+
 .target-header {
   display: flex;
   align-items: center;
@@ -446,12 +456,16 @@ async function toggle(): Promise<void> {
   position: relative;
 }
 
+/* Same reasoning as .target-row above: :data-tone here is for the verdict
+   span's own bare [data-tone] match, not for colouring the whole row - the
+   device's state icon and its own action icons would otherwise inherit it. */
 .device-row {
   display: flex;
   align-items: center;
   gap: 8px;
   padding: 3px 0;
   font-size: 0.8rem;
+  color: var(--color-text);
 }
 
 /* A by-id serial and a /dev/serial/by-path name are both long enough to wrap

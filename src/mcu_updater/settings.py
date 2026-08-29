@@ -89,6 +89,15 @@ class Settings:
     #: here is a flat top-level field, and SETTABLE/`_coerce_setting` assume one.
     ui_accent_color: str = ""
 
+    #: Serials on the bus that are not wanted as a tracked board - a USB
+    #: serial adapter feeding a Knomi, say. Dismissed once via `fw.bus.ignore`
+    #: rather than nagging "new board?" on every poll. A dedicated RPC, not a
+    #: `SETTABLE` key: this is a device list, not a behaviour preference (see
+    #: `RegistryMixin.SETTABLE`'s own docstring), and `_coerce_setting` has no
+    #: list branch to validate it against. Flag, not filter: a device stays in
+    #: `bus()`'s output once ignored, just marked - see `serialize_device`.
+    ignored_serials: list[str] = dataclasses.field(default_factory=list)
+
     @property
     def resolved_jobs(self) -> int:
         """make_jobs, or a sensible auto value if it was set to a negative."""
@@ -118,7 +127,11 @@ _INT_FIELDS = {"make_jobs", "log_ring_size"}
 #: needs this same list to validate a browser's string-typed values.
 STR_FIELDS = {"service_backend", "platformio_bin", "flashtool_path", "ui_accent_color"}
 _STR_FIELDS = STR_FIELDS
-_LIST_FIELDS = {"stop_services"}
+_LIST_FIELDS = {"stop_services", "ignored_serials"}
+#: Public for the same reason as `BOOL_FIELDS`/`STR_FIELDS`: a caller outside
+#: this module that needs to know which fields are list-typed should read this
+#: rather than keep its own copy in sync by hand.
+LIST_FIELDS = _LIST_FIELDS
 _BACKENDS = ("moonraker", "systemd", "null")
 
 #: Retired in favour of `stop_services`, but still read: a bare

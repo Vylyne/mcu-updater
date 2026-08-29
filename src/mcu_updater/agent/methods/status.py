@@ -90,7 +90,9 @@ def _serial_from_path(path: str) -> str | None:
     return parsed.serial if parsed is not None else None
 
 
-def serialize_device(dev: BusDevice, tracked_by: str | None = None) -> dict[str, Any]:
+def serialize_device(
+    dev: BusDevice, tracked_by: str | None = None, ignored: set[str] | None = None
+) -> dict[str, Any]:
     return {
         "fw": dev.fw,
         "chipset": dev.chipset,
@@ -103,6 +105,9 @@ def serialize_device(dev: BusDevice, tracked_by: str | None = None) -> dict[str,
         # contains USB serial adapters - and offering to adopt a Knomi's CH340 is
         # one tap from building Klipper firmware for a display.
         "is_mcu": dev.is_mcu,
+        # Dismissed via fw.bus.ignore. A flag, not a filter - the device stays
+        # in the list either way, see `bus_scan`'s docstring.
+        "ignored": dev.serial in (ignored or ()),
     }
 
 
@@ -364,7 +369,10 @@ class StatusMixin(_Base):
         for name, mcu in reg.items():
             for serial in mcu.serials:
                 owner[serial] = name
-        return [serialize_device(d, owner.get(d.serial)) for d in scan(self.paths)]
+        ignored = set(self.settings().ignored_serials)
+        return [
+            serialize_device(d, owner.get(d.serial), ignored) for d in scan(self.paths)
+        ]
 
     # -- methods -----------------------------------------------------------
 
@@ -1396,6 +1404,8 @@ class StatusMixin(_Base):
         "fw.type.list": "type_list",
         "fw.target.get": "target_get",
         "fw.bus.scan": "bus_scan",
+        "fw.bus.ignore": "bus_ignore",
+        "fw.bus.unignore": "bus_unignore",
         "fw.dfu.scan": "dfu_scan",
         "fw.bootsel.scan": "bootsel_scan",
         "fw.device.list": "device_list",

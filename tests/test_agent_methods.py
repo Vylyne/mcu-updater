@@ -435,6 +435,62 @@ def test_adoptable_respects_the_chipset_filter(api, fake_root):
 
 
 # --------------------------------------------------------------------------
+# fw.bus.ignore / fw.bus.unignore
+# --------------------------------------------------------------------------
+
+
+def test_bus_ignore_marks_a_device_ignored_but_keeps_it_listed(api, fake_root):
+    make_device(fake_root / "bus", "katapult", "rp2040", "STRANGER-if00")
+
+    res = api.dispatch("fw.bus.ignore", {"serial": "STRANGER-if00"})
+    assert res == {"serial": "STRANGER-if00", "ignored": True}
+
+    devices = {d["serial"]: d for d in api.dispatch("fw.bus.scan")["devices"]}
+    assert devices["STRANGER-if00"]["ignored"] is True
+
+
+def test_bus_ignore_is_idempotent(api):
+    first = api.dispatch("fw.bus.ignore", {"serial": "STRANGER-if00"})
+    second = api.dispatch("fw.bus.ignore", {"serial": "STRANGER-if00"})
+    assert first == second == {"serial": "STRANGER-if00", "ignored": True}
+    assert api.settings().ignored_serials.count("STRANGER-if00") == 1
+
+
+def test_bus_unignore_reverses_it_and_is_idempotent(api, fake_root):
+    make_device(fake_root / "bus", "katapult", "rp2040", "STRANGER-if00")
+    api.dispatch("fw.bus.ignore", {"serial": "STRANGER-if00"})
+
+    res = api.dispatch("fw.bus.unignore", {"serial": "STRANGER-if00"})
+    assert res == {"serial": "STRANGER-if00", "ignored": False}
+    again = api.dispatch("fw.bus.unignore", {"serial": "STRANGER-if00"})
+    assert again == {"serial": "STRANGER-if00", "ignored": False}
+
+    devices = {d["serial"]: d for d in api.dispatch("fw.bus.scan")["devices"]}
+    assert devices["STRANGER-if00"]["ignored"] is False
+
+
+@pytest.mark.parametrize("method", ["fw.bus.ignore", "fw.bus.unignore"])
+@pytest.mark.parametrize("args", [{}, {"serial": ""}, {"serial": "  "}])
+def test_bus_ignore_methods_require_a_serial(api, method, args):
+    with pytest.raises(RpcError) as exc:
+        api.dispatch(method, args)
+    assert exc.value.code == ERR_INVALID_PARAMS
+
+
+def test_bus_ignore_announces_the_change(paths, live_registry_text):
+    with open(paths.registry_file, "w", encoding="utf-8") as fh:
+        fh.write(live_registry_text)
+    changes: list[int] = []
+    api = Api(paths, on_change=lambda: changes.append(1))
+    api.dispatch("fw.bus.ignore", {"serial": "STRANGER-if00"})
+    assert len(changes) == 1
+    # A no-op ignore (already ignored) must not announce a change that did not
+    # happen.
+    api.dispatch("fw.bus.ignore", {"serial": "STRANGER-if00"})
+    assert len(changes) == 1
+
+
+# --------------------------------------------------------------------------
 # fw.serial.add / fw.serial.remove
 # --------------------------------------------------------------------------
 

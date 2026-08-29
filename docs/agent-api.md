@@ -115,6 +115,8 @@ application error (see `data.code`), `-32603` internal.
 | `fw.type.remove` | `name` (required), `force?` | `{name, removed_serials, kept_config_dir}` — refuses while boards are still tracked unless forced |
 | `fw.target.get` | `name`, `provider` (required) | `{provider, target}` — one `targets[]` entry's full detail |
 | `fw.bus.scan` | `only_untracked?`, `chipset?` | `{devices: [BusDevice]}` |
+| `fw.bus.ignore` | `serial` (required) | `{serial, ignored: true}` — hide a bus device from the "new board?" flow; idempotent, flag not filter |
+| `fw.bus.unignore` | `serial` (required) | `{serial, ignored: false}` — reverse `fw.bus.ignore`; idempotent |
 | `fw.dfu.scan` | — | `{devices, count, ready, reason, message}` — read-only |
 | `fw.bootsel.scan` | — | `{devices, count, mounts, mount_count, ready, reason, message}` — read-only |
 | `fw.add_mcu.start` | `name`, `dfu_serial?` (STM32 only) | `{job_id, job, dfu_serial, bootsel_id}` — **off by default** |
@@ -122,6 +124,7 @@ application error (see `data.code`), `-32603` internal.
 | `fw.settings.get` | — | `{settings: Settings}` |
 | `fw.settings.set` | `settings` (required, non-empty) | `{settings: Settings, changed: [key]}` — only the `SETTABLE` keys |
 | `fw.serial.add` | `name`, `serial` (required) | `{name, serial, added, chipset}` — track a bus device under an existing type |
+| `fw.serial.remove` | `name`, `serial` (required) | `{name, serial, removed}` — untrack a serial from a type; non-destructive, keeps its firmware and saved config |
 | `fw.build` | `name`, `fw`, `jobs?`, `clean?`, `reseed?` | `{job_id, job}` — returns immediately |
 | `fw.flash` | `serial\|port`, `name?`, `force?` | `{job_id, job}` — **off by default**, see below |
 | `fw.build_all` | `fw?`, `scope?` | `{job_id, job, types, builds, skipped}` — builds only, touches no board |
@@ -324,11 +327,16 @@ still names the seed it drifted from.
 ```json
 {"fw": "Klipper", "chipset": "stm32g0b1xx", "serial": "1100...-if00",
  "path": "/dev/serial/by-id/usb-Klipper_...", "state": "klipper",
- "tracked_by": "bttebb36"}
+ "tracked_by": "bttebb36", "is_mcu": true, "ignored": false}
 ```
 
 `tracked_by` is `null` for a device on the bus that no MCU type claims — that's
-the "new board, want to track it?" case.
+the "new board, want to track it?" case. `is_mcu` is false for anything that
+merely parses as a by-id device without looking like a Klipper or Katapult
+board — a USB serial adapter feeding a display, say — and a "track this"
+affordance should not be offered for it. `ignored` is set by `fw.bus.ignore`;
+like `is_mcu`, it is a flag rather than a filter, so an ignored device still
+appears here.
 
 ### `Target`
 
@@ -445,6 +453,13 @@ keys it does accept.
 behaviour preference, and are deliberately absent - editing them from a
 browser risks a real flash proceeding with Klipper never stopped. They stay a
 cfg-file-only edit.
+
+`ignored_serials` is also absent from `SETTABLE`, for a different reason: it
+is a device list, not a behaviour preference, and going through
+`fw.settings.set` would hit `_coerce_setting`'s int-fallthrough and refuse a
+JSON array as "must be a whole number". It is read and write through
+`fw.bus.ignore` / `fw.bus.unignore` instead - see those in the methods table
+and `BusDevice`'s `ignored` key above.
 
 `ui_accent_color` is the one `SETTABLE` key that isn't a behaviour preference
 at all - the agent never reads it, only stores and serves it back, so every

@@ -483,4 +483,30 @@ class RegistryMixin(_Base):
         self._changed()
         return {"name": name, "serial": serial, "removed": removed}
 
+    def bus_ignore(self, args: dict) -> dict[str, Any]:
+        """Hide a bus device from the "new board?" flow. Idempotent.
+
+        A dedicated RPC rather than `fw.settings.set` - see `Settings.ignored_serials`
+        for why. Flag, not filter: the device stays in `fw.bus.scan`'s `devices`,
+        just marked, so a mis-ignored board is recoverable from the panel rather
+        than only by hand-editing the cfg on the printer.
+        """
+        serial = self._require_str(args, "serial")
+        current = self.settings()
+        if serial not in current.ignored_serials:
+            current.ignored_serials.append(serial)
+            save_settings(self.paths.settings_file, current)
+            self._changed()
+        return {"serial": serial, "ignored": True}
+
+    def bus_unignore(self, args: dict) -> dict[str, Any]:
+        """Reverse `bus_ignore`. Idempotent."""
+        serial = self._require_str(args, "serial")
+        current = self.settings()
+        if serial in current.ignored_serials:
+            current.ignored_serials.remove(serial)
+            save_settings(self.paths.settings_file, current)
+            self._changed()
+        return {"serial": serial, "ignored": False}
+
     # -- jobs --------------------------------------------------------------

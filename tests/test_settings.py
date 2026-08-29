@@ -124,6 +124,36 @@ def test_save_then_load_round_trips_a_blank_stop_services(paths):
     assert load_settings(paths.settings_file).stop_services == []
 
 
+def test_save_then_load_round_trips_ignored_serials(paths):
+    """A realistic by-id serial - digits and a hyphen, no leading '#' (which
+    would read as an inline comment) and no comma (which `get_csv` would split
+    on)."""
+    original = Settings(ignored_serials=["290055001850304158373620-if00"])
+    save_settings(paths.settings_file, original)
+    assert load_settings(paths.settings_file) == original
+
+
+def test_ignored_serials_is_stored_as_a_multi_line_block(paths):
+    """Unlike `stop_services` (single-line CSV, joined by hand in
+    `save_settings`), `ignored_serials` goes through the generic per-field loop
+    and so takes `CfgDocument.set`'s own default rendering for a list value - a
+    multi-line block, one serial per line. Both forms round-trip identically
+    through `get_csv`; this pins which one actually lands on disk."""
+    save_settings(
+        paths.settings_file, Settings(ignored_serials=["AAAA-if00", "BBBB-if00"])
+    )
+    with open(paths.settings_file, encoding="utf-8") as fh:
+        text = fh.read()
+    assert "ignored_serials:\n    AAAA-if00\n    BBBB-if00\n" in text
+
+
+def test_save_then_load_round_trips_a_blank_ignored_serials(paths):
+    original = Settings()
+    assert original.ignored_serials == []
+    save_settings(paths.settings_file, original)
+    assert load_settings(paths.settings_file).ignored_serials == []
+
+
 def test_save_then_load_round_trips_an_accent_colour(paths):
     original = Settings(ui_accent_color="#2196f3")
     save_settings(paths.settings_file, original)

@@ -61,6 +61,7 @@ Firmware and boards:
 - [x] Displays re-identified at flash time, once the ports are free
 - [x] Discovery surface — one vocabulary for where a device is and how sure we are
 - [ ] CAN device discovery (needs `canbus_uuid` from printer.cfg)
+- [ ] Ignore an untracked bus device (agent RPC done; panel affordance pending)
 
 Interfaces:
 

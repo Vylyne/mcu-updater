@@ -17,8 +17,10 @@ import {
   state,
 } from "../store/agent";
 import type { KconfigNode as KconfigNodeType } from "../api/kconfig";
+import { mdiMagnify } from "../icons";
 import KconfigNode from "./KconfigNode.vue";
 import UiDialog from "./UiDialog.vue";
+import UiIcon from "./UiIcon.vue";
 
 const query = ref("");
 const confirmDiscard = ref(false);
@@ -135,13 +137,22 @@ function forceClose(): void {
     </nav>
 
     <div class="kconfig-search">
-      <input
-        v-model="query"
-        type="search"
-        placeholder="Search…"
-        @keyup.enter="runSearch"
-      />
-      <button type="button" @click="runSearch">Search</button>
+      <div class="kconfig-search-field">
+        <button
+          type="button"
+          class="kconfig-search-icon"
+          title="Search"
+          @click="runSearch"
+        >
+          <UiIcon :path="mdiMagnify" size="small" />
+        </button>
+        <input
+          v-model="query"
+          type="search"
+          placeholder="Search…"
+          @keyup.enter="runSearch"
+        />
+      </div>
       <button v-if="searching" type="button" @click="clearSearch">
         Back to menu
       </button>
@@ -255,8 +266,29 @@ function forceClose(): void {
   margin-bottom: 8px;
 }
 
-.kconfig-search input {
+.kconfig-search-field {
+  position: relative;
   flex: 1;
+}
+
+.kconfig-search-icon {
+  position: absolute;
+  left: 4px;
+  top: 50%;
+  transform: translateY(-50%);
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: none;
+  background: transparent;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+}
+
+.kconfig-search-field input {
+  width: 100%;
+  padding-left: 32px;
 }
 
 .detail-block {

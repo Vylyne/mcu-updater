@@ -4,7 +4,11 @@
 // gets a button instead of an input.
 import { computed } from "vue";
 import type { KconfigNode } from "../api/kconfig";
-import { mdiChevronDown, mdiDeveloperBoard } from "../icons";
+import {
+  mdiChevronDown,
+  mdiDeveloperBoard,
+  mdiHelpCircleOutline,
+} from "../icons";
 import UiIcon from "./UiIcon.vue";
 
 const props = defineProps<{
@@ -86,7 +90,7 @@ function onText(event: Event): void {
             title="Help"
             @click="emit('help', node)"
           >
-            ?
+            <UiIcon :path="mdiHelpCircleOutline" size="x-small" />
           </button>
           <!-- `editable` false means kconfiglib will not accept a change:
                another symbol's `select` holds it, or its dependencies are
@@ -245,6 +249,7 @@ function onText(event: Event): void {
   align-items: center;
   justify-self: end;
   gap: 6px;
+  width: 100%;
 }
 
 /* Each control used to size to its own content, so the shared grid column

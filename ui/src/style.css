@@ -597,6 +597,13 @@ main.embed {
   color: var(--color-text);
 }
 
+/* Toggled by clickOutside.ts's flipMenuIfOffscreen when the menu doesn't fit
+   below its trigger. */
+.menu-list--up {
+  top: auto;
+  bottom: 100%;
+}
+
 .menu-item {
   display: flex;
   align-items: center;

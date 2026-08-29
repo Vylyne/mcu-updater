@@ -7,8 +7,15 @@
 // A device can also be `ignored` (fw.bus.ignore/.unignore) - flagged, not
 // filtered server-side, so a mis-ignored board is always recoverable from the
 // disclosure section below rather than only by hand-editing the cfg.
-import { computed, reactive, ref, type ComponentPublicInstance } from "vue";
-import { useClickOutsideToClose } from "../clickOutside";
+import {
+  computed,
+  nextTick,
+  reactive,
+  ref,
+  watch,
+  type ComponentPublicInstance,
+} from "vue";
+import { flipMenuIfOffscreen, useClickOutsideToClose } from "../clickOutside";
 import {
   adoptSerial,
   hasCapability,
@@ -92,6 +99,10 @@ const menuOpen = computed<boolean>({
   },
 });
 useClickOutsideToClose(menuContainer, menuOpen);
+watch(menuOpenFor, (serial) => {
+  if (serial !== null)
+    void nextTick(() => flipMenuIfOffscreen(rowRefs[serial]));
+});
 
 function toggleMenu(serial: string): void {
   if (menuOpenFor.value === serial) {

@@ -11,8 +11,8 @@
 // artifact chip, profile chip, actions, overflow menu), then one sub-row per
 // device (state icon, identity, spacer, version, verdict, device actions,
 // detail expander), then a trailing divider.
-import { computed, ref } from "vue";
-import { useClickOutsideToClose } from "../clickOutside";
+import { computed, nextTick, ref, watch } from "vue";
+import { flipMenuIfOffscreen, useClickOutsideToClose } from "../clickOutside";
 import {
   fetchTargetDetail,
   hasCapability,
@@ -45,6 +45,9 @@ const detail = ref<Record<string, unknown> | null>(null);
 const menuOpen = ref(false);
 const menuRef = ref<HTMLElement | null>(null);
 useClickOutsideToClose(menuRef, menuOpen);
+watch(menuOpen, (open) => {
+  if (open) void nextTick(() => flipMenuIfOffscreen(menuRef.value));
+});
 const typeDialogOpen = ref(false);
 const removing = ref(false);
 

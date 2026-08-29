@@ -3,8 +3,8 @@
 // Phase 4's whole point. See docs/decisions.md. Phase 10 adds the fleet-wide
 // toolbar (build/flash/update all, refresh, new type) FirmwareUpdaterPanel.vue
 // carries and this UI didn't yet.
-import { computed, ref } from "vue";
-import { useClickOutsideToClose } from "../clickOutside";
+import { computed, nextTick, ref, watch } from "vue";
+import { flipMenuIfOffscreen, useClickOutsideToClose } from "../clickOutside";
 import TargetRow from "./TargetRow.vue";
 import AddMcuWizard from "./AddMcuWizard.vue";
 import UiPanel from "./UiPanel.vue";
@@ -69,6 +69,9 @@ const flashAllIcon = computed(() =>
 const menuOpen = ref(false);
 const menuRef = ref<HTMLElement | null>(null);
 useClickOutsideToClose(menuRef, menuOpen);
+watch(menuOpen, (open) => {
+  if (open) void nextTick(() => flipMenuIfOffscreen(menuRef.value));
+});
 const bulkOperation = ref<BulkOperation | null>(null);
 const typeDialogOpen = ref(false);
 const refreshing = ref(false);

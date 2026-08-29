@@ -368,6 +368,16 @@ export async function invokeAction(
       ...extraParams,
     });
     state.error = null;
+    // Same asymmetry as adoptSerial/ignoreSerial: `_changed()`'s "state"
+    // event already moves the device off its old target's own list, but
+    // only refreshStatus reseeds state.bus, so it stays absent from
+    // BusPanel's untracked list until the next scheduled `bus` poll rather
+    // than reappearing immediately. `invokeAction` is generic over every
+    // device/target action, most of which don't touch tracking at all (a
+    // build or flash reports its own result through the job/log event
+    // stream, not through this call resolving) - only refresh for the one
+    // method that does.
+    if (action.method === "fw.serial.remove") void refreshStatus();
     return true;
   } catch (error) {
     state.error = error as NormalizedAgentError;
@@ -608,6 +618,10 @@ export async function removeType(
   try {
     await callAgent(client, "fw.type.remove", { name, force });
     state.error = null;
+    // Same reasoning as invokeAction's fw.serial.remove case: every serial
+    // this type tracked goes back on the bus's untracked list, which only
+    // refreshStatus's reseed of state.bus picks up promptly.
+    void refreshStatus();
     return true;
   } catch (error) {
     state.error = error as NormalizedAgentError;

@@ -305,7 +305,16 @@ Per-type keys:
   *either* the main source or one of these has moved — e.g. `flylllplusbuffer`
   above pulls `buffer.c` in via a makefile patch, but that file actually lives
   in a separate `buffer_manager` checkout; without `klipper_extra_repos:
-  ~/buffer_manager` a commit there goes unnoticed.
+  ~/buffer_manager` a commit there goes unnoticed. A path that is not (yet) a
+  git checkout is accepted, not refused — declaring it before cloning is fine,
+  the same as `firmware:` naming a family whose tree doesn't exist yet — but
+  it fails **silently**: staleness for that path simply never fires, with
+  nothing on screen to say why, because a missing git HEAD and an
+  already-fresh path look identical to `artifact_status()`. A typo here is
+  invisible until someone thinks to check. The standalone UI's type editor
+  (Advanced section) surfaces this as a warning right after you save, from
+  the same check `fw.type.add`/`fw.type.update` run server-side — see
+  [docs/agent-api.md](docs/agent-api.md).
 - **`stop_services`** — units to stop before flashing this type, overriding
   `[firmware ...]` and `[updater]`. See
   [Which services stop before a write](#which-services-stop-before-a-write).

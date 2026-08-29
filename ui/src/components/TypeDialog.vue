@@ -9,6 +9,10 @@ import { addType, fetchTargetDetail, updateType } from "../store/agent";
 import {
   TYPE_NAME_MAX,
   validateTypeName,
+  parseExtraRepos,
+  formatExtraRepos,
+  parseMakefilePatches,
+  formatMakefilePatches,
   type Family,
   type TypeDraft,
 } from "../api/mcutype";
@@ -31,6 +35,7 @@ const emit = defineEmits<{ close: [] }>();
 interface FamilyBlock {
   extra_args: string;
   makefile_patches?: { file: string; line: string }[];
+  extra_repos?: string[];
 }
 
 interface TypeDetail {
@@ -52,7 +57,11 @@ const name = ref("");
 const chipset = ref("");
 const firmware = ref("klipper");
 const applicationExtraArgs = ref("");
+const applicationExtraRepos = ref("");
+const applicationMakefilePatches = ref("");
 const katapultExtraArgs = ref("");
+const katapultExtraRepos = ref("");
+const katapultMakefilePatches = ref("");
 const katapultInstalled = ref(true);
 
 // Katapult is what puts firmware on a board, not a board's application - a
@@ -71,7 +80,19 @@ function resetFromDetail(): void {
   chipset.value = detail.value?.chipset ?? props.suggestedChipset ?? "";
   firmware.value = detail.value?.firmware ?? "klipper";
   applicationExtraArgs.value = applicationBlock()?.extra_args ?? "";
+  applicationExtraRepos.value = formatExtraRepos(
+    applicationBlock()?.extra_repos ?? [],
+  );
+  applicationMakefilePatches.value = formatMakefilePatches(
+    applicationBlock()?.makefile_patches ?? [],
+  );
   katapultExtraArgs.value = detail.value?.katapult?.extra_args ?? "";
+  katapultExtraRepos.value = formatExtraRepos(
+    detail.value?.katapult?.extra_repos ?? [],
+  );
+  katapultMakefilePatches.value = formatMakefilePatches(
+    detail.value?.katapult?.makefile_patches ?? [],
+  );
   katapultInstalled.value = detail.value?.katapult_installed ?? true;
 }
 
@@ -137,18 +158,28 @@ const canSubmit = computed(() => {
 async function submit(): Promise<void> {
   if (!canSubmit.value) return;
   saving.value = true;
-  let ok: boolean;
+  let result: { ok: boolean; warnings: string[] };
   if (editing.value) {
     // Only the keys this form shows - the agent leaves anything else alone.
     // The extra-args key is dynamic and keyed on the *saved* application
     // (detail.value.firmware), not the family just picked in this same
     // edit - that family has no answers of its own yet.
     const savedFamily = detail.value?.firmware ?? "klipper";
-    ok = await updateType(name.value, {
+    result = await updateType(name.value, {
       chipset: chipset.value.trim(),
       firmware: firmware.value,
       [`${savedFamily}_extra_args`]: applicationExtraArgs.value,
+      [`${savedFamily}_extra_repos`]: parseExtraRepos(
+        applicationExtraRepos.value,
+      ),
+      [`${savedFamily}_makefile_patches`]: parseMakefilePatches(
+        applicationMakefilePatches.value,
+      ),
       katapult_extra_args: katapultExtraArgs.value,
+      katapult_extra_repos: parseExtraRepos(katapultExtraRepos.value),
+      katapult_makefile_patches: parseMakefilePatches(
+        katapultMakefilePatches.value,
+      ),
       katapult_installed: katapultInstalled.value,
     });
   } else {
@@ -157,20 +188,31 @@ async function submit(): Promise<void> {
       chipset: chipset.value.trim(),
       firmware: firmware.value,
       applicationExtraArgs: applicationExtraArgs.value,
+      applicationExtraRepos: parseExtraRepos(applicationExtraRepos.value),
+      applicationMakefilePatches: parseMakefilePatches(
+        applicationMakefilePatches.value,
+      ),
       katapultExtraArgs: katapultExtraArgs.value,
+      katapultExtraRepos: parseExtraRepos(katapultExtraRepos.value),
+      katapultMakefilePatches: parseMakefilePatches(
+        katapultMakefilePatches.value,
+      ),
       katapultInstalled: katapultInstalled.value,
       serial: props.serial ?? undefined,
     };
-    ok = await addType(draft);
+    result = await addType(draft);
   }
   saving.value = false;
-  if (ok) emit("close");
+  if (!result.ok) return;
+  if (result.warnings.length > 0) {
+    // Saved, but say so before the dialog vanishes - e.g. an extra_repos
+    // path with no git HEAD yet, which the browser has no way to check
+    // for itself ahead of the save.
+    warnings.value = result.warnings;
+    return;
+  }
+  emit("close");
 }
-
-const patchLines = computed(() => {
-  const patches = applicationBlock()?.makefile_patches ?? [];
-  return patches.map((p) => `${p.file} -> ${p.line}`);
-});
 </script>
 
 <template>
@@ -238,12 +280,42 @@ const patchLines = computed(() => {
         Katapult installed
       </label>
 
-      <div v-if="patchLines.length" class="detail-block">
-        <div class="text-caption text--disabled">Makefile patches</div>
-        <code v-for="line in patchLines" :key="line" class="text-caption">{{
-          line
-        }}</code>
-      </div>
+      <details class="advanced">
+        <summary>Advanced</summary>
+
+        <label>
+          Klipper extra repos
+          <textarea
+            v-model="applicationExtraRepos"
+            rows="2"
+            placeholder="one path per line, e.g. /home/pi/buffer_manager"
+          ></textarea>
+        </label>
+        <p class="text-caption text--disabled">
+          Secondary source trees whose git commit is tracked alongside the main
+          source - a type is reported stale if either one moves. See
+          <code>&lt;fw&gt;_extra_repos</code> in README.md.
+        </p>
+
+        <label>
+          Klipper makefile patches
+          <textarea
+            v-model="applicationMakefilePatches"
+            rows="2"
+            placeholder="file -> line, e.g. src/Makefile -> src-y += buffer.c"
+          ></textarea>
+        </label>
+
+        <label>
+          Katapult extra repos
+          <textarea v-model="katapultExtraRepos" rows="2"></textarea>
+        </label>
+
+        <label>
+          Katapult makefile patches
+          <textarea v-model="katapultMakefilePatches" rows="2"></textarea>
+        </label>
+      </details>
 
       <p v-if="serial" class="alert alert--info">
         Will also track {{ serial }} under this type once it's created.
@@ -283,14 +355,27 @@ label select {
   width: auto;
 }
 
-.detail-block {
-  margin: 8px 0;
+label textarea {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  margin-top: 2px;
+  font-family: monospace;
+  resize: vertical;
+}
+
+.advanced {
+  margin: 8px 0 10px;
   padding: 6px 8px;
   border-radius: 4px;
   background-color: var(--color-inset);
 }
 
-.detail-block code {
-  display: block;
+.advanced summary {
+  cursor: pointer;
+}
+
+.advanced label {
+  margin-top: 10px;
 }
 </style>

@@ -475,42 +475,66 @@ export async function runBulk(
  * createTypeAndTrack: a type created without its board is recoverable in one
  * tap, the reverse is not, so the two calls are sequenced rather than one
  * request doing both. */
-export async function addType(draft: TypeDraft): Promise<boolean> {
-  if (client === null) return false;
+export async function addType(
+  draft: TypeDraft,
+): Promise<{ ok: boolean; warnings: string[] }> {
+  if (client === null) return { ok: false, warnings: [] };
+  let warnings: string[] = [];
   try {
-    await callAgent(client, "fw.type.add", {
-      name: draft.name,
-      chipset: draft.chipset,
-      firmware: draft.firmware,
-      klipper_extra_args: draft.applicationExtraArgs,
-      katapult_extra_args: draft.katapultExtraArgs,
-      katapult_installed: draft.katapultInstalled,
-    });
+    const result = await callAgent<{ warnings?: string[] }>(
+      client,
+      "fw.type.add",
+      {
+        name: draft.name,
+        chipset: draft.chipset,
+        firmware: draft.firmware,
+        klipper_extra_args: draft.applicationExtraArgs,
+        klipper_extra_repos: draft.applicationExtraRepos,
+        klipper_makefile_patches: draft.applicationMakefilePatches,
+        katapult_extra_args: draft.katapultExtraArgs,
+        katapult_extra_repos: draft.katapultExtraRepos,
+        katapult_makefile_patches: draft.katapultMakefilePatches,
+        katapult_installed: draft.katapultInstalled,
+      },
+    );
+    warnings = result.warnings ?? [];
     state.error = null;
   } catch (error) {
     state.error = error as NormalizedAgentError;
-    return false;
+    return { ok: false, warnings: [] };
   }
-  if (draft.serial) return adoptSerial(draft.name, draft.serial);
-  return true;
+  if (draft.serial) {
+    const adopted = await adoptSerial(draft.name, draft.serial);
+    return { ok: adopted, warnings };
+  }
+  return { ok: true, warnings };
 }
 
 /** Edit a type in place. `patch` carries only the keys the form actually
  * showed - the agent treats a missing key as "leave alone", so sending
  * everything would clobber fields a future version of this form doesn't
- * know about. */
+ * know about. `warnings` (e.g. an `extra_repos` path with no git HEAD yet)
+ * comes back from the agent itself, not computed here - the browser has no
+ * way to check a server-side path on its own. */
 export async function updateType(
   name: string,
   patch: Record<string, unknown>,
-): Promise<boolean> {
-  if (client === null) return false;
+): Promise<{ ok: boolean; warnings: string[] }> {
+  if (client === null) return { ok: false, warnings: [] };
   try {
-    await callAgent(client, "fw.type.update", { name, ...patch });
+    const result = await callAgent<{ warnings?: string[] }>(
+      client,
+      "fw.type.update",
+      {
+        name,
+        ...patch,
+      },
+    );
     state.error = null;
-    return true;
+    return { ok: true, warnings: result.warnings ?? [] };
   } catch (error) {
     state.error = error as NormalizedAgentError;
-    return false;
+    return { ok: false, warnings: [] };
   }
 }
 

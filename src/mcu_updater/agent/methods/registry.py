@@ -7,7 +7,7 @@ from typing import Any
 
 from ... import firmware
 from ... import settings as settings_mod
-from ...config import Registry
+from ...config import MakefilePatch, Registry
 from ...devices import (
     scan,
 )
@@ -17,6 +17,55 @@ from ...errors import (
 from ...settings import save_settings
 from ..rpc import ERR_INVALID_PARAMS, RpcError
 from ._api import _Base
+
+
+def _parse_extra_repos(value: Any) -> list[str]:
+    if not isinstance(value, list):
+        raise RpcError("extra_repos must be a list of paths", ERR_INVALID_PARAMS)
+    return [str(p).strip() for p in value if str(p).strip()]
+
+
+def _parse_makefile_patches(value: Any) -> list[MakefilePatch]:
+    if not isinstance(value, list):
+        raise RpcError(
+            "makefile_patches must be a list of {file, line} objects", ERR_INVALID_PARAMS
+        )
+    patches: list[MakefilePatch] = []
+    for raw in value:
+        entry = raw if isinstance(raw, dict) else {}
+        patch = MakefilePatch(
+            file=str(entry.get("file") or "").strip(),
+            line=str(entry.get("line") or "").strip(),
+        )
+        if not patch.is_valid():
+            raise RpcError(
+                f"a makefile patch needs both 'file' and 'line': {raw!r}",
+                data={
+                    "code": "invalid_makefile_patch",
+                    "message": "incomplete makefile patch",
+                    "data": {"patch": raw},
+                },
+            )
+        patches.append(patch)
+    return patches
+
+
+def _extra_repo_warnings(repos: list[str]) -> list[str]:
+    """One warning per path that isn't (yet) a git checkout.
+
+    Not a refusal - `type_add` is deliberately reachable before hardware or
+    even source exists (see `type_add`'s docstring), and a not-yet-cloned
+    extra repo is the same kind of "fine for now" state. `git_head()` already
+    returns None rather than raising for a missing or non-git path, so
+    staleness itself degrades silently; this is the one place that says so.
+    """
+    from ...build import git_head
+
+    return [
+        f"{repo} has no git HEAD yet - staleness won't fire for it until it does."
+        for repo in repos
+        if git_head(repo) is None
+    ]
 
 
 class RegistryMixin(_Base):
@@ -239,8 +288,18 @@ class RegistryMixin(_Base):
         installed = args.get("katapult_installed")
         application = self._require_family(args)
 
+        # Parsed before the mutation, not after - a bad patch must not leave
+        # the type half-created.
+        extra_repos: dict[str, list[str]] = {}
+        makefile_patches: dict[str, list[MakefilePatch]] = {}
+        for fw in ("klipper", "katapult"):
+            if f"{fw}_extra_repos" in args:
+                extra_repos[fw] = _parse_extra_repos(args[f"{fw}_extra_repos"])
+            if f"{fw}_makefile_patches" in args:
+                makefile_patches[fw] = _parse_makefile_patches(args[f"{fw}_makefile_patches"])
+
         with Registry.mutate(self.paths, f"add type {name}") as reg:
-            reg.add_type(
+            mcu = reg.add_type(
                 name,
                 chipset,
                 klipper_args=str(args.get("klipper_extra_args") or "").strip(),
@@ -248,9 +307,17 @@ class RegistryMixin(_Base):
                 katapult_installed=True if installed is None else bool(installed),
                 application=application,
             )
+            for fw, repos in extra_repos.items():
+                mcu.fw(fw).extra_repos = repos
+            for fw, patches in makefile_patches.items():
+                mcu.fw(fw).makefile_patches = patches
 
         self._changed()
-        return {"name": name, "chipset": chipset, "firmware": application}
+        result: dict[str, Any] = {"name": name, "chipset": chipset, "firmware": application}
+        warnings = [w for repos in extra_repos.values() for w in _extra_repo_warnings(repos)]
+        if warnings:
+            result["warnings"] = warnings
+        return result
 
     def type_update(self, args: dict) -> dict[str, Any]:
         """Edit a type in place. Only the keys supplied are touched.
@@ -312,6 +379,16 @@ class RegistryMixin(_Base):
                 key = f"{fw}_extra_args"
                 if key in args:
                     mcu.fw(fw).extra_args = str(args.get(key) or "").strip()
+
+                repos_key = f"{fw}_extra_repos"
+                if repos_key in args:
+                    repos = _parse_extra_repos(args[repos_key])
+                    mcu.fw(fw).extra_repos = repos
+                    warnings.extend(_extra_repo_warnings(repos))
+
+                patches_key = f"{fw}_makefile_patches"
+                if patches_key in args:
+                    mcu.fw(fw).makefile_patches = _parse_makefile_patches(args[patches_key])
 
             if "katapult_installed" in args:
                 installed = bool(args.get("katapult_installed"))

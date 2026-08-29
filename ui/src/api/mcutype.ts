@@ -19,13 +19,24 @@ export interface Family {
   builtin: boolean;
 }
 
+/** One `<fw>_makefile_patches` entry - the shape `MakefilePatch.to_json()`
+ * emits and `fw.type.add`/`.update` accept back unchanged. */
+export interface MakefilePatchDraft {
+  file: string;
+  line: string;
+}
+
 /** What TypeDialog collects before calling addType/updateType. */
 export interface TypeDraft {
   name: string;
   chipset: string;
   firmware: string;
   applicationExtraArgs: string;
+  applicationExtraRepos: string[];
+  applicationMakefilePatches: MakefilePatchDraft[];
   katapultExtraArgs: string;
+  katapultExtraRepos: string[];
+  katapultMakefilePatches: MakefilePatchDraft[];
   katapultInstalled: boolean;
   /** A board to adopt once the type exists - the untracked-device entry
    * point. Empty when opened from the toolbar's "New type…". */
@@ -57,4 +68,41 @@ export function validateTypeName(
     return "A type with this name already exists.";
   }
   return null;
+}
+
+/** Turns the "one path per line" textarea into `<fw>_extra_repos`'s wire
+ * shape - blank lines dropped, everything else trimmed. */
+export function parseExtraRepos(text: string): string[] {
+  return text
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+}
+
+export function formatExtraRepos(repos: string[]): string {
+  return repos.join("\n");
+}
+
+/** Turns the "file -> line" per line textarea into `<fw>_makefile_patches`'s
+ * wire shape. A line missing the separator becomes a patch with an empty
+ * `line` rather than being dropped - the agent refuses an incomplete patch
+ * with a clear message (registry.py's `_parse_makefile_patches`), which
+ * surfaces through `state.error` instead of the mistake vanishing silently. */
+export function parseMakefilePatches(text: string): MakefilePatchDraft[] {
+  return text
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0)
+    .map((line) => {
+      const sep = line.indexOf("->");
+      if (sep === -1) return { file: line, line: "" };
+      return {
+        file: line.slice(0, sep).trim(),
+        line: line.slice(sep + 2).trim(),
+      };
+    });
+}
+
+export function formatMakefilePatches(patches: MakefilePatchDraft[]): string {
+  return patches.map((p) => `${p.file} -> ${p.line}`).join("\n");
 }

@@ -574,6 +574,24 @@ the type exists - mirroring the fork's `createTypeAndTrack`, sequenced as two
 calls rather than one, since a type created without its board is recoverable
 in one tap and the reverse is not).
 
+An "Advanced" `<details>` section holds `<fw>_extra_repos` and
+`<fw>_makefile_patches` for both the application family and katapult -
+textareas (`api/mcutype.ts`'s `parseExtraRepos`/`parseMakefilePatches` and
+their `format*` inverses) rather than a repeater UI, since the wire shape is
+already line-oriented (README.md's `<fw>_extra_repos` bullet) and a
+`file -> line` row matches the makefile-patch syntax already used on disk. A
+makefile-patch line with no `->` is kept as an incomplete `{file, line: ""}`
+patch rather than dropped - `registry.py`'s `_parse_makefile_patches` refuses
+it with a clear message via `state.error`, rather than the typo vanishing
+silently. `addType`/`updateType` (`store/agent.ts`) return
+`{ok, warnings}`, not a bare boolean: an `extra_repos` path with no git HEAD
+yet can only be checked server-side (`registry.py`'s
+`_extra_repo_warnings`, run for both `fw.type.add` and `fw.type.update`), so
+the dialog holds itself open and shows that warning on `warnings.value`
+instead of closing - the one warning shape here that arrives *after* the
+save rather than being computed client-side ahead of it, unlike the
+chipset/firmware staleness warnings above it in the same list.
+
 **Two more small safety gates, both direct fork parity.** `ActionButton.vue`'s
 `untrack` (`fw.serial.remove`) now confirms before firing, with the same
 reassuring copy the fork gives it - the board keeps its firmware, the type

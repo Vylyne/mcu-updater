@@ -653,6 +653,106 @@ def test_type_update_refuses_a_rename(api):
     assert exc.value.data["code"] == "rename_unsupported"
 
 
+def test_type_update_sets_extra_repos(api, fake_root):
+    buffer_manager = str(fake_root / "buffer_manager")
+    res = api.dispatch(
+        "fw.type.update", {"name": "bttebb36", "klipper_extra_repos": [buffer_manager]}
+    )
+    assert res["warnings"] == [
+        f"{buffer_manager} has no git HEAD yet - staleness won't fire "
+        f"for it until it does."
+    ]
+    assert api.registry().get("bttebb36").fw("klipper").extra_repos == [buffer_manager]
+
+
+def test_type_update_clears_extra_repos(api, fake_root):
+    buffer_manager = str(fake_root / "buffer_manager")
+    api.dispatch("fw.type.update", {"name": "bttebb36", "klipper_extra_repos": [buffer_manager]})
+    api.dispatch("fw.type.update", {"name": "bttebb36", "klipper_extra_repos": []})
+    assert api.registry().get("bttebb36").fw("klipper").extra_repos == []
+
+
+def test_type_update_does_not_warn_for_a_real_git_checkout(api, fake_root):
+    import subprocess
+
+    repo = fake_root / "buffer_manager"
+    repo.mkdir()
+    subprocess.run(["git", "init"], cwd=repo, check=True, capture_output=True)
+    subprocess.run(["git", "config", "user.email", "test@test"], cwd=repo, check=True)
+    subprocess.run(["git", "config", "user.name", "test"], cwd=repo, check=True)
+    (repo / "buffer.c").write_text("", encoding="utf-8")
+    subprocess.run(["git", "add", "."], cwd=repo, check=True)
+    subprocess.run(["git", "commit", "-m", "init"], cwd=repo, check=True, capture_output=True)
+
+    res = api.dispatch("fw.type.update", {"name": "bttebb36", "klipper_extra_repos": [str(repo)]})
+    assert res["warnings"] == []
+
+
+def test_type_update_leaves_other_fws_extra_repos_alone(api, fake_root):
+    klipper_repo = str(fake_root / "klipper_extra")
+    katapult_repo = str(fake_root / "katapult_extra")
+    api.dispatch("fw.type.update", {"name": "bttebb36", "klipper_extra_repos": [klipper_repo]})
+    api.dispatch("fw.type.update", {"name": "bttebb36", "katapult_extra_repos": [katapult_repo]})
+
+    mcu = api.registry().get("bttebb36")
+    assert mcu.fw("klipper").extra_repos == [klipper_repo]
+    assert mcu.fw("katapult").extra_repos == [katapult_repo]
+
+
+def test_type_update_sets_makefile_patches(api):
+    res = api.dispatch(
+        "fw.type.update",
+        {
+            "name": "bttebb36",
+            "klipper_makefile_patches": [{"file": "src/Makefile", "line": "src-y += buffer.c"}],
+        },
+    )
+    assert res["warnings"] == []
+    patches = api.registry().get("bttebb36").fw("klipper").makefile_patches
+    assert [p.to_json() for p in patches] == [
+        {"file": "src/Makefile", "line": "src-y += buffer.c"}
+    ]
+
+
+def test_type_update_refuses_an_incomplete_makefile_patch(api):
+    with pytest.raises(RpcError) as exc:
+        api.dispatch(
+            "fw.type.update",
+            {"name": "bttebb36", "klipper_makefile_patches": [{"file": "src/Makefile"}]},
+        )
+    assert exc.value.data["code"] == "invalid_makefile_patch"
+    # Refused before the mutation is saved - not left half-applied.
+    assert api.registry().get("bttebb36").fw("klipper").makefile_patches == []
+
+
+def test_type_add_accepts_extra_repos_and_makefile_patches(api, fake_root):
+    buffer_manager = str(fake_root / "buffer_manager")
+    res = api.dispatch(
+        "fw.type.add",
+        {
+            "name": "hexa",
+            "chipset": "stm32f072xb",
+            "klipper_extra_repos": [buffer_manager],
+            "klipper_makefile_patches": [{"file": "src/Makefile", "line": "src-y += buffer.c"}],
+        },
+    )
+    assert res["warnings"] == [
+        f"{buffer_manager} has no git HEAD yet - staleness won't fire "
+        f"for it until it does."
+    ]
+    mcu = api.registry().get("hexa")
+    assert mcu.fw("klipper").extra_repos == [buffer_manager]
+    assert [p.to_json() for p in mcu.fw("klipper").makefile_patches] == [
+        {"file": "src/Makefile", "line": "src-y += buffer.c"}
+    ]
+
+
+def test_type_add_omits_warnings_key_when_there_are_none(api):
+    """Backward compatible with a caller asserting the old 3-key shape."""
+    res = api.dispatch("fw.type.add", {"name": "hexa", "chipset": "stm32f072xb"})
+    assert "warnings" not in res
+
+
 def test_type_remove_refuses_while_boards_are_tracked(api):
     with pytest.raises(RpcError) as exc:
         api.dispatch("fw.type.remove", {"name": "bttebb36"})

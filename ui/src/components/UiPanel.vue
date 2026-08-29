@@ -53,6 +53,15 @@ function toggle(): void {
 }
 
 const showBody = computed(() => !props.collapsible || expanded.value);
+
+// For a parent that wants to force this open on its own trigger (JobPanel,
+// when a new job starts) without touching the stored collapse preference -
+// toggle() is a user action and persists; this deliberately doesn't.
+function expand(): void {
+  expanded.value = true;
+}
+
+defineExpose({ expand });
 </script>
 
 <template>

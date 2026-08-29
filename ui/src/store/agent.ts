@@ -286,7 +286,12 @@ function handleNotification(method: string, params: unknown): void {
       state.bus = devices;
     },
     onJob: (job) => {
-      state.job = job as Job | null;
+      // The agent sends `job: null` once it clears its "current job" slot,
+      // moments after the completion event that carries the final state -
+      // but Vi wants the finished job (and its log) to stay on screen rather
+      // than vanish, so that clear is ignored here. A real new job always
+      // arrives as a non-null object and replaces it normally.
+      if (job !== null) state.job = job as Job;
     },
     onLog: (batch, isGap) => {
       if (isGap) {

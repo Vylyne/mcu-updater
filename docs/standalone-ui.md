@@ -196,6 +196,21 @@ wording from `kind` rather than from `fw.job.cancel`'s own `immediate` return
 means it still reads correctly after a page reload, when that return value is
 long gone but the job (and its `kind`) is still live.
 
+**The finished job stays on screen instead of vanishing.** The agent sends
+`job: null` moments after the completion event that carries the final state,
+to clear its own "current job" slot - `store/agent.ts`'s `onJob` handler now
+ignores that `null` rather than clearing `state.job`, so the last job (and its
+log) keeps rendering, collapsible, until a real new job replaces it. `JobPanel`
+is now `collapsible storage-key="job"` (`UiPanel`'s existing mechanism, same
+as `SettingsPanel`/`BusPanel`), and gained a forced-open path for the moment a
+job actually starts: `UiPanel` exposes an `expand()` method (deliberately
+separate from its own `toggle()`, so this doesn't overwrite a reader's stored
+collapse preference), and `JobPanel` calls it - plus scrolls itself into view -
+whenever `state.job.id` changes to a new value. The log `<pre>` sticky-scrolls
+to its own bottom as lines arrive, but only while the reader hasn't scrolled up
+to look at something earlier (tracked via a `scroll` listener comparing
+`scrollHeight`/`scrollTop`/`clientHeight`); a new job resets it to pinned.
+
 **The log gap-heal had a real bug, fixed in this phase.** `resyncLog()` in
 `store/agent.ts` used to replace the entire rendered log with only the resync
 tail, silently dropping every line rendered before the gap; it now keeps

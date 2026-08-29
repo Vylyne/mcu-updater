@@ -2,10 +2,58 @@
 // The one job the agent ever runs at a time (docs/agent-api.md's "Jobs":
 // "One job at a time, and it is not a queue"), rendered from store state
 // that the event handlers in store/agent.ts already keep current.
-import { computed, reactive, ref } from "vue";
+import { computed, nextTick, reactive, ref, watch } from "vue";
 import { adoptSerial, cancelJob, state } from "../store/agent";
 import { cancelIsImmediate } from "../api/jobs";
 import UiPanel from "./UiPanel.vue";
+
+const panelRef = ref<InstanceType<typeof UiPanel> | null>(null);
+const panelRoot = ref<HTMLElement | null>(null);
+const logEl = ref<HTMLElement | null>(null);
+
+// Sticky-scroll: pin the log to its bottom as lines arrive, but only while
+// the reader hasn't scrolled up to look at something earlier. Reset to
+// pinned on each new job, since a fresh log has nothing worth holding a
+// scroll position on yet.
+const stickToBottom = ref(true);
+
+function isAtBottom(el: HTMLElement): boolean {
+  return el.scrollHeight - el.scrollTop - el.clientHeight < 24;
+}
+
+function onLogScroll(): void {
+  if (logEl.value) stickToBottom.value = isAtBottom(logEl.value);
+}
+
+watch(
+  () => state.log?.lines.length,
+  () => {
+    if (!stickToBottom.value) return;
+    void nextTick(() => {
+      if (logEl.value) logEl.value.scrollTop = logEl.value.scrollHeight;
+    });
+  },
+);
+
+// A job "starting" is its id changing to something new - bring the panel
+// into view and open it even if the reader left it collapsed, since a
+// collapsed job panel with no visible progress reads as a hang.
+watch(
+  () => state.job?.id,
+  (id, previousId) => {
+    if (!id || id === previousId) return;
+    stickToBottom.value = true;
+    panelRef.value?.expand();
+    void nextTick(() => {
+      // jsdom (unit tests) has no scrollIntoView implementation at all.
+      panelRoot.value?.scrollIntoView?.({
+        behavior: "smooth",
+        block: "nearest",
+      });
+      if (logEl.value) logEl.value.scrollTop = logEl.value.scrollHeight;
+    });
+  },
+);
 
 interface BulkFailure {
   type?: string;
@@ -105,103 +153,112 @@ async function onCancel(): Promise<void> {
 </script>
 
 <template>
-  <UiPanel v-if="state.job" :title="`Job: ${state.job.kind}`">
-    <template #buttons>
-      <button
-        v-if="showCancel"
-        type="button"
-        :disabled="cancelling"
-        @click="onCancel"
-      >
-        Cancel
-      </button>
-    </template>
-
-    <p class="text-caption text--secondary">state: {{ state.job.state }}</p>
-
-    <div v-if="progressPercent !== null" class="progress-track">
-      <div class="progress-bar" :style="{ width: `${progressPercent}%` }" />
-    </div>
-    <p v-if="progressText" class="text-caption">
-      {{ progressText }}
-    </p>
-
-    <p v-if="state.job.error" class="alert alert--error">
-      {{ state.job.error.code }} - {{ state.job.error.message }}
-    </p>
-
-    <!-- A bulk job with failures still ends "succeeded" - the state alone
-         would read as a clean run, so this renders regardless of state. -->
-    <div v-if="failures.length" class="alert alert--error">
-      <div>
-        <strong>{{ failures.length }}</strong> of the batch failed:
-      </div>
-      <div v-for="(failure, index) in failures" :key="index">
-        {{ failure.type ?? failure.id ?? "?" }} - {{ failure.error }}
-      </div>
-    </div>
-
-    <div v-if="state.bulkSkipped.length" class="alert alert--warning">
-      <div>{{ state.bulkSkipped.length }} target(s) could not be touched:</div>
-      <div v-for="(entry, index) in state.bulkSkipped" :key="index">
-        {{ entry.type }} - {{ entry.reason }}
-      </div>
-    </div>
-
-    <p v-if="configRewritten" class="alert alert--warning">
-      Klipper rewrote the saved config for this build (olddefconfig ran because
-      src/Kconfig changed) - some menuconfig answers may have moved.
-    </p>
-
-    <p v-if="state.job.cancel_requested" class="alert alert--info">
-      Cancelling… {{ cancelWording }}
-    </p>
-    <p v-else-if="showCancel" class="muted">
-      {{ cancelWording }}
-    </p>
-
-    <div v-if="addMcuResult && addMcuResult.candidates.length" class="picker">
-      <p>New board(s) appeared and are not tracked yet:</p>
-      <ul class="devices">
-        <li
-          v-for="candidate in addMcuResult.candidates"
-          :key="candidate.serial"
-        >
-          <span>{{ candidate.path }}</span>
-          <button
-            type="button"
-            :disabled="adopting[candidate.serial]"
-            @click="adoptCandidate(candidate.serial, addMcuResult.type)"
-          >
-            {{ adopting[candidate.serial] ? "Adopting…" : "Adopt" }}
-          </button>
-        </li>
-      </ul>
-    </div>
-    <p
-      v-else-if="addMcuResult && !addMcuResult.already_tracked.length"
-      class="muted"
+  <div v-if="state.job" ref="panelRoot">
+    <UiPanel
+      ref="panelRef"
+      :title="`Job: ${state.job.kind}`"
+      collapsible
+      storage-key="job"
     >
-      No board appeared. Check /dev/serial/by-id/ - if it is there, adopt it
-      directly once bus devices show it.
-    </p>
-    <p v-else-if="addMcuResult" class="muted">
-      The board that appeared is already tracked - nothing to adopt. Flash
-      Klipper onto it when ready.
-    </p>
+      <template #buttons>
+        <button
+          v-if="showCancel"
+          type="button"
+          :disabled="cancelling"
+          @click="onCancel"
+        >
+          Cancel
+        </button>
+      </template>
 
-    <div v-if="state.log && state.log.job_id === state.job.id" class="log">
-      <p v-if="state.logOmitted" class="muted">
-        Some earlier lines were dropped from the buffer and are not shown.
+      <p class="text-caption text--secondary">state: {{ state.job.state }}</p>
+
+      <div v-if="progressPercent !== null" class="progress-track">
+        <div class="progress-bar" :style="{ width: `${progressPercent}%` }" />
+      </div>
+      <p v-if="progressText" class="text-caption">
+        {{ progressText }}
       </p>
-      <pre class="detail-block"><span
+
+      <p v-if="state.job.error" class="alert alert--error">
+        {{ state.job.error.code }} - {{ state.job.error.message }}
+      </p>
+
+      <!-- A bulk job with failures still ends "succeeded" - the state alone
+         would read as a clean run, so this renders regardless of state. -->
+      <div v-if="failures.length" class="alert alert--error">
+        <div>
+          <strong>{{ failures.length }}</strong> of the batch failed:
+        </div>
+        <div v-for="(failure, index) in failures" :key="index">
+          {{ failure.type ?? failure.id ?? "?" }} - {{ failure.error }}
+        </div>
+      </div>
+
+      <div v-if="state.bulkSkipped.length" class="alert alert--warning">
+        <div>
+          {{ state.bulkSkipped.length }} target(s) could not be touched:
+        </div>
+        <div v-for="(entry, index) in state.bulkSkipped" :key="index">
+          {{ entry.type }} - {{ entry.reason }}
+        </div>
+      </div>
+
+      <p v-if="configRewritten" class="alert alert--warning">
+        Klipper rewrote the saved config for this build (olddefconfig ran
+        because src/Kconfig changed) - some menuconfig answers may have moved.
+      </p>
+
+      <p v-if="state.job.cancel_requested" class="alert alert--info">
+        Cancelling… {{ cancelWording }}
+      </p>
+      <p v-else-if="showCancel" class="muted">
+        {{ cancelWording }}
+      </p>
+
+      <div v-if="addMcuResult && addMcuResult.candidates.length" class="picker">
+        <p>New board(s) appeared and are not tracked yet:</p>
+        <ul class="devices">
+          <li
+            v-for="candidate in addMcuResult.candidates"
+            :key="candidate.serial"
+          >
+            <span>{{ candidate.path }}</span>
+            <button
+              type="button"
+              :disabled="adopting[candidate.serial]"
+              @click="adoptCandidate(candidate.serial, addMcuResult.type)"
+            >
+              {{ adopting[candidate.serial] ? "Adopting…" : "Adopt" }}
+            </button>
+          </li>
+        </ul>
+      </div>
+      <p
+        v-else-if="addMcuResult && !addMcuResult.already_tracked.length"
+        class="muted"
+      >
+        No board appeared. Check /dev/serial/by-id/ - if it is there, adopt it
+        directly once bus devices show it.
+      </p>
+      <p v-else-if="addMcuResult" class="muted">
+        The board that appeared is already tracked - nothing to adopt. Flash
+        Klipper onto it when ready.
+      </p>
+
+      <div v-if="state.log && state.log.job_id === state.job.id" class="log">
+        <p v-if="state.logOmitted" class="muted">
+          Some earlier lines were dropped from the buffer and are not shown.
+        </p>
+        <pre ref="logEl" class="detail-block" @scroll="onLogScroll"><span
         v-for="line in state.log.lines"
         :key="line.i"
         :data-stream="line.s"
         >{{ line.t }}
 </span></pre>
-    </div>
-  </UiPanel>
+      </div>
+    </UiPanel>
+  </div>
 </template>
 
 <style scoped>

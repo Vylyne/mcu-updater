@@ -76,7 +76,9 @@ describe("JobPanel", () => {
   it("hides the cancel button once cancellation was requested", () => {
     state.job = { ...runningBuild, cancel_requested: true };
     const wrapper = mount(JobPanel);
-    expect(wrapper.find("button").exists()).toBe(false);
+    // The panel-collapse toggle button is still there - only Cancel is gone.
+    const buttonLabels = wrapper.findAll("button").map((b) => b.text());
+    expect(buttonLabels).not.toContain("Cancel");
     expect(wrapper.text()).toContain("Cancelling…");
   });
 });

@@ -28,6 +28,18 @@
   --color-error: #ff5252;
   --color-info: #2196f3;
 
+  /* Chip text colour, not --tone-* directly - see the .chip rules below for
+     why: --tone-* is tuned for a plain --color-surface background (device
+     row icons, verdict labels), but a chip's own background is a translucent
+     tint of the SAME hue, which eats most of that headroom. Reusing --tone-*
+     there measured out to ~4.3-5.1:1, under-to-barely-over WCAG AA's 4.5:1 -
+     and same-hue text-on-tint reads as worse than the raw ratio even where it
+     technically passes. These are picked to clear ~6:1 against the chip's own
+     tinted background specifically. */
+  --chip-tone-ok: #81c784;
+  --chip-tone-unknown: #bdbdbd;
+  --chip-tone-attention: #ffa726;
+
   --panel-toolbar-height: 48px;
 }
 
@@ -57,6 +69,12 @@
     --tone-unknown: #616161;
     --tone-attention: #bf360c;
     --color-error: #c62828;
+
+    /* Same reasoning as the dark set above, darker instead of lighter since
+       the chip background here blends toward white, not black. */
+    --chip-tone-ok: #1b5e20;
+    --chip-tone-unknown: #424242;
+    --chip-tone-attention: #8f2703;
   }
 }
 
@@ -180,18 +198,20 @@ main h1 {
 }
 /* A solid tone fill with white text read as barely 2.8:1 contrast - well
    under WCAG AA's 4.5:1 for normal text. Same tinted-background-plus-
-   saturated-text pattern as .alert--* below, which already gets this right. */
+   saturated-text pattern as .alert--* below, which already gets this right.
+   Text colour is --chip-tone-*, not --tone-* - see :root's comment on those
+   tokens for why a chip needs its own shade. */
 .chip[data-tone="ok"] {
   background: rgba(76, 175, 80, 0.18);
-  color: var(--tone-ok);
+  color: var(--chip-tone-ok);
 }
 .chip[data-tone="unknown"] {
   background: rgba(158, 158, 158, 0.18);
-  color: var(--tone-unknown);
+  color: var(--chip-tone-unknown);
 }
 .chip[data-tone="attention"] {
   background: rgba(251, 140, 0, 0.18);
-  color: var(--tone-attention);
+  color: var(--chip-tone-attention);
 }
 .chip--outlined[data-tone] {
   background: transparent;

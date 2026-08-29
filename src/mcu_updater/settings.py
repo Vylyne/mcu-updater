@@ -181,7 +181,10 @@ def load_settings(path: str) -> Settings:
             elif name in _INT_FIELDS:
                 setattr(s, name, int(raw.strip()))
             elif name in _STR_FIELDS:
-                setattr(s, name, raw.strip())
+                text = raw.strip()
+                if name == "ui_accent_color" and text:
+                    text = f"#{text}"
+                setattr(s, name, text)
             elif name in _LIST_FIELDS:
                 setattr(s, name, doc.get_csv(SECTION, key))
             # Unknown keys are ignored rather than fatal: a newer version of the
@@ -218,6 +221,13 @@ def save_settings(path: str, settings: Settings) -> None:
         value: Any = getattr(settings, field.name)
         if isinstance(value, bool):
             value = "true" if value else "false"
+        elif field.name == "ui_accent_color" and value:
+            # A value starting with '#' is an inline comment to this module's
+            # own parser (mirroring Klipper's configparser, see the module
+            # docstring) - written as `#2196f3` it would come back empty on
+            # the very next load. Stored bare; `load_settings` adds the '#'
+            # back on the way in.
+            value = value.lstrip("#")
         doc.set(SECTION, field.name, value)
 
     if settings.stop_services is None:

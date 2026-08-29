@@ -250,6 +250,7 @@ make_jobs: 0               ; 0 = no -j flag, negative = one per CPU
 clean_before_build: true   ; leave on: a stale object mix flashes a wrong binary
 reseed_on_build: true      ; take a vendor's updated profile answers before building
 stop_services: klipper     ; klipper-1, klipper-2... for KIAUH multi-instance
+ui_accent_color: 2196f3    ; standalone UI's accent colour, no '#' - see below
 
 # A firmware family: a source tree, how it is built, what it emits.
 [firmware klipper]
@@ -366,6 +367,14 @@ names everything the write needs.
 that makes a flash unsafe rather than merely inconvenient — klipper stays up
 holding the serial port for every board on the printer. Absent still falls
 back to the built-in default, so this is not reachable by accident.
+
+⚠️ **`ui_accent_color` is written and read without its leading `#`.** A value
+starting with `#` is an inline comment to this file's own parser (it mirrors
+Klipper's `printer.cfg` parser exactly, comment prefixes included) — writing
+`ui_accent_color: #2196f3` by hand would silently come back as blank on the
+very next reload, with no error anywhere to say why. The standalone UI's own
+colour picker already round-trips this correctly; this only matters if you
+edit the value here directly.
 
 A unit that will not stop is a **hard failure**, not a best-effort skip: the
 write refuses rather than racing a service that still holds the port. If it

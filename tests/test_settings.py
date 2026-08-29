@@ -124,6 +124,30 @@ def test_save_then_load_round_trips_a_blank_stop_services(paths):
     assert load_settings(paths.settings_file).stop_services == []
 
 
+def test_save_then_load_round_trips_an_accent_colour(paths):
+    original = Settings(ui_accent_color="#2196f3")
+    save_settings(paths.settings_file, original)
+    assert load_settings(paths.settings_file) == original
+
+
+def test_accent_colour_is_stored_on_disk_without_its_leading_hash(paths):
+    """A value starting with '#' is an inline comment to this module's own
+    parser (mirroring Klipper's own configparser, `inline_comment_prefixes=
+    ('#', ';')` per this module's docstring) - written as `#2196f3` it would
+    come back as an empty string on the very next load. The wire/UI value
+    keeps its '#'; only the on-disk encoding is bare hex."""
+    save_settings(paths.settings_file, Settings(ui_accent_color="#2196f3"))
+    with open(paths.settings_file, encoding="utf-8") as fh:
+        text = fh.read()
+    assert "ui_accent_color: 2196f3" in text
+
+
+def test_save_then_load_round_trips_a_cleared_accent_colour(paths):
+    save_settings(paths.settings_file, Settings(ui_accent_color="#2196f3"))
+    save_settings(paths.settings_file, Settings(ui_accent_color=""))
+    assert load_settings(paths.settings_file).ui_accent_color == ""
+
+
 def test_saving_never_leaves_the_legacy_service_key_behind(paths):
     """The two keys must not be able to disagree once one of them has been
     written back out."""

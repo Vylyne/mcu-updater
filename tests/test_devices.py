@@ -39,6 +39,20 @@ def test_parses_a_two_part_name_as_having_no_chipset():
     assert dev.serial == "2900550018-if00"
 
 
+def test_a_multi_word_vendor_name_is_not_mis_split():
+    """usb-Raspberry_Pi_Pico_<serial> has three vendor/product words before the
+    serial - unlike Klipper's own `fw_chipset_serial` convention. The old
+    `split("_", 2)` corrupted this into fw="Raspberry", chipset="Pi",
+    serial="Pico_4250305031363918-if00"."""
+    dev = parse_entry("usb-Raspberry_Pi_Pico_4250305031363918-if00", "/bus")
+    assert dev is not None
+    assert (dev.fw, dev.chipset, dev.serial) == (
+        "Raspberry_Pi_Pico",
+        "",
+        "4250305031363918-if00",
+    )
+
+
 @pytest.mark.parametrize("name", ["not-a-usb-device", "usb-onlyonepart", "usb-", "README"])
 def test_ignores_unparseable_entries(name):
     assert parse_entry(name, "/bus") is None

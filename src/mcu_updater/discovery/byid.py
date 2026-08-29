@@ -140,19 +140,34 @@ class Byid:
 
 
 def parse_entry(name: str, directory: str) -> BusDevice | None:
-    """Parse one by-id filename. Returns None if it isn't a recognisable device."""
+    """Parse one by-id filename. Returns None if it isn't a recognisable device.
+
+    The serial is always the last underscore-delimited token
+    (`rsplit("_", 1)`), which is safe regardless of how many words precede it.
+    What remains (`name_blob`) is split into fw/chipset on its *first*
+    underscore, but only when it has at most one - i.e. at most two words -
+    which is the convention `usb-<fw>_<chipset>_<serial>` actually promises.
+    That covers every renamed Klipper fork too (e.g. Cartographer's own
+    `usb-Cartographer_stm32g431xx_<serial>`, `7bbf152`'s fix): the split isn't
+    gated on recognising the firmware name, because plenty of boards this tool
+    manages run firmware it has never heard of and still follow the
+    convention. A blob with *two or more* underscores (three or more words,
+    e.g. `usb-Raspberry_Pi_Pico_<serial>`) is genuinely ambiguous - there is no
+    reliable place to cut a vendor/product string into "name" and "chipset" -
+    so the whole blob becomes `fw` with no `chipset` rather than guessing.
+    """
     if not name.startswith(_PREFIX):
         return None
-    parts = name[len(_PREFIX) :].split("_", 2)
-    if len(parts) < 2:
+    rest = name[len(_PREFIX) :]
+    if "_" not in rest:
         return None
-    if len(parts) == 3:
-        fw, chipset, serial = parts
+    name_blob, serial = rest.rsplit("_", 1)
+    if not serial or not name_blob:
+        return None
+    if name_blob.count("_") <= 1:
+        fw, _, chipset = name_blob.partition("_")
     else:
-        # Two-part name: no chipset component.
-        fw, chipset, serial = parts[0], "", parts[1]
-    if not serial:
-        return None
+        fw, chipset = name_blob, ""
     return BusDevice(fw=fw, chipset=chipset, serial=serial, path=os.path.join(directory, name))
 
 

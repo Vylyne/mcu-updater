@@ -79,6 +79,21 @@ width*, not zero-padded, and uppercase.
 
 Nothing here is scheduled. Moved out of the runbook so it stops loading into
 every session.
+---
+
+## canbus support research
+
+- flashtool.py --query returns a list of can uuids
+
+```bash
+20:36:30 klipper@hestia buffer_manager main ~/katapult/scripts/flashtool.py --query
+Resetting all bootloader node IDs...
+Checking for Katapult nodes...
+Detected UUID: bcb5346fc731, Application: Klipper
+CANBus UUID Query Complete
+```
+
+- we may need a mapping for device serials to uuid due to how a usb to can bridge when booted into katapult by can uuid it comes up as a usb serial device running katapult.
 
 ### Other low-priority items
 
@@ -97,8 +112,6 @@ every session.
   polling. knomi-serial is gaining pyudev, so the dependency may arrive on the
   host anyway — but this project is stdlib-only by policy, so it would need a
   graceful fallback rather than a hard requirement.
-- **Standalone embeddable UI**, so the panel is not tied to a Mainsail fork.
-  Large; see the plugin-API item above for the cheaper version of the same win.
 - **Satellite host support** — a second host with no Moonraker and no agent,
   driven by a systemd timer.
 - **Flaky teardown** `RuntimeError` in

@@ -10,18 +10,23 @@ session, so it is kept to live work. Removed entries stay in git history
 
 ---
 
-- ~~save service state before attempting to stop the restore same state, (dont start the service if it was already stopped.)~~ shipped in `d2f7ee4` — `services_stopped()` (`service.py`) already checks `is_active()` before stopping and leaves an already-stopped service stopped.
-- ~~since we track what we flask i may want to and an option to also track a secondary folder's git sha, so we can report a version needs to be rebuilt and flashed if the either the main source orthe secondary folder has been updated, may be worth using a list extra_repos. this would be useful in situations like our buffer_manager devices, which flash klipper with an extra src file added as a makefile patch.~~ tracking itself shipped in `0d45e0a`; documented in README.md's `<fw>_extra_repos` bullet all along. What was actually missing — the standalone UI's edit view couldn't set it, and the silent-failure mode (a typo'd path never warns, staleness for it just never fires) went undocumented — is now fixed: `fw.type.add`/`.update` accept `<fw>_extra_repos`/`<fw>_makefile_patches`, warn (don't refuse) on a path with no git HEAD yet, and TypeDialog's Advanced section edits both.
+## 2028.08.29-0227 - UI improvements
 
-canbus support research
+### theming
 
-- flashtool.py --query returns a list of can uuids
+- apply theme to dropdown/select boxes.
 
-```bash
-20:36:30 klipper@hestia buffer_manager main ~/katapult/scripts/flashtool.py --query
-Resetting all bootloader node IDs...
-Checking for Katapult nodes...
-Detected UUID: bcb5346fc731, Application: Klipper
-CANBus UUID Query Complete
-```
+### untracked devices on bus
+
+- add option ingore device
+- move to the icon buttons like untrack button, +(track) and x(ignore) the track can bring up a dialogue or menu to select the type to add it to, or add new type.
+
+### settings panel
+
+- settings panel can default colapsed.
+
+### joblog
+
+- we are moving down to the joblog when a new job starts, but i don't think its fully there yet, as we don't get it fully scrolled into view.
+- joblog is not rendering coloured text.
 

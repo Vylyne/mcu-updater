@@ -245,7 +245,7 @@ async function toggle(): Promise<void> {
   <article class="target-row" :data-tone="target.artifact.tone">
     <div class="target-header">
       <span class="target-name">{{ target.name }}</span>
-      <span class="chip chip--outlined chip--x-small">{{
+      <span class="chip chip--outlined">{{
         target.provider
       }}</span>
       <span
@@ -265,7 +265,7 @@ async function toggle(): Promise<void> {
       <span class="spacer" />
 
       <span
-        class="chip chip--x-small"
+        class="chip"
         :data-tone="target.artifact.tone"
         :title="target.artifact.label"
       >
@@ -274,7 +274,7 @@ async function toggle(): Promise<void> {
 
       <span
         v-if="profileChip"
-        class="chip chip--x-small chip--outlined"
+        class="chip chip--outlined"
         :data-tone="profileChip.tone"
         :title="profileHint"
       >

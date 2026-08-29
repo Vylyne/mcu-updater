@@ -67,7 +67,7 @@ const allFlashed = computed(
 <template>
   <div class="summary-chips">
     <span
-      class="chip chip--x-small"
+      class="chip"
       :data-tone="staleCount ? 'attention' : 'ok'"
     >
       {{
@@ -76,19 +76,19 @@ const allFlashed = computed(
           : "All up to date"
       }}
     </span>
-    <span v-if="unprovableCount" class="chip chip--x-small chip--outlined">
+    <span v-if="unprovableCount" class="chip chip--outlined">
       {{ unprovableCount }} unprovable
     </span>
-    <span v-if="allFlashed" class="chip chip--x-small" data-tone="ok">
+    <span v-if="allFlashed" class="chip" data-tone="ok">
       All flashed
     </span>
-    <span v-if="needsFlashCount" class="chip chip--x-small chip--outlined">
+    <span v-if="needsFlashCount" class="chip chip--outlined">
       {{ needsFlashCount }} need flashing
     </span>
-    <span class="chip chip--x-small chip--outlined">
+    <span class="chip chip--outlined">
       {{ boardCount }} board{{ boardCount === 1 ? "" : "s" }}
     </span>
-    <span v-if="offlineCount" class="chip chip--x-small" data-tone="attention">
+    <span v-if="offlineCount" class="chip" data-tone="attention">
       {{ offlineCount }} offline
     </span>
   </div>

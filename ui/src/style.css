@@ -182,11 +182,6 @@ main h1 {
   white-space: nowrap;
 }
 
-.chip--x-small {
-  padding: 0 0.5rem;
-  font-size: 0.7rem;
-  line-height: 1.4;
-}
 
 .chip--outlined {
   background: transparent;

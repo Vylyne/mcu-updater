@@ -14,6 +14,10 @@ export interface UpdaterSettings {
   log_ring_size: number;
   platformio_bin: string;
   flashtool_path: string;
+  /** Empty means "use the UI's own default" - the agent never reads this
+   * itself, it only stores it so every browser pointed at this printer
+   * agrees on the accent colour. */
+  ui_accent_color: string;
 }
 
 /** registry.py's `SETTABLE` - the only keys `fw.settings.set` accepts from a
@@ -30,6 +34,7 @@ export const SETTABLE_KEYS = [
   "enable_flashing",
   "allow_flash_while_printing",
   "log_ring_size",
+  "ui_accent_color",
 ] as const satisfies readonly (keyof UpdaterSettings)[];
 
 export type SettableKey = (typeof SETTABLE_KEYS)[number];

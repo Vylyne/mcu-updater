@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
+import re
 from typing import Any
 
 from ... import firmware
@@ -17,6 +18,8 @@ from ...errors import (
 from ...settings import save_settings
 from ..rpc import ERR_INVALID_PARAMS, RpcError
 from ._api import _Base
+
+_HEX_COLOR = re.compile(r"^#[0-9a-fA-F]{6}$")
 
 
 def _parse_extra_repos(value: Any) -> list[str]:
@@ -82,6 +85,10 @@ class RegistryMixin(_Base):
     #: worst. Nothing about a browser form makes that a sensible thing to
     #: offer; editing the cfg is the right amount of friction. Remote service
     #: control is privilege, full stop.
+    #: `ui_accent_color` is the one exception to "everything here is a
+    #: behaviour preference" - it is cosmetic, but still belongs on this list:
+    #: it is still a browser-settable, agent-stored value, just not one the
+    #: agent itself ever reads.
     SETTABLE = (
         "make_jobs",
         "clean_before_build",
@@ -90,6 +97,7 @@ class RegistryMixin(_Base):
         "enable_flashing",
         "allow_flash_while_printing",
         "log_ring_size",
+        "ui_accent_color",
     )
 
     #: Changing either of these changes what a flash is allowed to do, so they are
@@ -155,6 +163,21 @@ class RegistryMixin(_Base):
         if key in settings_mod.BOOL_FIELDS:
             if not isinstance(raw, bool):
                 raise RpcError(f"'{key}' must be true or false", ERR_INVALID_PARAMS)
+            return raw
+
+        # Same reasoning as the bool branch above: driven by the settings
+        # module's own set, not a second hand-copied list. Must come before
+        # the int fallthrough below - a string would otherwise be refused as
+        # "must be a whole number", which is nonsense to read about a colour.
+        if key in settings_mod.STR_FIELDS:
+            if not isinstance(raw, str):
+                raise RpcError(f"'{key}' must be a string", ERR_INVALID_PARAMS)
+            if key == "ui_accent_color" and raw != "" and not _HEX_COLOR.match(raw):
+                raise RpcError(
+                    "'ui_accent_color' must be empty (the UI's own default) or a "
+                    "6-digit hex colour like '#2196f3'",
+                    ERR_INVALID_PARAMS,
+                )
             return raw
 
         if isinstance(raw, bool) or not isinstance(raw, int):

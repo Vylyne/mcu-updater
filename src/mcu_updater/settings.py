@@ -80,6 +80,15 @@ class Settings:
     #: printer's home the same way a [firmware] source: does.
     flashtool_path: str = ""
 
+    #: A UI-only cosmetic preference, not a behaviour one - the agent never reads
+    #: this itself, it only stores and serves it back so every browser pointed at
+    #: this printer agrees on the accent colour rather than each localStorage
+    #: disagreeing. Empty string means "use the UI's own default", since a
+    #: `<input type="color">` can never itself produce an empty value to mean
+    #: that. `ui_` prefixed rather than a nested section: every other setting
+    #: here is a flat top-level field, and SETTABLE/`_coerce_setting` assume one.
+    ui_accent_color: str = ""
+
     @property
     def resolved_jobs(self) -> int:
         """make_jobs, or a sensible auto value if it was set to a negative."""
@@ -105,7 +114,10 @@ BOOL_FIELDS = {
 #: lists of the same thing is how one grows a field the other does not.
 _BOOL_FIELDS = BOOL_FIELDS
 _INT_FIELDS = {"make_jobs", "log_ring_size"}
-_STR_FIELDS = {"service_backend", "platformio_bin", "flashtool_path"}
+#: Public for the same reason as `BOOL_FIELDS`: registry.py's `_coerce_setting`
+#: needs this same list to validate a browser's string-typed values.
+STR_FIELDS = {"service_backend", "platformio_bin", "flashtool_path", "ui_accent_color"}
+_STR_FIELDS = STR_FIELDS
 _LIST_FIELDS = {"stop_services"}
 _BACKENDS = ("moonraker", "systemd", "null")
 

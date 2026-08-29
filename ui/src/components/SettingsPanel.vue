@@ -19,8 +19,24 @@ const settings = computed(
 // A local editable copy, refreshed from the server value whenever it moves
 // under us (another tab saved, or a reconnect re-fetched fw.status) and we
 // have no pending edit of our own to lose.
-const draft = reactive<Partial<Record<SettableKey, number | boolean>>>({});
+const draft = reactive<Partial<Record<SettableKey, number | boolean | string>>>(
+  {},
+);
 const saving = ref(false);
+
+// `<input type="color">` can never itself produce an empty string, so an
+// unset (cleared-to-default) accent needs something to paint the swatch
+// with - matches this app's own --color-primary default in style.css, not
+// picked independently of it.
+const DEFAULT_ACCENT = "#2196f3";
+
+const accentValue = computed(
+  () => (draft.ui_accent_color as string) || DEFAULT_ACCENT,
+);
+
+function onAccentInput(event: Event): void {
+  draft.ui_accent_color = (event.target as HTMLInputElement).value;
+}
 
 watch(
   settings,
@@ -118,6 +134,25 @@ function discard(): void {
       </label>
     </div>
 
+    <!-- Not part of settings-grid's number/switch rows above - this one is
+         cosmetic, not a behaviour preference, and its "clear" affordance
+         doesn't fit that grid's single-control-per-row shape. Stored on the
+         agent anyway (not localStorage) so every browser pointed at this
+         printer agrees, per settings.py's own ui_accent_color comment. -->
+    <label class="accent-row">
+      Accent colour
+      <span class="accent-controls">
+        <input :value="accentValue" type="color" @input="onAccentInput" />
+        <button
+          type="button"
+          :disabled="!draft.ui_accent_color"
+          @click="draft.ui_accent_color = ''"
+        >
+          Reset to default
+        </button>
+      </span>
+    </label>
+
     <p class="alert alert--info">
       stop_services and service_backend describe how this host is wired, not a
       behaviour preference, and are edited in the cfg file directly rather than
@@ -137,3 +172,26 @@ function discard(): void {
     <button type="button" :disabled="!dirty" @click="discard">Discard</button>
   </UiPanel>
 </template>
+
+<style scoped>
+.accent-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-bottom: 0.5rem;
+}
+
+.accent-controls {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.accent-controls input[type="color"] {
+  width: 40px;
+  height: 28px;
+  padding: 2px;
+  cursor: pointer;
+}
+</style>

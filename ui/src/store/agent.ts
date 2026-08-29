@@ -2,7 +2,7 @@
 // weight bought nothing here, and this repo stays dependency-frugal by
 // default. Components import `state` directly and call the exported actions.
 
-import { reactive } from "vue";
+import { reactive, watch } from "vue";
 import {
   MoonrakerClient,
   type ConnectionState,
@@ -32,6 +32,7 @@ import type {
 } from "../api/kconfig";
 import type { BulkOperation, BulkScope } from "../api/bulk";
 import type { TypeDraft } from "../api/mcutype";
+import type { UpdaterSettings } from "../api/settings";
 
 export interface EventLogEntry {
   at: number;
@@ -95,6 +96,26 @@ export const state: AgentStoreState = reactive({
   unsupportedApiVersion: null,
   bulkSkipped: [],
 });
+
+// Lives here, not in SettingsPanel.vue: that panel is only ever mounted
+// while its own collapsible section is open, so a document-root side effect
+// tied to it would leave a browser that never opens Settings stuck on the
+// theme default even after a persisted colour arrives from `fw.status`. A
+// watch on `state.status` itself fires for every path that can change it -
+// the initial load, a push from another client's edit, and this client's
+// own save - with no separate wiring at each call site.
+watch(
+  () =>
+    (state.status?.settings as UpdaterSettings | undefined)?.ui_accent_color,
+  (color) => {
+    if (color) {
+      document.documentElement.style.setProperty("--color-primary", color);
+    } else {
+      document.documentElement.style.removeProperty("--color-primary");
+    }
+  },
+  { immediate: true },
+);
 
 const MAX_EVENT_LOG = 50;
 const logCursor: LogCursor = { current: 0 };

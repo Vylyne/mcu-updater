@@ -438,12 +438,20 @@ than from a `[firmware ...]` family, and naming one would be a guess.
 `Settings` dataclass (settings.py) as-is. `fw.settings.set {settings: {...}}`
 only accepts registry.py's `SETTABLE` subset - `make_jobs`,
 `clean_before_build`, `reseed_on_build`, `dry_run`, `enable_flashing`,
-`allow_flash_while_printing`, `log_ring_size` - and refuses anything else with
-`setting_not_settable`, whose `data.settable` names the keys it does accept.
+`allow_flash_while_printing`, `log_ring_size`, `ui_accent_color` - and refuses
+anything else with `setting_not_settable`, whose `data.settable` names the
+keys it does accept.
 `stop_services` and `service_backend` describe how this host is wired, not a
 behaviour preference, and are deliberately absent - editing them from a
 browser risks a real flash proceeding with Klipper never stopped. They stay a
 cfg-file-only edit.
+
+`ui_accent_color` is the one `SETTABLE` key that isn't a behaviour preference
+at all - the agent never reads it, only stores and serves it back, so every
+browser pointed at this printer agrees on the same accent colour rather than
+each one's `localStorage` disagreeing. Empty string means "use the UI's own
+default"; otherwise it must be a 6-digit hex colour (`#2196f3`), refused
+otherwise with `ERR_INVALID_PARAMS`.
 
 **Toggling `enable_flashing` or `allow_flash_while_printing` does not take
 effect until the agent's next reconnect.** `fw.ping`'s `capabilities` is

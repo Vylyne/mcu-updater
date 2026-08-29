@@ -252,6 +252,7 @@ def test_settings_get_is_serialisable(api):
     s = api.dispatch("fw.settings.get")["settings"]
     assert s["stop_services"] is None
     assert isinstance(s["clean_before_build"], bool)
+    assert s["ui_accent_color"] == ""
 
 
 # --------------------------------------------------------------------------
@@ -885,6 +886,29 @@ def test_settings_set_requires_a_non_empty_object(api, payload):
     with pytest.raises(RpcError) as exc:
         api.dispatch("fw.settings.set", payload)
     assert exc.value.code == ERR_INVALID_PARAMS
+
+
+def test_settings_set_accepts_a_hex_accent_colour(api):
+    res = api.dispatch("fw.settings.set", {"settings": {"ui_accent_color": "#2196f3"}})
+    assert res["settings"]["ui_accent_color"] == "#2196f3"
+    assert res["changed"] == ["ui_accent_color"]
+
+
+def test_settings_set_accepts_clearing_the_accent_colour(api):
+    api.dispatch("fw.settings.set", {"settings": {"ui_accent_color": "#2196f3"}})
+    res = api.dispatch("fw.settings.set", {"settings": {"ui_accent_color": ""}})
+    assert res["settings"]["ui_accent_color"] == ""
+
+
+@pytest.mark.parametrize(
+    "value",
+    ["blue", "#12345", "#1234567", "#gggggg", "2196f3", "#2196f3 "],
+)
+def test_settings_set_refuses_a_malformed_accent_colour(api, value):
+    with pytest.raises(RpcError) as exc:
+        api.dispatch("fw.settings.set", {"settings": {"ui_accent_color": value}})
+    assert exc.value.code == ERR_INVALID_PARAMS
+    assert api.settings().ui_accent_color == ""
 
 
 def test_enabling_flashing_makes_fw_flash_appear(paths, live_registry_text):

@@ -448,6 +448,12 @@ export async function adoptSerial(
   try {
     await callAgent(client, "fw.serial.add", { name, serial });
     state.error = null;
+    // The agent's own `bus` push has its own poll cadence (15s idle, 2s
+    // during a job) - too slow for an action the user just took themselves
+    // in this same browser tab to show its own result. `_changed()`'s "state"
+    // event covers `state.status`, but only refreshStatus reseeds
+    // `state.bus`, the same way it already does on first load.
+    void refreshStatus();
     return true;
   } catch (error) {
     state.error = error as NormalizedAgentError;
@@ -458,14 +464,13 @@ export async function adoptSerial(
 /** Flag a bus device so it stops appearing among the untracked/adoptable
  * ones - the flip side of adoptSerial for a device nobody wants tracked
  * (e.g. a USB-serial adapter sharing the same chipset as a real board).
- * Idempotent on the agent side; the updated `bus[]` (with `ignored: true`)
- * arrives the normal way through the `bus` notify_agent_event this store
- * already listens for, so there is nothing to patch locally here. */
+ * Idempotent on the agent side. */
 export async function ignoreSerial(serial: string): Promise<boolean> {
   if (client === null) return false;
   try {
     await callAgent(client, "fw.bus.ignore", { serial });
     state.error = null;
+    void refreshStatus();
     return true;
   } catch (error) {
     state.error = error as NormalizedAgentError;
@@ -479,6 +484,7 @@ export async function unignoreSerial(serial: string): Promise<boolean> {
   try {
     await callAgent(client, "fw.bus.unignore", { serial });
     state.error = null;
+    void refreshStatus();
     return true;
   } catch (error) {
     state.error = error as NormalizedAgentError;

@@ -21,7 +21,11 @@ import type { Family } from "../api/mcutype";
 import UiPanel from "./UiPanel.vue";
 import UiIcon from "./UiIcon.vue";
 import TypeDialog from "./TypeDialog.vue";
-import { mdiClose, mdiPlusCircleOutline, mdiUndoVariant } from "../icons";
+import {
+  mdiCloseCircleOutline,
+  mdiPlusCircleOutline,
+  mdiUndoVariant,
+} from "../icons";
 
 const devices = computed(() => state.bus as unknown as BusDevice[]);
 const untracked = computed(() =>
@@ -203,12 +207,12 @@ function openNewType(device: BusDevice): void {
 
         <button
           type="button"
-          class="btn-icon"
+          class="btn-icon btn-icon--small"
           title="Ignore"
           :disabled="busy[device.serial]"
           @click="ignore(device)"
         >
-          <UiIcon :path="mdiClose" size="small" />
+          <UiIcon :path="mdiCloseCircleOutline" size="x-small" />
         </button>
       </li>
     </ul>

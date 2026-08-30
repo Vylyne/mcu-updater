@@ -23,6 +23,18 @@ UI_PATH="${UI_PATH:-${HOME}/mcu-updater-ui}"
 # up by default).
 MCU_UPDATER_UI_PORT="${MCU_UPDATER_UI_PORT:-8090}"
 MCU_UPDATER_UI_SERVER_NAME="${MCU_UPDATER_UI_SERVER_NAME:-_}"
+# Which Moonraker `channel:` this install tracks. `stable` (the default)
+# refuses to seed a prerelease build during a beta-only window rather than
+# silently crossing channels - see install_ui_release. Set to `beta` to track
+# betas cut from the `develop` branch (see AGENTS.md's release sequence).
+MCU_UPDATER_UI_CHANNEL="${MCU_UPDATER_UI_CHANNEL:-stable}"
+case "${MCU_UPDATER_UI_CHANNEL}" in
+    stable | beta) ;;
+    *)
+        echo "MCU_UPDATER_UI_CHANNEL must be 'stable' or 'beta', got '${MCU_UPDATER_UI_CHANNEL}'" >&2
+        exit 1
+        ;;
+esac
 # One file for everything hand-edited: the [updater] section and the [mcu ...]
 # sections. Must match Paths.main_config.
 MAIN_CONFIG="${CONFIG_PATH}/mcu-updater.cfg"
@@ -453,7 +465,13 @@ function add_update_manager_ui {
         echo "[MOONRAKER] Adding mcu-updater-ui update_manager entry to moonraker.conf..."
         {
             printf "\n"
-            cat "${INSTALL_PATH}/scripts/moonraker-update-manager-ui.conf"
+            # The shipped conf hardcodes channel: stable; swap it when this
+            # install was asked to track beta instead.
+            if [ "${MCU_UPDATER_UI_CHANNEL}" = "beta" ]; then
+                sed 's/^channel: stable$/channel: beta/' "${INSTALL_PATH}/scripts/moonraker-update-manager-ui.conf"
+            else
+                cat "${INSTALL_PATH}/scripts/moonraker-update-manager-ui.conf"
+            fi
         } >> "${conf}"
         printf "[MOONRAKER] Added. Restart Moonraker for it to take effect.\n\n"
     fi
@@ -474,28 +492,33 @@ function install_ui_release {
         return 0
     fi
 
-    echo "[UI] Fetching the latest mcu-updater-ui release..."
+    echo "[UI] Fetching the latest mcu-updater-ui release (channel: ${MCU_UPDATER_UI_CHANNEL})..."
     # This is only the *bootstrap* fetch - it just needs to land some
     # release_info.json so Moonraker's own update_manager stops refusing to
-    # ever check (see the comment above). That check then follows whatever
-    # `channel:` is actually configured, so it does not matter which channel
-    # seeded this file. Every tag push publishes to beta first (see
-    # .github/workflows/ui-release.yml) and promotion to stable is a
-    # deliberate, separate step - so a fresh repo can go a long time with
-    # nothing on the stable channel at all. Try stable first since that is
-    # this conf's default, then fall back to beta rather than leaving a
-    # perfectly installable release invisible to a first-time install.
-    local asset_url
-    asset_url="$(curl -fsSL "https://api.github.com/repos/Vylyne/mcu-updater/releases/latest" \
-        | grep -o '"browser_download_url": *"[^"]*mcu-updater-ui\.zip"' \
-        | grep -o 'https://[^"]*' || true)"
-    if [ -z "${asset_url}" ]; then
+    # ever check (see the comment above). Every later check follows whatever
+    # `channel:` is configured, so this bootstrap must seed the *same*
+    # channel and never cross - seeding a prerelease into a channel: stable
+    # directory works technically (Moonraker only reads release_info.json),
+    # but Mainsail's client-side `semver.gt(remote, local)` then hides every
+    # future update row rather than reporting the mismatch. So: stable stays
+    # on /releases/latest only, with no fallback to "newest of any kind";
+    # beta reads the newest release regardless of its prerelease flag.
+    local asset_url=""
+    if [ "${MCU_UPDATER_UI_CHANNEL}" = "beta" ]; then
         asset_url="$(curl -fsSL "https://api.github.com/repos/Vylyne/mcu-updater/releases?per_page=1" \
+            | grep -o '"browser_download_url": *"[^"]*mcu-updater-ui\.zip"' \
+            | grep -o 'https://[^"]*' || true)"
+    else
+        asset_url="$(curl -fsSL "https://api.github.com/repos/Vylyne/mcu-updater/releases/latest" \
             | grep -o '"browser_download_url": *"[^"]*mcu-updater-ui\.zip"' \
             | grep -o 'https://[^"]*' || true)"
     fi
     if [ -z "${asset_url}" ]; then
-        printf "[UI] No release published yet (or the fetch failed) - leaving the placeholder.\n       Re-run install.sh once a release exists.\n\n"
+        if [ "${MCU_UPDATER_UI_CHANNEL}" = "stable" ]; then
+            printf "[UI] No stable release published yet - leaving the placeholder.\n       Re-run install.sh once one exists, or MCU_UPDATER_UI_CHANNEL=beta ./install.sh to track the beta channel instead.\n\n"
+        else
+            printf "[UI] No release published yet (or the fetch failed) - leaving the placeholder.\n       Re-run install.sh once a release exists.\n\n"
+        fi
         return 0
     fi
 
@@ -685,8 +708,10 @@ function print_next_steps {
  matches ^klipper(-[0-9a-zA-Z]+)?.service$ and would mistake it for a Klipper
  instance.
 
- For the Mainsail panel, point your Update Manager at the fork by changing
- one line in moonraker.conf:
+ The Mainsail fork (Vylyne/mainsail) is DEPRECATED - the standalone UI below
+ is the supported client now. Existing fork installs keep working, but a new
+ install should skip this step. See docs/mainsail-fork.md if you still need
+ it:
 
    [update_manager mainsail]
    repo: Vylyne/mainsail        # was mainsail-crew/mainsail
@@ -709,7 +734,8 @@ function print_next_steps {
  Manager will offer the real thing once a release exists; re-run install.sh
  to fetch it immediately instead of waiting for that panel. If you accepted
  the nginx prompt, it is reachable on port ${MCU_UPDATER_UI_PORT}. Re-run
- install.sh with UI_PATH/MCU_UPDATER_UI_PORT set to change either.
+ install.sh with UI_PATH/MCU_UPDATER_UI_PORT set to change either, or with
+ MCU_UPDATER_UI_CHANNEL=beta to track beta releases (currently: ${MCU_UPDATER_UI_CHANNEL}).
 ================================================================
 EOF
 }

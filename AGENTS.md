@@ -74,6 +74,50 @@ directly — activating in one call and running the gate in the next silently
 gets the system interpreter back. Without a floor venv, CI's 3.11 matrix leg is
 the only thing checking this.
 
+## Branching and releases
+
+`main` is not just a branch — `scripts/moonraker-update-manager.conf` pins
+`primary_branch: main`, so every push to `main` is an update Moonraker offers to
+every installed agent. Everyday work never targets `main` directly.
+
+| Branch | Role |
+| --- | --- |
+| `main` | Release channel. Protected — PR + green CI only. Receives `develop` only at release time. |
+| `develop` | Integration branch. Everyday work lands here. Beta tags are cut from here. |
+| `feat/…`, `fix/…`, `chore/…` | Short-lived topic branches, PR'd into `develop`. |
+
+**Release sequence** — tags are plain ascending `vX.Y.Z`, never `-beta.N`. The
+GitHub prerelease *flag* is the channel, not the version string:
+
+1. Bump `__version__` (`src/mcu_updater/__init__.py`) in the release commit, on `develop`.
+2. Tag that commit `vX.Y.Z`. `ui-release.yml` publishes with `prerelease: true` —
+   only `channel: beta` hosts are offered it.
+3. Soak. A fix gets a new tag (`vX.Y.Z+1`); a published tag is never reused.
+4. Promote: `gh release edit vX.Y.Z --prerelease=false`. This flips the flag on
+   the already-soaked artifact — it does **not** re-run the workflow or rebuild.
+   The `stable:` `workflow_dispatch` input rebuilds and is emergency-only.
+5. PR `develop` → `main`.
+
+**The one ordering rule.** `ui/src/store/agent.ts` refuses to render when the
+agent's `apiVersion` exceeds the UI's `SUPPORTED_API_VERSION` — so a newer agent
+paired with an older UI blanks the panel; the reverse is fine. The agent ships
+from `main`, the UI from a release zip, so on any `API_VERSION` bump:
+
+> **Promote the UI release to stable FIRST. Merge `develop` → `main` SECOND.**
+
+Reversed, every user's panel blanks in the window between the two steps.
+`tests/test_ui_contract.py` cannot catch this — it compares agent and UI within
+one commit, which is exactly the commit that creates the skew. (This rule has a
+residual gap it does not close: the agent and UI are separate Moonraker update
+rows, so a user who updates one but not the other can still hit the same blank
+panel. Not worth engineering around.)
+
+**Version of record:** the git tag, mirrored by `__version__`
+(`pyproject.toml`'s version is `dynamic`, read from `__version__` — never edit it
+directly). `ui/package.json`'s version is inert (`private: true`, never read at
+build time) and stays pinned at `0.0.0`; the UI's version of record is the tag
+that produced `release_info.json`, exactly as Moonraker already reads it.
+
 ## Finishing a plan
 
 Every plan that adds or changes user-facing behavior — a config key, the

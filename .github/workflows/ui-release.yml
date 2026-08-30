@@ -44,7 +44,7 @@ on:
         type: string
         required: true
       stable:
-        description: "Publish to the stable channel (leave off for beta only)"
+        description: "EMERGENCY ONLY - rebuilds and publishes straight to stable, skipping the beta soak. Normal promotion is `gh release edit <tag> --prerelease=false`, which flips the flag on the already-soaked artifact instead of rebuilding it."
         type: boolean
         default: false
 
@@ -56,7 +56,48 @@ defaults:
     working-directory: ui
 
 jobs:
+  # Tag pushes trigger neither ci.yml nor ui-ci.yml, so without this a release
+  # could publish from a commit whose Python gate never ran. Single-interpreter
+  # (3.13, what the printers run) rather than the full 3.11/3.13 matrix - the
+  # matrix already gates every merge into develop/main; this just refuses to
+  # release from a commit that skipped it some other way.
+  python-gate:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: .
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
+        with:
+          python-version: "3.13"
+      - run: pip install -e ".[dev]"
+      - name: Lint
+        run: ruff check src tests scripts
+      - name: Type check
+        run: mypy src
+      - name: Test
+        run: pytest -q
+
+      # The tag is the version of record (see AGENTS.md); pyproject.toml's
+      # version is derived from __version__, so installing the package above
+      # is enough to read it back. This never moves the tag - it only refuses
+      # a release where the bump was forgotten.
+      - name: Check tag matches __version__
+        env:
+          RELEASE_TAG: ${{ inputs.tag || github.ref_name }}
+        run: |
+          set -eu
+          PYVER="$(python3 -c 'import mcu_updater; print(mcu_updater.__version__)')"
+          TAGVER="${RELEASE_TAG#v}"
+          if [ "$TAGVER" != "$PYVER" ]; then
+            echo "tag $RELEASE_TAG (version $TAGVER) does not match mcu_updater.__version__ ($PYVER) - bump __version__ in the release commit before tagging" >&2
+            exit 1
+          fi
+          echo "tag $RELEASE_TAG matches __version__ $PYVER"
+
   release:
+    needs: python-gate
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7

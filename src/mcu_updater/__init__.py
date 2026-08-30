@@ -14,7 +14,12 @@ Anything importable by the agent must never block on a terminal.
 
 from __future__ import annotations
 
-__version__ = "0.9.0"
+# The version of record - matches the git tag that published it (v0.4.0 <->
+# "0.4.0", stripped of the leading `v`; tags carry no `-beta.N` suffix, see
+# AGENTS.md). pyproject.toml's own version is derived from this, not the other
+# way round - see [tool.setuptools.dynamic] there. ui-release.yml refuses to
+# publish a tag that disagrees with this value.
+__version__ = "0.4.0"
 
 # Bumped only on a breaking change to the agent's JSON-RPC surface. The Mainsail
 # panel refuses to render if it sees an API version it doesn't know.

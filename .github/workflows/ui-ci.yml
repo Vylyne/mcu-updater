@@ -6,7 +6,7 @@ name: ui-ci
 
 on:
   push:
-    branches: [main]
+    branches: [main, develop]
     paths: ["ui/**", ".github/workflows/ui-ci.yml"]
   pull_request:
     paths: ["ui/**", ".github/workflows/ui-ci.yml"]

@@ -18,8 +18,8 @@ jobs:
       run:
         working-directory: ui
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v7
         with:
           # jsdom 30's engines field is ^22.22.2 || ^24.15.0 || >=26.0.0 - 20
           # is not in that range at all, and fails at test time with

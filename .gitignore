@@ -1,6 +1,7 @@
 __pycache__/
 *.pyc
 .vscode/
+NOTES.md
 
 # packaging / tooling
 build/

@@ -10,8 +10,4 @@ session, so it is kept to live work. Removed entries stay in git history
 
 ---
 
-## 2028.08.29-0227 - UI improvements
-
-### untracked devices on bus
-
-- restore adopt button
+empty

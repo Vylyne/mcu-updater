@@ -88,11 +88,6 @@ of it. What is still open:
   `RPI-RP2` under either glob `bootsel_scan()` searches, or that a plain
   `shutil.copy2` onto that mount is enough without a sync. Try
   `mcu-updater add-mcu <rp2040-type>`. Bench board only.
-- **Promote `v2.18.4-vylyne.20`** on `Vylyne/mainsail` `mu/stable` once it has
-  soaked. It is published as a prerelease (beta channel) and carries the
-  `fw.display.*` wire-fold migration, the type-dialog fix, and the
-  `FW_SUPPORTED_API_VERSION` bump. Promote by editing the existing release — do
-  not re-run the release workflow with `stable: true`, which rebuilds the tree.
 - **Close the `.vue` type-checking gap** in the Mainsail fork. Blocked on a
   structural `vue-tsc` incompatibility, not a version pin — read
   [docs/decisions.md](docs/decisions.md) before attempting it, and treat
@@ -198,12 +193,14 @@ the batch past a check that exists to stop a fleet-wide brick.
 
 ## Web UI
 
-Everything above also works from a browser instead of SSH. A Moonraker agent
-(`src/mcu_updater/agent`) talks to a small fork of Mainsail —
+Everything above also works from a browser instead of SSH, via the standalone UI
+(`ui/`) — see [docs/standalone-ui.md](docs/standalone-ui.md). A Moonraker agent
+(`src/mcu_updater/agent`) also talks to a small fork of Mainsail —
 [Vylyne/mainsail](https://github.com/Vylyne/mainsail) — that adds a native "MCU
-Firmware" panel to the Machine page. Mainsail has no plugin API, so a real panel
-needs a fork; [docs/mainsail-fork.md](docs/mainsail-fork.md) covers how it's kept
-small and rebaseable against upstream.
+Firmware" panel to the Machine page; **that fork is deprecated** in favor of the
+standalone UI and kept only for existing installs —
+[docs/mainsail-fork.md](docs/mainsail-fork.md) covers how it's kept small and
+rebaseable against upstream, for whoever still maintains one.
 
 Same registry, same `mcu-updater.cfg`, same builds — the panel shown at the top
 of this page lists every tracked type, whether its firmware is current, and

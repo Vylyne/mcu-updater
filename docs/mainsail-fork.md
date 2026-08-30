@@ -1,5 +1,11 @@
 # The Mainsail fork
 
+> **Deprecated.** The standalone UI (`ui/`, see
+> [docs/standalone-ui.md](standalone-ui.md)) is the supported client now.
+> Existing installs of this fork keep working, but new work does not target
+> it — this document stays only as the runbook for whoever still maintains
+> an existing install.
+
 Mainsail has no plugin API — only CSS theming — so a real panel needs a fork.
 This document is the runbook for keeping that fork cheap to maintain.
 

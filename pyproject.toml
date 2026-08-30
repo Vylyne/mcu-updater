@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "mcu-updater"
-version = "0.3.2"
+dynamic = ["version"]
 description = "Klipper/Katapult MCU firmware management with a Moonraker agent and Mainsail UI"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -22,6 +22,12 @@ updatefw = "mcu_updater.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.dynamic]
+# The tag is the version of record (see AGENTS.md); this is the one place
+# Python reads it from, so a wheel build and `mcu_updater.__version__` can
+# never disagree.
+version = { attr = "mcu_updater.__version__" }
 
 [tool.ruff]
 target-version = "py311"

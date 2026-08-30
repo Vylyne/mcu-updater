@@ -351,6 +351,14 @@ input:not(.switch):not([type="checkbox"]):not([type="radio"]):not(
   color: var(--color-primary);
 }
 
+.btn-icon--success:not(:disabled) {
+  color: var(--tone-ok);
+}
+
+.btn-icon--warning:not(:disabled) {
+  color: var(--tone-attention);
+}
+
 /* -- text -------------------------------------------------------------- */
 
 .text-caption {
@@ -512,6 +520,15 @@ main.embed {
   align-items: center;
   gap: 0.5rem;
   padding: 0.25rem 0;
+}
+
+.device-identity {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  max-width: 50%;
 }
 
 /* -- switches (SettingsPanel's toggles, TypeDialog's katapult_installed,

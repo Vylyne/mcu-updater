@@ -489,15 +489,6 @@ async function toggle(): Promise<void> {
 
 /* A by-id serial and a /dev/serial/by-path name are both long enough to wrap
    the row without this. */
-.device-identity {
-  display: flex;
-  flex-direction: column;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-  max-width: 50%;
-}
-
 .mr {
   margin-right: 4px;
 }

@@ -30,8 +30,10 @@ import UiIcon from "./UiIcon.vue";
 import TypeDialog from "./TypeDialog.vue";
 import {
   mdiCloseCircleOutline,
+  mdiHelpCircleOutline,
   mdiPlusCircleOutline,
   mdiUndoVariant,
+  mdiUsb,
 } from "../icons";
 
 const devices = computed(() => state.bus as unknown as BusDevice[]);
@@ -163,19 +165,26 @@ function openNewType(device: BusDevice): void {
 
 <template>
   <UiPanel v-if="untracked.length || ignored.length" title="Untracked devices">
-    <p class="muted">
-      On the bus, but no MCU type claims them yet - pick a type to adopt one
-      under.
-    </p>
     <ul class="devices">
       <li
         v-for="device in untracked"
         :key="device.serial"
         :class="{ muted: device.is_mcu === false }"
       >
-        <span>{{ device.fw }}</span>
-        <span class="muted">{{ device.path }}</span>
+        <UiIcon
+          :path="device.is_mcu === false ? mdiHelpCircleOutline : mdiUsb"
+          size="x-small"
+        />
+        <span class="device-identity">
+          <span class="text--secondary">{{ device.serial }}</span>
+          <span class="text--disabled text-caption">{{ device.path }}</span>
+        </span>
         <span class="spacer" />
+
+        <span class="text-caption text--disabled">{{ device.fw }}</span>
+        <span v-if="device.chipset" class="text-caption text--disabled">{{
+          device.chipset
+        }}</span>
 
         <span
           v-if="device.is_mcu !== false && showPlusMenu"
@@ -184,12 +193,12 @@ function openNewType(device: BusDevice): void {
         >
           <button
             type="button"
-            class="btn-icon"
+            class="btn-icon btn-icon--small btn-icon--success"
             title="Track this device…"
             :disabled="busy[device.serial]"
             @click="toggleMenu(device.serial)"
           >
-            <UiIcon :path="mdiPlusCircleOutline" size="small" />
+            <UiIcon :path="mdiPlusCircleOutline" size="x-small" />
           </button>
           <div v-if="menuOpenFor === device.serial" class="menu-list">
             <template v-if="showAdoptItems">
@@ -218,7 +227,7 @@ function openNewType(device: BusDevice): void {
 
         <button
           type="button"
-          class="btn-icon btn-icon--small"
+          class="btn-icon btn-icon--small btn-icon--warning"
           title="Ignore"
           :disabled="busy[device.serial]"
           @click="ignore(device)"
@@ -232,17 +241,27 @@ function openNewType(device: BusDevice): void {
       <summary>Ignored ({{ ignored.length }})</summary>
       <ul class="devices">
         <li v-for="device in ignored" :key="device.serial">
-          <span>{{ device.fw }}</span>
-          <span class="muted">{{ device.path }}</span>
+          <UiIcon
+            :path="device.is_mcu === false ? mdiHelpCircleOutline : mdiUsb"
+            size="x-small"
+          />
+          <span class="device-identity">
+            <span class="text--secondary">{{ device.serial }}</span>
+            <span class="text--disabled text-caption">{{ device.path }}</span>
+          </span>
           <span class="spacer" />
+          <span class="text-caption text--disabled">{{ device.fw }}</span>
+          <span v-if="device.chipset" class="text-caption text--disabled">{{
+            device.chipset
+          }}</span>
           <button
             type="button"
-            class="btn-icon"
+            class="btn-icon btn-icon--small"
             title="Restore"
             :disabled="busy[device.serial]"
             @click="unignore(device)"
           >
-            <UiIcon :path="mdiUndoVariant" size="small" />
+            <UiIcon :path="mdiUndoVariant" size="x-small" />
           </button>
         </li>
       </ul>

@@ -148,6 +148,30 @@ describe("TargetRow", () => {
     expect(wrapper.text()).toContain("No serial devices are tracked");
   });
 
+  it("offers a scope override on a flash whose stale preview is empty", async () => {
+    // mcuTarget's device already has needs_flash: false, so the "stale"
+    // preview is empty even though a device is present - exactly the
+    // "nothing to do" gap the override switch exists for.
+    const target: Target = { ...mcuTarget, actions: [flashAction] };
+    const wrapper = mount(TargetRow, { props: { target } });
+    const flashButton = wrapper
+      .findAll("button")
+      .find((b) => b.attributes("title") === "Flash");
+    await flashButton!.trigger("click");
+
+    let confirmButton = wrapper
+      .findAll("button")
+      .find((b) => b.text() === "Confirm");
+    expect(confirmButton?.attributes("disabled")).toBeDefined();
+
+    await wrapper.get('input[type="checkbox"]').setValue(true);
+    expect(wrapper.text()).toContain("mcu EBBT0");
+    confirmButton = wrapper
+      .findAll("button")
+      .find((b) => b.text() === "Confirm");
+    expect(confirmButton?.attributes("disabled")).toBeUndefined();
+  });
+
   it("toggles the detail panel without a connected client", async () => {
     const wrapper = mount(TargetRow, { props: { target: mcuTarget } });
     const button = wrapper.get("button");

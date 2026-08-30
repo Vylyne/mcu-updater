@@ -78,6 +78,29 @@ describe("ActionButton", () => {
     await wrapper.get("button:not([disabled])").trigger("click");
   });
 
+  it("lists multiple preview devices as separate rows rather than running them together", async () => {
+    const action: Action = {
+      ...buildAction,
+      id: "flash",
+      label: "Flash",
+      method: "fw.flash_all",
+    };
+    const wrapper = mount(ActionButton, {
+      props: {
+        action,
+        previewDevices: [
+          { id: "abc-if00", name: "mcu T0_buffer" },
+          { id: "def-if00", name: "mcu T1_buffer" },
+        ],
+      },
+    });
+    await wrapper.get("button").trigger("click");
+    // Regression: these two used to render inline with no separator at all -
+    // "mcu T0_buffermcu T1_buffer".
+    const items = wrapper.findAll(".devices li").map((li) => li.text());
+    expect(items).toEqual(["mcu T0_buffer", "mcu T1_buffer"]);
+  });
+
   it("refuses to confirm a flash with no known preview devices", async () => {
     const action: Action = {
       ...buildAction,
@@ -147,6 +170,53 @@ describe("ActionButton", () => {
     await wrapper.get("button").trigger("click");
     expect(spy).toHaveBeenCalledWith("carto_v4", "klipper", false);
     expect(wrapper.text()).not.toContain("Confirm");
+  });
+
+  it("offers a scope override for a flash action, sending scope:all when checked", async () => {
+    const spy = vi.spyOn(store, "invokeAction").mockResolvedValue(true);
+    const action: Action = {
+      ...buildAction,
+      id: "flash",
+      label: "Flash",
+      method: "fw.flash_all",
+      params: { name: "bttebb36", scope: "stale" },
+    };
+    const wrapper = mount(ActionButton, {
+      props: {
+        action,
+        offersOverride: true,
+        allPreviewDevices: [{ id: "230048-if00", name: "mcu EBBT0" }],
+      },
+    });
+    await wrapper.get("button").trigger("click");
+    // Stale preview is empty (none passed), so Confirm starts disabled and
+    // the override switch is the only way out.
+    let confirmButton = wrapper
+      .findAll("button")
+      .find((b) => b.text() === "Confirm");
+    expect(confirmButton?.attributes("disabled")).toBeDefined();
+
+    await wrapper.get('input[type="checkbox"]').setValue(true);
+    expect(wrapper.text()).toContain("mcu EBBT0");
+    confirmButton = wrapper
+      .findAll("button")
+      .find((b) => b.text() === "Confirm");
+    expect(confirmButton?.attributes("disabled")).toBeUndefined();
+
+    await confirmButton?.trigger("click");
+    expect(spy).toHaveBeenCalledWith(action, { scope: "all" });
+  });
+
+  it("never shows the override switch when offersOverride is not set", async () => {
+    const action: Action = {
+      ...buildAction,
+      id: "flash",
+      label: "Flash",
+      method: "fw.flash_all",
+    };
+    const wrapper = mount(ActionButton, { props: { action } });
+    await wrapper.get("button").trigger("click");
+    expect(wrapper.find('input[type="checkbox"]').exists()).toBe(false);
   });
 
   it("offers a force takeover on a kconfig session conflict", async () => {

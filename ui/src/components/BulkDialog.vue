@@ -92,6 +92,7 @@ async function confirm(): Promise<void> {
         type="checkbox"
         true-value="all"
         false-value="stale"
+        class="switch"
       />
       Everything, not just what looks stale
     </label>

@@ -56,6 +56,14 @@ const props = withDefaults(
     /** Preselected answer for the reseed prompt, from settings.reseed_on_build -
      * agreeing with what a CLI or fleet build would do by default. */
     reseedDefault?: boolean;
+    /** True for a flash action whose params carry a `scope` (TargetRow's
+     * type-level fw.flash_all, never a device-level fw.flash) - offers the
+     * confirm dialog's "everything, not just what looks stale" switch,
+     * mirroring BulkDialog.vue's global override. */
+    offersOverride?: boolean;
+    /** previewDevices recomputed at scope "all" - what the override switch
+     * swaps the confirm dialog to when checked. */
+    allPreviewDevices?: { id: string; name: string | null }[];
   }>(),
   {
     disabled: false,
@@ -65,6 +73,8 @@ const props = withDefaults(
     wanted: false,
     offersReseed: false,
     reseedDefault: true,
+    offersOverride: false,
+    allPreviewDevices: undefined,
   },
 );
 
@@ -100,6 +110,15 @@ const confirming = ref(false);
 const untrackConfirming = ref(false);
 const reseedPrompting = ref(false);
 const reseed = ref(true);
+// Never latches - same reasoning as BulkDialog.vue's own scope ref: reopening
+// this dialog with the last run's override still checked would make the
+// deliberate, occasional choice the default for next time.
+const overrideAll = ref(false);
+const effectivePreview = computed(() =>
+  overrideAll.value && props.allPreviewDevices
+    ? props.allPreviewDevices
+    : props.previewDevices,
+);
 const pickingChoice = ref(false);
 const choiceOptions = ref<{ name: string; hint: string }[] | null>(null);
 const choiceLoading = ref(false);
@@ -207,6 +226,7 @@ function onClick(): void {
     return;
   }
   if (isDestructive.value) {
+    overrideAll.value = false;
     confirming.value = true;
     return;
   }
@@ -296,26 +316,31 @@ function onClick(): void {
       :title="action.label"
       @close="confirming = false"
     >
-      <p>
-        {{ action.label }} will write to:
-        <template v-if="previewDevices && previewDevices.length">
-          <strong v-for="device in previewDevices" :key="device.id">{{
-            device.name ?? device.id
-          }}</strong>
-        </template>
-        <template v-else
-          >an unknown set of devices - refusing to guess</template
-        >
+      <p v-if="!effectivePreview || !effectivePreview.length">
+        {{ action.label }} will write to an unknown set of devices - refusing
+        to guess.
       </p>
+      <template v-else>
+        <p>{{ action.label }} will write to:</p>
+        <ul class="devices">
+          <li v-for="device in effectivePreview" :key="device.id">
+            <strong>{{ device.name ?? device.id }}</strong>
+          </li>
+        </ul>
+      </template>
+      <label v-if="offersOverride" class="override-toggle">
+        <input v-model="overrideAll" type="checkbox" class="switch" />
+        Everything, not just what looks stale
+      </label>
       <p v-if="printerBusy()" class="alert alert--error">{{ busyMessage }}</p>
       <template #actions>
         <button type="button" @click="confirming = false">Cancel</button>
         <button
           type="button"
           :disabled="
-            !previewDevices || previewDevices.length === 0 || printerBusy()
+            !effectivePreview || effectivePreview.length === 0 || printerBusy()
           "
-          @click="run()"
+          @click="run(overrideAll ? { scope: 'all' } : {})"
         >
           Confirm
         </button>
@@ -380,5 +405,12 @@ function onClick(): void {
   align-items: center;
   gap: 6px;
   margin: 4px 0;
+}
+
+.override-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin: 8px 0 2px;
 }
 </style>

@@ -99,6 +99,20 @@ function previewFor(action: Target["actions"][number]): TargetDevice[] {
   return devicesToFlash(props.target, scope === "all" ? "all" : "stale");
 }
 
+/** The same preview, forced to scope "all" - fed to ActionButton's override
+ * switch so a row whose devices are all already flashed can still force a
+ * reflash, mirroring BulkDialog's "Everything, not just what looks stale". */
+function allPreviewFor(action: Target["actions"][number]): TargetDevice[] {
+  return devicesToFlash(props.target, "all");
+}
+
+/** Only the type-level fw.flash_all action carries a `scope` param -
+ * a device-level fw.flash never does (see _device_actions in status.py) -
+ * so this is the same signal previewFor already reads above. */
+function offersOverride(action: Target["actions"][number]): boolean {
+  return "scope" in action.params;
+}
+
 /** The ones that belong in the header itself; everything else goes in the
  * overflow menu - same split, and same reasoning, as
  * FirmwareUpdaterPanelTarget.HEADER_ACTIONS: a board with no profile yet
@@ -289,6 +303,10 @@ async function toggle(): Promise<void> {
         :wanted="wants(action)"
         :offers-reseed="offersReseed(action)"
         :reseed-default="reseedDefault"
+        :offers-override="offersOverride(action)"
+        :all-preview-devices="
+          offersOverride(action) ? allPreviewFor(action) : undefined
+        "
       />
 
       <span

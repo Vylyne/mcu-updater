@@ -146,7 +146,9 @@ async function confirm(): Promise<void> {
       This stops Klipper and writes to hardware. Do not interrupt it once
       started.
     </p>
-    <p v-if="busy" class="alert alert--error">{{ busyMessage }}</p>
+    <p v-if="busy" class="alert alert--error">
+      {{ busyMessage }}
+    </p>
 
     <template #actions>
       <button type="button" @click="emit('close')">Cancel</button>

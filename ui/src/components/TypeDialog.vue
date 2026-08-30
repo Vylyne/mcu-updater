@@ -234,7 +234,9 @@ async function submit(): Promise<void> {
           type's saved menuconfig answers.
         </div>
       </div>
-      <p v-if="nameError" class="alert alert--error">{{ nameError }}</p>
+      <p v-if="nameError" class="alert alert--error">
+        {{ nameError }}
+      </p>
 
       <label>
         Chipset
@@ -289,7 +291,7 @@ async function submit(): Promise<void> {
             v-model="applicationExtraRepos"
             rows="2"
             placeholder="one path per line, e.g. /home/pi/buffer_manager"
-          ></textarea>
+          />
         </label>
         <p class="text-caption text--disabled">
           Secondary source trees whose git commit is tracked alongside the main
@@ -303,17 +305,17 @@ async function submit(): Promise<void> {
             v-model="applicationMakefilePatches"
             rows="2"
             placeholder="file -> line, e.g. src/Makefile -> src-y += buffer.c"
-          ></textarea>
+          />
         </label>
 
         <label>
           Katapult extra repos
-          <textarea v-model="katapultExtraRepos" rows="2"></textarea>
+          <textarea v-model="katapultExtraRepos" rows="2" />
         </label>
 
         <label>
           Katapult makefile patches
-          <textarea v-model="katapultMakefilePatches" rows="2"></textarea>
+          <textarea v-model="katapultMakefilePatches" rows="2" />
         </label>
       </details>
 

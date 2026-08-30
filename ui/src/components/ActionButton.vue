@@ -317,8 +317,8 @@ function onClick(): void {
       @close="confirming = false"
     >
       <p v-if="!effectivePreview || !effectivePreview.length">
-        {{ action.label }} will write to an unknown set of devices - refusing
-        to guess.
+        {{ action.label }} will write to an unknown set of devices - refusing to
+        guess.
       </p>
       <template v-else>
         <p>{{ action.label }} will write to:</p>

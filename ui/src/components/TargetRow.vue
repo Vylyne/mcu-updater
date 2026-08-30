@@ -102,7 +102,7 @@ function previewFor(action: Target["actions"][number]): TargetDevice[] {
 /** The same preview, forced to scope "all" - fed to ActionButton's override
  * switch so a row whose devices are all already flashed can still force a
  * reflash, mirroring BulkDialog's "Everything, not just what looks stale". */
-function allPreviewFor(action: Target["actions"][number]): TargetDevice[] {
+function allPreviewFor(): TargetDevice[] {
   return devicesToFlash(props.target, "all");
 }
 
@@ -305,7 +305,7 @@ async function toggle(): Promise<void> {
         :reseed-default="reseedDefault"
         :offers-override="offersOverride(action)"
         :all-preview-devices="
-          offersOverride(action) ? allPreviewFor(action) : undefined
+          offersOverride(action) ? allPreviewFor() : undefined
         "
       />
 

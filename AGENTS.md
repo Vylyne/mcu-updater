@@ -1,4 +1,4 @@
-# CLAUDE.md
+# AGENTS.md
 
 Read [NOTES.md](NOTES.md) first, every session — it is Vi's inbox to Claude,
 dated entries newest first. Acted-on entries are struck through while they
@@ -6,8 +6,7 @@ still carry useful context, and removed once they do not; that file loads into
 every session, so it is kept to live work. Removed entries stay in git history.
 
 Project background: [docs/agent-api.md](docs/agent-api.md) (the Moonraker
-agent's JSON-RPC contract) and [docs/mainsail-fork.md](docs/mainsail-fork.md)
-(how the Mainsail panel fork stays small and rebaseable).
+agent's JSON-RPC contract).
 
 [docs/decisions.md](docs/decisions.md) records the standing "this looks like a
 gap and is not" decisions — CAN, the katapult deployer, plugin auto-discovery,

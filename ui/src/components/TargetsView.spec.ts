@@ -83,7 +83,12 @@ describe("TargetsView", () => {
     });
 
     await wrapper.get('[aria-label="More actions"]').trigger("click");
-    await wrapper.get(".menu-item").trigger("click");
+    const addBoard = wrapper
+      .get(".menu-list")
+      .findAll("button")
+      .find((button) => button.text().includes("Add new board"));
+    expect(addBoard).toBeDefined();
+    await addBoard!.trigger("click");
 
     expect(wrapper.find(".dialog-backdrop").exists()).toBe(true);
     expect(wrapper.find(".menu-list").exists()).toBe(false);

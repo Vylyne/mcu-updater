@@ -14,6 +14,7 @@ import BulkDialog from "./BulkDialog.vue";
 import TypeDialog from "./TypeDialog.vue";
 import {
   mdiChip,
+  mdiDeveloperBoard,
   mdiDotsVertical,
   mdiFlash,
   mdiHammerWrench,
@@ -57,7 +58,11 @@ const canManageTypes = computed(
     hasCapability("fw.type.update") &&
     hasCapability("fw.type.remove"),
 );
-const canAddMcu = computed(() => hasCapability("fw.add_mcu.start"));
+const canAddMcu = computed(
+  () =>
+    hasCapability("fw.add_mcu.start") &&
+    targets.value.some((target) => target.provider === "kconfig_make"),
+);
 const hasMenu = computed(
   () => canUpdateAll.value || canManageTypes.value || canAddMcu.value,
 );
@@ -74,6 +79,7 @@ watch(menuOpen, (open) => {
 });
 const bulkOperation = ref<BulkOperation | null>(null);
 const typeDialogOpen = ref(false);
+const addMcuOpen = ref(false);
 const refreshing = ref(false);
 
 function openBulk(operation: BulkOperation): void {
@@ -83,6 +89,11 @@ function openBulk(operation: BulkOperation): void {
 
 function openTypeDialog(): void {
   typeDialogOpen.value = true;
+  menuOpen.value = false;
+}
+
+function openAddMcu(): void {
+  addMcuOpen.value = true;
   menuOpen.value = false;
 }
 
@@ -117,9 +128,18 @@ async function onRefresh(): Promise<void> {
             Update everything…
           </button>
           <hr
-            v-if="canManageTypes && (canUpdateAll || canAddMcu)"
+            v-if="canUpdateAll && (canManageTypes || canAddMcu)"
             class="divider"
           />
+          <button
+            v-if="canAddMcu"
+            type="button"
+            class="menu-item"
+            @click="openAddMcu"
+          >
+            <UiIcon :path="mdiDeveloperBoard" size="x-small" />
+            Add new board…
+          </button>
           <button
             v-if="canManageTypes"
             type="button"
@@ -130,12 +150,6 @@ async function onRefresh(): Promise<void> {
             New type…
           </button>
         </div>
-        <AddMcuWizard
-          v-if="canAddMcu"
-          variant="menu"
-          :launcher-visible="menuOpen"
-          @click="menuOpen = false"
-        />
       </span>
 
       <button
@@ -195,6 +209,12 @@ async function onRefresh(): Promise<void> {
       :existing-names="existingTypeNames"
       :families="families"
       @close="typeDialogOpen = false"
+    />
+
+    <AddMcuWizard
+      v-if="canAddMcu"
+      :open="addMcuOpen"
+      @close="addMcuOpen = false"
     />
   </UiPanel>
 </template>

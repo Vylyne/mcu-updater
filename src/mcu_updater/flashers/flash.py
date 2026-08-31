@@ -715,6 +715,15 @@ def flash_dfu_stm32(
                 f"been unplugged, or left DFU mode.",
                 serial=target_serial,
             )
+        if len(matches) > 1:
+            raise AmbiguousDfuError(
+                f"{len(matches)} DFU devices report the same serial "
+                f"{target_serial} on different USB paths - refusing to guess "
+                f"which one to flash. Unplug all but the target board and try "
+                f"again.",
+                serial=target_serial,
+                devices=[str(d["raw"]) for d in matches],
+            )
         chosen = matches[0]
     elif len(devices) > 1:
         raise AmbiguousDfuError(

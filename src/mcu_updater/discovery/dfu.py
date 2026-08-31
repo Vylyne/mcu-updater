@@ -100,9 +100,12 @@ def dfu_devices(*, reporter: Reporter = null_reporter) -> list[dict[str, str | N
 
     out = (res.stdout or "") + (res.stderr or "")
 
-    # Deduplicate by whatever identifies the physical board, in decreasing order
-    # of trustworthiness. dict preserves insertion order, so the first line for
-    # each device is the one reported.
+    # Deduplicate by what identifies this physical attachment. The USB path is
+    # the port the scan actually found and remains the same across one board's
+    # altsettings. Prefer it over the ROM serial: some STM32s report the
+    # non-unique placeholder FFFFFFFEFFFF, so a serial-first key can collapse
+    # two physical boards into one apparent device. dict preserves insertion
+    # order, so the first line for each device is the one reported.
     devices: dict[str, dict[str, str | None]] = {}
     for raw in out.splitlines():
         line = raw.strip()
@@ -110,9 +113,9 @@ def dfu_devices(*, reporter: Reporter = null_reporter) -> list[dict[str, str | N
         if match is None:
             continue
         key = (
-            match.group("serial")
-            or match.group("path")
+            match.group("path")
             or match.group("devnum")
+            or match.group("serial")
             or line  # nothing to group on: treat the line itself as the device
         )
         devices.setdefault(
@@ -141,16 +144,17 @@ def dfu_devices(*, reporter: Reporter = null_reporter) -> list[dict[str, str | N
 def dfu_selector(device: dict) -> list[str]:
     """dfu-util arguments pinning a write to one physical board.
 
-    Preference order is by how well each field survives: the STM32 USB serial is
-    derived from the die's unique ID and is stable across replugs, the bus path
-    only holds while the board stays in the same port, and devnum changes every
-    time it enumerates. All three beat targeting the VID:PID alone, which picks
-    whichever board answers first.
+    The bus path is first because it names the physical port found by this scan.
+    A well-formed STM32 USB serial survives a replug, but it is not safe as the
+    first selector: some ROMs report the same FFFFFFFEFFFF placeholder on every
+    die. devnum changes every time the device enumerates, so it remains the last
+    fallback. All three beat targeting the VID:PID alone, which picks whichever
+    board answers first.
     """
-    if device.get("serial"):
-        return ["-S", str(device["serial"])]
     if device.get("path"):
         return ["-p", str(device["path"])]
+    if device.get("serial"):
+        return ["-S", str(device["serial"])]
     if device.get("devnum"):
         return ["-n", str(device["devnum"])]
     return []

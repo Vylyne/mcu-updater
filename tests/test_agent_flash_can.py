@@ -174,10 +174,46 @@ def test_a_successful_can_flash_completes_the_job(can_flashable, monkeypatch):
     assert job.result["type"] == TYPE
 
 
+def test_mapped_uuid_defaults_to_can0_without_falling_back(can_flashable, monkeypatch):
+    """An adopted UUID with no explicit canbus_interface is Klipper's can0,
+    even when another current CAN interface exists."""
+    can1 = os.path.join(can_flashable.paths.can_sysfs_net, "can1")
+    os.makedirs(can1)
+    with open(os.path.join(can1, "type"), "w", encoding="utf-8") as fh:
+        fh.write(f"{ARPHRD_CAN}\n")
+
+    activity_call = _moonraker()
+    mapping_call = _moonraker_canbus()
+
+    def call(method, params, timeout):
+        requested = ((params or {}).get("objects") or {}) if isinstance(params, dict) else {}
+        if method == "printer.objects.list" or (
+            method == "printer.objects.query" and "configfile" in requested
+        ):
+            return mapping_call(method, params, timeout)
+        return activity_call(method, params, timeout)
+
+    can_flashable._call = call
+    calls: list[list[str]] = []
+
+    def fake(cmd, *, cwd=None, reporter=None, dry_run=False, fake_delay=0.0, cancel=None):
+        calls.append(list(cmd))
+        return 0
+
+    monkeypatch.setattr(flash_mod, "run_streamed", fake)
+
+    res = can_flashable.dispatch("fw.flash", {"uuid": UUID})
+    assert can_flashable.runner.wait(timeout=30)
+    assert can_flashable.runner.get(res["job_id"]).result["uuid"] == UUID
+    can_commands = [cmd for cmd in calls if "-i" in cmd]
+    assert can_commands
+    assert {cmd[cmd.index("-i") + 1] for cmd in can_commands} == {"can0"}
+
+
 def test_a_known_bridge_from_canbus_info_skips_the_probe(can_flashable, monkeypatch):
     """`fw.flash {uuid}` is the one path where `mcu_constants.CANBUS_BRIDGE`
     is available at call time (already talking to Moonraker for the idle
-    gate) - it must reach `FlashtoolCan`/`flash_katapult_can`, not just the
+    gate) - it must reach `Flashtool`/`flash_katapult_can`, not just the
     bulk `flash_all` path. A sidecar `app_address` is staged so the probe
     would fire (and disagree, since nothing here matches it) if `bridge`
     were not actually threaded through target.detail."""
@@ -213,7 +249,9 @@ def test_a_known_bridge_from_canbus_info_skips_the_probe(can_flashable, monkeypa
 # --------------------------------------------------------------------------
 
 
-def _moonraker_canbus(mcu_object="mcu hexa", *, declared=True, version=None, bridge=False):
+def _moonraker_canbus(
+    mcu_object="mcu hexa", *, declared=True, version=None, bridge=False, interface=None
+):
     """`configfile.settings` cross-reference, faked. `declared=False` means the
     uuid never appears under any `[mcu ...]` section - the fallback tier's
     trigger. `version=None` with `declared=True` means it is declared but not
@@ -228,7 +266,10 @@ def _moonraker_canbus(mcu_object="mcu hexa", *, declared=True, version=None, bri
             if "configfile" in requested:
                 settings = {}
                 if declared:
-                    settings[mcu_object.lower()] = {"canbus_uuid": UUID}
+                    settings[mcu_object.lower()] = {
+                        "canbus_uuid": UUID,
+                        **({"canbus_interface": interface} if interface else {}),
+                    }
                 status["configfile"] = {"settings": settings}
             if mcu_object in requested:
                 entry: dict = {}
@@ -251,6 +292,15 @@ def test_canbus_info_reports_the_configfile_cross_reference(paths, live_registry
     assert info[UUID]["mcu"] == "mcu hexa"
     assert info[UUID]["version"] == "v0.13.0-711-gd7cea5bb"
     assert info[UUID]["bridge"] is True
+    assert info[UUID]["interface"] == "can0"
+
+
+def test_canbus_info_uses_klippers_configured_interface(paths, live_registry_text):
+    with open(paths.registry_file, "w", encoding="utf-8") as fh:
+        fh.write(live_registry_text)
+    api = Api(paths, call=_moonraker_canbus(interface="can1"))
+
+    assert api.canbus_info()[UUID]["interface"] == "can1"
 
 
 def test_canbus_info_is_empty_with_no_configfile_declaration(paths, live_registry_text):
@@ -272,6 +322,7 @@ def test_cross_reference_hit_online_is_included_under_scope_all(paths, live_regi
     assert [b["uuid"] for b in boards] == [UUID]
     assert boards[0]["reason"] == "forced"
     assert boards[0]["state"] == "klipper"
+    assert boards[0]["interface"] == "can0"
 
 
 def test_cross_reference_hit_with_no_live_version_falls_back_not_excludes(
@@ -318,7 +369,7 @@ def test_cross_reference_miss_falls_back_to_unconditional_inclusion(paths, live_
 
 def test_flash_all_selection_includes_both_serial_and_canbus_boards(paths, live_registry_text):
     """`_board_target` must route each dict shape to the right flasher -
-    `uuid` to FlashtoolCan, `serial` to Flashtool - inside one combined batch."""
+    both identities to Flashtool - inside one combined batch."""
     with open(paths.registry_file, "w", encoding="utf-8") as fh:
         fh.write(live_registry_text)
     _stage_artifact(paths)
@@ -331,6 +382,6 @@ def test_flash_all_selection_includes_both_serial_and_canbus_boards(paths, live_
 
     targets = [_board_target(b) for b in boards]
     by_flasher = {t.flasher for t in targets}
-    assert "flashtool_can" in by_flasher
-    can_targets = [t for t in targets if t.flasher == "flashtool_can"]
+    assert by_flasher == {"flashtool"}
+    can_targets = [t for t in targets if "uuid" in t.detail]
     assert [t.id for t in can_targets] == [UUID]

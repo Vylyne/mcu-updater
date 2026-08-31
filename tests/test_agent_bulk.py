@@ -26,11 +26,11 @@ from .conftest import make_device, write_settings
 
 EBB = "bttebb36"
 EBB_CHIPSET = "stm32g0b1xx"
-EBB_A = "290055001850304158373620-if00"
-EBB_B = "230048001750304158373620-if00"
+EBB_A = "290055001850304158373620"
+EBB_B = "230048001750304158373620"
 MMB = "OctopusMAXEZ"
 MMB_CHIPSET = "stm32h723xx"
-MMB_SERIAL = "210008000551333231343036-if00"
+MMB_SERIAL = "210008000551333231343036"
 
 HEAD = "d7cea5bb1aca70849f28d0bb98ab1b96b9f6db65"
 CURRENT_VERSION = "v0.13.0-711-gd7cea5bb"
@@ -468,13 +468,13 @@ def test_an_untracked_board_is_structurally_excluded(paths, live_registry_text, 
         fh.write(live_registry_text)
     _stage_artifact(paths, EBB)
     make_device(fake_root / "bus", "Klipper", EBB_CHIPSET, EBB_A)
-    make_device(fake_root / "bus", "Klipper", "stm32f072xb", "4B0036000A53594731383520-if00")
+    make_device(fake_root / "bus", "Klipper", "stm32f072xb", "4B0036000A53594731383520")
 
     api = Api(paths, call=_moonraker({EBB_A: OLD_VERSION}))
     monkey_head(api, paths)
 
     serials = [b["serial"] for b in api._boards_to_flash(Registry.load(paths), "all")]
-    assert "4B0036000A53594731383520-if00" not in serials
+    assert "4B0036000A53594731383520" not in serials
 
 
 def test_naming_a_type_narrows_the_batch_to_it(paths, live_registry_text, fake_root):

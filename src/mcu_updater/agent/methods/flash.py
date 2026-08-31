@@ -185,12 +185,12 @@ class FlashMixin(_Base):
         Same refusal ordering as the serial path above, up to where a uuid's
         lack of a chipset-segment identity forces a difference: there is no
         by-id equivalent of "is this specific uuid on the bus right now" to
-        check synchronously (see `flashers/flashtool_can.py` - finding out
+        check synchronously (see `flashers.flashtool` - finding out
         *is* the flash attempt, via its own per-interface trial), so only "no
         CAN interface exists on this host at all" is refused up front; a uuid
         that simply does not answer is discovered inside the job.
 
-        Routes through `flashtool_can.target_for` and the same `write_all`
+        Routes through `flashtool.target_for` and the same `write_all`
         batch machinery `flash_all`/`update_all` use for a CAN board, rather
         than a second hand-written stop/write/wait sequence - one target,
         one flasher, the loop already written for a batch of one.
@@ -213,9 +213,15 @@ class FlashMixin(_Base):
                 },
             )
 
-        from ...discovery.canbus import list_can_interfaces
+        cross = self.canbus_info().get(uuid.lower())
+        interface = cross.get("interface") if cross is not None else None
+        if interface is None:
+            from ...discovery.canbus import list_can_interfaces
 
-        if not list_can_interfaces(self.paths):
+            interfaces = list_can_interfaces(self.paths)
+        else:
+            interfaces = [interface]
+        if not interfaces:
             raise RpcError(
                 f"no CAN interface is present on this host, so {uuid} cannot be "
                 f"reached. Is a USB-CAN adapter connected?",
@@ -232,22 +238,21 @@ class FlashMixin(_Base):
             settings, activity=self._printer_activity, force=force, reporter=self._log_reporter
         )
 
-        # Known ahead of time only when this uuid is currently cross-
-        # referenceable via Klipper's own configfile - see canbus_info()'s
-        # own docstring. `None` (config silent, or not connected) means
-        # FlashtoolCan discovers it by trial instead, same as the interface.
-        bridge = (self.canbus_info().get(uuid.lower()) or {}).get("bridge")
+        # A Klipper mapping chooses one configured bus; config silence leaves
+        # the flasher to try every currently-present CAN interface.
+        bridge = cross.get("bridge") if cross is not None else None
 
         units = stop_services.for_mcu(self.paths, mcu, settings)
-        target = flashers.flashtool_can.target_for(
+        target = flashers.flashtool.target_for(
             {
                 "type": mcu_type,
+                "uuid": uuid,
                 "chipset": mcu.chipset,
                 "fw": application,
                 "force": force,
                 "bridge": bridge,
+                "interface": interface,
             },
-            uuid,
             stop_services=units,
         )
 
@@ -405,10 +410,10 @@ class FlashMixin(_Base):
         serial itself. RP2040 has no such derivation (see docs/agent-api.md's
         "RP2040 pairing identity" note): the boot ROM's flash-chip id is
         *assumed*, unverified, to be the same string Katapult later runs under
-        - up to the `-if00` interface suffix every by-id name carries and the
-        boot-ROM id never does, so the candidate is the running serial's UID
-        prefix (the same split `dfu_serial_for` itself starts with), not the
-        full string. If that assumption is wrong this candidate simply never
+        as the full canonical hardware serial. Interface suffixes belong only
+        to the transport path, and a hardware serial may legitimately contain
+        a hyphen, so the candidate is never shortened. If that assumption is
+        wrong this candidate simply never
         matches an entry - nothing is ever recorded under a bare running UID
         for an STM32 board either, so trying it for every device is harmless
         in both directions.
@@ -431,8 +436,7 @@ class FlashMixin(_Base):
 
         def candidate_keys(serial: str) -> list[str]:
             derived = dfu_serial_for(serial)
-            uid = serial.split("-", 1)[0]
-            return [derived, uid] if derived else [uid]
+            return [derived, serial] if derived else [serial]
 
         # Which known keys map to more than one board on the bus. Cheap, and it
         # is the only way a wrong adoption could happen.
@@ -601,18 +605,16 @@ class FlashMixin(_Base):
         board looks like, never a wrong name. Same collision guard as
         `_identify_dfu`: two known boards mapping to one id names neither.
 
-        A tracked serial's by-id name always carries a `-if00` interface
-        suffix (`parse_entry`), which the boot-ROM id never does - so this
-        compares against the UID prefix, the same split `dfu_serial_for` uses
-        to pull a UID out of a running serial, not the full string.
+        Tracked identities are canonical hardware serials; the by-id interface
+        suffix belongs only to the transport path. Compare the full string so
+        a legitimate hyphen cannot create a prefix match.
         """
         owners: dict[str, list[tuple[str, str]]] = {}
         for name, mcu in self.registry().types.items():
             if not mcu.chipset.startswith("rp2040"):
                 continue
             for serial in mcu.serials:
-                uid = serial.split("-", 1)[0]
-                owners.setdefault(uid, []).append((name, serial))
+                owners.setdefault(serial, []).append((name, serial))
 
         for device in devices:
             device["known_serial"] = None

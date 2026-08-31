@@ -18,7 +18,7 @@ from mcu_updater.service import Journal, NullService, services_stopped
 
 from .conftest import make_device, write_settings
 
-TRACKED_SERIAL = "290055001850304158373620-if00"
+TRACKED_SERIAL = "290055001850304158373620"
 TRACKED_TYPE = "bttebb36"
 TRACKED_CHIPSET = "stm32g0b1xx"
 

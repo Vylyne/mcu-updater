@@ -23,8 +23,10 @@ const props = withDefaults(
      * alongside "New type…" - same dialog, same state, just a different
      * trigger element so the two launchers can share one menu. */
     variant?: "icon" | "menu";
+    /** Keep mounted while the menu launcher is hidden. */
+    launcherVisible?: boolean;
   }>(),
-  { variant: "icon" },
+  { variant: "icon", launcherVisible: true },
 );
 
 const open = ref(false);
@@ -102,7 +104,12 @@ async function start(): Promise<void> {
       <UiIcon :path="mdiDeveloperBoard" size="small" />
     </button>
     <button
-      v-if="canStart && mcuTargets.length && props.variant === 'menu'"
+      v-if="
+        canStart &&
+        mcuTargets.length &&
+        props.variant === 'menu' &&
+        props.launcherVisible
+      "
       type="button"
       class="menu-item"
       @click="show"

@@ -2,9 +2,8 @@
 
 Two paths:
 
-* **katapult** - the normal case. A board already running Klipper is asked to
-  reboot into its bootloader, waited for, then written via katapult's
-  ``flashtool.py``.
+* **katapult** - the normal case. Katapult's ``flashtool.py`` transitions a
+  board from its running firmware and writes it in one ``-f`` operation.
 * **dfu-util** - the first-ever flash of a bare STM32, which has no bootloader
   yet to speak flashtool's protocol.
 
@@ -34,15 +33,12 @@ from typing import Any
 from .. import firmware
 from ..build import Reporter, null_reporter, run_streamed
 from ..devices import (
-    KATAPULT_FW_NAME,
     STATE_BOOTSEL,
     STATE_DFU,
-    STATE_KATAPULT,
     BusDevice,
     dfu_devices,
     dfu_selector,
     expected_path,
-    wait_for_device,
     wait_for_new_device,
 )
 from ..discovery.confirm import confirm
@@ -122,10 +118,8 @@ def flash_katapult(
 ) -> None:
     """Flash one board through katapult's flashtool.py.
 
-    If the board is currently running Klipper rather than sitting in its
-    bootloader, this requests the bootloader first and waits for it to
-    re-enumerate - flashtool's documented two-step process for devices it can't
-    put into bootloader mode itself.
+    ``-f`` performs the transition from a running application into Katapult
+    itself, so there is no separate reboot request before the write.
 
     `force` overrides the offset checks below (downgrading a refusal to a
     logged warning) for the case where the operator genuinely knows better.
@@ -172,30 +166,6 @@ def flash_katapult(
             chipset=chipset,
         )
     assert dev is not None  # device_for: reason is None iff dev is not None
-    if dev.state != STATE_KATAPULT:
-        running = dev
-        reporter("info", f"{serial} is running {running.fw} - requesting bootloader...")
-        run_streamed(
-            [sys.executable, flashtool, "-d", running.path, "-r"],
-            cwd=paths.home,
-            reporter=reporter,
-            dry_run=settings.dry_run,
-            fake_delay=0.0,
-        )
-        if settings.dry_run:
-            # Nothing actually rebooted, so there is nothing to wait for. Carry
-            # on with the klipper node standing in rather than returning early,
-            # so a rehearsal still covers the write step it is meant to rehearse.
-            reporter("info", f"[dry-run] would wait for {serial} to re-enumerate as Katapult")
-            dev = running
-        else:
-            reporter("info", f"Waiting for {serial} to re-enumerate as a Katapult device...")
-            # settle: udev creating the symlink is not atomic with the device
-            # being openable, so flashing the instant it appears can race.
-            dev = wait_for_device(
-                paths, chipset, serial, KATAPULT_FW_NAME, timeout=timeout, settle=0.5
-            )
-
     side: dict = {}
     if not settings.dry_run:
         from ..build import FlashLog, git_head, read_sidecar
@@ -371,15 +341,16 @@ def flash_katapult_can(
     reporter: Reporter = null_reporter,
     force: bool = False,
     bridge: bool | None = None,
+    interface: str | None = None,
 ) -> None:
     """Flash one CAN-addressed board through katapult's flashtool.py.
 
     `flash_katapult`'s CAN counterpart, mirrored as closely as the identity
     difference allows: `-d <path>` becomes `-i <interface> -u <uuid>`, tried
     against every interface `discovery.canbus.list_can_interfaces` currently
-    reports rather than a single resolved path - a timeout/failure on one
-    interface means "wrong bus, try the next", not a real failure, and this
-    only raises once every interface has been tried without success.
+    reports when no configured interface is supplied. A configured interface
+    is authoritative and is tried exactly once; otherwise a timeout/failure on
+    one interface means "wrong bus, try the next", not a real failure.
 
     `bridge` is the one thing this cannot always discover by trial: `True`
     when the caller already knows (via Klipper's own `mcu_constants.
@@ -434,7 +405,7 @@ def flash_katapult_can(
             path=fw_bin,
         )
 
-    interfaces = list_can_interfaces(paths)
+    interfaces = [interface] if interface is not None else list_can_interfaces(paths)
     if not interfaces:
         raise DeviceNotFoundError(
             f"no CAN interfaces found on this host for {uuid} (looked for a "
@@ -514,6 +485,13 @@ def flash_katapult_can(
         # (whose uuid never answers a bare -s, see docstring) or the board is
         # genuinely offline. Either way, fall through to the real write below
         # and let it serve as the interface-discovery attempt instead.
+        if probed_interface is None and bridge is False:
+            raise FlashError(
+                f"flashtool.py's status check failed for known native CAN node "
+                f"{uuid} on every selected interface. Not attempting to write.",
+                type=mcu_type,
+                uuid=uuid,
+            )
 
     # The real write: tried against each interface in turn until one accepts
     # it. For a probed native node this is a single attempt on the interface

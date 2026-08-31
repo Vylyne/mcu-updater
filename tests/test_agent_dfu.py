@@ -220,8 +220,8 @@ def test_the_probe_never_raises_whatever_dfu_util_does(api, monkeypatch):
 # which is the whole difficulty with several boards in DFU at once.
 # --------------------------------------------------------------------------
 
-#: 27000E000551343438333339-if00 in DFU. Same board as ONE_BOARD's serial.
-KNOWN_UID = "27000E000551343438333339-if00"
+#: 27000E000551343438333339 in DFU. Same board as ONE_BOARD's canonical serial.
+KNOWN_UID = "27000E000551343438333339"
 
 
 def test_a_tracked_board_in_dfu_is_named(paths, live_registry_text, monkeypatch):
@@ -242,7 +242,7 @@ def test_an_unrecognised_board_is_simply_unnamed(api, monkeypatch):
     an error.
 
     Deliberately not ONE_BOARD - live_registry_text now tracks the real board
-    its DFU serial derives from (27000E000551343438333339-if00, under
+    its DFU serial derives from (27000E000551343438333339, under
     bttebb36), so that serial is no longer "unrecognised". This is
     TWO_BOARDS' second device, which derives from no serial any type here
     tracks."""
@@ -272,7 +272,7 @@ def test_two_known_boards_mapping_to_one_dfu_serial_name_neither(
     api = Api(paths)
 
     # Constructed to collide: swapping w0 and w2 leaves the sum unchanged.
-    twin = "38333339" + "05513434" + "27000E00" + "-if00"
+    twin = "38333339" + "05513434" + "27000E00"
     assert dfu_serial_for(twin) == dfu_serial_for(KNOWN_UID)
 
     api.dispatch("fw.serial.add", {"name": "bttebb36", "serial": KNOWN_UID})

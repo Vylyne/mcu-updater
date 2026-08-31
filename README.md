@@ -46,7 +46,7 @@ Flashing:
 - [x] `esptool` — ESP32, via PlatformIO
 - [ ] RP2040 BOOTSEL — copy a `.uf2` to the mounted volume (written, never run
       against a real board)
-- [ ] CAN — `flashtool.py -i <iface> -u <uuid>`
+- [x] CAN — unified `flashtool.py` transport, with live interface discovery
 - [ ] Katapult deployer — replaces a bootloader; no software recovery if wrong
 
 Firmware and boards:
@@ -60,7 +60,7 @@ Firmware and boards:
 - [x] Board tracking by `/dev/serial/by-id` serial
 - [x] Displays re-identified at flash time, once the ports are free
 - [x] Discovery surface — one vocabulary for where a device is and how sure we are
-- [ ] CAN device discovery (needs `canbus_uuid` from printer.cfg)
+- [x] CAN device discovery and tracking by `canbus_uuid`
 - [x] Ignore an untracked bus device
 
 Interfaces:
@@ -265,8 +265,8 @@ bootloader: true                  ; a bootloader, not an application
 chipset: stm32f072xb
 firmware: klipper, katapult
 serials:
-    4C0033000957465331323720-if00
-    3F0037000957465331323720-if00
+    4C0033000957465331323720
+    3F0037000957465331323720
 klipper_makefile_patches:
     src/Makefile -> src-y += buffer.c
 klipper_extra_repos:
@@ -285,7 +285,9 @@ Per-type keys:
 
 - **`chipset`** — required on every type, PlatformIO included. It is the sole
   input to flasher selection.
-- **`serials`** — one tracked board per line.
+- **`serials`** — one tracked board per line, using the canonical hardware
+  serial without udev's terminal `-if00` suffix. The complete
+  `/dev/serial/by-id` path is rediscovered at operation time.
 - **`firmware`** — a **list** of the families this board actually runs, e.g.
   `cartographer, katapult` (comma- or space-separated). A type that uses no
   bootloader simply omits it. See [Firmware families](#firmware-families).
@@ -715,6 +717,9 @@ filesystem location comes from a `Paths` object that honours these overrides:
 | `MCU_UPDATER_CONFIG_DIR` | `…/config/mcu-updater` |
 | `MCU_UPDATER_DATA_DIR` | `…/mcu-updater` |
 | `MCU_UPDATER_FAKE_BUS` | `/dev/serial/by-id` |
+| `MCU_UPDATER_FAKE_CAN_SYSFS` | `/sys/class/net` |
+| `MCU_UPDATER_FAKE_USB_SYSFS` | `/sys/bus/usb/devices` |
+| `MCU_UPDATER_FAKE_TTY_SYSFS` | `/sys/class/tty` |
 
 `MCU_UPDATER_FAKE_BUS` is worth knowing about: `touch` and `rm` files named
 `usb-<fw>_<chipset>_<serial>` in that directory to simulate a board

@@ -33,13 +33,13 @@ _DFU_DENIED_RE = re.compile(
 
 
 def dfu_serial_for(serial: str) -> str | None:
-    """What a board with this by-id serial calls itself while in DFU mode.
+    """The shorter DFU serial derived from a board's canonical running identity.
 
     An STM32 reports a *different* serial in DFU than it does running firmware,
     and the DFU one is **derived, not truncated** - which is why they look
     unrelated:
 
-        27000E000551343438333339-if00   running Klipper or Katapult
+        27000E000551343438333339        canonical running identity
         3941335F3434                    the same board in DFU
 
     ST's own `Get_SerialNum()` builds the DFU string from the 96-bit unique id:
@@ -54,7 +54,7 @@ def dfu_serial_for(serial: str) -> str | None:
 
     Returns None for anything that isn't a 96-bit id, rather than guessing.
     """
-    uid = serial.split("-", 1)[0]
+    uid = serial
     if len(uid) != 24:
         return None
     try:

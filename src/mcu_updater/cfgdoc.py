@@ -70,7 +70,7 @@ _INLINE_COMMENT_RE = re.compile(r"(?:(?<=\s)|^)[#;].*$")
 
 
 def _strip_inline_comment(text: str) -> str:
-    """`290055...-if00  # EBBT1` -> `290055...-if00`.
+    """`290055...  # EBBT1` -> `290055...`.
 
     Without this the comment became part of the serial, so the board matched
     nothing on the bus and read as permanently offline.

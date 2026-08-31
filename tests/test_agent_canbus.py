@@ -59,6 +59,7 @@ def _fake_query_answering(uuid: str, application: str = "Klipper"):
 def test_no_can_interfaces_is_reported_not_raised(api):
     res = api.dispatch("fw.canbus.scan")
     assert res["interfaces"] == []
+    assert res["failures"] == []
     assert res["devices"] == []
     assert res["count"] == 0
     assert "can interface" in (res["message"] or "").lower()
@@ -69,7 +70,7 @@ def test_missing_flashtool_is_reported_not_raised(api, fake_root):
     api.paths = dataclasses.replace(api.paths, can_sysfs_net=net_root)
 
     res = api.dispatch("fw.canbus.scan")
-    assert res["interfaces"] == ["can0"]
+    assert res["interfaces"] == [{"name": "can0", "adapter": None}]
     assert res["devices"] == []
     assert "flashtool.py" in (res["message"] or "")
 
@@ -88,6 +89,32 @@ def test_an_unclaimed_board_is_reported_untracked(api, fake_root, monkeypatch):
     assert device["application"] == "Klipper"
     assert device["state"] == "klipper"
     assert device["tracked_by"] is None
+
+
+@pytest.mark.skipif(os.name == "nt", reason="symlink fixtures require POSIX")
+def test_scan_serializes_usb_adapter_identity(api, fake_root, monkeypatch):
+    net_root = _make_can_interface(fake_root, "can7")
+    usb_root = fake_root / "usb"
+    adapter = usb_root / "1-2"
+    adapter.mkdir(parents=True)
+    (adapter / "idVendor").write_text("1d50\n", encoding="utf-8")
+    (adapter / "idProduct").write_text("606f\n", encoding="utf-8")
+    (adapter / "serial").write_text("ADAPTER-SERIAL\n", encoding="utf-8")
+    interface = usb_root / "1-2:1.0"
+    interface.mkdir()
+    (fake_root / "sys_class_net" / "can7" / "device").symlink_to(
+        interface, target_is_directory=True
+    )
+    api.paths = dataclasses.replace(
+        api.paths, can_sysfs_net=net_root, usb_sysfs=str(usb_root)
+    )
+    _make_flashtool(api.paths)
+    monkeypatch.setattr(canbus_mod, "run_streamed", _fake_query_answering("bcb5346fc731"))
+
+    interface_info = api.dispatch("fw.canbus.scan")["interfaces"][0]
+
+    assert interface_info["name"] == "can7"
+    assert interface_info["adapter"]["serial"] == "ADAPTER-SERIAL"
 
 
 def test_nothing_unclaimed_answering_is_reported_not_raised(api, fake_root, monkeypatch):
@@ -122,6 +149,35 @@ def test_a_tracked_uuid_is_named(api, fake_root, monkeypatch):
     assert device["tracked_by"] == "hexadistrofusion"
 
 
+def test_one_failed_interface_keeps_other_results(api, fake_root, monkeypatch):
+    net_root = _make_can_interface(fake_root, "can0")
+    _make_can_interface(fake_root, "can1")
+    api.paths = dataclasses.replace(api.paths, can_sysfs_net=net_root)
+    _make_flashtool(api.paths)
+
+    def fake_run_streamed(cmd, *, reporter=None, **kwargs):
+        interface = cmd[cmd.index("-i") + 1]
+        if interface == "can0":
+            return 2
+        assert reporter is not None
+        reporter("stdout", "Detected UUID: bcb5346fc731, Application: Klipper")
+        reporter("stdout", "CANBus UUID Query Complete")
+        return 0
+
+    monkeypatch.setattr(canbus_mod, "run_streamed", fake_run_streamed)
+
+    res = api.dispatch("fw.canbus.scan")
+
+    assert [device["uuid"] for device in res["devices"]] == ["bcb5346fc731"]
+    assert res["failures"] == [
+        {
+            "interface": "can0",
+            "reason": "flashtool exited unsuccessfully",
+            "returncode": 2,
+        }
+    ]
+
+
 def test_the_scan_never_raises(api, fake_root, monkeypatch):
     """Every branch must return a renderable answer - a scan that throws
     leaves the panel with an error banner and no idea what to tell the user,
@@ -136,7 +192,7 @@ def test_the_scan_never_raises(api, fake_root, monkeypatch):
         if maybe_paths is not None:
             api.paths = maybe_paths
         res = api.dispatch("fw.canbus.scan")
-        assert set(res) >= {"interfaces", "devices", "count", "message"}
+        assert set(res) >= {"interfaces", "devices", "failures", "count", "message"}
 
 
 def test_the_scan_is_available_to_a_read_only_agent(api):

@@ -17,6 +17,9 @@ Env overrides (all honoured by :meth:`Paths.from_env`):
   MCU_UPDATER_PRINTER_DATA  relocate ~/printer_data
   MCU_UPDATER_FAKE_CAN_SYSFS  replace /sys/class/net for CAN interface
                                 enumeration (discovery.canbus)
+  MCU_UPDATER_FAKE_USB_SYSFS  replace /sys/bus/usb/devices for USB inventory
+  MCU_UPDATER_FAKE_TTY_SYSFS  replace /sys/class/tty when joining a serial
+                                by-id link to its USB device
 """
 
 from __future__ import annotations
@@ -78,6 +81,12 @@ class Paths:
     #: search entirely - what `MCU_UPDATER_FAKE_CAN_SYSFS` does for tests,
     #: mirroring `bootsel_root` above.
     can_sysfs_net: str = ""
+    #: Empty in production: `discovery.usb.collect` reads `/sys/bus/usb/devices`.
+    #: An exact override supplies a copied or synthetic USB sysfs tree in tests.
+    usb_sysfs: str = ""
+    #: Empty in production: `discovery.usb.device_for_tty` reads `/sys/class/tty`.
+    #: An exact override supplies a copied or synthetic tty sysfs tree in tests.
+    tty_sysfs: str = ""
 
     # --- hand-edited config ---
 
@@ -271,6 +280,8 @@ class Paths:
         bus = e.get("MCU_UPDATER_FAKE_BUS") or DEFAULT_SERIAL_BY_ID
         bootsel_root = e.get("MCU_UPDATER_FAKE_BOOTSEL") or ""
         can_sysfs_net = e.get("MCU_UPDATER_FAKE_CAN_SYSFS") or ""
+        usb_sysfs = e.get("MCU_UPDATER_FAKE_USB_SYSFS") or ""
+        tty_sysfs = e.get("MCU_UPDATER_FAKE_TTY_SYSFS") or ""
 
         return cls(
             home=resolved_home,
@@ -280,4 +291,6 @@ class Paths:
             printer_data=pdata,
             bootsel_root=bootsel_root,
             can_sysfs_net=can_sysfs_net,
+            usb_sysfs=usb_sysfs,
+            tty_sysfs=tty_sysfs,
         )

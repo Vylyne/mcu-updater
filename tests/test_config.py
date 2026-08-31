@@ -360,7 +360,7 @@ def test_add_and_remove_serial_report_whether_they_acted(paths):
 def test_resolve_serial_unique_match(paths, live_registry_text):
     _write(paths, live_registry_text)
     assert (
-        Registry.load(paths).resolve_serial("4B0036000A53594731383520-if00")
+        Registry.load(paths).resolve_serial("4B0036000A53594731383520")
         == "hexadistrofusion"
     )
 
@@ -385,7 +385,7 @@ def test_resolve_serial_ambiguous(paths):
 def test_resolve_serial_tracked_elsewhere_is_refused_not_offered(paths, live_registry_text):
     _write(paths, live_registry_text)
     with pytest.raises(SerialTrackedElsewhereError) as exc:
-        Registry.load(paths).resolve_serial("4B0036000A53594731383520-if00", "OctopusMAXEZ")
+        Registry.load(paths).resolve_serial("4B0036000A53594731383520", "OctopusMAXEZ")
     assert exc.value.data["tracked_under"] == ["hexadistrofusion"]
 
 
@@ -393,7 +393,7 @@ def test_resolve_serial_with_matching_type(paths, live_registry_text):
     _write(paths, live_registry_text)
     reg = Registry.load(paths)
     assert (
-        reg.resolve_serial("4B0036000A53594731383520-if00", "hexadistrofusion")
+        reg.resolve_serial("4B0036000A53594731383520", "hexadistrofusion")
         == "hexadistrofusion"
     )
 

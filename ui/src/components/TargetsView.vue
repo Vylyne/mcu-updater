@@ -129,12 +129,13 @@ async function onRefresh(): Promise<void> {
             <UiIcon :path="mdiPlusCircleOutline" size="x-small" />
             New type…
           </button>
-          <AddMcuWizard
-            v-if="canAddMcu"
-            variant="menu"
-            @click="menuOpen = false"
-          />
         </div>
+        <AddMcuWizard
+          v-if="canAddMcu"
+          variant="menu"
+          :launcher-visible="menuOpen"
+          @click="menuOpen = false"
+        />
       </span>
 
       <button

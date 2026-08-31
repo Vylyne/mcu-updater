@@ -101,6 +101,56 @@ def test_more_than_one_bridge_gives_more_than_one_interface(paths, fake_root):
     assert canbus.list_can_interfaces(fake_paths) == ["can0", "can1"]
 
 
+def test_can_interface_metadata_attaches_its_usb_adapter(paths, fake_root, monkeypatch):
+    net_root = fake_root / "sys_class_net"
+    _make_net_device(net_root, "can7", canbus.ARPHRD_CAN)
+    usb_root = fake_root / "usb"
+    adapter = usb_root / "1-2"
+    adapter.mkdir(parents=True)
+    (adapter / "idVendor").write_text("1d50\n", encoding="utf-8")
+    (adapter / "idProduct").write_text("606f\n", encoding="utf-8")
+    (adapter / "serial").write_text("ADAPTER-SERIAL\n", encoding="utf-8")
+    fake_paths = dataclasses.replace(
+        paths, can_sysfs_net=str(net_root), usb_sysfs=str(usb_root)
+    )
+    device_link = str(net_root / "can7" / "device")
+    realpath = canbus.os.path.realpath
+    monkeypatch.setattr(
+        canbus.os.path,
+        "realpath",
+        lambda path: str(usb_root / "1-2" / "interface") if path == device_link else realpath(path),
+    )
+
+    found = canbus.list_can_interface_metadata(fake_paths)
+
+    assert found[0].name == "can7"
+    assert found[0].adapter is not None
+    assert found[0].adapter.serial == "ADAPTER-SERIAL"
+
+
+@pytest.mark.skipif(os.name == "nt", reason="symlink fixtures require POSIX")
+def test_can_interface_metadata_follows_the_real_net_device_symlink(paths, fake_root):
+    net_root = fake_root / "sys_class_net"
+    _make_net_device(net_root, "can7", canbus.ARPHRD_CAN)
+    usb_root = fake_root / "usb"
+    adapter = usb_root / "1-2"
+    adapter.mkdir(parents=True)
+    (adapter / "idVendor").write_text("1d50\n", encoding="utf-8")
+    (adapter / "idProduct").write_text("606f\n", encoding="utf-8")
+    (adapter / "serial").write_text("ADAPTER-SERIAL\n", encoding="utf-8")
+    interface = usb_root / "1-2:1.0"
+    interface.mkdir()
+    (net_root / "can7" / "device").symlink_to(interface, target_is_directory=True)
+    fake_paths = dataclasses.replace(
+        paths, can_sysfs_net=str(net_root), usb_sysfs=str(usb_root)
+    )
+
+    found = canbus.list_can_interface_metadata(fake_paths)
+
+    assert found[0].adapter is not None
+    assert found[0].adapter.serial == "ADAPTER-SERIAL"
+
+
 def test_no_sysfs_net_directory_at_all_is_not_an_error(paths, fake_root):
     fake_paths = dataclasses.replace(paths, can_sysfs_net=str(fake_root / "does-not-exist"))
     assert canbus.list_can_interfaces(fake_paths) == []
@@ -137,6 +187,75 @@ def test_query_parses_the_fake_subprocess_output(paths, settings, monkeypatch):
     assert len(sightings) == 1
     assert sightings[0].uuid == "bcb5346fc731"
     assert sightings[0].interface == "can0"
+
+
+def test_read_only_query_still_runs_when_writes_are_dry_run(paths, settings, monkeypatch):
+    _fake_flashtool(paths)
+    dry_run_settings = dataclasses.replace(settings, dry_run=True)
+
+    def fake_run_streamed(cmd, *, reporter=None, dry_run=False, **kwargs):
+        assert dry_run is False
+        assert reporter is not None
+        reporter("stdout", "CANBus UUID Query Complete")
+        return 0
+
+    monkeypatch.setattr(canbus, "run_streamed", fake_run_streamed)
+
+    assert canbus.query(paths, dry_run_settings, "can0") == []
+
+
+def test_query_rejects_a_failed_subprocess_even_when_it_printed_a_device(paths, settings, monkeypatch):
+    _fake_flashtool(paths)
+
+    def fake_run_streamed(*args, reporter=None, **kwargs):
+        assert reporter is not None
+        reporter("stdout", "Detected UUID: bcb5346fc731, Application: Klipper")
+        reporter("stdout", "CANBus UUID Query Complete")
+        return 1
+
+    monkeypatch.setattr(canbus, "run_streamed", fake_run_streamed)
+
+    with pytest.raises(canbus.CanQueryError) as exc:
+        canbus.query(paths, settings, "can0")
+    assert exc.value.failure.interface == "can0"
+    assert exc.value.failure.returncode == 1
+
+
+def test_query_rejects_a_transcript_without_the_completion_sentinel(paths, settings, monkeypatch):
+    _fake_flashtool(paths)
+
+    def fake_run_streamed(*args, reporter=None, **kwargs):
+        assert reporter is not None
+        reporter("stdout", "Detected UUID: bcb5346fc731, Application: Klipper")
+        return 0
+
+    monkeypatch.setattr(canbus, "run_streamed", fake_run_streamed)
+
+    with pytest.raises(canbus.CanQueryError) as exc:
+        canbus.query(paths, settings, "can0")
+    assert exc.value.failure.reason == "completion sentinel missing"
+
+
+def test_scan_all_keeps_other_interfaces_when_one_query_fails(paths, settings, fake_root, monkeypatch):
+    net_root = fake_root / "sys_class_net"
+    _make_net_device(net_root, "can0", canbus.ARPHRD_CAN)
+    _make_net_device(net_root, "can1", canbus.ARPHRD_CAN)
+    fake_paths = dataclasses.replace(paths, can_sysfs_net=str(net_root))
+    _fake_flashtool(fake_paths)
+
+    def fake_run_streamed(cmd, *, reporter=None, **kwargs):
+        assert reporter is not None
+        if "can0" in cmd:
+            return 2
+        reporter("stdout", "Detected UUID: bcb5346fc731, Application: Klipper")
+        reporter("stdout", "CANBus UUID Query Complete")
+        return 0
+
+    monkeypatch.setattr(canbus, "run_streamed", fake_run_streamed)
+
+    result = canbus.scan_all_result(fake_paths, settings)
+    assert [sighting.uuid for sighting in result.sightings] == ["bcb5346fc731"]
+    assert [(failure.interface, failure.returncode) for failure in result.failures] == [("can0", 2)]
 
 
 def test_query_with_nothing_unclaimed_returns_an_empty_list(paths, settings, monkeypatch):

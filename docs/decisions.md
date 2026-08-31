@@ -21,14 +21,19 @@ The extension point is deliberately manual and documented: **one module + one
 line in the registry tuple**. `providers/registry.py`, `flashers/registry.py`
 and `discovery/registry.py` each say so in their own docstring.
 
-### Do not implement CAN discovery or flashing
+### CAN discovery and flashing use UUID identity and live interfaces
 
-Deliberately deferred. A CAN node has no `/dev/serial/by-id` entry at all, so it
-needs an identity source that does not exist yet — it would come from
-`canbus_uuid` in `printer.cfg`, which nothing here reads.
+CAN discovery and flashing are implemented. CAN nodes are identified by their
+UUID and tracked in `canbus_uuids`; Linux interface names are never persisted.
+Discovery scans every current network device whose sysfs type is `ARPHRD_CAN`,
+retains successful results when another interface reports an error, and keeps
+non-USB CAN nodes in the result. USB adapter topology metadata is attached when
+the shared USB sysfs collector can resolve it.
 
-This is why `discovery/topology.py` is named but empty (below), and why the CAN
-boxes in the README feature list are unticked rather than absent.
+For an adopted node, Klipper's configured `canbus_interface` is used when
+present (defaulting to `can0`); otherwise the updater retries every current CAN
+interface. The unified `flashtool` flasher handles both USB serial and CAN
+targets, and its `-f` operation performs the bootloader transition itself.
 
 ### Do not enable the katapult deployer
 
@@ -121,17 +126,13 @@ unfamiliar.
 
 they are the documented entry points.
 
-### Do not fold `scripts/usb_topology.py` into the package
+### The USB topology collector is shared by discovery and diagnostics
 
-It is a human diagnostic with its own argparse CLI and no caller in `src/`.
-Moving it makes `discovery/` look complete while adding the one source nothing
-consumes.
-
-### Do not build `discovery/topology.py`
-
-The slot is named because it helps to know where the thing would go — the sysfs
-USB tree as a `Source`, which is where CAN identity would land. Leave it empty;
-it is blocked by the CAN decision above, not by the seam.
+USB sysfs collection lives in `discovery/usb.py` and is shared by topology,
+by-id discovery, watcher support, and CAN adapter metadata. The standalone
+`scripts/usb_topology.py` remains a human diagnostic CLI, while the package
+collector supplies the reusable data path; the old split is no longer a reason
+to defer topology or CAN support.
 
 ### Do not give `Confidence` a fourth degree of certainty
 

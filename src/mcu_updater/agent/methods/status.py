@@ -1242,10 +1242,11 @@ class StatusMixin(_Base):
         from ...flashers.flash import find_flashtool
 
         settings = self.settings()
-        interfaces = canbus.list_can_interfaces(self.paths)
+        interfaces = canbus.list_can_interface_metadata(self.paths)
         out: dict[str, Any] = {
-            "interfaces": interfaces,
+            "interfaces": [dataclasses.asdict(interface) for interface in interfaces],
             "devices": [],
+            "failures": [],
             "count": 0,
             "message": None,
         }
@@ -1262,14 +1263,12 @@ class StatusMixin(_Base):
             return out
 
         reg = self.registry()
-        sightings: list[Any] = []
-        for interface in interfaces:
-            sightings.extend(
-                canbus.query(self.paths, settings, interface, reporter=self._log_reporter)
-            )
+        result = canbus.scan_all_result(self.paths, settings, reporter=self._log_reporter)
+        out["interfaces"] = [dataclasses.asdict(interface) for interface in result.interfaces]
+        out["failures"] = [dataclasses.asdict(failure) for failure in result.failures]
 
         devices = []
-        for sighting in sightings:
+        for sighting in result.sightings:
             elsewhere = reg.find_types_for_uuid(sighting.uuid)
             devices.append(
                 {
@@ -1282,7 +1281,9 @@ class StatusMixin(_Base):
             )
         out["devices"] = devices
         out["count"] = len(devices)
-        if not devices:
+        if not devices and result.failures:
+            out["message"] = "CAN interface queries failed; see failures for details."
+        elif not devices:
             out["message"] = "No unclaimed CAN boards answered on any interface."
         return out
 
@@ -1924,9 +1925,9 @@ class StatusMixin(_Base):
         with no bus traffic of its own (`--query` cannot poll an already-
         connected node at all - see `discovery/canbus.py`'s own docstring),
         and `mcu_constants.CANBUS_BRIDGE`, which says whether the mcu object
-        in question is a USB-CAN bridge or a native node - `flashtool_can`
-        uses this to pick a flashing strategy without probing for it, when it
-        is available.
+        in question is a USB-CAN bridge or a native node. It also carries
+        Klipper's `canbus_interface`, defaulting its omitted historical value
+        to `can0`, so a mapped target is written only on its configured bus.
 
         A uuid with **no** `canbus_uuid:` declaration anywhere in
         `configfile.settings` is simply absent from the returned dict - that
@@ -1958,13 +1959,17 @@ class StatusMixin(_Base):
                 continue
             uuid = (values or {}).get("canbus_uuid")
             if isinstance(uuid, str) and uuid:
-                uuid_by_section[section.lower()] = uuid.lower()
+                interface = (values or {}).get("canbus_interface")
+                uuid_by_section[section.lower()] = (
+                    uuid.lower(), interface if isinstance(interface, str) and interface else "can0"
+                )
 
         out: dict[str, dict[str, Any]] = {}
         for name in names:
-            uuid = uuid_by_section.get(name.lower())
-            if not uuid:
+            mapped = uuid_by_section.get(name.lower())
+            if not mapped:
                 continue
+            uuid, interface = mapped
             entry = status.get(name) or {}
             version = entry.get("mcu_version")
             constants = entry.get("mcu_constants")
@@ -1978,6 +1983,7 @@ class StatusMixin(_Base):
                 "bridge": (
                     "CANBUS_BRIDGE" in constants if isinstance(constants, dict) else None
                 ),
+                "interface": interface,
             }
         return out
 

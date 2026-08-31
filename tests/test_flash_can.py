@@ -1,4 +1,4 @@
-"""flash_katapult_can / FlashtoolCan: CAN-addressed flashing.
+"""flash_katapult_can / Flashtool: CAN-addressed flashing.
 
 Mirrors test_flash.py's approach for the by-id path - every subprocess call
 is faked via `run_streamed`, and CAN interfaces are faked via
@@ -15,7 +15,6 @@ import os
 
 import pytest
 
-from mcu_updater import devices as devices_mod
 from mcu_updater import flashers
 from mcu_updater.discovery.canbus import ARPHRD_CAN
 from mcu_updater.errors import (
@@ -145,6 +144,19 @@ def test_uses_dash_i_dash_u_instead_of_dash_d(paths, ready, fake_root, monkeypat
     assert "-d" not in calls[0]
     assert calls[0][calls[0].index("-i") + 1] == "can0"
     assert calls[0][calls[0].index("-u") + 1] == UUID
+
+
+def test_a_configured_interface_is_used_without_trying_other_buses(
+    paths, ready, fake_root, monkeypatch
+):
+    """A printer.cfg mapping is authoritative for this write, so a failed
+    configured bus must not fall through and flash the same UUID elsewhere."""
+    ready_paths = _with_interfaces(paths, fake_root, ["can0", "can1"])
+    calls = _script_run_streamed(monkeypatch, {("can1", "write"): (0, [])})
+
+    flash_katapult_can(ready_paths, ready, "board", UUID, interface="can1")
+
+    assert [call[call.index("-i") + 1] for call in calls] == ["can1"]
 
 
 # --------------------------------------------------------------------------
@@ -287,6 +299,20 @@ def test_an_unanswered_probe_falls_through_to_the_write_loop(paths, ready, fake_
     assert all("-s" not in calls[i] for i in (2, 3))
 
 
+def test_a_known_native_node_never_writes_after_every_probe_fails(
+    paths, ready, fake_root, monkeypatch
+):
+    ready_paths = _with_interfaces(paths, fake_root, ["can0", "can1"])
+    _write_sidecar(paths, "board", "klipper", app_address=0x08004000)
+    calls = _script_run_streamed(monkeypatch, {("can1", "write"): (0, [])})
+
+    with pytest.raises(FlashError, match="Not attempting to write"):
+        flash_katapult_can(ready_paths, ready, "board", UUID, bridge=False)
+
+    assert [call[call.index("-i") + 1] for call in calls] == ["can0", "can1"]
+    assert all("-s" in call for call in calls)
+
+
 # --------------------------------------------------------------------------
 # the flash log
 # --------------------------------------------------------------------------
@@ -305,57 +331,39 @@ def test_a_real_flash_records_canbus_uuid_confidence(paths, ready, fake_root, mo
 
 
 # --------------------------------------------------------------------------
-# FlashtoolCan / target_for / registry membership
+# Flashtool / CAN target construction
 # --------------------------------------------------------------------------
 
 
 def test_target_for_builds_a_target_keyed_on_the_uuid():
-    target = flashers.flashtool_can.target_for(
-        {"type": "board", "chipset": "stm32g431xx", "fw": "klipper"},
-        UUID,
+    target = flashers.flashtool.target_for(
+        {"type": "board", "uuid": UUID, "chipset": "stm32g431xx", "fw": "klipper"},
         stop_services=("klipper",),
     )
-    assert target.flasher == "flashtool_can"
+    assert target.flasher == "flashtool"
     assert target.type == "board"
     assert target.id == UUID
     assert target.stop_services == ("klipper",)
 
 
-def test_flashtool_can_is_registered_but_never_selected():
-    """Joins FLASHERS (so by_flasher/group_by_stop work generically), but
-    select_for must always resolve a CAN-shaped chipset/state pair to plain
-    Flashtool, never to FlashtoolCan - the whole reason target_for exists as
-    a direct, un-routed entry point."""
-    assert flashers.by_name("flashtool_can").name == "flashtool_can"
-    assert any(f.name == "flashtool_can" for f in flashers.FLASHERS)
-
-    for chipset, state in (
-        ("stm32g431xx", devices_mod.STATE_KLIPPER),
-        ("stm32g431xx", devices_mod.STATE_KATAPULT),
-        ("rp2040", devices_mod.STATE_KLIPPER),
-        ("rp2040", devices_mod.STATE_KATAPULT),
-    ):
-        assert flashers.select_for(chipset, state).name == "flashtool"
-
-
-def test_flashtool_can_write_returns_the_uuid(paths, ready, fake_root, monkeypatch):
+def test_flashtool_writes_a_can_target_and_returns_its_uuid(paths, ready, fake_root, monkeypatch):
     ready_paths = _with_interfaces(paths, fake_root, ["can0"])
     _script_run_streamed(monkeypatch, {("can0", "write"): (0, [])})
 
     bench = flashers.Bench(paths=ready_paths, settings=ready, controller=lambda name=None: None)
-    target = flashers.flashtool_can.target_for(
-        {"type": "board", "chipset": "stm32g431xx", "fw": "klipper"}, UUID
+    target = flashers.flashtool.target_for(
+        {"type": "board", "uuid": UUID, "chipset": "stm32g431xx", "fw": "klipper"}
     )
-    result = flashers.FlashtoolCan().write(
+    result = flashers.Flashtool().write(
         bench, None, target, flashers.PlainContext(lambda *a: None)
     )
     assert result == {"uuid": UUID}
 
 
-def test_flashtool_can_settled_is_a_harmless_no_op(paths, settings):
+def test_flashtool_settles_a_can_target_as_a_harmless_no_op(paths, settings):
     bench = flashers.Bench(paths=paths, settings=settings, controller=lambda name=None: None)
-    target = flashers.flashtool_can.target_for(
-        {"type": "board", "chipset": "stm32g431xx", "fw": "klipper"}, UUID
+    target = flashers.flashtool.target_for(
+        {"type": "board", "uuid": UUID, "chipset": "stm32g431xx", "fw": "klipper"}
     )
     # Must not raise - Flasher.settled's own contract.
-    flashers.FlashtoolCan().settled(bench, target, flashers.PlainContext(lambda *a: None))
+    flashers.Flashtool().settled(bench, target, flashers.PlainContext(lambda *a: None))

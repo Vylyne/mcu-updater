@@ -10,7 +10,7 @@
 import type { MoonrakerClient, RpcError } from "./moonraker";
 
 export const AGENT_NAME = "mcu_updater";
-export const SUPPORTED_API_VERSION = 3;
+export const SUPPORTED_API_VERSION = 4;
 
 /** The identify `version` field is informational on the Moonraker side, not
  * parsed - it does not need to track ui/package.json. */

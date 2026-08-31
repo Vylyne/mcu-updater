@@ -6,6 +6,7 @@ import { state } from "../store/agent";
 
 afterEach(() => {
   state.ping = null;
+  state.status = null;
 });
 
 function makeTarget(provider: Target["provider"], name: string): Target {
@@ -70,5 +71,21 @@ describe("TargetsView", () => {
     expect(
       wrapper.find('[title="Flash everything that needs it"]').exists(),
     ).toBe(true);
+  });
+
+  it("keeps the add-board wizard mounted after its menu closes", async () => {
+    state.ping = { capabilities: ["fw.add_mcu.start"] };
+    state.status = {
+      targets: [makeTarget("kconfig_make", "carto_v4")],
+    } as never;
+    const wrapper = mount(TargetsView, {
+      props: { targets: [makeTarget("kconfig_make", "carto_v4")] },
+    });
+
+    await wrapper.get('[aria-label="More actions"]').trigger("click");
+    await wrapper.get(".menu-item").trigger("click");
+
+    expect(wrapper.find(".dialog-backdrop").exists()).toBe(true);
+    expect(wrapper.find(".menu-list").exists()).toBe(false);
   });
 });

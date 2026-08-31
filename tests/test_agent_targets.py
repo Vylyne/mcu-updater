@@ -231,7 +231,7 @@ def test_a_type_whose_boards_are_all_offline_reports_unknown_not_clean(api):
 
 def test_a_type_needs_flashing_when_any_one_board_does(api, fake_root):
     make_device(
-        fake_root / "bus", "katapult", "stm32f072xb", "4B0036000A53594731383520-if00"
+        fake_root / "bus", "katapult", "stm32f072xb", "4B0036000A53594731383520"
     )
     hexa = _targets(api)["hexadistrofusion"]
 
@@ -572,7 +572,7 @@ def test_build_and_flash_is_not_blocked_by_a_missing_artifact(paths, live_regist
         fh.write(live_registry_text)
     write_settings(paths, enable_flashing="true")
     make_device(
-        _bus(paths), "klipper", "stm32f072xb", "4B0036000A53594731383520-if00"
+        _bus(paths), "klipper", "stm32f072xb", "4B0036000A53594731383520"
     )
     api = Api(paths, runner=_runner())
 
@@ -630,7 +630,7 @@ def test_every_fact_in_the_old_keys_survives_the_projection(api, paths, fake_roo
     """
     port = _add_display(paths, fake_root, api)
     make_device(
-        fake_root / "bus", "klipper", "stm32f072xb", "4B0036000A53594731383520-if00"
+        fake_root / "bus", "klipper", "stm32f072xb", "4B0036000A53594731383520"
     )
 
     reg = api.registry()

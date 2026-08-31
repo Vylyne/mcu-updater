@@ -435,19 +435,16 @@ def _board_targets(
 def _canbus_targets(c: Context, mcu_type: str, uuids: list[str]) -> list:
     """CAN-uuid counterpart to `_board_targets`, for a type's `canbus_uuids:`.
 
-    Same resolved `stop_services` as this same type's by-id boards -
-    `flashtool_can`'s own stated design intent, mirrored here rather than a
-    CAN-specific mechanism. No interface is resolved here, for the same
-    reason `flashtool_can.target_for` itself takes none: `canbus_uuids:`
-    stores no interface, and the flasher discovers it itself at write time.
+    Same resolved `stop_services` as this same type's by-id boards. The CLI
+    has no Klipper mapping, so the flasher discovers the current interface at
+    write time; `canbus_uuids:` stores no interface.
     """
     mcu = c.registry().get(mcu_type)
     application = mcu.application()
     units = stop_services.for_mcu(c.paths, mcu, c.settings)
     return [
-        flashers.flashtool_can.target_for(
-            {"type": mcu_type, "chipset": mcu.chipset, "fw": application},
-            uuid,
+        flashers.flashtool.target_for(
+            {"type": mcu_type, "uuid": uuid, "chipset": mcu.chipset, "fw": application},
             stop_services=units,
         )
         for uuid in uuids

@@ -313,6 +313,9 @@ class BusWatcher:
         while not self._stop.is_set():
             try:
                 found = devices_mod.scan(self.paths)
+                # devices.scan() already uses the shared USB inventory to map
+                # by-id tty nodes to physical hardware serials. Fingerprinting
+                # every unrelated USB device would emit an unchanged bus payload.
                 fp = _fingerprint(found)
                 if fp != self._last:
                     self._last = fp

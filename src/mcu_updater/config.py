@@ -6,8 +6,8 @@ Klipper-style, because it lives next to ``printer.cfg`` and gets hand-edited::
     [mcu flylllplusbuffer]
     chipset: stm32f072xb
     serials:
-        4C0033000957465331323720-if00
-        3F0037000957465331323720-if00
+        4C0033000957465331323720
+        3F0037000957465331323720
     klipper_makefile_patches:
         src/Makefile -> src-y += buffer.c
 

@@ -42,7 +42,7 @@ def _board_target(board: dict) -> flashers.FlashTarget:
     """
     stop_services = tuple(board.get("stop_services") or ())
     if "uuid" in board:
-        return flashers.flashtool_can.target_for(board, board["uuid"], stop_services=stop_services)
+        return flashers.flashtool.target_for(board, stop_services=stop_services)
     return flashers.flashtool.target_for(board, stop_services=stop_services)
 
 
@@ -252,6 +252,7 @@ class BulkMixin(_Base):
                             "stop_services": list(units),
                             "state": "klipper",
                             "bridge": cross["bridge"],
+                            "interface": cross["interface"],
                             "reason": info["reason"] if scope != "all" else "forced",
                         }
                     )
@@ -270,6 +271,7 @@ class BulkMixin(_Base):
                         "stop_services": list(units),
                         "state": "unknown",
                         "bridge": cross["bridge"] if cross is not None else None,
+                        "interface": cross["interface"] if cross is not None else None,
                         "reason": "forced" if scope == "all" else "unknown_liveness",
                     }
                 )

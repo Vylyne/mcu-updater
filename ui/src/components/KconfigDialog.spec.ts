@@ -116,4 +116,43 @@ describe("KconfigDialog", () => {
     const wrapper = mount(KconfigDialog);
     expect(wrapper.text()).toContain("Does foo things.");
   });
+
+  it.each([
+    ["Save", false],
+    ["Save & Build", true],
+  ])("keeps the dialog and edits when %s fails", async (label, build) => {
+    state.kconfig = { ...menu, dirty: true };
+    const save = vi.spyOn(store, "kconfigSave").mockResolvedValue(false);
+    const close = vi.spyOn(store, "closeKconfig");
+    const wrapper = mount(KconfigDialog);
+
+    await wrapper
+      .findAll(".dialog-actions button")
+      .find((button) => button.text() === label)
+      ?.trigger("click");
+    await Promise.resolve();
+
+    expect(save).toHaveBeenCalledWith(build);
+    expect(close).not.toHaveBeenCalled();
+    expect(state.kconfig?.dirty).toBe(true);
+    expect(wrapper.find(".dialog-backdrop").exists()).toBe(true);
+  });
+
+  it.each([
+    ["Save", false],
+    ["Save & Build", true],
+  ])("closes the dialog after %s succeeds", async (label, build) => {
+    state.kconfig = { ...menu, dirty: true };
+    const save = vi.spyOn(store, "kconfigSave").mockResolvedValue(true);
+    const close = vi.spyOn(store, "closeKconfig");
+    const wrapper = mount(KconfigDialog);
+
+    await wrapper
+      .findAll(".dialog-actions button")
+      .find((button) => button.text() === label)
+      ?.trigger("click");
+
+    expect(save).toHaveBeenCalledWith(build);
+    expect(close).toHaveBeenCalled();
+  });
 });

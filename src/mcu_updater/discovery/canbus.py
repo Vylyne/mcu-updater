@@ -40,6 +40,7 @@ from ..build import Reporter, null_reporter, run_streamed
 from ..flashers.flash import find_flashtool
 from ..paths import Paths
 from ..settings import Settings
+from . import usb
 from .spec import state_for_firmware
 
 #: ARPHRD_CAN, from <linux/if_arp.h> - the kernel's own answer to "is this a
@@ -89,6 +90,36 @@ class CanSighting:
     interface: str
 
 
+@dataclasses.dataclass(frozen=True)
+class CanInterface:
+    """A kernel-confirmed CAN interface and its USB adapter when applicable."""
+
+    name: str
+    adapter: usb.UsbDevice | None
+
+
+@dataclasses.dataclass(frozen=True)
+class CanQueryFailure:
+    """A failed unassigned-node query, kept per interface for callers to report."""
+
+    interface: str
+    reason: str
+    returncode: int | None = None
+
+
+class CanQueryError(RuntimeError):
+    def __init__(self, failure: CanQueryFailure) -> None:
+        super().__init__(f"CAN query on {failure.interface} failed: {failure.reason}")
+        self.failure = failure
+
+
+@dataclasses.dataclass(frozen=True)
+class CanScanResult:
+    interfaces: list[CanInterface]
+    sightings: list[CanSighting]
+    failures: list[CanQueryFailure]
+
+
 def list_can_interfaces(paths: Paths) -> list[str]:
     """Every real CAN network interface currently present on this host.
 
@@ -99,10 +130,16 @@ def list_can_interfaces(paths: Paths) -> list[str]:
     `/sys/class/net`, and a test pointing it at a tmp_path searches there
     instead.
     """
+    return [interface.name for interface in list_can_interface_metadata(paths)]
+
+
+def list_can_interface_metadata(paths: Paths) -> list[CanInterface]:
+    """Every CAN interface, with USB inventory metadata where the bus has it."""
     root = paths.can_sysfs_net or _DEFAULT_SYS_CLASS_NET
     if not os.path.isdir(root):
         return []
-    found = []
+    devices = usb.collect(paths)
+    found: list[CanInterface] = []
     for name in sorted(os.listdir(root)):
         type_file = os.path.join(root, name, "type")
         try:
@@ -111,7 +148,8 @@ def list_can_interfaces(paths: Paths) -> list[str]:
         except OSError:
             continue
         if value == ARPHRD_CAN:
-            found.append(name)
+            adapter = usb.device_for_sysfs_path(devices, os.path.join(root, name, "device"))
+            found.append(CanInterface(name=name, adapter=adapter))
     return found
 
 
@@ -154,13 +192,12 @@ def query(
     """Every unclaimed board answering on one CAN interface right now.
 
     Shells out to ``flashtool.py -i <interface> --query`` via the same
-    `run_streamed` subprocess pattern `flashers/flash.py` uses. Does not
-    raise when the query simply finds nothing, or when flashtool's own
-    "CANBus UUID Query Complete" sentinel never shows up in its output -
-    those read as "no unclaimed boards on this interface right now", not as a
-    failure of this call. It *does* raise `FileNotFoundError` if flashtool.py
-    itself is missing, the same hard dependency `flash_katapult` refuses to
-    proceed without.
+    `run_streamed` subprocess pattern `flashers/flash.py` uses. An empty,
+    completed query returns an empty list. A nonzero exit or a transcript
+    without flashtool's completion sentinel raises `CanQueryError`, so callers
+    can distinguish an empty bus from an incomplete scan. It *does* raise
+    `FileNotFoundError` if flashtool.py itself is missing, the same hard
+    dependency `flash_katapult` refuses to proceed without.
     """
     flashtool = find_flashtool(paths, settings)
     if not os.path.exists(flashtool):
@@ -174,13 +211,21 @@ def query(
         transcript.append(line)
         reporter(stream, line)
 
-    run_streamed(
+    returncode = run_streamed(
         [sys.executable, flashtool, "-i", interface, "--query"],
         cwd=paths.home,
         reporter=capture,
-        dry_run=settings.dry_run,
+        # Querying unassigned UUIDs is read-only discovery, so dry-run must not
+        # turn it into a skipped subprocess with no completion sentinel.
+        dry_run=False,
         fake_delay=0.0,
     )
+    if returncode != 0:
+        raise CanQueryError(
+            CanQueryFailure(interface, "flashtool exited unsuccessfully", returncode)
+        )
+    if not any(QUERY_COMPLETE_RE.search(line) for line in transcript):
+        raise CanQueryError(CanQueryFailure(interface, "completion sentinel missing", returncode))
     return parse_query_output(transcript, interface)
 
 
@@ -197,19 +242,42 @@ def scan_all(
     CAN hardware on this host" apart from "CAN hardware present, nothing
     unclaimed answered".
     """
-    interfaces = list_can_interfaces(paths)
+    result = scan_all_result(paths, settings, reporter=reporter)
+    return [interface.name for interface in result.interfaces], result.sightings
+
+
+def scan_all_result(
+    paths: Paths,
+    settings: Settings,
+    *,
+    reporter: Reporter = null_reporter,
+) -> CanScanResult:
+    """Sweep every current CAN interface without losing good results to one failure."""
+    interfaces = list_can_interface_metadata(paths)
     sightings: list[CanSighting] = []
+    failures: list[CanQueryFailure] = []
     for interface in interfaces:
-        sightings.extend(query(paths, settings, interface, reporter=reporter))
-    return interfaces, sightings
+        try:
+            sightings.extend(query(paths, settings, interface.name, reporter=reporter))
+        except CanQueryError as exc:
+            failures.append(exc.failure)
+        except Exception as exc:  # noqa: BLE001 - one adapter must not hide another
+            failures.append(CanQueryFailure(interface.name, str(exc)))
+    return CanScanResult(interfaces, sightings, failures)
 
 
 __all__ = [
     "ARPHRD_CAN",
     "QUERY_COMPLETE_RE",
+    "CanInterface",
+    "CanQueryError",
+    "CanQueryFailure",
+    "CanScanResult",
     "CanSighting",
     "list_can_interfaces",
+    "list_can_interface_metadata",
     "parse_query_output",
     "query",
     "scan_all",
+    "scan_all_result",
 ]

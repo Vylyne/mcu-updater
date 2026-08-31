@@ -85,8 +85,11 @@ async function reset(): Promise<void> {
 
 async function save(build: boolean): Promise<void> {
   busy.value = true;
-  await kconfigSave(build);
-  busy.value = false;
+  try {
+    if (await kconfigSave(build)) forceClose();
+  } finally {
+    busy.value = false;
+  }
 }
 
 // Unsaved edits are the one thing here that cannot be regenerated, so

@@ -68,8 +68,8 @@ enable_flashing: true
 chipset: stm32f072xb
 firmware: klipper, katapult
 serials:
-    4C0033000957465331323720-if00
-    3F0037000957465331323720-if00
+    4C0033000957465331323720
+    3F0037000957465331323720
 klipper_makefile_patches:
     src/Makefile -> src-y += buffer.c
 canbus_uuids:
@@ -79,7 +79,7 @@ canbus_uuids:
 | Key | Meaning |
 | --- | --- |
 | `chipset` | Required on every type, PlatformIO included. Matches the chipset segment of the `/dev/serial/by-id` name. |
-| `serials` | One tracked board per line. |
+| `serials` | One tracked board per line, using the canonical hardware serial without udev's terminal `-if00` suffix. The full `/dev/serial/by-id` path remains the transport address and is rediscovered. |
 | `canbus_uuids` | One tracked CAN-addressed board's uuid per line, parallel to `serials` but a separate key. No interface is stored — Linux CAN interface names (`can0`, `can1`, ...) are enumeration order, not stable identity, so the flasher re-discovers one at write time instead of trusting a remembered one. |
 | `firmware` | A **list** of the families this board runs, e.g. `cartographer, katapult`. A type with no bootloader simply omits it. See `[firmware ...]` sections, below. |
 | `profile` | The vendor answer file the config was seeded from, e.g. `config.CartoV4USB`. |
@@ -161,6 +161,9 @@ Every path derives from one `Paths` object, so nothing is hardcoded elsewhere:
 | `MCU_UPDATER_CONFIG_DIR` | `…/config/mcu-updater` |
 | `MCU_UPDATER_DATA_DIR` | `…/mcu-updater` |
 | `MCU_UPDATER_FAKE_BUS` | `/dev/serial/by-id` |
+| `MCU_UPDATER_FAKE_CAN_SYSFS` | `/sys/class/net` |
+| `MCU_UPDATER_FAKE_USB_SYSFS` | `/sys/bus/usb/devices` |
+| `MCU_UPDATER_FAKE_TTY_SYSFS` | `/sys/class/tty` |
 
 ## The standalone UI lives outside all of this
 

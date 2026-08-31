@@ -14,11 +14,21 @@ from .bootsel import Bootsel
 from .dfu_util import DfuUtil
 from .esptool import Esptool
 from .flashtool import Flashtool
+from .flashtool_can import FlashtoolCan
 from .spec import Flasher, FlashTarget
 
 #: Every flasher. Order is not a batch order - a batch keeps the order its
 #: selection produced - so this is just the set.
-FLASHERS: tuple[Flasher, ...] = (Flashtool(), Esptool(), DfuUtil(), Bootsel())
+#:
+#: `FlashtoolCan` is placed right after `Flashtool` deliberately, even though
+#: `select_for` never reaches it either way (see `FlashtoolCan`'s own class
+#: docstring): the two declare the identical `chipsets`/`states` pair, and
+#: `select_for` returns the first match it finds. Keeping `Flashtool` first
+#: means that even a future caller that mistakenly reaches `select_for` for a
+#: CAN-shaped chipset/state pair gets the safe, already-reachable-by-id
+#: flasher back, never the CAN one, rather than depending only on
+#: `FlashtoolCan` never being wired into that path at all.
+FLASHERS: tuple[Flasher, ...] = (Flashtool(), FlashtoolCan(), Esptool(), DfuUtil(), Bootsel())
 
 _BY_NAME: dict[str, Flasher] = {f.name: f for f in FLASHERS}
 

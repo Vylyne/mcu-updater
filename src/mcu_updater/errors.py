@@ -81,6 +81,33 @@ class SerialTrackedElsewhereError(ConfigError):
     code = "serial_tracked_elsewhere"
 
 
+class UuidTrackedElsewhereError(ConfigError):
+    """A CAN uuid already tracked under a different type.
+
+    Kept separate from `SerialTrackedElsewhereError` rather than reused for it
+    - a uuid and a by-id serial are different identity namespaces, the same
+    false-cognate reasoning that keeps `canbus_uuids:` its own config key
+    instead of folding into `serials:`.
+    """
+
+    code = "uuid_tracked_elsewhere"
+
+
+class UnknownUuidError(ConfigError):
+    """A CAN uuid not tracked under any type. `resolve_uuid`'s counterpart to
+    `UnknownSerialError`, for the same reason `find_types_for_uuid` is
+    separate from `find_types_for_serial`."""
+
+    code = "unknown_uuid"
+
+
+class AmbiguousUuidError(ConfigError):
+    """One CAN uuid tracked under more than one type - always a
+    misconfiguration, same as `AmbiguousSerialError`."""
+
+    code = "ambiguous_uuid"
+
+
 # --- build ---
 
 

@@ -17,6 +17,12 @@ Per-type keys, and that is all:
     Required. Matches the chipset segment of the /dev/serial/by-id name.
 ``serials``
     One tracked board per line.
+``canbus_uuids``
+    One tracked CAN-addressed board's uuid per line - parallel to ``serials``
+    but a separate key, since a CAN uuid has no chipset/interface segment the
+    way a by-id serial does. No interface is stored: Linux CAN interface
+    names (``can0``, ``can1``, ...) are enumeration order, not stable
+    identity, so the flasher re-discovers one at write time instead.
 ``firmware``
     Required. Which families this board runs, comma- or space-separated - an
     application and, for a board with one, its bootloader, e.g.
@@ -50,12 +56,15 @@ from . import firmware, sections
 from .cfgdoc import CfgDocument
 from .errors import (
     AmbiguousSerialError,
+    AmbiguousUuidError,
     ConfigCorruptError,
     DuplicateTypeError,
     InvalidTypeNameError,
     SerialTrackedElsewhereError,
     UnknownSerialError,
     UnknownTypeError,
+    UnknownUuidError,
+    UuidTrackedElsewhereError,
 )
 from .paths import Paths
 
@@ -144,6 +153,10 @@ class McuType:
     name: str
     chipset: str = ""
     serials: list[str] = dataclasses.field(default_factory=list)
+    #: CAN-addressed boards tracked under this type, by uuid. Parallel to
+    #: `serials` but a separate list - see the module docstring's
+    #: `canbus_uuids` entry for why. No interface is stored here either.
+    canbus_uuids: list[str] = dataclasses.field(default_factory=list)
     fws: dict[str, FwConfig] = dataclasses.field(default_factory=dict)
     #: Every family this board runs - an application and, for a board with
     #: one, its bootloader. Replaces the old single `firmware` string and the
@@ -243,6 +256,7 @@ class McuType:
             if cfg is not None:
                 out[fw] = cfg.to_json()
         out["serials"] = list(self.serials)
+        out["canbus_uuids"] = list(self.canbus_uuids)
         return out
 
 
@@ -342,6 +356,7 @@ class Registry:
             name, section = declared.name, declared.section
             mcu = McuType(name=name, chipset=(doc.get(section, "chipset") or "").strip())
             mcu.serials = doc.get_list(section, "serials")
+            mcu.canbus_uuids = doc.get_list(section, "canbus_uuids")
 
             declared_fws = doc.get_csv(section, "firmware") or []
             if not declared_fws:
@@ -470,6 +485,15 @@ class Registry:
             doc.set(section, "chipset", mcu.chipset)
             doc.set(section, "serials", list(mcu.serials))
 
+            # Optional, unlike `serials` - most types have no CAN board at
+            # all, and writing an empty `canbus_uuids:` stub into every
+            # existing type section would be noise for a key most types will
+            # never use.
+            if mcu.canbus_uuids:
+                doc.set(section, "canbus_uuids", list(mcu.canbus_uuids))
+            else:
+                doc.remove_option(section, "canbus_uuids")
+
             # Always written, never omitted as a restated default: load() now
             # refuses a type with no firmware: key at all, so save() cannot
             # leave it implicit even for the plain-klipper case.
@@ -549,6 +573,15 @@ class Registry:
         """Types tracking this serial. Normally 0 or 1; >1 is a misconfiguration."""
         return [name for name, mcu in self.types.items() if serial in mcu.serials]
 
+    def find_types_for_uuid(self, uuid: str) -> list[str]:
+        """Types tracking this CAN uuid. Normally 0 or 1; >1 is a misconfiguration.
+
+        Separate from `find_types_for_serial` for the same reason
+        `canbus_uuids` is a separate config key: a uuid and a by-id serial are
+        different identity namespaces.
+        """
+        return [name for name, mcu in self.types.items() if uuid in mcu.canbus_uuids]
+
     def resolve_serial(self, serial: str, mcu_type: str | None = None) -> str:
         """Work out which type a serial belongs to.
 
@@ -587,6 +620,51 @@ class Registry:
                 f"serial '{serial}' is tracked under multiple types "
                 f"({', '.join(sorted(matches))}) - pass -t to disambiguate.",
                 serial=serial,
+                tracked_under=sorted(matches),
+            )
+        return matches[0]
+
+    def resolve_uuid(self, uuid: str, mcu_type: str | None = None) -> str:
+        """Work out which type a CAN uuid belongs to.
+
+        `resolve_serial`'s counterpart for the uuid identity namespace - same
+        shape, same three outcomes, mirrored rather than reused because a uuid
+        and a by-id serial are different identity namespaces (the same
+        false-cognate reasoning `canbus_uuids:` already follows as its own
+        config key). Raises `UuidTrackedElsewhereError` if an explicit
+        `mcu_type` does not match where the uuid is actually tracked,
+        `UnknownUuidError` if it is untracked anywhere, `AmbiguousUuidError`
+        if it is tracked under more than one type.
+        """
+        if mcu_type is not None:
+            mcu = self.get(mcu_type)
+            if uuid in mcu.canbus_uuids:
+                return mcu_type
+            elsewhere = self.find_types_for_uuid(uuid)
+            if elsewhere:
+                raise UuidTrackedElsewhereError(
+                    f"CAN uuid '{uuid}' is already tracked under '{elsewhere[0]}', "
+                    f"not '{mcu_type}'. Did you mean -t {elsewhere[0]}?",
+                    uuid=uuid,
+                    requested=mcu_type,
+                    tracked_under=elsewhere,
+                )
+            raise UnknownUuidError(
+                f"CAN uuid '{uuid}' isn't tracked under '{mcu_type}' yet.",
+                uuid=uuid,
+                requested=mcu_type,
+            )
+
+        matches = self.find_types_for_uuid(uuid)
+        if not matches:
+            raise UnknownUuidError(
+                f"CAN uuid '{uuid}' isn't tracked under any MCU type.", uuid=uuid
+            )
+        if len(matches) > 1:
+            raise AmbiguousUuidError(
+                f"CAN uuid '{uuid}' is tracked under multiple types "
+                f"({', '.join(sorted(matches))}) - pass -t to disambiguate.",
+                uuid=uuid,
                 tracked_under=sorted(matches),
             )
         return matches[0]
@@ -657,6 +735,22 @@ class Registry:
         if serial not in mcu.serials:
             return False
         mcu.serials.remove(serial)
+        return True
+
+    def add_canbus_uuid(self, name: str, uuid: str) -> bool:
+        """Returns True if it was added, False if already present."""
+        mcu = self.get(name)
+        if uuid in mcu.canbus_uuids:
+            return False
+        mcu.canbus_uuids.append(uuid)
+        return True
+
+    def remove_canbus_uuid(self, name: str, uuid: str) -> bool:
+        """Returns True if it was removed, False if it wasn't tracked."""
+        mcu = self.get(name)
+        if uuid not in mcu.canbus_uuids:
+            return False
+        mcu.canbus_uuids.remove(uuid)
         return True
 
     def items(self) -> Iterable[tuple[str, McuType]]:

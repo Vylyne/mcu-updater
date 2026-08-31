@@ -32,9 +32,13 @@ than an ``if kind ==``.
 
 **Selection is not here.** Which devices exist, where they are and which of them
 want firmware is the Inventory axis, and that stays deferred on its own
-criterion - two implementations, and the third (CAN) is not committed.
-Half-inventing it inside this seam is how a deferral quietly stops being one.
-The agent selects and says which flasher owns each device; a flasher writes.
+criterion - three implementations now that CAN has landed (`flashtool_can.py`),
+and each stays a *write*, never a *selection*: `FlashtoolCan` is reachable only
+through its own `target_for`, never through this module's `select_for`, so a
+CAN target is still something the caller decided on, not something this seam
+worked out for itself. Half-inventing selection inside this seam is how a
+deferral quietly stops being one. The agent selects and says which flasher owns
+each device; a flasher writes.
 """
 
 from __future__ import annotations

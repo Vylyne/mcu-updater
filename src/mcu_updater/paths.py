@@ -15,6 +15,8 @@ Env overrides (all honoured by :meth:`Paths.from_env`):
   MCU_UPDATER_FAKE_BOOTSEL  replace the RPI-RP2 automount search with one
                                 exact directory to look in instead
   MCU_UPDATER_PRINTER_DATA  relocate ~/printer_data
+  MCU_UPDATER_FAKE_CAN_SYSFS  replace /sys/class/net for CAN interface
+                                enumeration (discovery.canbus)
 """
 
 from __future__ import annotations
@@ -71,6 +73,11 @@ class Paths:
     #: what a real deployment with a non-standard automount setup could also
     #: use it for.
     bootsel_root: str = ""
+    #: Empty in production: `discovery.canbus.list_can_interfaces` then reads
+    #: the real `/sys/class/net`. Set to one exact directory to replace that
+    #: search entirely - what `MCU_UPDATER_FAKE_CAN_SYSFS` does for tests,
+    #: mirroring `bootsel_root` above.
+    can_sysfs_net: str = ""
 
     # --- hand-edited config ---
 
@@ -263,6 +270,7 @@ class Paths:
         data = e.get("MCU_UPDATER_DATA_DIR") or os.path.join(pdata, "mcu-updater")
         bus = e.get("MCU_UPDATER_FAKE_BUS") or DEFAULT_SERIAL_BY_ID
         bootsel_root = e.get("MCU_UPDATER_FAKE_BOOTSEL") or ""
+        can_sysfs_net = e.get("MCU_UPDATER_FAKE_CAN_SYSFS") or ""
 
         return cls(
             home=resolved_home,
@@ -271,4 +279,5 @@ class Paths:
             serial_by_id=bus,
             printer_data=pdata,
             bootsel_root=bootsel_root,
+            can_sysfs_net=can_sysfs_net,
         )

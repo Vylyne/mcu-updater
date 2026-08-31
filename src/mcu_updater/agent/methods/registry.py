@@ -14,6 +14,7 @@ from ...devices import (
 )
 from ...errors import (
     SerialTrackedElsewhereError,
+    UuidTrackedElsewhereError,
 )
 from ...settings import save_settings
 from ..rpc import ERR_INVALID_PARAMS, RpcError
@@ -482,6 +483,57 @@ class RegistryMixin(_Base):
 
         self._changed()
         return {"name": name, "serial": serial, "removed": removed}
+
+    def canbus_add(self, args: dict) -> dict[str, Any]:
+        """Track a CAN-addressed board under an existing type.
+
+        Mirrors `serial_add`'s validation shape - type-exists check,
+        cross-type double-tracking refusal - minus the `is_mcu` bridge-chip
+        check: every CAN admin responder is inherently a Klipper- or
+        Katapult-speaking node (the protocol itself names the application in
+        its reply to `--query`), unlike a USB CH340 bridge chip that merely
+        looks like a board on `/dev/serial/by-id`. There is no non-board case
+        to guard against here.
+        """
+        name = self._require_str(args, "name")
+        uuid = self._require_str(args, "uuid")
+
+        with Registry.mutate(self.paths, f"add canbus uuid {uuid}") as reg:
+            mcu = reg.get(name)  # UnknownTypeError if the type doesn't exist
+            # One board tracked under two types would get flashed twice with
+            # different firmware, so this is refused rather than merged - same
+            # rule `serial_add` enforces for by-id serials.
+            elsewhere = [t for t in reg.find_types_for_uuid(uuid) if t != name]
+            if elsewhere:
+                raise UuidTrackedElsewhereError(
+                    f"CAN uuid '{uuid}' is already tracked under '{elsewhere[0]}'. "
+                    f"Remove it from there first if it really belongs to '{name}'.",
+                    uuid=uuid,
+                    requested=name,
+                    tracked_under=elsewhere,
+                )
+            added = reg.add_canbus_uuid(name, uuid)
+            chipset = mcu.chipset
+
+        self._changed()
+        return {"name": name, "uuid": uuid, "added": added, "chipset": chipset}
+
+    def canbus_remove(self, args: dict) -> dict[str, Any]:
+        """Stop tracking a CAN-addressed board.
+
+        Deliberately non-destructive, mirroring `serial_remove`: the type
+        keeps its saved .config and its built artifacts, and re-adding the
+        uuid makes it flashable again with nothing to rebuild.
+        """
+        name = self._require_str(args, "name")
+        uuid = self._require_str(args, "uuid")
+
+        with Registry.mutate(self.paths, f"remove canbus uuid {uuid}") as reg:
+            reg.get(name)  # UnknownTypeError if the type doesn't exist
+            removed = reg.remove_canbus_uuid(name, uuid)
+
+        self._changed()
+        return {"name": name, "uuid": uuid, "removed": removed}
 
     def bus_ignore(self, args: dict) -> dict[str, Any]:
         """Hide a bus device from the "new board?" flow. Idempotent.

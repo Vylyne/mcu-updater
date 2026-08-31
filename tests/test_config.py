@@ -658,3 +658,80 @@ def test_an_inline_comment_on_a_setting_is_not_part_of_its_value(paths):
     with open(paths.registry_file, "w", encoding="utf-8") as fh:
         fh.write(ANNOTATED)
     assert load_settings(paths.settings_file).enable_flashing is True
+
+
+# --------------------------------------------------------------------------
+# canbus_uuids: - parallel to serials:, but a separate key/list throughout
+# --------------------------------------------------------------------------
+
+
+def test_add_and_remove_canbus_uuid_report_whether_they_acted(paths):
+    reg = Registry.load(paths)
+    reg.add_type("a", "x")
+    assert reg.add_canbus_uuid("a", "bcb5346fc731") is True
+    assert reg.add_canbus_uuid("a", "bcb5346fc731") is False
+    assert reg.remove_canbus_uuid("a", "bcb5346fc731") is True
+    assert reg.remove_canbus_uuid("a", "bcb5346fc731") is False
+
+
+def test_find_types_for_uuid(paths):
+    reg = Registry.load(paths)
+    reg.add_type("a", "x")
+    reg.add_type("b", "x")
+    reg.add_canbus_uuid("a", "bcb5346fc731")
+    assert reg.find_types_for_uuid("bcb5346fc731") == ["a"]
+    assert reg.find_types_for_uuid("does-not-exist") == []
+    reg.add_canbus_uuid("b", "bcb5346fc731")
+    assert sorted(reg.find_types_for_uuid("bcb5346fc731")) == ["a", "b"]
+
+
+def test_a_type_with_no_canbus_uuids_never_gets_the_key(paths, live_registry_text):
+    """The live registry predates this key entirely - saving an untouched type
+    must not stamp an empty `canbus_uuids:` stub into every section, unlike
+    `serials:` which is always present."""
+    _write(paths, live_registry_text)
+    reg = Registry.load(paths)
+    reg.save(paths)
+    assert "canbus_uuids" not in _read(paths)
+
+
+def test_canbus_uuid_round_trips_through_save_and_load(paths, live_registry_text):
+    _write(paths, live_registry_text)
+    reg = Registry.load(paths)
+    reg.add_canbus_uuid("hexadistrofusion", "bcb5346fc731")
+    reg.save(paths)
+
+    text = _read(paths)
+    assert "canbus_uuids:" in text
+    assert "bcb5346fc731" in text
+    # Comments and the rest of the file survive, same guarantee `serials:`
+    # already gets.
+    assert "# mcu-updater configuration." in text
+
+    reloaded = Registry.load(paths)
+    assert reloaded.get("hexadistrofusion").canbus_uuids == ["bcb5346fc731"]
+
+
+def test_removing_the_last_canbus_uuid_drops_the_key_again(paths, live_registry_text):
+    _write(paths, live_registry_text)
+    reg = Registry.load(paths)
+    reg.add_canbus_uuid("hexadistrofusion", "bcb5346fc731")
+    reg.save(paths)
+    reg = Registry.load(paths)
+    reg.remove_canbus_uuid("hexadistrofusion", "bcb5346fc731")
+    reg.save(paths)
+
+    assert "canbus_uuids" not in _read(paths)
+    assert Registry.load(paths).get("hexadistrofusion").canbus_uuids == []
+
+
+def test_canbus_uuid_is_a_separate_namespace_from_serial(paths):
+    """A uuid and a by-id serial never collide even if the strings happen to
+    match - `canbus_uuids:` and `serials:` are deliberately separate keys."""
+    reg = Registry.load(paths)
+    reg.add_type("a", "x")
+    reg.add_serial("a", "SHARED")
+    assert reg.find_types_for_uuid("SHARED") == []
+    reg.add_canbus_uuid("a", "SHARED")
+    assert reg.find_types_for_uuid("SHARED") == ["a"]
+    assert reg.find_types_for_serial("SHARED") == ["a"]

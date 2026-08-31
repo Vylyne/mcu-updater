@@ -72,12 +72,15 @@ serials:
     3F0037000957465331323720-if00
 klipper_makefile_patches:
     src/Makefile -> src-y += buffer.c
+canbus_uuids:
+    bcb5346fc731
 ```
 
 | Key | Meaning |
 | --- | --- |
 | `chipset` | Required on every type, PlatformIO included. Matches the chipset segment of the `/dev/serial/by-id` name. |
 | `serials` | One tracked board per line. |
+| `canbus_uuids` | One tracked CAN-addressed board's uuid per line, parallel to `serials` but a separate key. No interface is stored — Linux CAN interface names (`can0`, `can1`, ...) are enumeration order, not stable identity, so the flasher re-discovers one at write time instead of trusting a remembered one. |
 | `firmware` | A **list** of the families this board runs, e.g. `cartographer, katapult`. A type with no bootloader simply omits it. See `[firmware ...]` sections, below. |
 | `profile` | The vendor answer file the config was seeded from, e.g. `config.CartoV4USB`. |
 | `<fw>_extra_args` | Appended to the `make` command line. |

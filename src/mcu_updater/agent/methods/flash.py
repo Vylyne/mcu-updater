@@ -9,10 +9,12 @@ from ... import firmware, flashers, providers, stop_services
 from ...config import Registry
 from ...errors import (
     DfuPermissionError,
+    FlashError,
     ToolMissingError,
     UpdaterError,
 )
 from ...paths import REENUMERATE_TIMEOUT
+from ...settings import Settings
 from ..rpc import ERR_INVALID_PARAMS, RpcError
 from ._api import _Base
 
@@ -45,6 +47,13 @@ class FlashMixin(_Base):
         name = args.get("name")
         if name and self._provider_of(str(name)) == providers.PlatformIO.name:
             return self._pio_flash(args)
+
+        # `uuid` is the third identity form, alongside `serial`/`port` - a
+        # CAN-addressed board rather than a by-id one. Checked before `serial`
+        # is required, since a caller naming a uuid has nothing to put there.
+        uuid = args.get("uuid")
+        if uuid:
+            return self._flash_can(args, str(uuid), name, runner, settings)
 
         # `id` is the uniform slot - `FlashTarget.id` is a serial for a board and
         # a port for a screen - and `serial` is what this method has always been
@@ -166,6 +175,110 @@ class FlashMixin(_Base):
             }
 
         job = runner.submit("flash", {"name": mcu_type, "serial": serial}, run)
+        return {"job_id": job.id, "job": job.to_dict()}
+
+    def _flash_can(
+        self, args: dict, uuid: str, name: Any, runner: Any, settings: Settings
+    ) -> dict[str, Any]:
+        """`fw.flash {uuid}` - the CAN identity form.
+
+        Same refusal ordering as the serial path above, up to where a uuid's
+        lack of a chipset-segment identity forces a difference: there is no
+        by-id equivalent of "is this specific uuid on the bus right now" to
+        check synchronously (see `flashers/flashtool_can.py` - finding out
+        *is* the flash attempt, via its own per-interface trial), so only "no
+        CAN interface exists on this host at all" is refused up front; a uuid
+        that simply does not answer is discovered inside the job.
+
+        Routes through `flashtool_can.target_for` and the same `write_all`
+        batch machinery `flash_all`/`update_all` use for a CAN board, rather
+        than a second hand-written stop/write/wait sequence - one target,
+        one flasher, the loop already written for a batch of one.
+        """
+        force = bool(args.get("force"))
+        reg = self.registry()
+        # resolve_uuid raises unknown_uuid / ambiguous_uuid / uuid_tracked_elsewhere.
+        mcu_type = reg.resolve_uuid(uuid, str(name) if name else None)
+        mcu = reg.get(mcu_type)
+        application = mcu.application(firmware.load(self.paths))
+
+        fw_bin = self.paths.bin_file(mcu_type, application)
+        if not os.path.exists(fw_bin):
+            raise RpcError(
+                f"no built firmware for {mcu_type} at {fw_bin}. Build it first.",
+                data={
+                    "code": "no_artifact",
+                    "message": "firmware has not been built",
+                    "data": {"type": mcu_type, "path": fw_bin},
+                },
+            )
+
+        from ...discovery.canbus import list_can_interfaces
+
+        if not list_can_interfaces(self.paths):
+            raise RpcError(
+                f"no CAN interface is present on this host, so {uuid} cannot be "
+                f"reached. Is a USB-CAN adapter connected?",
+                data={
+                    "code": "device_not_found",
+                    "message": "no CAN interface present on this host",
+                    "data": {"uuid": uuid},
+                },
+            )
+
+        from ...service import assert_printer_idle
+
+        assert_printer_idle(
+            settings, activity=self._printer_activity, force=force, reporter=self._log_reporter
+        )
+
+        # Known ahead of time only when this uuid is currently cross-
+        # referenceable via Klipper's own configfile - see canbus_info()'s
+        # own docstring. `None` (config silent, or not connected) means
+        # FlashtoolCan discovers it by trial instead, same as the interface.
+        bridge = (self.canbus_info().get(uuid.lower()) or {}).get("bridge")
+
+        units = stop_services.for_mcu(self.paths, mcu, settings)
+        target = flashers.flashtool_can.target_for(
+            {
+                "type": mcu_type,
+                "chipset": mcu.chipset,
+                "fw": application,
+                "force": force,
+                "bridge": bridge,
+            },
+            uuid,
+            stop_services=units,
+        )
+
+        def run(ctx) -> dict[str, Any]:
+            # `on_ready` here, not `_do_flash_all`'s hardcoded one - a
+            # single-board `fw.flash` job has always surfaced `klippy_state`
+            # in its own result, and `write_all`'s own on_ready return is
+            # deliberately discarded, so this captures it locally instead.
+            state_holder: dict[str, Any] = {}
+
+            def on_ready(reporter: Any) -> None:
+                state_holder["klippy_state"] = self._await_klippy_ready(reporter)
+
+            result = flashers.write_all(
+                self._bench(self.settings()), [target], ctx, on_ready=on_ready
+            )
+            if result["failures"]:
+                # A batch reports failures rather than raising per-device -
+                # right for a fleet sweep, wrong for a job that promised its
+                # caller a single board's own success or failure.
+                raise FlashError(
+                    result["failures"][0]["error"], type=mcu_type, uuid=uuid
+                )
+            return {
+                "type": mcu_type,
+                "uuid": uuid,
+                "fw_bin": fw_bin,
+                "klippy_state": state_holder.get("klippy_state"),
+            }
+
+        job = runner.submit("flash", {"name": mcu_type, "uuid": uuid}, run)
         return {"job_id": job.id, "job": job.to_dict()}
 
     def _pio_flash(self, args: dict) -> dict[str, Any]:

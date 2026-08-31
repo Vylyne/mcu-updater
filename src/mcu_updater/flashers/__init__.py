@@ -21,6 +21,7 @@ from .bootsel import Bootsel
 from .dfu_util import DfuUtil
 from .esptool import Esptool
 from .flashtool import Flashtool
+from .flashtool_can import FlashtoolCan
 from .registry import (
     FLASHERS,
     by_flasher,
@@ -40,6 +41,7 @@ __all__ = [
     "FlashTarget",
     "Flasher",
     "Flashtool",
+    "FlashtoolCan",
     "PlainContext",
     "by_flasher",
     "by_name",

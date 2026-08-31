@@ -432,6 +432,28 @@ def _board_targets(
     ]
 
 
+def _canbus_targets(c: Context, mcu_type: str, uuids: list[str]) -> list:
+    """CAN-uuid counterpart to `_board_targets`, for a type's `canbus_uuids:`.
+
+    Same resolved `stop_services` as this same type's by-id boards -
+    `flashtool_can`'s own stated design intent, mirrored here rather than a
+    CAN-specific mechanism. No interface is resolved here, for the same
+    reason `flashtool_can.target_for` itself takes none: `canbus_uuids:`
+    stores no interface, and the flasher discovers it itself at write time.
+    """
+    mcu = c.registry().get(mcu_type)
+    application = mcu.application()
+    units = stop_services.for_mcu(c.paths, mcu, c.settings)
+    return [
+        flashers.flashtool_can.target_for(
+            {"type": mcu_type, "chipset": mcu.chipset, "fw": application},
+            uuid,
+            stop_services=units,
+        )
+        for uuid in uuids
+    ]
+
+
 def _pio_targets(
     c: Context,
     name: str,
@@ -593,17 +615,21 @@ def flash_fw_cmd(args: argparse.Namespace) -> None:
                 code = _run_batch(c, targets, f"flash {args.type}")
         sys.exit(code)
 
-    # Whole type: flash every tracked board under it.
+    # Whole type: flash every tracked board under it - by-id serials and CAN
+    # uuids both, since a type may legitimately track either or both.
     if args.type and not args.serial:
         mcu = reg.get(args.type)
-        if not mcu.serials:
-            print(f"No serials tracked under '{args.type}'.", file=sys.stderr)
+        if not mcu.serials and not mcu.canbus_uuids:
+            print(
+                f"No serials or CAN uuids tracked under '{args.type}'.", file=sys.stderr
+            )
             sys.exit(1)
 
         with exclusive(c.paths, f"flash type {args.type}"):
-            code = _run_batch(
-                c, _board_targets(c, args.type, mcu.serials), f"flash {args.type}"
+            targets = _board_targets(c, args.type, mcu.serials) + _canbus_targets(
+                c, args.type, mcu.canbus_uuids
             )
+            code = _run_batch(c, targets, f"flash {args.type}")
         sys.exit(code)
 
     # Single device.
@@ -691,7 +717,9 @@ def update_all(args: argparse.Namespace) -> None:
         with _ports_free(c, sorted(install.displays), "update-all"):
             targets: list = []
             for name in sorted(install.registry.names()):
-                targets += _board_targets(c, name, install.registry.get(name).serials)
+                reg_mcu = install.registry.get(name)
+                targets += _board_targets(c, name, reg_mcu.serials)
+                targets += _canbus_targets(c, name, reg_mcu.canbus_uuids)
             for name in sorted(install.displays):
                 try:
                     targets += _pio_targets(c, name, allow_discovery=True)

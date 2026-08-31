@@ -6,7 +6,12 @@ import pytest
 
 from mcu_updater.build import artifact_status, build, read_sidecar
 from mcu_updater.config import Registry
-from mcu_updater.errors import ConfigNotFoundError, SourceTreeMissingError
+from mcu_updater.errors import (
+    BuildError,
+    ConfigNotFoundError,
+    OperationCancelled,
+    SourceTreeMissingError,
+)
 
 from .conftest import cmd_tokens
 
@@ -243,7 +248,9 @@ def test_extra_args_are_split_shell_style(paths, settings):
         "klipper",
         reporter=lambda s, line: cmds.append(line) if s == "cmd" else None,
     )
-    make_cmd = [c for c in cmds if "KCONFIG_CONFIG" in c][-1]
+    make_cmd = next(
+        c for c in cmds if "KCONFIG_CONFIG" in c and "clean" not in cmd_tokens(c)
+    )
     assert "FOO=bar" in make_cmd
     assert "a b" in make_cmd
 
@@ -284,6 +291,125 @@ def test_no_jobs_by_default_matching_the_original(paths, settings):
     )
     flags = [t for c in cmds for t in cmd_tokens(c)]
     assert not any(t.startswith("-j") for t in flags)
+
+
+def test_successful_build_cleans_source_artifacts_after_staging(
+    paths, settings, fake_root, monkeypatch
+):
+    reg = _registry(paths)
+    _write_config(paths)
+    compiled = fake_root / "klipper" / "out" / "klipper.bin"
+    compiled.parent.mkdir()
+    compiled.write_bytes(b"firmware")
+    compiled_uf2 = fake_root / "klipper" / "out" / "klipper.uf2"
+    compiled_uf2.write_bytes(b"uf2 firmware")
+    calls: list[tuple[list[str], object]] = []
+
+    def fake_run(command, **kwargs):
+        calls.append((command, kwargs.get("cancel")))
+        if command[-1] == "clean":
+            compiled.unlink()
+            compiled_uf2.unlink()
+        return 0
+
+    monkeypatch.setattr("mcu_updater.build.run_streamed", fake_run)
+
+    result = build(paths, reg, settings, "board", "klipper")
+
+    with open(result.bin_path, "rb") as fh:
+        assert fh.read() == b"firmware"
+    assert result.uf2_path is not None
+    with open(result.uf2_path, "rb") as fh:
+        assert fh.read() == b"uf2 firmware"
+    assert not compiled.exists()
+    assert not compiled_uf2.exists()
+    assert calls[-1][0][-1] == "clean"
+    assert calls[-1][1] is None
+
+
+def test_failed_build_still_cleans_source_artifacts(paths, settings, monkeypatch):
+    reg = _registry(paths)
+    _write_config(paths)
+    calls: list[list[str]] = []
+
+    def fake_run(command, **kwargs):
+        calls.append(command)
+        return 0 if command[-1] == "clean" else 2
+
+    monkeypatch.setattr("mcu_updater.build.run_streamed", fake_run)
+
+    with pytest.raises(BuildError, match="make exited 2"):
+        build(paths, reg, settings, "board", "klipper")
+
+    assert calls[-1][-1] == "clean"
+
+
+def test_cancelled_build_still_cleans_without_using_cancel_token(
+    paths, settings, monkeypatch
+):
+    reg = _registry(paths)
+    _write_config(paths)
+    calls: list[tuple[list[str], object]] = []
+
+    def fake_run(command, **kwargs):
+        calls.append((command, kwargs.get("cancel")))
+        if command[-1] != "clean":
+            raise OperationCancelled("cancelled")
+        return 0
+
+    monkeypatch.setattr("mcu_updater.build.run_streamed", fake_run)
+
+    with pytest.raises(OperationCancelled, match="cancelled"):
+        build(paths, reg, settings, "board", "klipper")
+
+    assert calls[-1][0][-1] == "clean"
+    assert calls[-1][1] is None
+
+
+def test_cleanup_failure_fails_an_otherwise_successful_build(
+    paths, settings, fake_root, monkeypatch
+):
+    reg = _registry(paths)
+    _write_config(paths)
+    compiled = fake_root / "klipper" / "out" / "klipper.bin"
+    compiled.parent.mkdir()
+    compiled.write_bytes(b"firmware")
+
+    def fake_run(command, **kwargs):
+        return 3 if command[-1] == "clean" else 0
+
+    monkeypatch.setattr("mcu_updater.build.run_streamed", fake_run)
+
+    with pytest.raises(BuildError, match="cleanup failed.*exited 3"):
+        build(paths, reg, settings, "board", "klipper")
+
+    with open(paths.bin_file("board", "klipper"), "rb") as fh:
+        assert fh.read() == b"firmware"
+
+
+def test_cleanup_failure_does_not_hide_cancellation(paths, settings, monkeypatch):
+    reg = _registry(paths)
+    _write_config(paths)
+    reported: list[tuple[str, str]] = []
+
+    def fake_run(command, **kwargs):
+        if command[-1] == "clean":
+            return 3
+        raise OperationCancelled("cancelled")
+
+    monkeypatch.setattr("mcu_updater.build.run_streamed", fake_run)
+
+    with pytest.raises(OperationCancelled, match="cancelled"):
+        build(
+            paths,
+            reg,
+            settings,
+            "board",
+            "klipper",
+            reporter=lambda *line: reported.append(line),
+        )
+
+    assert any(stream == "error" and "cleanup failed" in line for stream, line in reported)
 
 
 # --------------------------------------------------------------------------

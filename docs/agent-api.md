@@ -541,7 +541,7 @@ moment later.
 
 | kind | behaviour |
 | --- | --- |
-| `build`, `build_all` | **Immediate.** The whole `make` process group is killed. Worst case is a half-written object file that `make` will redo. |
+| `build`, `build_all` | **Immediate.** The active `make` process group is killed, then an uncancellable `make clean` removes its source-tree outputs before the job finishes cancelling. |
 | `flash`, `flash_all` | **Deferred** — honoured only *between* devices. Interrupting a `flashtool -f` write leaves a board with half an image. Show "cancelling after the current board finishes…". |
 | `update_all` | **Deferred**, because it may reach the flashing half. Cancelling during its build phase still waits for the current type's `make` to be killed and the loop to come round. |
 

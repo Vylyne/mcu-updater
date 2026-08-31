@@ -566,6 +566,47 @@ def _read_app_address(config_file: str) -> int | None:
         return None
 
 
+@contextlib.contextmanager
+def _clean_source_tree_after_build(
+    fw_dir: str,
+    kconfig_arg: str,
+    mcu_type: str,
+    fw: str,
+    reporter: Reporter,
+    *,
+    dry_run: bool,
+) -> Iterator[None]:
+    """Remove source-tree artifacts after every attempted firmware build."""
+    build_error: BaseException | None = None
+    try:
+        yield
+    except BaseException as exc:
+        build_error = exc
+        raise
+    finally:
+        try:
+            rc = run_streamed(
+                ["make", kconfig_arg, "clean"],
+                cwd=fw_dir,
+                reporter=reporter,
+                cancel=None,
+                dry_run=dry_run,
+                fake_delay=0.0,
+            )
+            if rc != 0:
+                raise BuildError(
+                    f"firmware source cleanup failed for {mcu_type} ({fw}): "
+                    f"make clean exited {rc}.",
+                    type=mcu_type,
+                    fw=fw,
+                    returncode=rc,
+                )
+        except Exception as exc:
+            if build_error is None:
+                raise
+            reporter("error", f"firmware source cleanup failed after build error: {exc}")
+
+
 def build(
     paths: Paths,
     registry: Registry,
@@ -645,98 +686,101 @@ def build(
     started = time.monotonic()
 
     reporter("info", f"Building {fw} for {mcu_type}...")
-    with makefile_patches(paths, mcu, fw, reporter, dry_run=dry_run):
-        if do_clean:
-            run_streamed(
-                ["make", kconfig_arg, "clean"],
+    with _clean_source_tree_after_build(
+        fw_dir, kconfig_arg, mcu_type, fw, reporter, dry_run=dry_run
+    ):
+        with makefile_patches(paths, mcu, fw, reporter, dry_run=dry_run):
+            if do_clean:
+                run_streamed(
+                    ["make", kconfig_arg, "clean"],
+                    cwd=fw_dir,
+                    reporter=reporter,
+                    cancel=cancel,
+                    dry_run=dry_run,
+                    fake_delay=0.0,
+                )
+            rc = run_streamed(
+                ["make", kconfig_arg, *make_flags, *extra_args],
                 cwd=fw_dir,
                 reporter=reporter,
                 cancel=cancel,
                 dry_run=dry_run,
-                fake_delay=0.0,
             )
-        rc = run_streamed(
-            ["make", kconfig_arg, *make_flags, *extra_args],
-            cwd=fw_dir,
-            reporter=reporter,
-            cancel=cancel,
-            dry_run=dry_run,
-        )
 
-    duration = time.monotonic() - started
+        duration = time.monotonic() - started
 
-    if rc != 0:
-        raise BuildError(
-            f"firmware build failed for {mcu_type} ({fw}): make exited {rc}.",
-            type=mcu_type,
-            fw=fw,
-            returncode=rc,
-        )
-
-    config_after = sha256_file(config_file)
-    rewritten = bool(config_before and config_after and config_before != config_after)
-    if rewritten:
-        # Klipper's Makefile reruns olddefconfig when src/Kconfig is newer than
-        # the .config, which silently changes saved answers. Pre-existing
-        # behaviour, but invisible until now.
-        reporter(
-            "warn",
-            "make rewrote the saved .config (klipper ran olddefconfig, most likely "
-            "because src/Kconfig changed in a git pull). Review your settings.",
-        )
-
-    # Artifacts live outside the config tree, so this is a different directory
-    # from the one holding the saved .config.
-    os.makedirs(paths.artifact_dir(mcu_type), exist_ok=True)
-    bin_out = paths.bin_file(mcu_type, fw)
-    compiled = family.built_artifact(paths, "bin")
-
-    if dry_run:
-        # A real (if inert) file, so artifact/staleness logic downstream is
-        # exercised for real instead of being special-cased.
-        with open(bin_out, "wb") as fh:
-            fh.write(b"\0" * 1024)
-        reporter("info", f"[dry-run] wrote stub firmware to {bin_out}")
-    else:
-        if not os.path.exists(compiled):
+        if rc != 0:
             raise BuildError(
-                f"make succeeded but {compiled} was not produced.",
+                f"firmware build failed for {mcu_type} ({fw}): make exited {rc}.",
                 type=mcu_type,
                 fw=fw,
-                expected=compiled,
+                returncode=rc,
             )
-        shutil.copyfile(compiled, bin_out)
-        reporter("info", f"Firmware built and copied to {bin_out}")
 
-    # RP2040 BOOTSEL mass storage only accepts .uf2 - a .bin copied to the mount
-    # is accepted and silently ignored - so stage it whenever the build made one.
-    uf2_out: str | None = None
-    compiled_uf2 = family.built_artifact(paths, "uf2")
-    if not dry_run and os.path.exists(compiled_uf2):
-        uf2_out = paths.uf2_file(mcu_type, fw)
-        shutil.copyfile(compiled_uf2, uf2_out)
-        reporter("info", f"Also staged {uf2_out}")
+        config_after = sha256_file(config_file)
+        rewritten = bool(config_before and config_after and config_before != config_after)
+        if rewritten:
+            # Klipper's Makefile reruns olddefconfig when src/Kconfig is newer than
+            # the .config, which silently changes saved answers. Pre-existing
+            # behaviour, but invisible until now.
+            reporter(
+                "warn",
+                "make rewrote the saved .config (klipper ran olddefconfig, most likely "
+                "because src/Kconfig changed in a git pull). Review your settings.",
+            )
 
-    result = BuildResult(
-        bin_path=bin_out,
-        uf2_path=uf2_out,
-        duration=duration,
-        fw_sha=git_head(fw_dir),
-        config_sha256=config_after,
-        bin_sha256=sha256_file(bin_out),
-        config_rewritten=rewritten,
-        reseeded=reseeded,
-        app_address=_read_app_address(config_file),
-        version=profiles.stamped_version(config_file),
-        extra_repo_shas={p: git_head(p) for p in mcu.fw_get(fw).extra_repos},
-    )
-    try:
-        with open(paths.sidecar_file(mcu_type, fw), "w", encoding="utf-8") as fh:
-            json.dump(result.to_sidecar(), fh, indent=2)
-    except OSError as exc:
-        reporter("warn", f"could not write build sidecar: {exc}")
+        # Artifacts live outside the config tree, so this is a different directory
+        # from the one holding the saved .config.
+        os.makedirs(paths.artifact_dir(mcu_type), exist_ok=True)
+        bin_out = paths.bin_file(mcu_type, fw)
+        compiled = family.built_artifact(paths, "bin")
 
-    return result
+        if dry_run:
+            # A real (if inert) file, so artifact/staleness logic downstream is
+            # exercised for real instead of being special-cased.
+            with open(bin_out, "wb") as fh:
+                fh.write(b"\0" * 1024)
+            reporter("info", f"[dry-run] wrote stub firmware to {bin_out}")
+        else:
+            if not os.path.exists(compiled):
+                raise BuildError(
+                    f"make succeeded but {compiled} was not produced.",
+                    type=mcu_type,
+                    fw=fw,
+                    expected=compiled,
+                )
+            shutil.copyfile(compiled, bin_out)
+            reporter("info", f"Firmware built and copied to {bin_out}")
+
+        # RP2040 BOOTSEL mass storage only accepts .uf2 - a .bin copied to the mount
+        # is accepted and silently ignored - so stage it whenever the build made one.
+        uf2_out: str | None = None
+        compiled_uf2 = family.built_artifact(paths, "uf2")
+        if not dry_run and os.path.exists(compiled_uf2):
+            uf2_out = paths.uf2_file(mcu_type, fw)
+            shutil.copyfile(compiled_uf2, uf2_out)
+            reporter("info", f"Also staged {uf2_out}")
+
+        result = BuildResult(
+            bin_path=bin_out,
+            uf2_path=uf2_out,
+            duration=duration,
+            fw_sha=git_head(fw_dir),
+            config_sha256=config_after,
+            bin_sha256=sha256_file(bin_out),
+            config_rewritten=rewritten,
+            reseeded=reseeded,
+            app_address=_read_app_address(config_file),
+            version=profiles.stamped_version(config_file),
+            extra_repo_shas={p: git_head(p) for p in mcu.fw_get(fw).extra_repos},
+        )
+        try:
+            with open(paths.sidecar_file(mcu_type, fw), "w", encoding="utf-8") as fh:
+                json.dump(result.to_sidecar(), fh, indent=2)
+        except OSError as exc:
+            reporter("warn", f"could not write build sidecar: {exc}")
+
+        return result
 
 
 # --------------------------------------------------------------------------

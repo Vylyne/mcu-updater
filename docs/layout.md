@@ -101,6 +101,12 @@ A source tree that doesn't follow the `~/<name>` / `out/<name>.bin` convention
 its own, with `source:` and `artifact:` keys. See the main
 [README](../README.md#firmware-families).
 
+For Kconfig Make trees, `out/` is transient. The requested `.bin` and optional
+`.uf2` are copied into `~/printer_data/mcu-updater/` with their provenance, then
+`make clean` removes the source-tree outputs. Cleanup runs after failed and
+cancelled builds too, so another tool cannot later flash whichever image a
+previous updater build happened to leave in `out/`.
+
 The `[updater]` section holds `make_jobs`, `clean_before_build`,
 `reseed_on_build`, `service`, `service_backend`, `dry_run`, `enable_flashing`,
 `allow_flash_while_printing`, `log_ring_size` and `platformio_bin`. All

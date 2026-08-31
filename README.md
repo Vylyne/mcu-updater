@@ -172,7 +172,7 @@ of it. What is still open:
 | `profiles -t NAME` | List the vendor answer files this type's firmware tree ships |
 | `apply-profile -t NAME -p config.CartoV4USB [-f FW]` | Seed a type's menuconfig answers from one, deriving Katapult's to match |
 | `menuconfig -t NAME -f FW` | Configure a type, saved per type so it survives rebuilds |
-| `build -t NAME -f FW [--no-reseed]` | Compile and stage the artifact |
+| `build -t NAME -f FW [--no-reseed]` | Compile and stage the artifact, then clean source-tree outputs |
 | `flash -t NAME [-s SERIAL]` | Flash one board, or every board of a type |
 | `update-all` | Stop Klipper, rebuild and reflash everything, start Klipper |
 | `add-mcu -t NAME` | Guided first-time Katapult install on a new board |
@@ -245,7 +245,7 @@ writing to it.
 [updater]
 enable_flashing: true      ; let the web UI flash boards. Off by default.
 make_jobs: 0               ; 0 = no -j flag, negative = one per CPU
-clean_before_build: true   ; leave on: a stale object mix flashes a wrong binary
+clean_before_build: true   ; pre-clean: a stale object mix flashes a wrong binary
 reseed_on_build: true      ; take a vendor's updated profile answers before building
 stop_services: klipper     ; klipper-1, klipper-2... for KIAUH multi-instance
 ui_accent_color: 2196f3    ; standalone UI's accent colour, no '#' - see below
@@ -609,6 +609,13 @@ Config lives under `config/` so it's backed up and reachable by Mainsail's own
 editor. Firmware binaries deliberately don't: backup tools git-commit everything
 in that directory, so a `.bin` there means a binary churn commit after every
 build — and they're regenerable anyway.
+
+After a Kconfig build stages its `.bin`, optional `.uf2`, and provenance in the
+data tree, it runs `make clean` in the firmware source tree. This keeps
+`~/klipper/out` and `~/katapult/out` from retaining an image that a standalone
+flasher could pick up later. Cleanup also runs after a failed or cancelled
+build. If cleanup itself fails after successful staging, the build is reported
+failed while the staged artifact remains available for inspection.
 
 The per-type folders sit under `types/` so `mcu-updater.cfg` is the only thing
 in the directory that editor opens. They used to be directly in it; an existing

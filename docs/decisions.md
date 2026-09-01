@@ -134,6 +134,10 @@ by-id discovery, watcher support, and CAN adapter metadata. The standalone
 collector supplies the reusable data path; the old split is no longer a reason
 to defer topology or CAN support.
 
+The standalone UI runs `fw.status` and the explicit `fw.canbus.scan` together
+on refresh. Their results are stored independently, and a generation guard
+prevents an older overlapping CAN scan from replacing a newer result.
+
 ### Do not give `Confidence` a fourth degree of certainty
 
 Three tones and a tri-state `safe_to_write`, built the way `states.py` is. A

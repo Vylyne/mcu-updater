@@ -161,11 +161,13 @@ of it. What is still open:
 ```bash
 ~/mcu-updater/mcu-updater.py            # interactive menu
 ~/mcu-updater/mcu-updater.py status     # what's tracked, built, and online
+~/mcu-updater/mcu-updater.py status --can  # also query unclaimed CAN boards
 ```
 
 | Command | What it does |
 | --- | --- |
 | `status` | Every tracked type: whether its firmware is stale, and whether each board is online as Klipper, sitting in the Katapult bootloader, or offline |
+| `status --can` | The same status plus an explicit scan of every current CAN interface; the query may take a few seconds |
 | `add-type -t NAME -c CHIPSET` | Register a board model |
 | `add-serial -t NAME -s SERIAL` | Track a physical board under a type |
 | `remove-type` / `remove-serial` | The inverse |

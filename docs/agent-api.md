@@ -966,8 +966,13 @@ that question is answered separately, via `printer.cfg`'s own
 `canbus_uuid`/`configfile` cross-reference, not this method.
 
 Runs **only** when called — never from `fw.status`, never swept into
-`discovery.confirm`'s USB-flash sources, never on a timer. The panel surfaces
-it as an explicit "Refresh CAN bus" action rather than something automatic.
+`discovery.confirm`'s USB-flash sources, never on a timer. The standalone panel
+calls it alongside `fw.status` on initial connection and manual refresh, while
+keeping the two results independent.
+The standalone UI starts this scan alongside `fw.status` on initial connection
+and manual refresh, so USB status is displayed as soon as it arrives even when
+CAN queries are slow or fail. Older scan responses cannot replace a newer
+refresh.
 
 Mirrors `fw.dfu.scan`/`fw.bootsel.scan`'s report-don't-raise shape:
 describing the situation *is* the work here, so this never throws for

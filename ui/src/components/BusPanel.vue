@@ -18,12 +18,14 @@ import {
 import { flipMenuIfOffscreen, useClickOutsideToClose } from "../clickOutside";
 import {
   adoptSerial,
+  adoptCanbus,
   hasCapability,
   ignoreSerial,
   state,
   unignoreSerial,
 } from "../store/agent";
 import type { BusDevice, Target } from "../api/targets";
+import type { CanbusDevice, CanbusScanDevice } from "../store/agent";
 import type { Family } from "../api/mcutype";
 import UiPanel from "./UiPanel.vue";
 import UiIcon from "./UiIcon.vue";
@@ -41,6 +43,12 @@ const untracked = computed(() =>
   devices.value.filter((d) => !d.tracked_by && !d.ignored),
 );
 const ignored = computed(() => devices.value.filter((d) => d.ignored));
+const canbusDevices = computed<CanbusDevice[]>(
+  () =>
+    (state.canbus?.devices as CanbusScanDevice[] | undefined)
+      ?.filter((d) => !d.tracked_by)
+      .map((d) => ({ ...d, kind: "can" as const })) ?? [],
+);
 
 // Only MCU types can adopt a serial (fw.serial.add) - a display is a
 // separate provider with its own port config, not a bus device to claim.
@@ -52,6 +60,7 @@ const mcuTypeNames = computed(() => {
 });
 
 const canAdopt = computed(() => hasCapability("fw.serial.add"));
+const canAdoptCan = computed(() => hasCapability("fw.canbus.add"));
 
 const canManageTypes = computed(
   () =>
@@ -62,6 +71,9 @@ const canManageTypes = computed(
 
 const showAdoptItems = computed(
   () => canAdopt.value && mcuTypeNames.value.length > 0,
+);
+const showCanAdoptItems = computed(
+  () => canAdoptCan.value && mcuTypeNames.value.length > 0,
 );
 const showNewTypeItem = computed(() => canManageTypes.value);
 // Whether the `+` trigger itself is worth showing at all - an empty dropdown
@@ -115,6 +127,10 @@ function toggleMenu(serial: string): void {
   menuContainer.value = rowRefs[serial] ?? null;
 }
 
+function canKey(device: CanbusDevice): string {
+  return `can:${device.uuid}@${device.interface}`;
+}
+
 // The `busy[serial]` check up front is a synchronous re-entrancy guard, not
 // just UI decoration: `:disabled` only reaches the DOM on Vue's next patch,
 // so two clicks landing in the same tick (no await between them, e.g. an
@@ -128,6 +144,17 @@ async function adopt(device: BusDevice, name: string): Promise<void> {
     await adoptSerial(name, device.serial);
   } finally {
     busy[device.serial] = false;
+  }
+}
+
+async function adoptCan(device: CanbusDevice, name: string): Promise<void> {
+  const key = `can:${device.uuid}`;
+  if (busy[key]) return;
+  busy[key] = true;
+  try {
+    await adoptCanbus(name, device.uuid);
+  } finally {
+    busy[key] = false;
   }
 }
 
@@ -164,7 +191,18 @@ function openNewType(device: BusDevice): void {
 </script>
 
 <template>
-  <UiPanel v-if="untracked.length || ignored.length" title="Untracked devices">
+  <UiPanel
+    v-if="
+      untracked.length ||
+      canbusDevices.length ||
+      ignored.length ||
+      state.canbusError
+    "
+    title="Untracked devices"
+  >
+    <p v-if="state.canbusError" class="alert alert--warning">
+      CAN scan failed: {{ state.canbusError.message }}. Refresh to try again.
+    </p>
     <ul class="devices">
       <li
         v-for="device in untracked"
@@ -234,6 +272,45 @@ function openNewType(device: BusDevice): void {
         >
           <UiIcon :path="mdiCloseCircleOutline" size="x-small" />
         </button>
+      </li>
+      <li v-for="device in canbusDevices" :key="canKey(device)">
+        <UiIcon :path="mdiUsb" size="x-small" />
+        <span class="device-identity">
+          <span class="text--secondary">{{ device.uuid }}</span>
+          <span class="text--disabled text-caption">
+            CAN {{ device.interface }} · {{ device.application }} ({{
+              device.state
+            }})
+          </span>
+        </span>
+        <span class="spacer" />
+        <span
+          v-if="showCanAdoptItems"
+          :ref="(el) => setRowRef(canKey(device), el)"
+          class="target-menu"
+        >
+          <button
+            type="button"
+            class="btn-icon btn-icon--small btn-icon--success"
+            title="Track this CAN device…"
+            :disabled="busy[`can:${device.uuid}`]"
+            @click="toggleMenu(canKey(device))"
+          >
+            <UiIcon :path="mdiPlusCircleOutline" size="x-small" />
+          </button>
+          <div v-if="menuOpenFor === canKey(device)" class="menu-list">
+            <button
+              v-for="name in mcuTypeNames"
+              :key="name"
+              type="button"
+              class="menu-item"
+              :disabled="busy[`can:${device.uuid}`]"
+              @click="adoptCan(device, name)"
+            >
+              {{ name }}
+            </button>
+          </div>
+        </span>
       </li>
     </ul>
 

@@ -22,6 +22,7 @@ import pytest
 
 from mcu_updater import cli, flashers
 from mcu_updater.config import Registry
+from mcu_updater.discovery import canbus
 from mcu_updater.errors import UpdaterError
 from mcu_updater.settings import Settings
 
@@ -76,6 +77,29 @@ def captured(monkeypatch):
 
     monkeypatch.setattr(flashers, "write_all", fake)
     return calls
+
+
+def test_status_can_flag_prints_interfaces_sightings_and_partial_failures(c, capsys, monkeypatch):
+    result = canbus.CanScanResult(
+        interfaces=[canbus.CanInterface("can0", None), canbus.CanInterface("can1", None)],
+        sightings=[canbus.CanSighting("abc123", "Klipper", "klipper", "can1")],
+        failures=[canbus.CanQueryFailure("can0", "completion sentinel missing", 0)],
+    )
+    monkeypatch.setattr(canbus, "scan_all_result", lambda *args, **kwargs: result)
+
+    args = cli.build_parser().parse_args(["status", "--can"])
+    cli.status_cmd(args)
+    output = capsys.readouterr().out
+    assert "CAN scan" in output
+    assert "can0" in output and "can1" in output
+    assert "abc123" in output and "Klipper" in output
+    assert "completion sentinel missing" in output
+
+
+def test_status_without_can_does_not_scan_can(c, monkeypatch):
+    monkeypatch.setattr(canbus, "scan_all_result", lambda *args, **kwargs: pytest.fail("CAN scan was not requested"))
+    args = cli.build_parser().parse_args(["status"])
+    cli.status_cmd(args)
 
 
 def _device_map(paths, tree, **devices) -> None:

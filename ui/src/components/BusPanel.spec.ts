@@ -60,6 +60,8 @@ const fullCapabilities = [
 afterEach(() => {
   vi.restoreAllMocks();
   state.bus = [];
+  state.canbus = null;
+  state.canbusError = null;
   state.status = null;
   state.ping = null;
 });
@@ -167,5 +169,95 @@ describe("BusPanel", () => {
     const wrapper = mount(BusPanel);
 
     expect(wrapper.find(".panel").exists()).toBe(false);
+  });
+
+  it("renders an untracked CAN UUID with its interface and application", () => {
+    state.canbus = {
+      interfaces: [],
+      devices: [
+        {
+          uuid: "abc123",
+          interface: "can1",
+          application: "Katapult",
+          state: "katapult",
+          tracked_by: null,
+        },
+      ],
+      failures: [],
+      count: 1,
+      message: null,
+    };
+    const wrapper = mount(BusPanel);
+    expect(wrapper.text()).toContain("abc123");
+    expect(wrapper.text()).toContain("CAN can1 · Katapult (katapult)");
+    expect(wrapper.find('[title="Ignore"]').exists()).toBe(false);
+  });
+
+  it("adopts a CAN device with fw.canbus.add", async () => {
+    state.canbus = {
+      interfaces: [],
+      devices: [
+        {
+          uuid: "abc123",
+          interface: "can1",
+          application: "Klipper",
+          state: "klipper",
+          tracked_by: null,
+        },
+      ],
+      failures: [],
+      count: 1,
+      message: null,
+    };
+    state.status = { targets: [makeTarget("bttebb36")] };
+    state.ping = { capabilities: fullCapabilities.concat("fw.canbus.add") };
+    const spy = vi.spyOn(store, "adoptCanbus").mockResolvedValue(true);
+    const wrapper = mount(BusPanel);
+    await wrapper.get('[title="Track this CAN device…"]').trigger("click");
+    await wrapper.get(".menu-item").trigger("click");
+    expect(spy).toHaveBeenCalledWith("bttebb36", "abc123");
+  });
+
+  it("keeps duplicate UUID sightings separate by interface", async () => {
+    state.canbus = {
+      interfaces: [],
+      devices: [
+        {
+          uuid: "abc123",
+          interface: "can0",
+          application: "Klipper",
+          state: "klipper",
+          tracked_by: null,
+        },
+        {
+          uuid: "abc123",
+          interface: "can1",
+          application: "Katapult",
+          state: "katapult",
+          tracked_by: null,
+        },
+      ],
+      failures: [],
+      count: 2,
+      message: null,
+    };
+    state.status = { targets: [makeTarget("bttebb36")] };
+    state.ping = { capabilities: ["fw.canbus.add"] };
+    const wrapper = mount(BusPanel);
+    expect(wrapper.findAll("ul.devices > li")).toHaveLength(2);
+    const buttons = wrapper.findAll('[title="Track this CAN device…"]');
+    await buttons[1].trigger("click");
+    expect(wrapper.findAll(".menu-list")).toHaveLength(1);
+    expect(wrapper.findAll(".menu-list")[0].text()).toContain("bttebb36");
+  });
+
+  it("shows a non-actionable CAN scan warning", () => {
+    state.canbusError = { code: "timeout", message: "CAN failed" };
+    state.ping = { capabilities: ["fw.canbus.add"] };
+    const wrapper = mount(BusPanel);
+    expect(wrapper.text()).toContain("CAN scan failed: CAN failed");
+    expect(wrapper.find('[title="Track this CAN device…"]').exists()).toBe(
+      false,
+    );
   });
 });

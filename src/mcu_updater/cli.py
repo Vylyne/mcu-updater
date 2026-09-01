@@ -267,6 +267,36 @@ def status_cmd(args: argparse.Namespace) -> None:
     """Read-only overview. Promoted from menu-only to a real subcommand."""
     c = ctx()
     reg = c.registry()
+    if getattr(args, "can", False):
+        from .discovery import canbus
+
+        print("\nCAN scan (may take a few seconds):")
+        result = canbus.scan_all_result(c.paths, c.settings, reporter=stdout_reporter)
+        print("  Interfaces:")
+        for interface in result.interfaces:
+            adapter = interface.adapter
+            suffix = (
+                f" (USB {adapter.vendor_id or '?'}:{adapter.product_id or '?'})"
+                if adapter is not None
+                else ""
+            )
+            print(f"  - {interface.name}{suffix}")
+        if result.sightings:
+            print("  Untracked CAN devices:")
+            for sighting in result.sightings:
+                print(
+                    f"  - {sighting.uuid}  (interface={sighting.interface}, "
+                    f"application={sighting.application}, state={sighting.state})"
+                )
+        if result.failures:
+            print("  Query failures:")
+            for failure in result.failures:
+                code = f", returncode={failure.returncode}" if failure.returncode is not None else ""
+                print(f"  - {failure.interface}: {failure.reason}{code}")
+        if not result.interfaces:
+            print("  No CAN interfaces found.")
+        elif not result.sightings and not result.failures:
+            print("  No unclaimed CAN devices answered.")
     if not reg:
         print("No MCU types configured yet.")
         return
@@ -843,6 +873,7 @@ def build_parser(fw_choices: Sequence[str] | None = None) -> argparse.ArgumentPa
     p.set_defaults(func=remove_serial)
 
     p = subparsers.add_parser("status", help="Show tracked types, staleness, and bus state")
+    p.add_argument("--can", action="store_true", help="Also scan CAN interfaces (may take a few seconds)")
     p.set_defaults(func=status_cmd)
 
     p = subparsers.add_parser(

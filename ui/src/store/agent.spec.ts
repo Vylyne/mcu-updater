@@ -11,6 +11,7 @@ import {
   invokeAction,
   kconfigEnter,
   openKconfig,
+  refresh,
   scanBareBoard,
   startAddMcu,
   state,
@@ -140,6 +141,177 @@ describe("fetchTargetDetail", () => {
 
     expect(await call).toBeNull();
     expect(state.error?.code).toBe("unknown_target");
+  });
+});
+
+describe("refresh discovery", () => {
+  afterEach(() => {
+    disconnect();
+    state.bus = [];
+    state.canbus = null;
+    state.canbusError = null;
+  });
+
+  it("updates USB status without waiting for the CAN scan", async () => {
+    let socket!: FakeWebSocket;
+    connect("ws://test/websocket", () => {
+      socket = new FakeWebSocket();
+      return socket;
+    });
+    socket.open();
+    await drainHandshake(socket);
+
+    const before = socket.sent.length;
+    state.canbus = null;
+    state.ping = { capabilities: ["fw.canbus.scan"] };
+    const call = refresh();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const requests = socket.sent.slice(before).map((raw) => JSON.parse(raw));
+    const statusRequest = requests.find(
+      (request) => request.params?.method === "fw.status",
+    );
+    const canRequest = requests.find(
+      (request) => request.params?.method === "fw.canbus.scan",
+    );
+    expect(statusRequest).toBeDefined();
+    expect(canRequest).toBeDefined();
+
+    socket.message({
+      jsonrpc: "2.0",
+      id: statusRequest.id,
+      result: { bus: [{ serial: "usb-board", tracked_by: null }] },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(state.bus).toEqual([{ serial: "usb-board", tracked_by: null }]);
+    expect(state.canbus).toBeNull();
+
+    socket.message({
+      jsonrpc: "2.0",
+      id: canRequest.id,
+      result: {
+        interfaces: [],
+        devices: [],
+        failures: [],
+        count: 0,
+        message: null,
+      },
+    });
+    await call;
+  });
+
+  it("does not let an older CAN scan overwrite a newer refresh", async () => {
+    let socket!: FakeWebSocket;
+    connect("ws://test/websocket", () => {
+      socket = new FakeWebSocket();
+      return socket;
+    });
+    socket.open();
+    await drainHandshake(socket);
+
+    const before = socket.sent.length;
+    state.ping = { capabilities: ["fw.canbus.scan"] };
+    const first = refresh();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const firstCan = socket.sent
+      .slice(before)
+      .map((raw) => JSON.parse(raw))
+      .find((request) => request.params?.method === "fw.canbus.scan")!;
+    const second = refresh();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const canRequests = socket.sent
+      .slice(before)
+      .map((raw) => JSON.parse(raw))
+      .filter((request) => request.params?.method === "fw.canbus.scan");
+    const secondCan = canRequests.at(-1)!;
+    for (const request of socket.sent
+      .slice(before)
+      .map((raw) => JSON.parse(raw))
+      .filter((request) => request.params?.method === "fw.status")) {
+      socket.message({ jsonrpc: "2.0", id: request.id, result: { bus: [] } });
+    }
+    socket.message({
+      jsonrpc: "2.0",
+      id: secondCan.id,
+      result: { devices: [{ uuid: "new" }] },
+    });
+    socket.message({
+      jsonrpc: "2.0",
+      id: firstCan.id,
+      result: { devices: [{ uuid: "old" }] },
+    });
+    await Promise.all([first, second]);
+    expect(
+      (state.canbus as { devices: { uuid: string }[] }).devices[0].uuid,
+    ).toBe("new");
+  });
+
+  it("does not call CAN scan when the agent lacks that capability", async () => {
+    let socket!: FakeWebSocket;
+    connect("ws://test/websocket", () => {
+      socket = new FakeWebSocket();
+      return socket;
+    });
+    socket.open();
+    await drainHandshake(socket);
+    state.ping = { capabilities: [] };
+    const before = socket.sent.length;
+    const call = refresh();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const requests = socket.sent.slice(before).map((raw) => JSON.parse(raw));
+    const statusRequest = requests.find(
+      (request) => request.params?.method === "fw.status",
+    )!;
+    expect(
+      requests.some((request) => request.params?.method === "fw.canbus.scan"),
+    ).toBe(false);
+    socket.message({
+      jsonrpc: "2.0",
+      id: statusRequest.id,
+      result: { bus: [] },
+    });
+    await call;
+  });
+
+  it("clears stale CAN results when the current scan fails", async () => {
+    let socket!: FakeWebSocket;
+    connect("ws://test/websocket", () => {
+      socket = new FakeWebSocket();
+      return socket;
+    });
+    socket.open();
+    await drainHandshake(socket);
+    state.ping = { capabilities: ["fw.canbus.scan"] };
+    state.canbus = {
+      interfaces: [],
+      devices: [],
+      failures: [],
+      count: 0,
+      message: null,
+    };
+    const before = socket.sent.length;
+    const call = refresh();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const requests = socket.sent.slice(before).map((raw) => JSON.parse(raw));
+    const statusRequest = requests.find(
+      (request) => request.params?.method === "fw.status",
+    )!;
+    const canRequest = requests.find(
+      (request) => request.params?.method === "fw.canbus.scan",
+    )!;
+    socket.message({
+      jsonrpc: "2.0",
+      id: statusRequest.id,
+      result: { bus: [{ serial: "usb" }] },
+    });
+    socket.message({
+      jsonrpc: "2.0",
+      id: canRequest.id,
+      error: { code: -1, message: "CAN failed" },
+    });
+    await call;
+    expect(state.bus).toEqual([{ serial: "usb" }]);
+    expect(state.canbus).toBeNull();
+    expect(state.canbusError).not.toBeNull();
   });
 });
 

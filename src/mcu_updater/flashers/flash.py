@@ -2,9 +2,8 @@
 
 Two paths:
 
-* **katapult** - the normal case. A board already running Klipper is asked to
-  reboot into its bootloader, waited for, then written via katapult's
-  ``flashtool.py``.
+* **katapult** - the normal case. Katapult's ``flashtool.py`` transitions a
+  board from its running firmware and writes it in one ``-f`` operation.
 * **dfu-util** - the first-ever flash of a bare STM32, which has no bootloader
   yet to speak flashtool's protocol.
 
@@ -34,15 +33,12 @@ from typing import Any
 from .. import firmware
 from ..build import Reporter, null_reporter, run_streamed
 from ..devices import (
-    KATAPULT_FW_NAME,
     STATE_BOOTSEL,
     STATE_DFU,
-    STATE_KATAPULT,
     BusDevice,
     dfu_devices,
     dfu_selector,
     expected_path,
-    wait_for_device,
     wait_for_new_device,
 )
 from ..discovery.confirm import confirm
@@ -122,10 +118,8 @@ def flash_katapult(
 ) -> None:
     """Flash one board through katapult's flashtool.py.
 
-    If the board is currently running Klipper rather than sitting in its
-    bootloader, this requests the bootloader first and waits for it to
-    re-enumerate - flashtool's documented two-step process for devices it can't
-    put into bootloader mode itself.
+    ``-f`` performs the transition from a running application into Katapult
+    itself, so there is no separate reboot request before the write.
 
     `force` overrides the offset checks below (downgrading a refusal to a
     logged warning) for the case where the operator genuinely knows better.
@@ -172,30 +166,6 @@ def flash_katapult(
             chipset=chipset,
         )
     assert dev is not None  # device_for: reason is None iff dev is not None
-    if dev.state != STATE_KATAPULT:
-        running = dev
-        reporter("info", f"{serial} is running {running.fw} - requesting bootloader...")
-        run_streamed(
-            [sys.executable, flashtool, "-d", running.path, "-r"],
-            cwd=paths.home,
-            reporter=reporter,
-            dry_run=settings.dry_run,
-            fake_delay=0.0,
-        )
-        if settings.dry_run:
-            # Nothing actually rebooted, so there is nothing to wait for. Carry
-            # on with the klipper node standing in rather than returning early,
-            # so a rehearsal still covers the write step it is meant to rehearse.
-            reporter("info", f"[dry-run] would wait for {serial} to re-enumerate as Katapult")
-            dev = running
-        else:
-            reporter("info", f"Waiting for {serial} to re-enumerate as a Katapult device...")
-            # settle: udev creating the symlink is not atomic with the device
-            # being openable, so flashing the instant it appears can race.
-            dev = wait_for_device(
-                paths, chipset, serial, KATAPULT_FW_NAME, timeout=timeout, settle=0.5
-            )
-
     side: dict = {}
     if not settings.dry_run:
         from ..build import FlashLog, git_head, read_sidecar
@@ -360,6 +330,227 @@ def _verify_offset_before_write(
             )
 
 
+def flash_katapult_can(
+    paths: Paths,
+    settings: Settings,
+    mcu_type: str,
+    uuid: str,
+    fw_bin: str | None = None,
+    *,
+    fw: str | None = None,
+    reporter: Reporter = null_reporter,
+    force: bool = False,
+    bridge: bool | None = None,
+    interface: str | None = None,
+) -> None:
+    """Flash one CAN-addressed board through katapult's flashtool.py.
+
+    `flash_katapult`'s CAN counterpart, mirrored as closely as the identity
+    difference allows: `-d <path>` becomes `-i <interface> -u <uuid>`, tried
+    against every interface `discovery.canbus.list_can_interfaces` currently
+    reports when no configured interface is supplied. A configured interface
+    is authoritative and is tried exactly once; otherwise a timeout/failure on
+    one interface means "wrong bus, try the next", not a real failure.
+
+    `bridge` is the one thing this cannot always discover by trial: `True`
+    when the caller already knows (via Klipper's own `mcu_constants.
+    CANBUS_BRIDGE`, for an already-tracked and currently-connected board) that
+    the target is a USB-CAN bridge rather than a native CAN node. `None`
+    means "unknown" - an unclaimed board from Phase 1's discovery flow has no
+    Klipper object to ask at all - and this falls back to discovering it by
+    trial, same as the interface itself.
+
+    **Offset guard, native node.** `-i <iface> -u <uuid> -f <fw_bin> -s` runs
+    the same `connect_btl()` handshake and prints the same "Application
+    Start:" line `_APP_START_RE` already parses, without writing - so for a
+    native CAN node this probe doubles as both the interface-discovery
+    attempt *and* the pre-write offset guard `_verify_offset_before_write`
+    gives a by-id board, in one step: whichever interface answers the probe
+    is confirmed as both "the right bus" and "safe to write".
+
+    **Offset guard, bridge target.** A bare `-s` probe against a bridge's own
+    uuid tries to speak the bootloader handshake directly to a device that
+    isn't a CAN-bootloader node at all - it's the adapter providing the
+    interface - and would not produce a useful handshake before the jump. So
+    for a known bridge (`bridge is True`), or once the probe above has found
+    no answer on any interface (which a bridge's own uuid never will), this
+    skips the pre-flight probe entirely and lets the real `-f` write - which
+    *does* transparently jump a bridge and reflash it over USB - serve as the
+    only interface-discovery attempt, relying solely on the post-write
+    mismatch check (`_report_offset_mismatch`) for that target. This is a
+    real, accepted reduction in safety margin for a bridge target specifically
+    - not a gap for a native node, which keeps the full pre-write guard - and
+    is recorded here and in `docs/decisions.md` rather than silently dropped.
+
+    Raises on any failure; returns None on success.
+    """
+    from ..discovery.canbus import list_can_interfaces
+
+    flashtool = find_flashtool(paths, settings)
+    if not os.path.exists(flashtool):
+        raise ToolMissingError(
+            f"flashtool.py not found at {flashtool}. Is katapult installed?",
+            tool="flashtool.py",
+            path=flashtool,
+        )
+
+    fw = fw or "klipper"
+    if fw_bin is None:
+        fw_bin = paths.bin_file(mcu_type, fw)
+    if not os.path.exists(fw_bin):
+        raise FlashError(
+            f"firmware binary not found at {fw_bin}. Build it first.",
+            type=mcu_type,
+            uuid=uuid,
+            path=fw_bin,
+        )
+
+    interfaces = [interface] if interface is not None else list_can_interfaces(paths)
+    if not interfaces:
+        raise DeviceNotFoundError(
+            f"no CAN interfaces found on this host for {uuid} (looked for a "
+            f"network device whose sysfs type is ARPHRD_CAN). Is a USB-CAN "
+            f"adapter connected?",
+            type=mcu_type,
+            uuid=uuid,
+        )
+
+    side: dict = {}
+    app_address = None
+    if not settings.dry_run:
+        from ..build import FlashLog, git_head, read_sidecar
+
+        side = read_sidecar(paths, mcu_type, fw) or {}
+        app_address = side.get("app_address")
+
+    # The probe-as-discovery attempt: only meaningful for a native node (see
+    # docstring above), and only when there is something of ours to check the
+    # answer against.
+    probed_interface: str | None = None
+    if not settings.dry_run and bridge is not True and app_address is not None:
+        probe_transcript: list[str] = []
+
+        def capture_probe(stream: str, line: str) -> None:
+            probe_transcript.append(line)
+            reporter(stream, line)
+
+        for candidate in interfaces:
+            probe_transcript.clear()
+            reporter("info", f"Probing {uuid} on {candidate} before writing...")
+            rc = run_streamed(
+                [sys.executable, flashtool, "-i", candidate, "-u", uuid, "-f", fw_bin, "-s"],
+                cwd=paths.home,
+                reporter=capture_probe,
+                dry_run=False,
+                fake_delay=0.0,
+            )
+            if rc != 0:
+                # Wrong bus, or nothing answered this uuid here - try the next
+                # interface rather than treating this as a real failure.
+                continue
+            board_address = _parse_application_start(probe_transcript)
+            if board_address is None:
+                message = (
+                    f"could not read {uuid}'s own Application Start address from "
+                    f"flashtool's status check on {candidate}, so whether it "
+                    f"would boot the {fw} firmware about to be written could not "
+                    f"be verified."
+                )
+                if force:
+                    reporter("warn", f"{message} Proceeding anyway (forced).")
+                else:
+                    raise OffsetMismatchError(message, type=mcu_type, uuid=uuid, fw=fw)
+            elif app_address != board_address:
+                message = (
+                    f"{uuid} ({mcu_type}) is about to be flashed with {fw} linked "
+                    f"to run at {app_address:#x}, but its bootloader reports it "
+                    f"will jump to {board_address:#x}. It would not come back "
+                    f"running {fw} - re-derive {fw}'s bootloader offset, or check "
+                    f"what bootloader is actually on this board."
+                )
+                if force:
+                    reporter("warn", f"{message} Proceeding anyway (forced).")
+                else:
+                    raise OffsetMismatchError(
+                        message,
+                        type=mcu_type,
+                        uuid=uuid,
+                        fw=fw,
+                        app_address=f"{app_address:#x}",
+                        board_address=f"{board_address:#x}",
+                    )
+            probed_interface = candidate
+            break
+        # No interface answered the probe at all: either this is a bridge
+        # (whose uuid never answers a bare -s, see docstring) or the board is
+        # genuinely offline. Either way, fall through to the real write below
+        # and let it serve as the interface-discovery attempt instead.
+        if probed_interface is None and bridge is False:
+            raise FlashError(
+                f"flashtool.py's status check failed for known native CAN node "
+                f"{uuid} on every selected interface. Not attempting to write.",
+                type=mcu_type,
+                uuid=uuid,
+            )
+
+    # The real write: tried against each interface in turn until one accepts
+    # it. For a probed native node this is a single attempt on the interface
+    # already confirmed above; for a bridge, or when the probe found nothing,
+    # this loop *is* the interface discovery.
+    interfaces_to_try = [probed_interface] if probed_interface is not None else interfaces
+    transcript: list[str] = []
+
+    def capture(stream: str, line: str) -> None:
+        transcript.append(line)
+        reporter(stream, line)
+
+    chosen: str | None = None
+    for candidate in interfaces_to_try:
+        transcript.clear()
+        reporter("info", f"Flashing {uuid} ({mcu_type}) via {candidate}...")
+        rc = run_streamed(
+            [sys.executable, flashtool, "-i", candidate, "-u", uuid, "-f", fw_bin],
+            cwd=paths.home,
+            reporter=capture,
+            # No cancel: see module docstring. Never interrupt a write.
+            dry_run=settings.dry_run,
+            fake_delay=0.0,
+        )
+        if rc == 0:
+            chosen = candidate
+            break
+        reporter("info", f"{uuid} did not answer on {candidate} - trying another interface.")
+
+    if chosen is None:
+        raise FlashError(
+            f"flashtool.py failed for {uuid} on every discovered CAN interface "
+            f"({', '.join(interfaces_to_try) or 'none'}).",
+            type=mcu_type,
+            uuid=uuid,
+        )
+
+    if not settings.dry_run:
+        # side/FlashLog/git_head came from the pre-write block above, which
+        # runs under the same `not settings.dry_run` condition.
+        FlashLog(paths).record(
+            uuid,
+            mcu_type=mcu_type,
+            fw=fw,
+            bin_sha256=side.get("bin_sha256"),
+            fw_sha=side.get("fw_sha")
+            or git_head(firmware.resolve(paths, fw).source_dir(paths)),
+            # Finding a uuid answer on the bus at all - probe or write - is
+            # itself the confirmation; there is no separate by-id sighting to
+            # carry a `Confidence.reason` the way a serial's does.
+            confidence="canbus_uuid",
+            version=side.get("version"),
+        )
+
+        _report_offset_mismatch(reporter, uuid, mcu_type, fw, side, transcript)
+
+    reporter("info", f"Flashed {uuid} successfully.")
+
+
 def _report_offset_mismatch(
     reporter: Reporter,
     serial: str,
@@ -501,6 +692,15 @@ def flash_dfu_stm32(
                 f"no DFU device with serial {target_serial} is attached. It may have "
                 f"been unplugged, or left DFU mode.",
                 serial=target_serial,
+            )
+        if len(matches) > 1:
+            raise AmbiguousDfuError(
+                f"{len(matches)} DFU devices report the same serial "
+                f"{target_serial} on different USB paths - refusing to guess "
+                f"which one to flash. Unplug all but the target board and try "
+                f"again.",
+                serial=target_serial,
+                devices=[str(d["raw"]) for d in matches],
             )
         chosen = matches[0]
     elif len(devices) > 1:

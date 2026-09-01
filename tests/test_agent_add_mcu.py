@@ -27,7 +27,7 @@ from .test_agent_dfu import ONE_BOARD, TWO_BOARDS, patch_dfu
 
 EBB = "bttebb36"
 EBB_CHIPSET = "stm32g0b1xx"
-TRACKED = "290055001850304158373620-if00"
+TRACKED = "290055001850304158373620"
 PICO = "testrp2040"
 PICO_CHIPSET = "rp2040"
 
@@ -221,7 +221,7 @@ def test_the_new_board_is_found_by_diffing_the_bus(adder, paths, fake_root, monk
     patch_dfu(monkeypatch, stdout=ONE_BOARD)
 
     def appear(*args, **kwargs):
-        make_device(fake_root / "bus", "katapult", EBB_CHIPSET, "NEWBOARD-if00")
+        make_device(fake_root / "bus", "katapult", EBB_CHIPSET, "NEWBOARD")
 
     monkeypatch.setattr("mcu_updater.flashers.flash.flash_initial_bootloader", appear)
 
@@ -230,7 +230,7 @@ def test_the_new_board_is_found_by_diffing_the_bus(adder, paths, fake_root, monk
     job = adder.runner.get(res["job_id"])
 
     assert job.state == "succeeded", job.error
-    assert [c["serial"] for c in job.result["candidates"]] == ["NEWBOARD-if00"]
+    assert [c["serial"] for c in job.result["candidates"]] == ["NEWBOARD"]
     assert job.result["type"] == EBB
 
 
@@ -243,7 +243,7 @@ def test_a_katapult_board_already_on_the_bus_is_not_reported_as_new(
     devices (see the chain-load test below), so this exclusion works purely off
     the before/after baseline diff now - not off firmware name.
     """
-    make_device(fake_root / "bus", "katapult", EBB_CHIPSET, "WASHERE-if00")
+    make_device(fake_root / "bus", "katapult", EBB_CHIPSET, "WASHERE")
     _stage_katapult(paths)
     patch_dfu(monkeypatch, stdout=ONE_BOARD)
     monkeypatch.setattr("mcu_updater.flashers.flash.flash_initial_bootloader", lambda *a, **k: None)
@@ -260,12 +260,12 @@ def test_the_new_board_is_told_apart_from_one_already_in_katapult(
     adder, paths, fake_root, monkeypatch
 ):
     """Both on the bus at the end; only the one that appeared is offered."""
-    make_device(fake_root / "bus", "katapult", EBB_CHIPSET, "WASHERE-if00")
+    make_device(fake_root / "bus", "katapult", EBB_CHIPSET, "WASHERE")
     _stage_katapult(paths)
     patch_dfu(monkeypatch, stdout=ONE_BOARD)
 
     def appear(*args, **kwargs):
-        make_device(fake_root / "bus", "katapult", EBB_CHIPSET, "NEWBOARD-if00")
+        make_device(fake_root / "bus", "katapult", EBB_CHIPSET, "NEWBOARD")
 
     monkeypatch.setattr("mcu_updater.flashers.flash.flash_initial_bootloader", appear)
 
@@ -274,7 +274,7 @@ def test_the_new_board_is_told_apart_from_one_already_in_katapult(
     job = adder.runner.get(res["job_id"])
 
     assert job.state == "succeeded", job.error
-    assert [c["serial"] for c in job.result["candidates"]] == ["NEWBOARD-if00"]
+    assert [c["serial"] for c in job.result["candidates"]] == ["NEWBOARD"]
 
 
 def test_a_board_that_chain_loads_past_katapult_is_still_a_candidate(
@@ -290,7 +290,7 @@ def test_a_board_that_chain_loads_past_katapult_is_still_a_candidate(
     patch_dfu(monkeypatch, stdout=ONE_BOARD)
 
     def appear(*args, **kwargs):
-        make_device(fake_root / "bus", "klipper", EBB_CHIPSET, "NEWBOARD-if00")
+        make_device(fake_root / "bus", "klipper", EBB_CHIPSET, "NEWBOARD")
 
     monkeypatch.setattr("mcu_updater.flashers.flash.flash_initial_bootloader", appear)
 
@@ -299,7 +299,7 @@ def test_a_board_that_chain_loads_past_katapult_is_still_a_candidate(
     job = adder.runner.get(res["job_id"])
 
     assert job.state == "succeeded", job.error
-    assert [c["serial"] for c in job.result["candidates"]] == ["NEWBOARD-if00"]
+    assert [c["serial"] for c in job.result["candidates"]] == ["NEWBOARD"]
 
 
 def test_a_re_bootloadered_tracked_board_is_reported_as_such_not_as_nothing(
@@ -381,7 +381,7 @@ def test_adopting_the_result_is_the_existing_method(adder, paths, fake_root, mon
     patch_dfu(monkeypatch, stdout=ONE_BOARD)
 
     def appear(*args, **kwargs):
-        make_device(fake_root / "bus", "katapult", EBB_CHIPSET, "NEWBOARD-if00")
+        make_device(fake_root / "bus", "katapult", EBB_CHIPSET, "NEWBOARD")
 
     monkeypatch.setattr("mcu_updater.flashers.flash.flash_initial_bootloader", appear)
 
@@ -527,7 +527,7 @@ def test_the_new_bootsel_board_is_found_by_diffing_the_bus(
     adder.paths = dataclasses.replace(adder.paths, bootsel_root=str(root))
 
     def appear(*args, **kwargs):
-        make_device(fake_root / "bus", "katapult", PICO_CHIPSET, "NEWPICO-if00")
+        make_device(fake_root / "bus", "katapult", PICO_CHIPSET, "NEWPICO")
 
     monkeypatch.setattr("mcu_updater.flashers.flash.flash_initial_bootloader", appear)
 
@@ -536,7 +536,7 @@ def test_the_new_bootsel_board_is_found_by_diffing_the_bus(
     job = adder.runner.get(res["job_id"])
 
     assert job.state == "succeeded", job.error
-    assert [c["serial"] for c in job.result["candidates"]] == ["NEWPICO-if00"]
+    assert [c["serial"] for c in job.result["candidates"]] == ["NEWPICO"]
     assert job.result["bootsel_id"] is not None
 
 

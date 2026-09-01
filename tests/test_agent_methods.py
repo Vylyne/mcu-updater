@@ -137,10 +137,10 @@ def test_status_surfaces_extra_repos(api, paths):
 
 
 def test_status_reports_device_state_from_the_bus(api, paths, fake_root):
-    make_device(fake_root / "bus", "klipper", "stm32f072xb", "4B0036000A53594731383520-if00")
+    make_device(fake_root / "bus", "klipper", "stm32f072xb", "4B0036000A53594731383520")
     types = {t["name"]: t for t in api.dispatch("fw.type.list")["types"]}
     serials = {s["serial"]: s for s in types["hexadistrofusion"]["serials"]}
-    online = serials["4B0036000A53594731383520-if00"]
+    online = serials["4B0036000A53594731383520"]
     assert online["state"] == "klipper"
     assert online["path"] is not None
 
@@ -192,30 +192,30 @@ def test_artifact_goes_clean_after_a_build(api, paths, settings):
 
 def test_bus_scan_marks_who_tracks_each_device(api, fake_root):
     bus = fake_root / "bus"
-    make_device(bus, "Klipper", "stm32f072xb", "4B0036000A53594731383520-if00")  # tracked
-    make_device(bus, "katapult", "rp2040", "STRANGER-if00")  # not tracked
+    make_device(bus, "Klipper", "stm32f072xb", "4B0036000A53594731383520")  # tracked
+    make_device(bus, "katapult", "rp2040", "STRANGER")  # not tracked
 
     devices = {d["serial"]: d for d in api.dispatch("fw.bus.scan")["devices"]}
-    assert devices["4B0036000A53594731383520-if00"]["tracked_by"] == "hexadistrofusion"
-    assert devices["STRANGER-if00"]["tracked_by"] is None
-    assert devices["STRANGER-if00"]["state"] == "katapult"
+    assert devices["4B0036000A53594731383520"]["tracked_by"] == "hexadistrofusion"
+    assert devices["STRANGER"]["tracked_by"] is None
+    assert devices["STRANGER"]["state"] == "katapult"
 
 
 def test_bus_scan_can_filter_to_untracked_only(api, fake_root):
     bus = fake_root / "bus"
-    make_device(bus, "Klipper", "stm32f072xb", "4B0036000A53594731383520-if00")
-    make_device(bus, "katapult", "rp2040", "STRANGER-if00")
+    make_device(bus, "Klipper", "stm32f072xb", "4B0036000A53594731383520")
+    make_device(bus, "katapult", "rp2040", "STRANGER")
 
     res = api.dispatch("fw.bus.scan", {"only_untracked": True})
-    assert [d["serial"] for d in res["devices"]] == ["STRANGER-if00"]
+    assert [d["serial"] for d in res["devices"]] == ["STRANGER"]
 
 
 def test_bus_scan_can_filter_by_chipset(api, fake_root):
     bus = fake_root / "bus"
-    make_device(bus, "katapult", "rp2040", "A-if00")
-    make_device(bus, "katapult", "stm32g0b1xx", "B-if00")
+    make_device(bus, "katapult", "rp2040", "A")
+    make_device(bus, "katapult", "stm32g0b1xx", "B")
     res = api.dispatch("fw.bus.scan", {"chipset": "rp2040"})
-    assert [d["serial"] for d in res["devices"]] == ["A-if00"]
+    assert [d["serial"] for d in res["devices"]] == ["A"]
 
 
 def test_bus_scan_is_empty_with_no_bus(api):
@@ -397,30 +397,30 @@ def test_an_unexpected_moonraker_shape_is_reported_as_unknown(paths, live_regist
 
 
 def test_bus_scan_exposes_is_mcu_per_device(api, fake_root):
-    make_device(fake_root / "bus", "katapult", "stm32f072xb", "NEWBOARD-if00")
-    (fake_root / "bus" / "usb-1a86_USB_Serial-if00").write_text("", encoding="utf-8")
+    make_device(fake_root / "bus", "katapult", "stm32f072xb", "NEWBOARD")
+    (fake_root / "bus" / "usb-1a86_USB_Serial").write_text("", encoding="utf-8")
 
     by_serial = {d["serial"]: d for d in api.dispatch("fw.bus.scan")["devices"]}
-    assert by_serial["NEWBOARD-if00"]["is_mcu"] is True
-    assert by_serial["Serial-if00"]["is_mcu"] is False
+    assert by_serial["NEWBOARD"]["is_mcu"] is True
+    assert by_serial["Serial"]["is_mcu"] is False
 
 
 def test_adoptable_excludes_serial_adapters(api, fake_root):
     """The Phase 4 footgun: a Knomi's CH340 one tap from being tracked as a board
     and having Klipper firmware built for it."""
-    make_device(fake_root / "bus", "katapult", "stm32f072xb", "NEWBOARD-if00")
-    (fake_root / "bus" / "usb-1a86_USB_Serial-if00").write_text("", encoding="utf-8")
+    make_device(fake_root / "bus", "katapult", "stm32f072xb", "NEWBOARD")
+    (fake_root / "bus" / "usb-1a86_USB_Serial").write_text("", encoding="utf-8")
 
     res = api.dispatch("fw.bus.scan")
-    assert [d["serial"] for d in res["adoptable"]] == ["NEWBOARD-if00"]
+    assert [d["serial"] for d in res["adoptable"]] == ["NEWBOARD"]
     # ...but the adapter is still *visible*, because someone hunting for a board
     # that hasn't appeared is better served by seeing what did.
-    assert "Serial-if00" in [d["serial"] for d in res["devices"]]
+    assert "Serial" in [d["serial"] for d in res["devices"]]
 
 
 def test_adoptable_excludes_already_tracked_boards(api, fake_root, live_registry_text):
     """A tracked serial from the live registry must not be offered again."""
-    make_device(fake_root / "bus", "Klipper", "stm32g0b1xx", "290055001850304158373620-if00")
+    make_device(fake_root / "bus", "Klipper", "stm32g0b1xx", "290055001850304158373620")
     res = api.dispatch("fw.bus.scan")
     tracked = next(d for d in res["devices"] if d["serial"].startswith("290055"))
     assert tracked["tracked_by"] == "bttebb36"
@@ -428,10 +428,10 @@ def test_adoptable_excludes_already_tracked_boards(api, fake_root, live_registry
 
 
 def test_adoptable_respects_the_chipset_filter(api, fake_root):
-    make_device(fake_root / "bus", "katapult", "stm32f072xb", "AAAA-if00")
-    make_device(fake_root / "bus", "katapult", "rp2040", "BBBB-if00")
+    make_device(fake_root / "bus", "katapult", "stm32f072xb", "AAAA")
+    make_device(fake_root / "bus", "katapult", "rp2040", "BBBB")
     res = api.dispatch("fw.bus.scan", {"chipset": "rp2040"})
-    assert [d["serial"] for d in res["adoptable"]] == ["BBBB-if00"]
+    assert [d["serial"] for d in res["adoptable"]] == ["BBBB"]
 
 
 # --------------------------------------------------------------------------
@@ -440,33 +440,33 @@ def test_adoptable_respects_the_chipset_filter(api, fake_root):
 
 
 def test_bus_ignore_marks_a_device_ignored_but_keeps_it_listed(api, fake_root):
-    make_device(fake_root / "bus", "katapult", "rp2040", "STRANGER-if00")
+    make_device(fake_root / "bus", "katapult", "rp2040", "STRANGER")
 
-    res = api.dispatch("fw.bus.ignore", {"serial": "STRANGER-if00"})
-    assert res == {"serial": "STRANGER-if00", "ignored": True}
+    res = api.dispatch("fw.bus.ignore", {"serial": "STRANGER"})
+    assert res == {"serial": "STRANGER", "ignored": True}
 
     devices = {d["serial"]: d for d in api.dispatch("fw.bus.scan")["devices"]}
-    assert devices["STRANGER-if00"]["ignored"] is True
+    assert devices["STRANGER"]["ignored"] is True
 
 
 def test_bus_ignore_is_idempotent(api):
-    first = api.dispatch("fw.bus.ignore", {"serial": "STRANGER-if00"})
-    second = api.dispatch("fw.bus.ignore", {"serial": "STRANGER-if00"})
-    assert first == second == {"serial": "STRANGER-if00", "ignored": True}
-    assert api.settings().ignored_serials.count("STRANGER-if00") == 1
+    first = api.dispatch("fw.bus.ignore", {"serial": "STRANGER"})
+    second = api.dispatch("fw.bus.ignore", {"serial": "STRANGER"})
+    assert first == second == {"serial": "STRANGER", "ignored": True}
+    assert api.settings().ignored_serials.count("STRANGER") == 1
 
 
 def test_bus_unignore_reverses_it_and_is_idempotent(api, fake_root):
-    make_device(fake_root / "bus", "katapult", "rp2040", "STRANGER-if00")
-    api.dispatch("fw.bus.ignore", {"serial": "STRANGER-if00"})
+    make_device(fake_root / "bus", "katapult", "rp2040", "STRANGER")
+    api.dispatch("fw.bus.ignore", {"serial": "STRANGER"})
 
-    res = api.dispatch("fw.bus.unignore", {"serial": "STRANGER-if00"})
-    assert res == {"serial": "STRANGER-if00", "ignored": False}
-    again = api.dispatch("fw.bus.unignore", {"serial": "STRANGER-if00"})
-    assert again == {"serial": "STRANGER-if00", "ignored": False}
+    res = api.dispatch("fw.bus.unignore", {"serial": "STRANGER"})
+    assert res == {"serial": "STRANGER", "ignored": False}
+    again = api.dispatch("fw.bus.unignore", {"serial": "STRANGER"})
+    assert again == {"serial": "STRANGER", "ignored": False}
 
     devices = {d["serial"]: d for d in api.dispatch("fw.bus.scan")["devices"]}
-    assert devices["STRANGER-if00"]["ignored"] is False
+    assert devices["STRANGER"]["ignored"] is False
 
 
 @pytest.mark.parametrize("method", ["fw.bus.ignore", "fw.bus.unignore"])
@@ -482,11 +482,11 @@ def test_bus_ignore_announces_the_change(paths, live_registry_text):
         fh.write(live_registry_text)
     changes: list[int] = []
     api = Api(paths, on_change=lambda: changes.append(1))
-    api.dispatch("fw.bus.ignore", {"serial": "STRANGER-if00"})
+    api.dispatch("fw.bus.ignore", {"serial": "STRANGER"})
     assert len(changes) == 1
     # A no-op ignore (already ignored) must not announce a change that did not
     # happen.
-    api.dispatch("fw.bus.ignore", {"serial": "STRANGER-if00"})
+    api.dispatch("fw.bus.ignore", {"serial": "STRANGER"})
     assert len(changes) == 1
 
 
@@ -500,48 +500,48 @@ def test_serial_add_tracks_the_board_and_announces_it(paths, live_registry_text,
         fh.write(live_registry_text)
     changes: list[int] = []
     api = Api(paths, on_change=lambda: changes.append(1))
-    make_device(fake_root / "bus", "katapult", "stm32g0b1xx", "NEWBOARD-if00")
+    make_device(fake_root / "bus", "katapult", "stm32g0b1xx", "NEWBOARD")
 
-    res = api.dispatch("fw.serial.add", {"name": "bttebb36", "serial": "NEWBOARD-if00"})
+    res = api.dispatch("fw.serial.add", {"name": "bttebb36", "serial": "NEWBOARD"})
     assert res["added"] is True
-    assert "NEWBOARD-if00" in api.registry().get("bttebb36").serials
+    assert "NEWBOARD" in api.registry().get("bttebb36").serials
     # Other clients have to learn about it; the bus poll would not tell them,
     # because the devices on the bus did not change - only who tracks them.
     assert len(changes) == 1
 
 
 def test_serial_add_is_idempotent(api, fake_root):
-    make_device(fake_root / "bus", "katapult", "stm32g0b1xx", "NEWBOARD-if00")
-    api.dispatch("fw.serial.add", {"name": "bttebb36", "serial": "NEWBOARD-if00"})
-    again = api.dispatch("fw.serial.add", {"name": "bttebb36", "serial": "NEWBOARD-if00"})
+    make_device(fake_root / "bus", "katapult", "stm32g0b1xx", "NEWBOARD")
+    api.dispatch("fw.serial.add", {"name": "bttebb36", "serial": "NEWBOARD"})
+    again = api.dispatch("fw.serial.add", {"name": "bttebb36", "serial": "NEWBOARD"})
     assert again["added"] is False
-    assert api.registry().get("bttebb36").serials.count("NEWBOARD-if00") == 1
+    assert api.registry().get("bttebb36").serials.count("NEWBOARD") == 1
 
 
 def test_serial_add_refuses_a_device_that_is_not_a_board(api, fake_root):
     """Server-side enforcement of what the panel merely filters. The panel only
     offers `adoptable` entries, but it is not the only possible caller."""
-    (fake_root / "bus" / "usb-1a86_USB_Serial-if00").write_text("", encoding="utf-8")
+    (fake_root / "bus" / "usb-1a86_USB_Serial").write_text("", encoding="utf-8")
     with pytest.raises(RpcError) as exc:
-        api.dispatch("fw.serial.add", {"name": "bttebb36", "serial": "Serial-if00"})
+        api.dispatch("fw.serial.add", {"name": "bttebb36", "serial": "Serial"})
     assert exc.value.data["code"] == "not_an_mcu"
-    assert "Serial-if00" not in api.registry().get("bttebb36").serials
+    assert "Serial" not in api.registry().get("bttebb36").serials
 
 
 def test_serial_add_allows_a_board_that_is_not_plugged_in(api):
     """Pre-registering an absent board is legitimate - you cannot judge what you
     cannot see, and refusing would block adding a board that is simply off."""
-    res = api.dispatch("fw.serial.add", {"name": "bttebb36", "serial": "ABSENT-if00"})
+    res = api.dispatch("fw.serial.add", {"name": "bttebb36", "serial": "ABSENT"})
     assert res["added"] is True
 
 
 def test_serial_add_refuses_a_serial_tracked_under_another_type(api, fake_root):
     """One board under two types gets flashed twice with different firmware."""
-    make_device(fake_root / "bus", "Klipper", "stm32g0b1xx", "290055001850304158373620-if00")
+    make_device(fake_root / "bus", "Klipper", "stm32g0b1xx", "290055001850304158373620")
     with pytest.raises(RpcError) as exc:
         api.dispatch(
             "fw.serial.add",
-            {"name": "OctopusMAXEZ", "serial": "290055001850304158373620-if00"},
+            {"name": "OctopusMAXEZ", "serial": "290055001850304158373620"},
         )
     assert exc.value.data["code"] == "serial_tracked_elsewhere"
     assert "bttebb36" in exc.value.data["data"]["tracked_under"]
@@ -549,7 +549,7 @@ def test_serial_add_refuses_a_serial_tracked_under_another_type(api, fake_root):
 
 def test_serial_add_refuses_an_unknown_type(api):
     with pytest.raises(RpcError) as exc:
-        api.dispatch("fw.serial.add", {"name": "nope", "serial": "X-if00"})
+        api.dispatch("fw.serial.add", {"name": "nope", "serial": "X"})
     assert exc.value.data["code"] == "unknown_type"
 
 
@@ -564,12 +564,12 @@ def test_serial_methods_require_both_arguments(api, method, args):
 def test_serial_remove_reports_whether_it_acted(api):
     first = api.dispatch(
         "fw.serial.remove",
-        {"name": "bttebb36", "serial": "290055001850304158373620-if00"},
+        {"name": "bttebb36", "serial": "290055001850304158373620"},
     )
     assert first["removed"] is True
     again = api.dispatch(
         "fw.serial.remove",
-        {"name": "bttebb36", "serial": "290055001850304158373620-if00"},
+        {"name": "bttebb36", "serial": "290055001850304158373620"},
     )
     assert again["removed"] is False
 
@@ -590,7 +590,7 @@ def test_serial_remove_touches_nothing_but_the_registry(api, paths):
 
     api.dispatch(
         "fw.serial.remove",
-        {"name": "bttebb36", "serial": "290055001850304158373620-if00"},
+        {"name": "bttebb36", "serial": "290055001850304158373620"},
     )
 
     assert os.path.exists(binary)
@@ -599,8 +599,8 @@ def test_serial_remove_touches_nothing_but_the_registry(api, paths):
 
 
 def test_a_mutation_preserves_comments_and_other_sections(api, paths, fake_root):
-    make_device(fake_root / "bus", "katapult", "stm32g0b1xx", "NEWBOARD-if00")
-    api.dispatch("fw.serial.add", {"name": "bttebb36", "serial": "NEWBOARD-if00"})
+    make_device(fake_root / "bus", "katapult", "stm32g0b1xx", "NEWBOARD")
+    api.dispatch("fw.serial.add", {"name": "bttebb36", "serial": "NEWBOARD"})
 
     with open(paths.main_config, encoding="utf-8") as fh:
         out = fh.read()
@@ -1294,24 +1294,24 @@ def test_the_commit_is_extracted_from_a_git_describe(version, sha):
 
 def test_a_board_behind_the_source_tree_needs_flashing(api):
     head = "d7cea5bb1aca70849f28d0bb98ab1b96b9f6db65"
-    versions = {"A-if00": {"version": "v0.13.0-623-gaea1bcf5", "mcu": "mcu hexa"}}
-    state = api.flash_state("A-if00", versions, head)
+    versions = {"A": {"version": "v0.13.0-623-gaea1bcf5", "mcu": "mcu hexa"}}
+    state = api.flash_state("A", versions, head)
     assert state["needs_flash"] is True
     assert state["running_sha"] == "aea1bcf5"
 
 
 def test_a_board_at_the_source_tree_does_not(api):
     head = "d7cea5bb1aca70849f28d0bb98ab1b96b9f6db65"
-    info = {"A-if00": {"version": "v0.13.0-711-gd7cea5bb", "mcu": "mcu"}}
-    assert api.flash_state("A-if00", info, head)["needs_flash"] is False
+    info = {"A": {"version": "v0.13.0-711-gd7cea5bb", "mcu": "mcu"}}
+    assert api.flash_state("A", info, head)["needs_flash"] is False
 
 
 def test_a_dirty_version_still_matches(api):
     """A type with makefile patches is dirty by construction - the patch is in place
     while klipper stamps its version - so dirty must not mean out of date."""
     head = "6d43f8b3ddbfab679d1a64cb6f9f7adbe851ee82"
-    info = {"A-if00": {"version": "v0.13.0-712-g6d43f8b3-dirty", "mcu": "mcu T0_buffer"}}
-    state = api.flash_state("A-if00", info, head)
+    info = {"A": {"version": "v0.13.0-712-g6d43f8b3-dirty", "mcu": "mcu T0_buffer"}}
+    state = api.flash_state("A", info, head)
     assert state["needs_flash"] is False
 
 
@@ -1319,14 +1319,14 @@ def test_a_dirty_version_still_matches(api):
     ("versions", "head", "why"),
     [
         ({}, "d7cea5bb", "the board is offline or klippy is unreachable"),
-        ({"A-if00": {"version": "v0.12.0", "mcu": "mcu"}}, "d7cea5bb", "no commit in the version"),
-        ({"A-if00": {"version": "v0.13.0-711-gd7cea5bb", "mcu": "mcu"}}, None, "no git metadata"),
+        ({"A": {"version": "v0.12.0", "mcu": "mcu"}}, "d7cea5bb", "no commit in the version"),
+        ({"A": {"version": "v0.13.0-711-gd7cea5bb", "mcu": "mcu"}}, None, "no git metadata"),
     ],
 )
 def test_unknown_is_reported_as_unknown_not_as_up_to_date(api, versions, head, why):
     """Claiming a board is current without having checked is the bug being fixed,
     so absence of evidence must not read as evidence."""
-    assert api.flash_state("A-if00", versions, head)["needs_flash"] is None, why
+    assert api.flash_state("A", versions, head)["needs_flash"] is None, why
 
 
 def test_mcu_info_joins_serials_to_versions_and_names(paths, live_registry_text):
@@ -1348,10 +1348,10 @@ def test_mcu_info_joins_serials_to_versions_and_names(paths, live_registry_text)
                     "configfile": {
                         "settings": {
                             "mcu": {
-                                "serial": "/dev/serial/by-id/usb-Klipper_stm32h723xx_2100-if00"
+                                "serial": "/dev/serial/by-id/usb-Klipper_stm32h723xx_2100"
                             },
                             "mcu ebbt0": {
-                                "serial": "/dev/serial/by-id/usb-Klipper_stm32g0b1xx_2900-if00"
+                                "serial": "/dev/serial/by-id/usb-Klipper_stm32g0b1xx_2900"
                             },
                         }
                     },
@@ -1363,8 +1363,8 @@ def test_mcu_info_joins_serials_to_versions_and_names(paths, live_registry_text)
 
     api = Api(paths, call=fake_call)
     assert api.mcu_info() == {
-        "2100-if00": {"version": "v0.13.0-711-gd7cea5bb", "mcu": "mcu"},
-        "2900-if00": {"version": "v0.13.0-712-g6d43f8b3", "mcu": "mcu EBBT0"},
+        "2100": {"version": "v0.13.0-711-gd7cea5bb", "mcu": "mcu"},
+        "2900": {"version": "v0.13.0-712-g6d43f8b3", "mcu": "mcu EBBT0"},
     }
     # The object list is cached, so a second call costs one probe, not two.
     calls.clear()
@@ -1381,12 +1381,12 @@ def test_two_boards_of_one_type_can_disagree(
         fh.write(live_registry_text)
     # Both boards have to be *on the bus*: an offline board is now reported as
     # unassessable rather than as up to date, which is the point.
-    for serial in ("290055001850304158373620-if00", "230048001750304158373620-if00"):
+    for serial in ("290055001850304158373620", "230048001750304158373620"):
         make_device(fake_root / "bus", "Klipper", "stm32g0b1xx", serial)
     api = Api(paths)
     versions = {
-        "290055001850304158373620-if00": {"version": "v0.13.0-711-gd7cea5bb", "mcu": "mcu EBBT0"},
-        "230048001750304158373620-if00": {"version": "v0.13.0-623-gaea1bcf5", "mcu": "mcu EBBT1"},
+        "290055001850304158373620": {"version": "v0.13.0-711-gd7cea5bb", "mcu": "mcu EBBT0"},
+        "230048001750304158373620": {"version": "v0.13.0-623-gaea1bcf5", "mcu": "mcu EBBT1"},
     }
     head = "d7cea5bb1aca70849f28d0bb98ab1b96b9f6db65"
     # type_status resolves the source head itself now, from the tree its own
@@ -1399,8 +1399,8 @@ def test_two_boards_of_one_type_can_disagree(
 
     ebb = api.type_status(api.registry(), "bttebb36", versions)
     by_serial = {s["serial"]: s for s in ebb["serials"]}
-    assert by_serial["290055001850304158373620-if00"]["needs_flash"] is False
-    assert by_serial["230048001750304158373620-if00"]["needs_flash"] is True
+    assert by_serial["290055001850304158373620"]["needs_flash"] is False
+    assert by_serial["230048001750304158373620"]["needs_flash"] is True
     assert ebb["needs_flash"] is True, "the type rolls up to needing attention"
 
 
@@ -1436,10 +1436,10 @@ def test_the_klipper_mcu_name_travels_with_the_serial(api):
     printer object verbatim - "mcu", "mcu EBBT0" - matching what Mainsail's own
     System Loads panel shows, so the two read consistently."""
     head = "d7cea5bb1aca70849f28d0bb98ab1b96b9f6db65"
-    info = {"A-if00": {"version": "v0.13.0-711-gd7cea5bb", "mcu": "mcu EBBT0"}}
-    assert api.flash_state("A-if00", info, head)["mcu"] == "mcu EBBT0"
+    info = {"A": {"version": "v0.13.0-711-gd7cea5bb", "mcu": "mcu EBBT0"}}
+    assert api.flash_state("A", info, head)["mcu"] == "mcu EBBT0"
     # Unknown board: no name to give, and None rather than a guess.
-    assert api.flash_state("B-if00", info, head)["mcu"] is None
+    assert api.flash_state("B", info, head)["mcu"] is None
 
 
 # --------------------------------------------------------------------------
@@ -1450,26 +1450,26 @@ def test_the_klipper_mcu_name_travels_with_the_serial(api):
 # --------------------------------------------------------------------------
 
 HEAD = "d7cea5bb1aca70849f28d0bb98ab1b96b9f6db65"
-CURRENT = {"A-if00": {"version": "v0.13.0-711-gd7cea5bb", "mcu": "mcu EBBT0"}}
+CURRENT = {"A": {"version": "v0.13.0-711-gd7cea5bb", "mcu": "mcu EBBT0"}}
 
 
 def test_a_board_in_its_bootloader_is_a_strong_yes(api):
     """It reports no klipper version at all, which is not "unknown": a board
     waiting in Katapult is the clearest possible signal that it wants firmware."""
-    state = api.flash_state("A-if00", {}, HEAD, state="katapult")
+    state = api.flash_state("A", {}, HEAD, state="katapult")
     assert state["needs_flash"] is True
     assert state["reason"] == "in_bootloader"
 
 
 def test_an_offline_board_is_not_an_answer(api):
-    state = api.flash_state("A-if00", CURRENT, HEAD, state="offline")
+    state = api.flash_state("A", CURRENT, HEAD, state="offline")
     assert state["needs_flash"] is None
     assert state["reason"] == "offline"
 
 
 def test_an_older_commit_is_source_changed(api):
-    info = {"A-if00": {"version": "v0.13.0-623-gaea1bcf5", "mcu": "mcu hexa"}}
-    state = api.flash_state("A-if00", info, HEAD, state="klipper")
+    info = {"A": {"version": "v0.13.0-623-gaea1bcf5", "mcu": "mcu hexa"}}
+    state = api.flash_state("A", info, HEAD, state="klipper")
     assert state["needs_flash"] is True
     assert state["reason"] == "source_changed"
 
@@ -1477,7 +1477,7 @@ def test_an_older_commit_is_source_changed(api):
 def test_a_matching_commit_with_no_record_is_taken_at_face_value(api):
     """The flash log only ever *adds* confidence. Degrading every board that
     predates the log to "unknown" would be noise, not caution."""
-    state = api.flash_state("A-if00", CURRENT, HEAD, state="klipper", artifact_sha="aa" * 32)
+    state = api.flash_state("A", CURRENT, HEAD, state="klipper", artifact_sha="aa" * 32)
     assert state["needs_flash"] is False
     assert state["reason"] is None
 
@@ -1489,10 +1489,10 @@ def test_the_same_commit_with_a_different_binary_is_artifact_changed(api, paths)
     from mcu_updater.build import FlashLog
 
     log = FlashLog(paths)
-    log.record("A-if00", mcu_type="t", fw="klipper", bin_sha256="old" + "0" * 61, fw_sha=HEAD)
+    log.record("A", mcu_type="t", fw="klipper", bin_sha256="old" + "0" * 61, fw_sha=HEAD)
 
     state = api.flash_state(
-        "A-if00", CURRENT, HEAD, state="klipper", artifact_sha="new" + "0" * 61, flashlog=log
+        "A", CURRENT, HEAD, state="klipper", artifact_sha="new" + "0" * 61, flashlog=log
     )
     assert state["needs_flash"] is True
     assert state["reason"] == "artifact_changed"
@@ -1502,10 +1502,10 @@ def test_the_same_binary_is_up_to_date(api, paths):
     from mcu_updater.build import FlashLog
 
     log = FlashLog(paths)
-    log.record("A-if00", mcu_type="t", fw="klipper", bin_sha256="aa" * 32, fw_sha=HEAD)
+    log.record("A", mcu_type="t", fw="klipper", bin_sha256="aa" * 32, fw_sha=HEAD)
 
     state = api.flash_state(
-        "A-if00", CURRENT, HEAD, state="klipper", artifact_sha="aa" * 32, flashlog=log
+        "A", CURRENT, HEAD, state="klipper", artifact_sha="aa" * 32, flashlog=log
     )
     assert state["needs_flash"] is False
     assert state["reason"] is None
@@ -1517,17 +1517,17 @@ def test_a_record_contradicted_by_the_board_is_ignored(api, paths):
     from mcu_updater.build import FlashLog
 
     log = FlashLog(paths)
-    log.record("A-if00", mcu_type="t", fw="klipper", bin_sha256="old" + "0" * 61, fw_sha="ffffffff")
+    log.record("A", mcu_type="t", fw="klipper", bin_sha256="old" + "0" * 61, fw_sha="ffffffff")
 
     state = api.flash_state(
-        "A-if00", CURRENT, HEAD, state="klipper", artifact_sha="new" + "0" * 61, flashlog=log
+        "A", CURRENT, HEAD, state="klipper", artifact_sha="new" + "0" * 61, flashlog=log
     )
     assert state["needs_flash"] is False, "a disbelieved record must not invent a mismatch"
 
 
 def test_an_unparseable_version_is_unknown(api):
-    info = {"A-if00": {"version": "v0.12.0", "mcu": "mcu"}}
-    state = api.flash_state("A-if00", info, HEAD, state="klipper")
+    info = {"A": {"version": "v0.12.0", "mcu": "mcu"}}
+    state = api.flash_state("A", info, HEAD, state="klipper")
     assert state["needs_flash"] is None
     assert state["reason"] == "unknown_version"
 
@@ -1540,13 +1540,13 @@ def test_an_unparseable_version_is_unknown(api):
 # the stamp itself against what the build produced. See states.VERSION_ONLY.
 # --------------------------------------------------------------------------
 
-CARTO_STAMP = {"A-if00": {"version": "CARTOGRAPHER 6.2.0", "mcu": "mcu"}}
+CARTO_STAMP = {"A": {"version": "CARTOGRAPHER 6.2.0", "mcu": "mcu"}}
 
 
 def test_a_stamped_version_with_nothing_built_is_unknown(api):
     """Today's answer, unchanged: no built .config to compare the stamp
     against, so this is exactly the old bail-out."""
-    state = api.flash_state("A-if00", CARTO_STAMP, HEAD, state="klipper")
+    state = api.flash_state("A", CARTO_STAMP, HEAD, state="klipper")
     assert state["needs_flash"] is None
     assert state["reason"] == "unknown_version"
 
@@ -1555,7 +1555,7 @@ def test_a_differing_stamp_is_source_changed(api):
     """CARTOGRAPHER 6.2.0 on the board, CARTOGRAPHER v4 6.2.0 out of the
     build - genuinely not our binary."""
     state = api.flash_state(
-        "A-if00", CARTO_STAMP, HEAD, state="klipper", built_version="CARTOGRAPHER v4 6.2.0"
+        "A", CARTO_STAMP, HEAD, state="klipper", built_version="CARTOGRAPHER v4 6.2.0"
     )
     assert state["needs_flash"] is True
     assert state["reason"] == "source_changed"
@@ -1566,7 +1566,7 @@ def test_a_matching_stamp_with_no_record_is_version_only(api):
     not - distinct from unknown_version, which means nothing was recognised
     at all."""
     state = api.flash_state(
-        "A-if00", CARTO_STAMP, HEAD, state="klipper", built_version="CARTOGRAPHER 6.2.0"
+        "A", CARTO_STAMP, HEAD, state="klipper", built_version="CARTOGRAPHER 6.2.0"
     )
     assert state["needs_flash"] is None
     assert state["reason"] == "version_only"
@@ -1577,7 +1577,7 @@ def test_a_matching_stamp_backed_by_a_record_is_up_to_date(api, paths):
 
     log = FlashLog(paths)
     log.record(
-        "A-if00",
+        "A",
         mcu_type="cartographer",
         fw="klipper",
         bin_sha256="aa" * 32,
@@ -1586,7 +1586,7 @@ def test_a_matching_stamp_backed_by_a_record_is_up_to_date(api, paths):
     )
 
     state = api.flash_state(
-        "A-if00",
+        "A",
         CARTO_STAMP,
         HEAD,
         state="klipper",
@@ -1605,7 +1605,7 @@ def test_a_matching_stamp_with_a_stale_binary_is_artifact_changed(api, paths):
 
     log = FlashLog(paths)
     log.record(
-        "A-if00",
+        "A",
         mcu_type="cartographer",
         fw="klipper",
         bin_sha256="old" + "0" * 61,
@@ -1614,7 +1614,7 @@ def test_a_matching_stamp_with_a_stale_binary_is_artifact_changed(api, paths):
     )
 
     state = api.flash_state(
-        "A-if00",
+        "A",
         CARTO_STAMP,
         HEAD,
         state="klipper",
@@ -1631,8 +1631,8 @@ def test_a_klipper_type_with_no_version_symbol_is_unaffected(api):
     this must take the ordinary sha path exactly as before, whatever
     built_version happens to be (it is always None for a tree with no VERSION
     symbol, but a stray value must not derail a board that has a real sha)."""
-    info = {"A-if00": {"version": "v0.13.0-711-gd7cea5bb", "mcu": "mcu"}}
-    state = api.flash_state("A-if00", info, HEAD, state="klipper", built_version=None)
+    info = {"A": {"version": "v0.13.0-711-gd7cea5bb", "mcu": "mcu"}}
+    state = api.flash_state("A", info, HEAD, state="klipper", built_version=None)
     assert state["needs_flash"] is False
     assert state["reason"] is None
 
@@ -1664,7 +1664,7 @@ def test_a_flash_writes_a_record(paths, live_registry_text):
     build(paths, Registry.load(paths), dry, "bttebb36", "klipper")
 
     # A dry-run flash deliberately writes no record: nothing was written to a board.
-    serial = "290055001850304158373620-if00"
+    serial = "290055001850304158373620"
     make_device(pathlib.Path(paths.serial_by_id), "katapult", "stm32g0b1xx", serial)
     flash_katapult(paths, dry, "bttebb36", "stm32g0b1xx", serial)
     assert FlashLog(paths).all() == {}, "a rehearsal must not claim to have flashed anything"

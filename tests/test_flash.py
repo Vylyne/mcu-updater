@@ -95,17 +95,15 @@ def test_device_already_in_bootloader_is_flashed_directly(paths, ready, fake_roo
     assert any("Flashed S1 successfully" in line for _, line in events)
 
 
-def test_device_running_klipper_gets_a_bootloader_request_first(paths, ready, fake_root):
+def test_device_running_klipper_is_flashed_without_a_separate_reboot(paths, ready, fake_root):
     make_device(fake_root / "bus", "klipper", "chipA", "S1")  # lowercase on purpose
     events: list[tuple[str, str]] = []
     flash_katapult(
         paths, ready, "board", "chipA", "S1", reporter=lambda s, line: events.append((s, line))
     )
     per_cmd = [cmd_tokens(c) for c in _cmds(events)]
-    assert any("-r" in toks for toks in per_cmd), "should request the bootloader"
-    assert any("requesting bootloader" in line for _, line in events)
-    # A dry run must still rehearse the write, not stop at the reboot request.
-    assert any("-f" in toks for toks in per_cmd), "should still reach the flash step"
+    assert all("-r" not in toks for toks in per_cmd)
+    assert any("-f" in toks for toks in per_cmd)
     assert any("Flashed S1 successfully" in line for _, line in events)
 
 
@@ -138,8 +136,8 @@ def test_a_fork_that_renames_its_usb_descriptor_is_still_found(paths, ready, fak
         reporter=lambda s, line: events.append((s, line)),
     )
     per_cmd = [cmd_tokens(c) for c in _cmds(events)]
-    assert any("-r" in toks for toks in per_cmd), "should request the bootloader"
-    assert any("-f" in toks for toks in per_cmd), "should still reach the flash step"
+    assert all("-r" not in toks for toks in per_cmd)
+    assert any("-f" in toks for toks in per_cmd)
     # The board names itself; the log should not claim it is running Klipper.
     assert any("Cartographer" in line for _, line in events)
 

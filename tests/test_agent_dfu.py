@@ -31,6 +31,10 @@ Found DFU: [0483:df11] ver=0200, devnum=52, cfg=1, intf=0, path="6-1.6.6.1.4", \
 alt=0, name="@Internal Flash /0x08000000/64*02Kg", serial="205B33753539"
 """
 
+TWO_BOARDS_SAME_SERIAL = ONE_BOARD + ONE_BOARD.replace(
+    "devnum=51", "devnum=52"
+).replace("6-1.6.6.1.3", "6-1.6.6.1.4")
+
 DENIED = """\
 dfu-util 0.11
 Cannot open DFU device 0483:df11 found on devnum 51 (LIBUSB_ERROR_ACCESS)
@@ -88,6 +92,17 @@ def test_the_fields_are_the_only_identity_a_dfu_board_has(monkeypatch):
 
     assert [d["serial"] for d in devices] == ["3941335F3434", "205B33753539"]
     assert [d["devnum"] for d in devices] == ["51", "52"]
+
+
+def test_two_paths_remain_two_devices_when_the_rom_serial_collides(monkeypatch):
+    """Some STM32 ROMs report the placeholder FFFFFFFEFFFF for every die.
+    A serial-first dedupe hid one physical board and made a later -S ambiguous."""
+    listing = TWO_BOARDS_SAME_SERIAL.replace("3941335F3434", "FFFFFFFEFFFF")
+    patch_dfu(monkeypatch, stdout=listing)
+
+    devices = dfu_devices()
+
+    assert [d["path"] for d in devices] == ["6-1.6.6.1.3", "6-1.6.6.1.4"]
 
 
 def test_the_raw_line_contract_is_unchanged(monkeypatch):
@@ -205,8 +220,8 @@ def test_the_probe_never_raises_whatever_dfu_util_does(api, monkeypatch):
 # which is the whole difficulty with several boards in DFU at once.
 # --------------------------------------------------------------------------
 
-#: 27000E000551343438333339-if00 in DFU. Same board as ONE_BOARD's serial.
-KNOWN_UID = "27000E000551343438333339-if00"
+#: 27000E000551343438333339 in DFU. Same board as ONE_BOARD's canonical serial.
+KNOWN_UID = "27000E000551343438333339"
 
 
 def test_a_tracked_board_in_dfu_is_named(paths, live_registry_text, monkeypatch):
@@ -227,7 +242,7 @@ def test_an_unrecognised_board_is_simply_unnamed(api, monkeypatch):
     an error.
 
     Deliberately not ONE_BOARD - live_registry_text now tracks the real board
-    its DFU serial derives from (27000E000551343438333339-if00, under
+    its DFU serial derives from (27000E000551343438333339, under
     bttebb36), so that serial is no longer "unrecognised". This is
     TWO_BOARDS' second device, which derives from no serial any type here
     tracks."""
@@ -257,7 +272,7 @@ def test_two_known_boards_mapping_to_one_dfu_serial_name_neither(
     api = Api(paths)
 
     # Constructed to collide: swapping w0 and w2 leaves the sum unchanged.
-    twin = "38333339" + "05513434" + "27000E00" + "-if00"
+    twin = "38333339" + "05513434" + "27000E00"
     assert dfu_serial_for(twin) == dfu_serial_for(KNOWN_UID)
 
     api.dispatch("fw.serial.add", {"name": "bttebb36", "serial": KNOWN_UID})
@@ -286,23 +301,25 @@ def test_the_probe_is_available_to_a_read_only_agent(api):
 # --------------------------------------------------------------------------
 
 
-def test_a_lone_board_is_still_pinned_by_serial(monkeypatch):
+def test_a_lone_board_is_pinned_by_bus_path(monkeypatch):
     """Not belt-and-braces: between the scan and the write, someone can jumper a
     second board and plug it in. Targeting the VID:PID alone would then take
-    whichever answered first."""
+    whichever answered first. The path names the physical port that was scanned;
+    a ROM serial can be a non-unique placeholder such as FFFFFFFEFFFF."""
     from mcu_updater.flashers.flash import dfu_selector
 
     patch_dfu(monkeypatch, stdout=ONE_BOARD)
-    assert dfu_selector(dfu_devices()[0]) == ["-S", "3941335F3434"]
+    assert dfu_selector(dfu_devices()[0]) == ["-p", "6-1.6.6.1.3"]
 
 
 def test_the_selector_degrades_by_how_well_each_field_survives():
-    """Serial comes from the die's unique id and survives a replug; a bus path
-    holds only while the board stays in one port; devnum changes every time."""
+    """The path is unique for this scan and names the port the user chose. A
+    valid serial survives a replug, while devnum changes every time."""
     from mcu_updater.flashers.flash import dfu_selector
 
-    assert dfu_selector({"serial": "ABC", "path": "6-1", "devnum": "9"}) == ["-S", "ABC"]
+    assert dfu_selector({"serial": "ABC", "path": "6-1", "devnum": "9"}) == ["-p", "6-1"]
     assert dfu_selector({"serial": None, "path": "6-1", "devnum": "9"}) == ["-p", "6-1"]
+    assert dfu_selector({"serial": "ABC", "path": None, "devnum": "9"}) == ["-S", "ABC"]
     assert dfu_selector({"serial": None, "path": None, "devnum": "9"}) == ["-n", "9"]
     assert dfu_selector({"serial": None, "path": None, "devnum": None}) == []
 
@@ -340,10 +357,31 @@ def test_naming_a_serial_resolves_two_boards(paths, monkeypatch, settings):
 
     assert len(commands) == 1
     cmd = commands[0]
-    assert cmd[cmd.index("-S") + 1] == "205B33753539"
+    assert cmd[cmd.index("-p") + 1] == "6-1.6.6.1.4"
     # The altsetting stays pinned by NUMBER. All three altsettings on a G0B1
     # report the same name, so matching on the name would be the ambiguous one.
     assert cmd[cmd.index("-a") + 1] == "0"
+
+
+def test_a_colliding_serial_cannot_choose_between_two_paths(paths, monkeypatch, settings):
+    """A placeholder ROM serial must produce a refusal, never a first-match write."""
+    from mcu_updater.errors import AmbiguousDfuError
+    from mcu_updater.flashers.flash import flash_dfu_stm32
+
+    listing = TWO_BOARDS_SAME_SERIAL.replace("3941335F3434", "FFFFFFFEFFFF")
+    patch_dfu(monkeypatch, stdout=listing)
+    monkeypatch.setattr(
+        "mcu_updater.flashers.flash.run_streamed",
+        lambda cmd, **kw: 0,
+    )
+
+    with pytest.raises(AmbiguousDfuError):
+        flash_dfu_stm32(
+            paths,
+            settings,
+            _staged_bin(paths),
+            target_serial="FFFFFFFEFFFF",
+        )
 
 
 def test_naming_a_serial_that_is_not_there_is_refused(paths, monkeypatch, settings):

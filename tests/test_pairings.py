@@ -32,7 +32,7 @@ CHIPSET = "stm32g0b1xx"
 # `dfu_serial_for`'s docstring), but not one already tracked by
 # `live_registry_text` - the whole point here is a board that has not yet
 # been adopted.
-NEW_UID = "0102030405060708090A0B0C-if00"
+NEW_UID = "0102030405060708090A0B0C"
 NEW_DFU = "100E0C0A0807"
 
 
@@ -137,7 +137,7 @@ def test_a_board_with_no_pairing_is_left_alone(api, paths, fake_root):
 
 
 def test_an_already_tracked_board_is_untouched(api, paths, fake_root):
-    tracked = "290055001850304158373620-if00"
+    tracked = "290055001850304158373620"
     Pairings(paths).record(dfu_serial_for(tracked) or "x", "OctopusMAXEZ")
     _appear(fake_root, tracked)
 
@@ -198,7 +198,7 @@ def test_two_boards_sharing_a_dfu_serial_adopt_neither(api, paths, fake_root):
     """The derivation sums two of the three id words, so a collision is possible.
     Adopting the wrong board under a type is how the wrong firmware gets written
     to it later - so an ambiguous match does nothing, exactly as naming does."""
-    twin = "090A0B0C" + "05060708" + "01020304" + "-if00"
+    twin = "090A0B0C" + "05060708" + "01020304" + ""
     assert dfu_serial_for(twin) == NEW_DFU
 
     Pairings(paths).record(NEW_DFU, "bttebb36")
@@ -227,16 +227,14 @@ def test_no_pairings_at_all_does_no_work(api, fake_root):
 # --------------------------------------------------------------------------
 
 RP2040_CHIPSET = "rp2040"
-#: A boot-ROM flash-chip id, as `bootsel.target_for` records it: bare hex, no
-#: interface suffix. Assumed (unverified on real hardware) to be the same
-#: string Katapult later runs under, up to the `-if00` every by-id name gets.
+#: A boot-ROM flash-chip id, as `bootsel.target_for` records it: bare hex.
 PICO_BOOT_ID = "E0C9125B0D9B"
-PICO_RUNNING = PICO_BOOT_ID + "-if00"
+PICO_RUNNING = PICO_BOOT_ID + ""
 
 
 def test_an_rp2040_boards_running_uid_tried_as_is_adopts_it(api, paths, fake_root):
     """The path this whole mechanism is betting on: no derivation, just the
-    UID prefix of the running serial compared directly to the recorded id."""
+    full running identity compared directly to the recorded id."""
     api.dispatch("fw.type.add", {"name": "pico", "chipset": RP2040_CHIPSET})
     Pairings(paths).record(PICO_BOOT_ID, "pico")
     _appear(fake_root, PICO_RUNNING, chipset=RP2040_CHIPSET)
@@ -257,7 +255,17 @@ def test_a_mismatched_rp2040_identity_is_left_alone(api, paths, fake_root):
     api.dispatch("fw.type.add", {"name": "pico", "chipset": RP2040_CHIPSET})
     Pairings(paths).record(PICO_BOOT_ID, "pico")
     # A running serial whose UID does not match the recorded boot-ROM id at all.
-    _appear(fake_root, "DIFFERENTUID99-if00", chipset=RP2040_CHIPSET)
+    _appear(fake_root, "DIFFERENTUID99", chipset=RP2040_CHIPSET)
+
+    assert api.adopt_paired() == []
+
+
+def test_a_hyphenated_running_serial_is_not_prefix_matched(api, paths, fake_root):
+    """A transport-independent serial may contain a hyphen; it is not shortened
+    into a BOOTSEL id that happens to share its prefix."""
+    api.dispatch("fw.type.add", {"name": "pico", "chipset": RP2040_CHIPSET})
+    Pairings(paths).record(PICO_BOOT_ID, "pico")
+    _appear(fake_root, f"{PICO_BOOT_ID}-extra", chipset=RP2040_CHIPSET)
 
     assert api.adopt_paired() == []
     assert Pairings(paths).type_for(PICO_BOOT_ID) == "pico", "the pairing is kept"
@@ -292,7 +300,7 @@ def test_the_flash_records_the_pairing_before_waiting(paths, live_registry_text,
     # tracks. The matching by-id UID it turns up as afterwards must be one
     # `dfu_serial_for` actually derives back to that same DFU string, and
     # untracked, so it is free to be adopted.
-    board_uid = "5F3341390000343400000000-if00"
+    board_uid = "5F3341390000343400000000"
     board_dfu = "3941335F3434"
 
     with open(paths.registry_file, "w", encoding="utf-8") as fh:

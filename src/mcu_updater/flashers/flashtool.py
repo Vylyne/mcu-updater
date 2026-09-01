@@ -1,9 +1,8 @@
-"""Katapult's flashtool.py: the normal case for a board on the Klipper bus.
+"""Katapult's flashtool.py for serial and CAN-addressed boards.
 
-A thin adapter. :func:`mcu_updater.flashers.flash.flash_katapult` keeps its whole body -
-the bootloader request, the re-enumeration wait, the flash-log record - because
-this is not a rewrite. What moves here is the *shape*: what has to be true
-before the write, and what has to be waited for after it.
+A thin adapter. The serial and CAN write functions keep their transport
+details; this module chooses one from the target identity and gives batches a
+single flasher name.
 """
 
 from __future__ import annotations
@@ -43,7 +42,21 @@ class Flashtool:
     def write(
         self, bench: Bench, session: Any, target: FlashTarget, ctx: Any
     ) -> dict[str, Any]:
-        from .flash import flash_katapult
+        from .flash import flash_katapult, flash_katapult_can
+
+        if "uuid" in target.detail:
+            flash_katapult_can(
+                bench.paths,
+                bench.settings,
+                target.type,
+                target.id,
+                fw=target.detail.get("fw"),
+                reporter=ctx.reporter,
+                force=bool(target.detail.get("force", False)),
+                bridge=target.detail.get("bridge"),
+                interface=target.detail.get("interface"),
+            )
+            return {"uuid": target.id}
 
         flash_katapult(
             bench.paths,
@@ -74,6 +87,9 @@ class Flashtool:
         A timeout here is reported and not raised: the write succeeded, and the
         readiness check after the batch is the real verdict.
         """
+        if "uuid" in target.detail:
+            return
+
         from ..devices import KLIPPER_FW_NAME, wait_for_device
         from ..errors import BootloaderTimeoutError
 
@@ -107,7 +123,7 @@ def target_for(
     return FlashTarget(
         flasher=Flashtool.name,
         type=board["type"],
-        id=board["serial"],
+        id=board.get("uuid") or board["serial"],
         stop_services=stop_services,
         detail=board,
     )

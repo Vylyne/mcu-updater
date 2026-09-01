@@ -267,6 +267,36 @@ def status_cmd(args: argparse.Namespace) -> None:
     """Read-only overview. Promoted from menu-only to a real subcommand."""
     c = ctx()
     reg = c.registry()
+    if getattr(args, "can", False):
+        from .discovery import canbus
+
+        print("\nCAN scan (may take a few seconds):")
+        result = canbus.scan_all_result(c.paths, c.settings, reporter=stdout_reporter)
+        print("  Interfaces:")
+        for interface in result.interfaces:
+            adapter = interface.adapter
+            suffix = (
+                f" (USB {adapter.vendor_id or '?'}:{adapter.product_id or '?'})"
+                if adapter is not None
+                else ""
+            )
+            print(f"  - {interface.name}{suffix}")
+        if result.sightings:
+            print("  Untracked CAN devices:")
+            for sighting in result.sightings:
+                print(
+                    f"  - {sighting.uuid}  (interface={sighting.interface}, "
+                    f"application={sighting.application}, state={sighting.state})"
+                )
+        if result.failures:
+            print("  Query failures:")
+            for failure in result.failures:
+                code = f", returncode={failure.returncode}" if failure.returncode is not None else ""
+                print(f"  - {failure.interface}: {failure.reason}{code}")
+        if not result.interfaces:
+            print("  No CAN interfaces found.")
+        elif not result.sightings and not result.failures:
+            print("  No unclaimed CAN devices answered.")
     if not reg:
         print("No MCU types configured yet.")
         return
@@ -432,6 +462,25 @@ def _board_targets(
     ]
 
 
+def _canbus_targets(c: Context, mcu_type: str, uuids: list[str]) -> list:
+    """CAN-uuid counterpart to `_board_targets`, for a type's `canbus_uuids:`.
+
+    Same resolved `stop_services` as this same type's by-id boards. The CLI
+    has no Klipper mapping, so the flasher discovers the current interface at
+    write time; `canbus_uuids:` stores no interface.
+    """
+    mcu = c.registry().get(mcu_type)
+    application = mcu.application()
+    units = stop_services.for_mcu(c.paths, mcu, c.settings)
+    return [
+        flashers.flashtool.target_for(
+            {"type": mcu_type, "uuid": uuid, "chipset": mcu.chipset, "fw": application},
+            stop_services=units,
+        )
+        for uuid in uuids
+    ]
+
+
 def _pio_targets(
     c: Context,
     name: str,
@@ -593,17 +642,21 @@ def flash_fw_cmd(args: argparse.Namespace) -> None:
                 code = _run_batch(c, targets, f"flash {args.type}")
         sys.exit(code)
 
-    # Whole type: flash every tracked board under it.
+    # Whole type: flash every tracked board under it - by-id serials and CAN
+    # uuids both, since a type may legitimately track either or both.
     if args.type and not args.serial:
         mcu = reg.get(args.type)
-        if not mcu.serials:
-            print(f"No serials tracked under '{args.type}'.", file=sys.stderr)
+        if not mcu.serials and not mcu.canbus_uuids:
+            print(
+                f"No serials or CAN uuids tracked under '{args.type}'.", file=sys.stderr
+            )
             sys.exit(1)
 
         with exclusive(c.paths, f"flash type {args.type}"):
-            code = _run_batch(
-                c, _board_targets(c, args.type, mcu.serials), f"flash {args.type}"
+            targets = _board_targets(c, args.type, mcu.serials) + _canbus_targets(
+                c, args.type, mcu.canbus_uuids
             )
+            code = _run_batch(c, targets, f"flash {args.type}")
         sys.exit(code)
 
     # Single device.
@@ -691,7 +744,9 @@ def update_all(args: argparse.Namespace) -> None:
         with _ports_free(c, sorted(install.displays), "update-all"):
             targets: list = []
             for name in sorted(install.registry.names()):
-                targets += _board_targets(c, name, install.registry.get(name).serials)
+                reg_mcu = install.registry.get(name)
+                targets += _board_targets(c, name, reg_mcu.serials)
+                targets += _canbus_targets(c, name, reg_mcu.canbus_uuids)
             for name in sorted(install.displays):
                 try:
                     targets += _pio_targets(c, name, allow_discovery=True)
@@ -818,6 +873,7 @@ def build_parser(fw_choices: Sequence[str] | None = None) -> argparse.ArgumentPa
     p.set_defaults(func=remove_serial)
 
     p = subparsers.add_parser("status", help="Show tracked types, staleness, and bus state")
+    p.add_argument("--can", action="store_true", help="Also scan CAN interfaces (may take a few seconds)")
     p.set_defaults(func=status_cmd)
 
     p = subparsers.add_parser(

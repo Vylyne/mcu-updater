@@ -35,7 +35,11 @@ __version__ = "0.4.0"
 #    is gone too - `targets[].provider` ("kconfig_make" | "platformio")
 #    already said the same thing without a second vocabulary to keep in step.
 #    A panel switching on `kind` gets a KeyError, not a wrong answer.
-API_VERSION = 3
+# 4: USB MCU identities now use the hardware USB serial without the terminal
+#    `-if00` interface suffix.  The full `/dev/serial/by-id` path remains the
+#    transport address, but clients must key and submit devices by the canonical
+#    serial returned by the agent.
+API_VERSION = 4
 
 AGENT_NAME = "mcu_updater"
 

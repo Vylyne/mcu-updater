@@ -32,9 +32,11 @@ than an ``if kind ==``.
 
 **Selection is not here.** Which devices exist, where they are and which of them
 want firmware is the Inventory axis, and that stays deferred on its own
-criterion - two implementations, and the third (CAN) is not committed.
-Half-inventing it inside this seam is how a deferral quietly stops being one.
-The agent selects and says which flasher owns each device; a flasher writes.
+criterion - each remains a *write*, never a *selection*. CAN and serial
+Katapult targets share `Flashtool`, while the agent still selects the identity
+and supplies it in `FlashTarget.detail`. Half-inventing selection inside this
+seam is how a deferral quietly stops being one. The agent selects; a flasher
+writes.
 """
 
 from __future__ import annotations

@@ -23,19 +23,27 @@ from ._api import _Base
 
 
 def _board_target(board: dict) -> flashers.FlashTarget:
-    """One entry from `_boards_to_flash`, as something a batch can write.
+    """One entry from `_boards_to_flash`/`_canbus_boards_to_flash`, as
+    something a batch can write.
 
-    A one-line alias so the two bulk callers say the same thing, and so the
-    board selection's dict shape - which is on the wire - stays the selection's
+    A one-line alias so the bulk callers say the same thing, and so the board
+    selection's dict shape - which is on the wire - stays the selection's
     business rather than leaking a second copy into each of them.
 
-    `stop_services` rides inside the same dict (set by `_boards_to_flash`,
-    resolved once per type) rather than as a second argument here, since
-    `board` is already the one place that selection's per-target facts live.
+    `stop_services` rides inside the same dict (set by whichever selection
+    produced it, resolved once per type) rather than as a second argument
+    here, since `board` is already the one place that selection's per-target
+    facts live.
+
+    Branches on which identity key the dict carries - `uuid` for a CAN board,
+    `serial` for a by-id one - rather than a `kind` field, since the two
+    selections never overlap for one board (a type's `serials:` and
+    `canbus_uuids:` name different physical devices).
     """
-    return flashers.flashtool.target_for(
-        board, stop_services=tuple(board.get("stop_services") or ())
-    )
+    stop_services = tuple(board.get("stop_services") or ())
+    if "uuid" in board:
+        return flashers.flashtool.target_for(board, stop_services=stop_services)
+    return flashers.flashtool.target_for(board, stop_services=stop_services)
 
 
 def _screen_json(target: flashers.FlashTarget) -> dict[str, Any]:
@@ -165,6 +173,108 @@ class BulkMixin(_Base):
                             "reason": info["reason"] if scope != "all" else "forced",
                         }
                     )
+        return out
+
+    def _canbus_boards_to_flash(
+        self, reg: Registry, scope: str, only: str | None = None
+    ) -> list[dict]:
+        """The CAN counterpart to `_boards_to_flash`: which tracked
+        `canbus_uuids:` a flash_all should write, with the reason for each.
+
+        Included, not excluded - the user's explicit call for CAN in bulk
+        operations, at the cost of a slower liveness check than the by-id
+        scan's instant presence test. Two tiers, cheaper first:
+
+        - **Cross-reference hit, online**: `canbus_info()`'s `configfile`
+          join found a `[mcu <name>] canbus_uuid:` declaration for this uuid
+          and that mcu object reports a version - judged exactly like a
+          tracked serial, via the same `flash_state`.
+        - **Everything else falls to the unconditional-inclusion tier**:
+          printer.cfg does not declare this uuid at all, Klipper could not be
+          asked, or it *is* declared but reports no live version. That last
+          case is deliberately **not** treated as `STATE_OFFLINE` the way a
+          missing by-id device is: absence of `mcu_version` here covers both
+          "genuinely offline" and "sitting in Katapult, unreachable to
+          klippy" indistinguishably - and the latter is `flash_state`'s own
+          `in_bootloader`, "the strongest possible signal that it wants
+          firmware". Excluding it would silently drop exactly the board most
+          in need of a flash. `flash_katapult_can`'s single `-f` invocation
+          handles a native CAN node in either state itself (see its own
+          docstring), so only the attempt can actually tell them apart - a
+          timeout on every interface is what "genuinely offline" looks like,
+          an accepted, stated cost rather than a reason to guess here.
+        """
+        from ...build import FlashLog, git_head
+
+        canbus = self.canbus_info()
+        families = firmware.load(self.paths)
+        settings = self.settings()
+        flashlog = FlashLog(self.paths)
+
+        out: list[dict] = []
+        for name in reg.names():
+            if only is not None and name != only:
+                continue
+            mcu = reg.get(name)
+            if not mcu.canbus_uuids:
+                continue
+            application = mcu.application(families)
+            if not os.path.exists(self.paths.bin_file(name, application)):
+                continue
+            fw_head = git_head(
+                firmware.resolve(self.paths, application, families).source_dir(self.paths)
+            )
+            units = stop_services.for_mcu(self.paths, mcu, settings, families)
+            artifact_sha = (read_sidecar(self.paths, name, application) or {}).get("bin_sha256")
+            for uuid in mcu.canbus_uuids:
+                # configfile.settings lowercases everything; canbus_uuids: is
+                # stored verbatim (canbus_add never normalises case), so this
+                # is the join key both sides actually agree on.
+                cross = canbus.get(uuid.lower())
+                if cross is not None and cross["version"] is not None:
+                    # Preferred tier: online, and Klipper says what it's
+                    # running - judged exactly like a tracked serial.
+                    info = self.flash_state(
+                        uuid,
+                        {uuid: {"version": cross["version"], "mcu": cross["mcu"]}},
+                        fw_head,
+                        artifact_sha=artifact_sha,
+                        flashlog=flashlog,
+                    )
+                    if scope != "all" and info["needs_flash"] is not True:
+                        continue
+                    out.append(
+                        {
+                            "type": name,
+                            "uuid": uuid,
+                            "chipset": mcu.chipset,
+                            "fw": application,
+                            "stop_services": list(units),
+                            "state": "klipper",
+                            "bridge": cross["bridge"],
+                            "interface": cross["interface"],
+                            "reason": info["reason"] if scope != "all" else "forced",
+                        }
+                    )
+                    continue
+                # Fallback tier: no configfile cross-reference at all, or one
+                # that cannot tell "offline" apart from "in Katapult" (see
+                # the method docstring). Never excluded either way - `bridge`
+                # still carries through when config at least named the mcu
+                # object, even though its liveness could not be judged.
+                out.append(
+                    {
+                        "type": name,
+                        "uuid": uuid,
+                        "chipset": mcu.chipset,
+                        "fw": application,
+                        "stop_services": list(units),
+                        "state": "unknown",
+                        "bridge": cross["bridge"] if cross is not None else None,
+                        "interface": cross["interface"] if cross is not None else None,
+                        "reason": "forced" if scope == "all" else "unknown_liveness",
+                    }
+                )
         return out
 
     def _screens_to_flash(
@@ -399,7 +509,11 @@ class BulkMixin(_Base):
         if only is not None:
             only = self._require_flashable_type(reg, str(only))
 
-        boards = self._boards_to_flash(reg, scope, only)
+        # By-id and CAN both, and neither excludes the other - a type may
+        # legitimately track both `serials:` and `canbus_uuids:`.
+        boards = self._boards_to_flash(reg, scope, only) + self._canbus_boards_to_flash(
+            reg, scope, only
+        )
         # Read now, while Klipper can still answer - the same constraint
         # `_pio_flash` has always had, and the reason this is selection
         # rather than something the batch could work out for itself.
@@ -507,7 +621,10 @@ class BulkMixin(_Base):
             # stale: choosing up front would use provenance the build has just
             # invalidated. Screens included - a fleet update that rebuilt a
             # screen's firmware and then declined to write it is half a job.
-            boards = self._boards_to_flash(self.registry(), scope, only)
+            reg_now = self.registry()
+            boards = self._boards_to_flash(reg_now, scope, only) + self._canbus_boards_to_flash(
+                reg_now, scope, only
+            )
             devices = [_board_target(b) for b in boards] + self._screens_to_flash(
                 scope, only
             )

@@ -6,7 +6,7 @@ truth** — and `tests/test_agent_methods.py` is what stops them drifting.
 
 - Agent name: `mcu_updater` — a protocol identifier, deliberately unchanged
   when the project was renamed to `mcu-updater`; the panel matches on it.
-- `api_version`: **3**
+- `api_version`: **4**
 
   Bumped only when a field is *removed* or changes meaning; additions do not
   need one, since a panel that has never heard of a key simply does not read it.
@@ -18,7 +18,9 @@ truth** — and `tests/test_agent_methods.py` is what stops them drifting.
   `fw.display.list` and `fw.display.build` (use `fw.device.list` and `fw.build`,
   which already did the same work) and `targets[].kind` (use
   `targets[].provider`, `"kconfig_make"` | `"platformio"`, which already said
-  the same thing).
+  the same thing). Version 4 makes USB MCU serials canonical by removing the
+  terminal `-if00` suffix from the hardware serial; the full `/dev/serial/by-id`
+  path remains the transport address.
 - Every planned capability has shipped: build, flash, bulk build/flash/update,
   registry and settings editing, Kconfig in the browser, and DFU setup of a new
   board. The flashing ones stay behind `enable_flashing`, off by default.
@@ -119,14 +121,19 @@ application error (see `data.code`), `-32603` internal.
 | `fw.bus.unignore` | `serial` (required) | `{serial, ignored: false}` — reverse `fw.bus.ignore`; idempotent |
 | `fw.dfu.scan` | — | `{devices, count, ready, reason, message}` — read-only |
 | `fw.bootsel.scan` | — | `{devices, count, mounts, mount_count, ready, reason, message}` — read-only |
+| `fw.canbus.scan` | — | `{interfaces, devices, failures, count, message}` — read-only, run only when called |
+| `fw.canbus.ignore` | `uuid` (required) | `{uuid, ignored: true}` — hide every sighting of a CAN UUID from the "new board?" flow; idempotent, flag not filter |
+| `fw.canbus.unignore` | `uuid` (required) | `{uuid, ignored: false}` — reverse `fw.canbus.ignore`; idempotent |
 | `fw.add_mcu.start` | `name`, `dfu_serial?` (STM32 only) | `{job_id, job, dfu_serial, bootsel_id}` — **off by default** |
 | `fw.artifacts` | `name` (required) | `{<fw>: Artifact, ...}`, one key per family the type declares |
 | `fw.settings.get` | — | `{settings: Settings}` |
 | `fw.settings.set` | `settings` (required, non-empty) | `{settings: Settings, changed: [key]}` — only the `SETTABLE` keys |
 | `fw.serial.add` | `name`, `serial` (required) | `{name, serial, added, chipset}` — track a bus device under an existing type |
 | `fw.serial.remove` | `name`, `serial` (required) | `{name, serial, removed}` — untrack a serial from a type; non-destructive, keeps its firmware and saved config |
+| `fw.canbus.add` | `name`, `uuid` (required) | `{name, uuid, added, chipset}` — track a CAN-addressed board under an existing type; parallel to `fw.serial.add`, not an overload of it |
+| `fw.canbus.remove` | `name`, `uuid` (required) | `{name, uuid, removed}` — untrack a CAN uuid from a type; non-destructive, same as `fw.serial.remove` |
 | `fw.build` | `name`, `fw`, `jobs?`, `clean?`, `reseed?` | `{job_id, job}` — returns immediately |
-| `fw.flash` | `serial\|port`, `name?`, `force?` | `{job_id, job}` — **off by default**, see below |
+| `fw.flash` | `serial\|port\|uuid`, `name?`, `force?` | `{job_id, job}` — **off by default**, see below |
 | `fw.build_all` | `fw?`, `scope?` | `{job_id, job, types, builds, skipped}` — builds only, touches no board |
 | `fw.flash_all` | `scope?`, `name?`, `force?` | `{job_id, job, boards, displays}` — **off by default** |
 | `fw.update_all` | `scope?`, `name?`, `force?` | `{job_id, job, types}` — **off by default** |
@@ -137,7 +144,7 @@ application error (see `data.code`), `-32603` internal.
 ### `fw.ping`
 
 ```json
-{"api_version": 3, "version": "0.9.0", "dry_run": false, "enable_flashing": false,
+{"api_version": 4, "version": "0.9.0", "dry_run": false, "enable_flashing": false,
  "phase": 1, "capabilities": ["fw.artifacts", "fw.bus.scan", "..."],
  "host": {"nproc": 4, "python": "3.13.5",
           "config_dir": "/home/biqu/printer_data/config/mcu-updater",
@@ -209,11 +216,11 @@ shape doesn't change when jobs arrive. `klipper_service`, `printing` and
  "katapult": {"extra_args": "", "makefile_patches": [], "extra_repos": [],
               "installed": true},
  "serials": [
-   {"serial": "290055001850304158373620-if00", "state": "klipper",
+   {"serial": "290055001850304158373620", "state": "klipper",
     "path": "/dev/serial/by-id/usb-Klipper_stm32g0b1xx_290055001850304158373620-if00",
     "mcu": "EBBT0", "running_version": "v0.12.0-381-g...", "running_sha": "e4f5a6b",
     "confidence": "unique_bus_id", "needs_flash": false, "reason": null},
-   {"serial": "230048001750304158373620-if00", "state": "offline", "path": null,
+   {"serial": "230048001750304158373620", "state": "offline", "path": null,
     "mcu": null, "running_version": null, "running_sha": null,
     "confidence": null, "needs_flash": null, "reason": "offline"}],
  "artifacts": {"klipper": Artifact, "katapult": Artifact}}
@@ -325,7 +332,7 @@ still names the seed it drifted from.
 ### `BusDevice`
 
 ```json
-{"fw": "Klipper", "chipset": "stm32g0b1xx", "serial": "1100...-if00",
+{"fw": "Klipper", "chipset": "stm32g0b1xx", "serial": "1100...",
  "path": "/dev/serial/by-id/usb-Klipper_...", "state": "klipper",
  "tracked_by": "bttebb36", "is_mcu": true, "ignored": false}
 ```
@@ -355,13 +362,13 @@ component renders both — and renders whatever comes next without being taught 
              "label": "Profile updated - reseed available"},
  "needs_flash": true,
  "devices": [
-   {"id": "290055001850304158373620-if00", "name": "mcu scanner",
+   {"id": "290055001850304158373620", "name": "mcu scanner",
     "present": true, "state": "klipper", "path": "/dev/serial/by-id/usb-...",
     "version": "v0.12.0-381-g...", "confidence": "unique_bus_id",
     "needs_flash": true, "tone": "attention",
     "label": "Update available", "reason": "source_changed",
     "actions": [{"id": "flash", "label": "Flash", "method": "fw.flash",
-                 "params": {"name": "carto_v4", "serial": "2900...-if00"},
+                 "params": {"name": "carto_v4", "serial": "2900..."},
                  "blocked": null}]}],
  "actions": [
    {"id": "build", "label": "Build", "method": "fw.build",
@@ -423,6 +430,15 @@ a type can be offline while its neighbour waits in Katapult. `fw.flash` writes
 both kinds now — a board's action carries `serial`, a screen's carries `port` —
 so the reader never has to branch on which it is holding.
 
+For an MCU target, `devices` contains both tracked USB serials and tracked CAN
+UUIDs. A CAN device's flash action carries `uuid` (rather than `serial`), and a
+UUID whose liveness cannot be established is reported as `state: "unknown"`,
+`version: null`, and `unknown_version`. It deliberately remains `present: true`:
+CAN cannot passively distinguish an offline node from one in Katapult, so the
+flash attempt is the only safe liveness check. Keeping it eligible ensures the
+per-type preview matches `fw.flash_all`, which must attempt an
+unknown-liveness UUID rather than silently omitting it.
+
 `needs_flash` is tri-state at both levels, and the target's is `true` if any
 device is, `false` only if every device provably is not, and `null` otherwise.
 `any()` would read "cannot tell" as "nothing to do" and report a fleet nobody
@@ -454,12 +470,11 @@ behaviour preference, and are deliberately absent - editing them from a
 browser risks a real flash proceeding with Klipper never stopped. They stay a
 cfg-file-only edit.
 
-`ignored_serials` is also absent from `SETTABLE`, for a different reason: it
-is a device list, not a behaviour preference, and going through
+`ignored_serials` and `ignored_canbus_uuids` are also absent from `SETTABLE`,
+for a different reason: they are device lists, not behaviour preferences, and going through
 `fw.settings.set` would hit `_coerce_setting`'s int-fallthrough and refuse a
-JSON array as "must be a whole number". It is read and write through
-`fw.bus.ignore` / `fw.bus.unignore` instead - see those in the methods table
-and `BusDevice`'s `ignored` key above.
+JSON array as "must be a whole number". They are read and written through
+their dedicated `fw.bus.*` and `fw.canbus.*` ignore methods instead.
 
 `ui_accent_color` is the one `SETTABLE` key that isn't a behaviour preference
 at all - the agent never reads it, only stores and serves it back, so every
@@ -538,7 +553,7 @@ moment later.
 
 | kind | behaviour |
 | --- | --- |
-| `build`, `build_all` | **Immediate.** The whole `make` process group is killed. Worst case is a half-written object file that `make` will redo. |
+| `build`, `build_all` | **Immediate.** The active `make` process group is killed, then an uncancellable `make clean` removes its source-tree outputs before the job finishes cancelling. |
 | `flash`, `flash_all` | **Deferred** — honoured only *between* devices. Interrupting a `flashtool -f` write leaves a board with half an image. Show "cancelling after the current board finishes…". |
 | `update_all` | **Deferred**, because it may reach the flashing half. Cancelling during its build phase still waits for the current type's `make` to be killed and the loop to come round. |
 
@@ -574,6 +589,35 @@ real explanation instead of a job that dies a second later. In order:
 | firmware has been built | `no_artifact` |
 | board is on the bus | `device_not_found` |
 | printer idle | `print_in_progress` (bypass with `force: true`) |
+
+**`uuid` is a third identity form**, alongside `serial`/`port` - `{uuid, name?,
+force?}` flashes a CAN-addressed board instead of a by-id one. Same ordering,
+with two differences a CAN uuid's lack of a chipset-segment identity forces:
+
+| Check | Error code |
+| --- | --- |
+| capability gate | `flashing_disabled` |
+| `uuid` present | `-32602` |
+| uuid resolves to a type | `unknown_uuid` / `ambiguous_uuid` / `uuid_tracked_elsewhere` |
+| firmware has been built | `no_artifact` |
+| **a CAN interface exists on this host at all** | `device_not_found` |
+| printer idle | `print_in_progress` (bypass with `force: true`) |
+
+The last difference is the one that matters: there is no by-id equivalent of
+"is this specific uuid on the bus right now" to check synchronously - finding
+out *is* the flash attempt, via the unified flashtool flasher's own
+per-interface trial (see
+"What gets selected" below). So this only refuses up front when there is no
+CAN hardware on the host at all; a uuid that simply does not answer on any
+interface is discovered inside the job instead, the same timeout-means-
+not-found fallback `flash_all`/`update_all`'s CAN liveness check uses. For an
+adopted CAN uuid, the configured Klipper `canbus_interface` is used when
+present, with the historical default `can0` when it is omitted. If no adopted
+interface mapping is available, the updater retries the current CAN interfaces
+discovered from sysfs and retains successful results when another interface
+fails. Interface names are never persisted. The unified `flashtool` flasher
+selects the CAN operation itself; callers do not add a separate recovery `-r`
+option.
 
 The idle check looks at **two** fields, and needs both:
 
@@ -729,6 +773,35 @@ one model genuinely do run different firmware. Passing `name` narrows it to a
 single type, board or screen — that is "flash this type", implemented as this
 same operation with a filter.
 
+**A tracked `canbus_uuids:` entry is included too, never excluded** — the
+CAN counterpart of the same rule, with liveness answered by two tiers rather
+than a single instant by-id check:
+
+1. **Preferred: a `canbus_uuid` → `[mcu <name>]` cross-reference**, read from
+   Klipper's own `configfile.settings` (the same `printer.objects.query` this
+   already uses for a tracked serial's `mcu`/`running_version`). A hit whose
+   mcu object also reports a live version answers "online, and what's it
+   running" as cheaply as a tracked serial's presence does today, with no
+   CAN bus traffic of its own — judged by the usual `needs_flash` reasons
+   (`source_changed`, `artifact_changed`, ...), `state: "klipper"`.
+2. **Fallback: attempt the flash and let a timeout mean "not found."**
+   Included in the sweep unconditionally, `state: "unknown"`,
+   `reason: "unknown_liveness"` (or `"forced"` under `scope: "all"`) — used
+   whenever the preferred tier cannot give a real answer: the uuid has no
+   `canbus_uuid:` declaration anywhere in `configfile.settings` at all,
+   Klipper cannot be asked, **or** it *is* declared but the mcu object
+   reports no live version. That last case is deliberately **not** treated
+   as offline the way a missing by-id device is: absence of `mcu_version`
+   here covers both "genuinely offline" and "sitting in Katapult, unreachable
+   to klippy" indistinguishably — and the latter is exactly the board most in
+   need of a flash, so guessing "offline" would silently drop it. Only the
+   flash attempt's own per-interface trial can actually tell the two apart.
+   Slower than the by-id scan's instant presence check, and an accepted cost
+   rather than a reason to leave a tracked CAN board out of a fleet operation.
+
+`fw.bus.scan` stays USB-by-id-specific, as it is today — CAN's own "on bus"
+view is `fw.canbus.scan`, not a merge into this one.
+
 Screens are selected **before anything stops**, because the screen list comes
 from the klippy module's own printer objects and only a running Klipper answers.
 That constraint is why selection is the agent's job rather than the flasher's.
@@ -744,13 +817,21 @@ in its confirmation:
 
 ```json
 {"job_id": "job-9", "job": {...},
- "boards": [{"type": "flylllplusbuffer", "serial": "4C00...-if00",
+ "boards": [{"type": "flylllplusbuffer", "serial": "4C00...",
              "chipset": "stm32f072xb", "state": "klipper",
-             "reason": "artifact_changed"}],
+             "reason": "artifact_changed"},
+            {"type": "hexadistrofusion", "uuid": "bcb5346fc731",
+             "chipset": "stm32f072xb", "state": "unknown", "bridge": true,
+             "reason": "unknown_liveness"}],
  "displays": [{"type": "knomi_toolchanger", "id": "/dev/knomi_t0",
                "flasher": "esptool", "name": "t0_knomi",
                "section": "knomi_serial t0_knomi", "reason": "source_changed"}]}
 ```
+
+A CAN board's entry carries `uuid` rather than `serial`, and `bridge` — `true`/
+`false` from the `configfile` cross-reference's `mcu_constants.CANBUS_BRIDGE`
+read, `null` when liveness could not be judged at all (the fallback tier's
+"no cross-reference to read it from" case).
 
 Two keys rather than one merged list: the selections answer with different facts
 — a board has a chipset and a serial, a screen has a port and a klippy section —
@@ -766,8 +847,8 @@ reports what happened — matching what the CLI's `update-all` has always done:
 {"build": {"built": [{"type": "bttebb36", "fw": "klipper", "provider": "kconfig_make"}],
            "failures": [{"type": "bttmmbv1", "fw": "klipper",
                          "provider": "kconfig_make", "error": "make failed (exit 2)"}]},
- "flash": {"flashed": [{"type": "bttebb36", "id": "2900...-if00",
-                        "flasher": "flashtool", "serial": "2900...-if00"}],
+ "flash": {"flashed": [{"type": "bttebb36", "id": "2900...",
+                        "flasher": "flashtool", "serial": "2900..."}],
            "failures": []}}
 ```
 
@@ -880,6 +961,44 @@ but unlike DFU's derivation, this is an **assumed identity** (the boot-ROM id
 equals Katapult's later running serial), not a computed one; see "A board that
 turns up later is still adopted" below.
 
+#### `fw.canbus.scan`
+
+The CAN counterpart to `fw.bus.scan`'s untracked-USB-serial view — "on bus,
+want to adopt it?" for a CAN-addressed board, not a liveness check for one
+already adopted and connected. `flashtool.py --query` broadcasts a "who has no
+CAN node id yet" admin request, and a board klippy has already connected to
+(which assigns it a node id while establishing the link) goes silent to
+further queries — confirmed both live on the bench and from Klipper's own
+firmware source. That makes this reliable for discovering **unclaimed**
+boards — freshly flashed, not yet in `printer.cfg`, or tracked here with no
+live klippy connection — and unusable for polling an already-connected one;
+that question is answered separately, via `printer.cfg`'s own
+`canbus_uuid`/`configfile` cross-reference, not this method.
+
+Runs **only** when called — never from `fw.status`, never swept into
+`discovery.confirm`'s USB-flash sources, never on a timer. The standalone panel
+starts it alongside `fw.status` on initial connection and manual refresh. The
+results stay independent, so USB status is displayed as soon as it arrives even
+when CAN queries are slow or fail. Older scan responses cannot replace a newer
+refresh.
+
+Mirrors `fw.dfu.scan`/`fw.bootsel.scan`'s report-don't-raise shape:
+describing the situation *is* the work here, so this never throws for
+"nothing found" — it reports it in `message` instead.
+
+| `interfaces` | Every host network device whose sysfs `type` is `280` (`ARPHRD_CAN`) — read from the kernel, never assumed from a name like `can0`. Each entry is `{name, adapter}`; `adapter` is the shared USB inventory record when the interface belongs to a USB adapter, otherwise `null`. Empty means no CAN hardware on this host at all. |
+| --- | --- |
+| `devices` | One entry per unclaimed board that answered, across every interface: `{uuid, interface, application, state, tracked_by, ignored}`. `application` is exactly what flashtool printed (`"Klipper"`, `"Katapult"`, or `"Unknown"`); `interface` is informational only for *this* scan — Linux CAN interface names are enumeration order, not stable identity, so nothing here persists one. `tracked_by` is the type name if `uuid` is already in that type's `canbus_uuids:`, else `null`. `ignored` is set through `fw.canbus.ignore`; it is a flag rather than a filter, and applies to every sighting of the UUID on every interface. |
+| `failures` | Per-interface query failures, `{interface, reason, returncode}`. A failed interface does not discard successful sightings from other interfaces. |
+| `count` | `len(devices)`. |
+| `message` | Set whenever there is nothing to show — no CAN interfaces present, `flashtool.py` itself is missing, every query failed, or no unclaimed board answered — otherwise `null`. |
+
+No `is_mcu`-style filtering happens here: every CAN admin responder is
+inherently a Klipper- or Katapult-speaking node, since the protocol itself
+names the application in its reply. There is no non-board case to guard
+against on this path, unlike a USB CH340 bridge chip that merely looks like a
+board on `/dev/serial/by-id`.
+
 #### `fw.add_mcu.start`
 
 Writes Katapult to a board in DFU or BOOTSEL (by the type's `chipset`), waits
@@ -890,7 +1009,7 @@ board was attached) only on the BOOTSEL path — the other is always `null`:
 ```json
 {"type": "bttebb36", "chipset": "stm32g0b1xx", "dfu_serial": "3941335F3434",
  "bootsel_id": null,
- "candidates":      [{"serial": "2D0043...-if00", "path": "...", "state": "katapult"}],
+ "candidates":      [{"serial": "2D0043...", "path": "...", "state": "katapult"}],
  "already_tracked": []}
 ```
 
@@ -983,10 +1102,9 @@ can see happening is the thing to avoid.
 difference matters.** For DFU it is the *derived* DFU serial
 (`devices.dfu_serial_for`), computed from the same 96-bit unique id the running
 serial is built from - a real transformation, verified working. For BOOTSEL it
-is the boot-ROM flash-chip id, compared directly against the UID prefix of the
-board's running serial (stripping the `-if00` interface suffix every by-id name
-carries, the same split `dfu_serial_for` itself starts with) - **no
-transformation of that UID itself** - an *assumed* identity (RP2040 UF2
+is the boot-ROM flash-chip id, compared directly against the board's full
+canonical hardware serial - **no transformation of that identity** - an
+*assumed* identity (RP2040 UF2
 bootloaders and Katapult's own RP2040 port both commonly derive their USB
 serial from the same Pico SDK unique-id call, but this repo has not yet
 confirmed the two strings are literally identical on real hardware). If that

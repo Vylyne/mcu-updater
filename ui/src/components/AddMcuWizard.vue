@@ -4,30 +4,13 @@
 // Katapult. Adopting the result (fw.serial.add) and putting Klipper on it
 // (fw.flash) are existing, separate flows - JobPanel's add_mcu result panel
 // is where the adopt step actually happens, once the job succeeds.
-import { computed, ref } from "vue";
-import {
-  hasCapability,
-  scanBareBoard,
-  startAddMcu,
-  state,
-} from "../store/agent";
+import { computed, ref, watch } from "vue";
+import { scanBareBoard, startAddMcu, state } from "../store/agent";
 import type { Target } from "../api/targets";
-import UiIcon from "./UiIcon.vue";
 import UiDialog from "./UiDialog.vue";
-import { mdiDeveloperBoard } from "../icons";
 
-const props = withDefaults(
-  defineProps<{
-    /** "icon" (default) is the standalone launcher this used to always be.
-     * "menu" renders as a row inside TargetsView's own `⋮` menu instead,
-     * alongside "New type…" - same dialog, same state, just a different
-     * trigger element so the two launchers can share one menu. */
-    variant?: "icon" | "menu";
-  }>(),
-  { variant: "icon" },
-);
-
-const open = ref(false);
+const props = defineProps<{ open: boolean }>();
+const emit = defineEmits<{ close: [] }>();
 const scanning = ref(false);
 const starting = ref(false);
 const scan = ref<Record<string, unknown> | null>(null);
@@ -39,8 +22,6 @@ const mcuTargets = computed(() =>
     (t) => t.provider === "kconfig_make",
   ),
 );
-
-const canStart = computed(() => hasCapability("fw.add_mcu.start"));
 
 const mechanism = computed<"dfu" | "bootsel" | null>(() => {
   const target = mcuTargets.value.find((t) => t.name === chosenName.value);
@@ -59,15 +40,18 @@ const scanDevices = computed(
   () => (scan.value?.devices as Record<string, unknown>[] | undefined) ?? [],
 );
 
-function show(): void {
-  open.value = true;
-  scan.value = null;
-  chosenName.value = "";
-  chosenDfuSerial.value = "";
-}
+watch(
+  () => props.open,
+  (open) => {
+    if (!open) return;
+    scan.value = null;
+    chosenName.value = "";
+    chosenDfuSerial.value = "";
+  },
+);
 
 function close(): void {
-  open.value = false;
+  emit("close");
 }
 
 async function runScan(): Promise<void> {
@@ -91,102 +75,70 @@ async function start(): Promise<void> {
 </script>
 
 <template>
-  <span class="add-mcu-wizard">
-    <button
-      v-if="canStart && mcuTargets.length && props.variant === 'icon'"
-      type="button"
-      class="btn-icon"
-      title="Add new board…"
-      @click="show"
-    >
-      <UiIcon :path="mdiDeveloperBoard" size="small" />
-    </button>
-    <button
-      v-if="canStart && mcuTargets.length && props.variant === 'menu'"
-      type="button"
-      class="menu-item"
-      @click="show"
-    >
-      <UiIcon :path="mdiDeveloperBoard" size="x-small" />
-      Add new board…
-    </button>
+  <UiDialog v-if="props.open" title="Add a new board" @close="close">
+    <label>
+      Type
+      <select v-model="chosenName" @change="scan = null">
+        <option value="" disabled>Choose a type…</option>
+        <option
+          v-for="target in mcuTargets"
+          :key="target.name"
+          :value="target.name"
+        >
+          {{ target.name }} ({{ target.descriptor }})
+        </option>
+      </select>
+    </label>
 
-    <UiDialog v-if="open" title="Add a new board" @close="close">
-      <label>
-        Type
-        <select v-model="chosenName" @change="scan = null">
-          <option value="" disabled>Choose a type…</option>
-          <option
-            v-for="target in mcuTargets"
-            :key="target.name"
-            :value="target.name"
-          >
-            {{ target.name }} ({{ target.descriptor }})
-          </option>
-        </select>
-      </label>
+    <p v-if="chosenName && !mechanism" class="muted">
+      {{ chosenName }}'s chipset has no DFU/BOOTSEL setup path - only STM32
+      (DFU) and RP2040 (BOOTSEL) boards can be added this way.
+    </p>
 
-      <p v-if="chosenName && !mechanism" class="muted">
-        {{ chosenName }}'s chipset has no DFU/BOOTSEL setup path - only STM32
-        (DFU) and RP2040 (BOOTSEL) boards can be added this way.
+    <template v-if="mechanism">
+      <p class="muted">
+        {{ mechanism === "dfu" ? "DFU (STM32)" : "BOOTSEL (RP2040)" }} - fit the
+        boot jumper (or hold BOOTSEL) and plug the board in, then scan.
       </p>
+      <button type="button" :disabled="scanning" @click="runScan">
+        {{ scanning ? "Scanning…" : "Scan" }}
+      </button>
 
-      <template v-if="mechanism">
-        <p class="muted">
-          {{ mechanism === "dfu" ? "DFU (STM32)" : "BOOTSEL (RP2040)" }} - fit
-          the boot jumper (or hold BOOTSEL) and plug the board in, then scan.
-        </p>
-        <button type="button" :disabled="scanning" @click="runScan">
-          {{ scanning ? "Scanning…" : "Scan" }}
+      <div v-if="scan">
+        <p v-if="ready">Ready - one board found.</p>
+        <p v-else-if="message" class="muted">{{ message }}</p>
+
+        <template v-if="mechanism === 'dfu' && reason === 'ambiguous'">
+          <p class="muted">
+            More than one board in DFU. Pick the one at the port you mean to
+            flash - the path is the only field that says which one.
+          </p>
+          <select v-model="chosenDfuSerial">
+            <option value="" disabled>Choose a device…</option>
+            <option
+              v-for="device in scanDevices"
+              :key="String(device.serial)"
+              :value="device.serial"
+            >
+              {{ device.path }} ({{ device.serial }})
+            </option>
+          </select>
+        </template>
+
+        <button
+          type="button"
+          :disabled="
+            starting ||
+            !(
+              ready ||
+              (reason === 'ambiguous' && mechanism === 'dfu' && chosenDfuSerial)
+            )
+          "
+          @click="start"
+        >
+          {{ starting ? "Starting…" : "Install Katapult" }}
         </button>
-
-        <div v-if="scan">
-          <p v-if="ready">Ready - one board found.</p>
-          <p v-else-if="message" class="muted">{{ message }}</p>
-
-          <template v-if="mechanism === 'dfu' && reason === 'ambiguous'">
-            <p class="muted">
-              More than one board in DFU. Pick the one at the port you mean to
-              flash - the path is the only field that says which one.
-            </p>
-            <select v-model="chosenDfuSerial">
-              <option value="" disabled>Choose a device…</option>
-              <option
-                v-for="device in scanDevices"
-                :key="String(device.serial)"
-                :value="device.serial"
-              >
-                {{ device.path }} ({{ device.serial }})
-              </option>
-            </select>
-          </template>
-
-          <button
-            type="button"
-            :disabled="
-              starting ||
-              !(
-                ready ||
-                (reason === 'ambiguous' &&
-                  mechanism === 'dfu' &&
-                  chosenDfuSerial)
-              )
-            "
-            @click="start"
-          >
-            {{ starting ? "Starting…" : "Install Katapult" }}
-          </button>
-        </div>
-      </template>
-    </UiDialog>
-  </span>
+      </div>
+    </template>
+  </UiDialog>
 </template>
-
-<style scoped>
-/* Only needed for variant="menu": the span wrapper otherwise stays inline
-   and shrinks to fit, which would leave its menu-item button narrower than
-   the other rows in the same .menu-list column. */
-.add-mcu-wizard {
-  display: block;
-}
-</style>

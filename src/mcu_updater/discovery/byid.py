@@ -26,12 +26,14 @@ from typing import TYPE_CHECKING
 
 from ..errors import BootloaderTimeoutError, OperationCancelled
 from ..paths import REENUMERATE_TIMEOUT, Paths
+from . import usb
 
 if TYPE_CHECKING:
     from ..flashers.spec import Bench
     from .spec import Sighting
 
 _PREFIX = "usb-"
+_INTERFACE_SUFFIX = "-if00"
 
 #: Katapult was called CanBoot before it was renamed; older bootloaders still
 #: enumerate under the old name.
@@ -131,6 +133,11 @@ class BusDevice:
         return not any(bridge in fw_norm for bridge in KNOWN_SERIAL_BRIDGE_NAMES)
 
 
+def canonical_serial(serial: str) -> str:
+    """A serial parsed from a by-id name, without udev's interface marker."""
+    return serial.removesuffix(_INTERFACE_SUFFIX)
+
+
 class Byid:
     """The by-id scan, as a `discovery.spec.Source`.
 
@@ -196,7 +203,12 @@ def parse_entry(name: str, directory: str) -> BusDevice | None:
         fw, _, chipset = name_blob.partition("_")
     else:
         fw, chipset = name_blob, ""
-    return BusDevice(fw=fw, chipset=chipset, serial=serial, path=os.path.join(directory, name))
+    return BusDevice(
+        fw=fw,
+        chipset=chipset,
+        serial=canonical_serial(serial),
+        path=os.path.join(directory, name),
+    )
 
 
 def scan(paths: Paths) -> list[BusDevice]:
@@ -204,10 +216,15 @@ def scan(paths: Paths) -> list[BusDevice]:
     directory = paths.serial_by_id
     if not os.path.isdir(directory):
         return []
+    inventory = usb.collect(paths)
     out = []
     for name in sorted(os.listdir(directory)):
         dev = parse_entry(name, directory)
         if dev is not None:
+            tty = os.path.basename(os.path.realpath(dev.path))
+            hardware = usb.device_for_tty(inventory, paths, tty)
+            if hardware is not None and hardware.serial is not None:
+                dev = dataclasses.replace(dev, serial=hardware.serial)
             out.append(dev)
     return out
 
@@ -234,15 +251,20 @@ def find_device(
     else:
         wanted = (fw.lower(),)
 
+    matches = []
     for dev in scan(paths):
+        # `parse_entry()` only derives a serial from the final by-id component,
+        # so equality is an exact-ending match rather than a substring match.
+        # It also lets a raw hardware serial from USB sysfs remain the durable
+        # identity when udev's by-id spelling differs.
         if dev.serial != serial:
             continue
         if chipset and dev.chipset != chipset:
             continue
         if wanted is not None and dev.fw.lower() not in wanted:
             continue
-        return dev
-    return None
+        matches.append(dev)
+    return matches[0] if len(matches) == 1 else None
 
 
 def device_state(paths: Paths, chipset: str, serial: str) -> tuple[str, str | None]:

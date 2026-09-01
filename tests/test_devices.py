@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import dataclasses
+import os
 
 import pytest
 
@@ -29,14 +30,123 @@ from .conftest import make_device
 def test_parses_the_three_part_name():
     dev = parse_entry("usb-Klipper_stm32g0b1xx_2900550018-if00", "/bus")
     assert dev is not None
-    assert (dev.fw, dev.chipset, dev.serial) == ("Klipper", "stm32g0b1xx", "2900550018-if00")
+    assert (dev.fw, dev.chipset, dev.serial) == ("Klipper", "stm32g0b1xx", "2900550018")
+    assert dev.path.endswith("usb-Klipper_stm32g0b1xx_2900550018-if00")
 
 
 def test_parses_a_two_part_name_as_having_no_chipset():
     dev = parse_entry("usb-Klipper_2900550018-if00", "/bus")
     assert dev is not None
     assert dev.chipset == ""
-    assert dev.serial == "2900550018-if00"
+    assert dev.serial == "2900550018"
+
+
+def test_find_device_matches_the_canonical_serial_at_an_exact_by_id_ending(paths, fake_root):
+    bus = fake_root / "bus"
+    make_device(bus, "Klipper", "stm32g0b1xx", "SERIAL-if00")
+    (bus / "usb-Klipper_stm32g0b1xx-NOT-SERIAL-if00").write_text("", encoding="utf-8")
+
+    dev = find_device(paths, "stm32g0b1xx", "SERIAL", fw="klipper")
+
+    assert dev is not None
+    assert dev.path.endswith("usb-Klipper_stm32g0b1xx_SERIAL-if00")
+
+
+def test_find_device_refuses_ambiguous_by_id_entries(paths, fake_root):
+    bus = fake_root / "bus"
+    make_device(bus, "Klipper", "stm32g0b1xx", "SERIAL-if00")
+    make_device(bus, "katapult", "stm32g0b1xx", "SERIAL-if00")
+
+    assert find_device(paths, "stm32g0b1xx", "SERIAL") is None
+
+
+@pytest.mark.skipif(os.name == "nt", reason="symlink fixtures require POSIX")
+def test_scan_prefers_the_raw_usb_hardware_serial_via_the_tty_sysfs_link(paths, fake_root):
+    bus = fake_root / "bus"
+    make_device(bus, "Klipper", "stm32g0b1xx", "BY-ID-if00")
+    by_id = bus / "usb-Klipper_stm32g0b1xx_BY-ID-if00"
+    by_id.unlink()
+    tty = fake_root / "dev" / "ttyACM0"
+    tty.parent.mkdir()
+    tty.write_text("", encoding="utf-8")
+    by_id.symlink_to(tty)
+
+    usb_root = fake_root / "usb"
+    adapter = usb_root / "1-2"
+    adapter.mkdir(parents=True)
+    (adapter / "idVendor").write_text("1d50\n", encoding="utf-8")
+    (adapter / "idProduct").write_text("606f\n", encoding="utf-8")
+    (adapter / "serial").write_text("RAW-HARDWARE-SERIAL\n", encoding="utf-8")
+    interface = usb_root / "1-2:1.0"
+    interface.mkdir()
+    tty_device = fake_root / "sys" / "class" / "tty" / "ttyACM0" / "device"
+    tty_device.parent.mkdir(parents=True)
+    tty_device.symlink_to(interface, target_is_directory=True)
+    paths = dataclasses.replace(
+        paths, usb_sysfs=str(usb_root), tty_sysfs=str(tty_device.parents[1])
+    )
+
+    assert scan(paths)[0].serial == "RAW-HARDWARE-SERIAL"
+
+
+@pytest.mark.skipif(os.name == "nt", reason="symlink fixtures require POSIX")
+def test_find_device_resolves_the_raw_usb_hardware_serial_via_the_tty_sysfs_link(paths, fake_root):
+    bus = fake_root / "bus"
+    make_device(bus, "Klipper", "stm32g0b1xx", "BY-ID-if00")
+    by_id = bus / "usb-Klipper_stm32g0b1xx_BY-ID-if00"
+    by_id.unlink()
+    tty = fake_root / "dev" / "ttyACM0"
+    tty.parent.mkdir()
+    tty.write_text("", encoding="utf-8")
+    by_id.symlink_to(tty)
+
+    usb_root = fake_root / "usb"
+    adapter = usb_root / "1-2"
+    adapter.mkdir(parents=True)
+    (adapter / "idVendor").write_text("1d50\n", encoding="utf-8")
+    (adapter / "idProduct").write_text("606f\n", encoding="utf-8")
+    (adapter / "serial").write_text("RAW-HARDWARE-SERIAL\n", encoding="utf-8")
+    interface = usb_root / "1-2:1.0"
+    interface.mkdir()
+    tty_device = fake_root / "sys" / "class" / "tty" / "ttyACM0" / "device"
+    tty_device.parent.mkdir(parents=True)
+    tty_device.symlink_to(interface, target_is_directory=True)
+    paths = dataclasses.replace(
+        paths, usb_sysfs=str(usb_root), tty_sysfs=str(tty_device.parents[1])
+    )
+
+    dev = find_device(paths, "stm32g0b1xx", "RAW-HARDWARE-SERIAL", fw="klipper")
+
+    assert dev is not None
+    assert dev.path.endswith("usb-Klipper_stm32g0b1xx_BY-ID-if00")
+
+
+@pytest.mark.skipif(os.name == "nt", reason="symlink fixtures require POSIX")
+def test_scan_falls_back_to_the_parsed_by_id_serial_when_tty_is_not_usb(paths, fake_root):
+    bus = fake_root / "bus"
+    make_device(bus, "Klipper", "stm32g0b1xx", "BY-ID-if00")
+    by_id = bus / "usb-Klipper_stm32g0b1xx_BY-ID-if00"
+    by_id.unlink()
+    tty = fake_root / "dev" / "ttyS0"
+    tty.parent.mkdir()
+    tty.write_text("", encoding="utf-8")
+    by_id.symlink_to(tty)
+
+    paths = dataclasses.replace(paths, tty_sysfs=str(fake_root / "sys" / "class" / "tty"))
+
+    assert scan(paths)[0].serial == "BY-ID"
+
+
+def test_find_device_does_not_treat_an_interface_suffix_in_config_as_canonical(paths, fake_root):
+    make_device(fake_root / "bus", "Klipper", "stm32g0b1xx", "SERIAL-if00")
+
+    assert find_device(paths, "stm32g0b1xx", "SERIAL-if00", fw="klipper") is None
+
+
+def test_find_untracked_does_not_treat_an_interface_suffix_in_known_ids_as_canonical(paths, fake_root):
+    make_device(fake_root / "bus", "Klipper", "stm32g0b1xx", "SERIAL-if00")
+
+    assert [device.serial for device in find_untracked(paths, {"SERIAL-if00"})] == ["SERIAL"]
 
 
 def test_a_multi_word_vendor_name_is_not_mis_split():
@@ -49,7 +159,7 @@ def test_a_multi_word_vendor_name_is_not_mis_split():
     assert (dev.fw, dev.chipset, dev.serial) == (
         "Raspberry_Pi_Pico",
         "",
-        "4250305031363918-if00",
+        "4250305031363918",
     )
 
 
@@ -66,7 +176,7 @@ def test_lowercase_klipper_is_found(paths, fake_root):
     `usb-klipper_...` was detected and then declared missing.
     """
     make_device(fake_root / "bus", "klipper", "rp2040", "E660-if00")
-    dev = find_device(paths, "rp2040", "E660-if00", fw="Klipper")
+    dev = find_device(paths, "rp2040", "E660", fw="Klipper")
     assert dev is not None
     assert dev.is_klipper
     assert dev.path.endswith("usb-klipper_rp2040_E660-if00")
@@ -74,13 +184,13 @@ def test_lowercase_klipper_is_found(paths, fake_root):
 
 def test_uppercase_klipper_is_also_found(paths, fake_root):
     make_device(fake_root / "bus", "Klipper", "rp2040", "E660-if00")
-    assert find_device(paths, "rp2040", "E660-if00", fw="klipper") is not None
+    assert find_device(paths, "rp2040", "E660", fw="klipper") is not None
 
 
 def test_canboot_counts_as_katapult(paths, fake_root):
     """Katapult was called CanBoot; older bootloaders still enumerate that way."""
     make_device(fake_root / "bus", "CanBoot", "stm32f072xb", "4C00-if00")
-    dev = find_device(paths, "stm32f072xb", "4C00-if00", fw="katapult")
+    dev = find_device(paths, "stm32f072xb", "4C00", fw="katapult")
     assert dev is not None
     assert dev.is_katapult
     assert dev.state == STATE_KATAPULT
@@ -88,7 +198,7 @@ def test_canboot_counts_as_katapult(paths, fake_root):
 
 def test_chipset_must_match(paths, fake_root):
     make_device(fake_root / "bus", "Klipper", "stm32g0b1xx", "S1-if00")
-    assert find_device(paths, "rp2040", "S1-if00") is None
+    assert find_device(paths, "rp2040", "S1") is None
 
 
 def test_device_state_reports_klipper_katapult_offline(paths, fake_root):
@@ -255,10 +365,10 @@ def test_a_board_in_its_bootloader_is_adoptable(paths, fake_root):
 
 def test_the_dfu_serial_is_derived_from_the_running_one():
     """Captured from a real BTT EBB36: dfu-util reported 3941335F3434, and the
-    same board came back as 27000E000551343438333339-if00."""
+    same board came back with canonical serial 27000E000551343438333339."""
     from mcu_updater.devices import dfu_serial_for
 
-    assert dfu_serial_for("27000E000551343438333339-if00") == "3941335F3434"
+    assert dfu_serial_for("27000E000551343438333339-if00") is None
 
 
 def test_it_works_without_the_interface_suffix():

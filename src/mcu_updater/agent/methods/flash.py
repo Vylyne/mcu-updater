@@ -9,10 +9,12 @@ from ... import firmware, flashers, providers, stop_services
 from ...config import Registry
 from ...errors import (
     DfuPermissionError,
+    FlashError,
     ToolMissingError,
     UpdaterError,
 )
 from ...paths import REENUMERATE_TIMEOUT
+from ...settings import Settings
 from ..rpc import ERR_INVALID_PARAMS, RpcError
 from ._api import _Base
 
@@ -45,6 +47,13 @@ class FlashMixin(_Base):
         name = args.get("name")
         if name and self._provider_of(str(name)) == providers.PlatformIO.name:
             return self._pio_flash(args)
+
+        # `uuid` is the third identity form, alongside `serial`/`port` - a
+        # CAN-addressed board rather than a by-id one. Checked before `serial`
+        # is required, since a caller naming a uuid has nothing to put there.
+        uuid = args.get("uuid")
+        if uuid:
+            return self._flash_can(args, str(uuid), name, runner, settings)
 
         # `id` is the uniform slot - `FlashTarget.id` is a serial for a board and
         # a port for a screen - and `serial` is what this method has always been
@@ -166,6 +175,115 @@ class FlashMixin(_Base):
             }
 
         job = runner.submit("flash", {"name": mcu_type, "serial": serial}, run)
+        return {"job_id": job.id, "job": job.to_dict()}
+
+    def _flash_can(
+        self, args: dict, uuid: str, name: Any, runner: Any, settings: Settings
+    ) -> dict[str, Any]:
+        """`fw.flash {uuid}` - the CAN identity form.
+
+        Same refusal ordering as the serial path above, up to where a uuid's
+        lack of a chipset-segment identity forces a difference: there is no
+        by-id equivalent of "is this specific uuid on the bus right now" to
+        check synchronously (see `flashers.flashtool` - finding out
+        *is* the flash attempt, via its own per-interface trial), so only "no
+        CAN interface exists on this host at all" is refused up front; a uuid
+        that simply does not answer is discovered inside the job.
+
+        Routes through `flashtool.target_for` and the same `write_all`
+        batch machinery `flash_all`/`update_all` use for a CAN board, rather
+        than a second hand-written stop/write/wait sequence - one target,
+        one flasher, the loop already written for a batch of one.
+        """
+        force = bool(args.get("force"))
+        reg = self.registry()
+        # resolve_uuid raises unknown_uuid / ambiguous_uuid / uuid_tracked_elsewhere.
+        mcu_type = reg.resolve_uuid(uuid, str(name) if name else None)
+        mcu = reg.get(mcu_type)
+        application = mcu.application(firmware.load(self.paths))
+
+        fw_bin = self.paths.bin_file(mcu_type, application)
+        if not os.path.exists(fw_bin):
+            raise RpcError(
+                f"no built firmware for {mcu_type} at {fw_bin}. Build it first.",
+                data={
+                    "code": "no_artifact",
+                    "message": "firmware has not been built",
+                    "data": {"type": mcu_type, "path": fw_bin},
+                },
+            )
+
+        cross = self.canbus_info().get(uuid.lower())
+        interface = cross.get("interface") if cross is not None else None
+        if interface is None:
+            from ...discovery.canbus import list_can_interfaces
+
+            interfaces = list_can_interfaces(self.paths)
+        else:
+            interfaces = [interface]
+        if not interfaces:
+            raise RpcError(
+                f"no CAN interface is present on this host, so {uuid} cannot be "
+                f"reached. Is a USB-CAN adapter connected?",
+                data={
+                    "code": "device_not_found",
+                    "message": "no CAN interface present on this host",
+                    "data": {"uuid": uuid},
+                },
+            )
+
+        from ...service import assert_printer_idle
+
+        assert_printer_idle(
+            settings, activity=self._printer_activity, force=force, reporter=self._log_reporter
+        )
+
+        # A Klipper mapping chooses one configured bus; config silence leaves
+        # the flasher to try every currently-present CAN interface.
+        bridge = cross.get("bridge") if cross is not None else None
+
+        units = stop_services.for_mcu(self.paths, mcu, settings)
+        target = flashers.flashtool.target_for(
+            {
+                "type": mcu_type,
+                "uuid": uuid,
+                "chipset": mcu.chipset,
+                "fw": application,
+                "force": force,
+                "bridge": bridge,
+                "interface": interface,
+            },
+            stop_services=units,
+        )
+
+        def run(ctx) -> dict[str, Any]:
+            # `on_ready` here, not `_do_flash_all`'s hardcoded one - a
+            # single-board `fw.flash` job has always surfaced `klippy_state`
+            # in its own result, and `write_all`'s own on_ready return is
+            # deliberately discarded, so this captures it locally instead.
+            state_holder: dict[str, Any] = {}
+
+            def on_ready(reporter: Any) -> None:
+                state_holder["klippy_state"] = self._await_klippy_ready(reporter)
+
+            result = flashers.write_all(
+                self._bench(self.settings()), [target], ctx, on_ready=on_ready
+            )
+            if result["failures"]:
+                # A batch reports failures rather than raising per-device -
+                # right for a fleet sweep, wrong for a job that promised its
+                # caller a single board's own success or failure.
+                raise FlashError(
+                    result["failures"][0]["error"], type=mcu_type, uuid=uuid
+                )
+            return {
+                "type": mcu_type,
+                "uuid": uuid,
+                "fw_bin": fw_bin,
+                "klippy_state": state_holder.get("klippy_state"),
+            }
+
+        job = runner.submit("flash", {"name": mcu_type, "uuid": uuid}, run)
         return {"job_id": job.id, "job": job.to_dict()}
 
     def _pio_flash(self, args: dict) -> dict[str, Any]:
@@ -292,10 +410,10 @@ class FlashMixin(_Base):
         serial itself. RP2040 has no such derivation (see docs/agent-api.md's
         "RP2040 pairing identity" note): the boot ROM's flash-chip id is
         *assumed*, unverified, to be the same string Katapult later runs under
-        - up to the `-if00` interface suffix every by-id name carries and the
-        boot-ROM id never does, so the candidate is the running serial's UID
-        prefix (the same split `dfu_serial_for` itself starts with), not the
-        full string. If that assumption is wrong this candidate simply never
+        as the full canonical hardware serial. Interface suffixes belong only
+        to the transport path, and a hardware serial may legitimately contain
+        a hyphen, so the candidate is never shortened. If that assumption is
+        wrong this candidate simply never
         matches an entry - nothing is ever recorded under a bare running UID
         for an STM32 board either, so trying it for every device is harmless
         in both directions.
@@ -318,8 +436,7 @@ class FlashMixin(_Base):
 
         def candidate_keys(serial: str) -> list[str]:
             derived = dfu_serial_for(serial)
-            uid = serial.split("-", 1)[0]
-            return [derived, uid] if derived else [uid]
+            return [derived, serial] if derived else [serial]
 
         # Which known keys map to more than one board on the bus. Cheap, and it
         # is the only way a wrong adoption could happen.
@@ -488,18 +605,16 @@ class FlashMixin(_Base):
         board looks like, never a wrong name. Same collision guard as
         `_identify_dfu`: two known boards mapping to one id names neither.
 
-        A tracked serial's by-id name always carries a `-if00` interface
-        suffix (`parse_entry`), which the boot-ROM id never does - so this
-        compares against the UID prefix, the same split `dfu_serial_for` uses
-        to pull a UID out of a running serial, not the full string.
+        Tracked identities are canonical hardware serials; the by-id interface
+        suffix belongs only to the transport path. Compare the full string so
+        a legitimate hyphen cannot create a prefix match.
         """
         owners: dict[str, list[tuple[str, str]]] = {}
         for name, mcu in self.registry().types.items():
             if not mcu.chipset.startswith("rp2040"):
                 continue
             for serial in mcu.serials:
-                uid = serial.split("-", 1)[0]
-                owners.setdefault(uid, []).append((name, serial))
+                owners.setdefault(serial, []).append((name, serial))
 
         for device in devices:
             device["known_serial"] = None

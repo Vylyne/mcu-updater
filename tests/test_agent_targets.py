@@ -231,13 +231,35 @@ def test_a_type_whose_boards_are_all_offline_reports_unknown_not_clean(api):
 
 def test_a_type_needs_flashing_when_any_one_board_does(api, fake_root):
     make_device(
-        fake_root / "bus", "katapult", "stm32f072xb", "4B0036000A53594731383520-if00"
+        fake_root / "bus", "katapult", "stm32f072xb", "4B0036000A53594731383520"
     )
     hexa = _targets(api)["hexadistrofusion"]
 
     assert hexa["needs_flash"] is True
     waiting = [d for d in hexa["devices"] if d["reason"] == "in_bootloader"]
     assert waiting and waiting[0]["tone"] == TONE_ATTENTION
+
+
+def test_a_tracked_can_uuid_is_projected_onto_its_type(api):
+    """Removing CAN projection from `_mcu_target` must not hide the board.
+
+    A CAN UUID is a configured board even when Klipper has no matching
+    ``[mcu ...] canbus_uuid:`` cross-reference to establish its liveness.
+    It belongs under its type so the user can see and manage it rather than
+    looking like it vanished after adoption.
+    """
+    uuid = "bcb5346fc731"
+    api.dispatch("fw.canbus.add", {"name": "hexadistrofusion", "uuid": uuid})
+
+    devices = _targets(api)["hexadistrofusion"]["devices"]
+    can = next(device for device in devices if device["id"] == uuid)
+
+    assert can["name"] is None
+    assert can["present"] is True
+    assert can["state"] == "unknown"
+    assert can["version"] is None
+    assert can["needs_flash"] is None
+    assert can["reason"] == "unknown_version"
 
 
 def test_a_screen_that_cannot_be_reached_is_offline_not_current(api, paths, fake_root):
@@ -572,7 +594,7 @@ def test_build_and_flash_is_not_blocked_by_a_missing_artifact(paths, live_regist
         fh.write(live_registry_text)
     write_settings(paths, enable_flashing="true")
     make_device(
-        _bus(paths), "klipper", "stm32f072xb", "4B0036000A53594731383520-if00"
+        _bus(paths), "klipper", "stm32f072xb", "4B0036000A53594731383520"
     )
     api = Api(paths, runner=_runner())
 
@@ -630,7 +652,7 @@ def test_every_fact_in_the_old_keys_survives_the_projection(api, paths, fake_roo
     """
     port = _add_display(paths, fake_root, api)
     make_device(
-        fake_root / "bus", "klipper", "stm32f072xb", "4B0036000A53594731383520-if00"
+        fake_root / "bus", "klipper", "stm32f072xb", "4B0036000A53594731383520"
     )
 
     reg = api.registry()

@@ -21,8 +21,12 @@ ports of it - and that is exactly the information a udev rule needs.
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import os
 import sys
+
+from mcu_updater.discovery import usb
+from mcu_updater.paths import Paths
 
 SYSFS = "/sys/bus/usb/devices"
 
@@ -36,25 +40,17 @@ KNOWN = {
 }
 
 
-def read(path: str) -> str | None:
-    try:
-        with open(path, encoding="utf-8", errors="replace") as fh:
-            return fh.read().strip()
-    except OSError:
-        return None
-
-
 class Device:
-    def __init__(self, root: str, name: str) -> None:
-        self.name = name
-        self.path = os.path.join(root, name)
-        self.vid = read(os.path.join(self.path, "idVendor")) or ""
-        self.pid = read(os.path.join(self.path, "idProduct")) or ""
-        self.product = read(os.path.join(self.path, "product")) or ""
-        self.vendor = read(os.path.join(self.path, "manufacturer")) or ""
-        self.serial = read(os.path.join(self.path, "serial")) or ""
-        self.speed = read(os.path.join(self.path, "speed")) or ""
-        self.ports = int(read(os.path.join(self.path, "maxchild")) or 0)
+    def __init__(self, device: usb.UsbDevice) -> None:
+        self.name = device.name
+        self.path = device.path
+        self.vid = device.vendor_id or ""
+        self.pid = device.product_id or ""
+        self.product = device.product or ""
+        self.vendor = device.manufacturer or ""
+        self.serial = device.serial or ""
+        self.speed = device.speed or ""
+        self.ports = device.ports
         self.children: list[Device] = []
         self.ttys: list[str] = []
         self.links: list[str] = []
@@ -92,16 +88,10 @@ class Device:
 
 def collect(root: str) -> dict[str, Device]:
     """Every USB device, minus the `:1.0` interface entries."""
-    devices: dict[str, Device] = {}
-    try:
-        names = sorted(os.listdir(root))
-    except OSError as exc:
-        sys.exit(f"cannot read {root}: {exc}")
-    for name in names:
-        if ":" in name:  # an interface, not a device
-            continue
-        devices[name] = Device(root, name)
-    return devices
+    if not os.path.isdir(root):
+        sys.exit(f"cannot read {root}")
+    paths = dataclasses.replace(Paths.from_env(), usb_sysfs=root)
+    return {device.name: Device(device) for device in usb.collect(paths)}
 
 
 def attach_ttys(devices: dict[str, Device], tty_root: str, dev_root: str) -> None:

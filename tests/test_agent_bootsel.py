@@ -143,11 +143,9 @@ def test_the_probe_is_available_to_a_read_only_agent(api):
 
 
 def test_a_tracked_board_in_bootsel_is_named(api, fake_root):
-    """The tracked, running serial always carries a `-if00` interface suffix
-    (`parse_entry`); the boot-ROM id never does. The match has to look past
-    that, or it never fires on a real board."""
+    """The boot-ROM hex id matches the same canonical running identity."""
     api.dispatch("fw.type.add", {"name": PICO, "chipset": PICO_CHIPSET})
-    api.dispatch("fw.serial.add", {"name": PICO, "serial": "E0C9125B0D9B-if00"})
+    api.dispatch("fw.serial.add", {"name": PICO, "serial": "E0C9125B0D9B"})
 
     root, _vol = mounted_bootsel_volume(fake_root)
     bootsel_device_node(root, serial="E0C9125B0D9B")
@@ -155,7 +153,20 @@ def test_a_tracked_board_in_bootsel_is_named(api, fake_root):
 
     device = api.dispatch("fw.bootsel.scan")["devices"][0]
     assert device["tracked_by"] == PICO
-    assert device["known_serial"] == "E0C9125B0D9B-if00"
+    assert device["known_serial"] == "E0C9125B0D9B"
+
+
+def test_a_hyphenated_serial_is_not_prefix_matched(api, fake_root):
+    api.dispatch("fw.type.add", {"name": PICO, "chipset": PICO_CHIPSET})
+    api.dispatch("fw.serial.add", {"name": PICO, "serial": "E0C9125B0D9B-extra"})
+
+    root, _vol = mounted_bootsel_volume(fake_root)
+    bootsel_device_node(root, serial="E0C9125B0D9B")
+    api.paths = dataclasses.replace(api.paths, bootsel_root=str(root))
+
+    device = api.dispatch("fw.bootsel.scan")["devices"][0]
+    assert device["tracked_by"] is None
+    assert device["known_serial"] is None
 
 
 def test_an_unrecognised_board_is_simply_unnamed(api, fake_root):
@@ -174,21 +185,21 @@ def test_two_known_boards_sharing_an_id_name_neither(api, fake_root):
     you meant to leave alone. This assumed identity has no derivation to
     collide by construction, but the guard still has to hold if two tracked
     boards were ever (mis)recorded under the same UID (different interface
-    suffix, e.g. re-tracked from a different by-id entry)."""
+    identity)."""
     api.dispatch("fw.type.add", {"name": PICO, "chipset": PICO_CHIPSET})
     api.dispatch("fw.type.add", {"name": "pico2", "chipset": PICO_CHIPSET})
-    api.dispatch("fw.serial.add", {"name": PICO, "serial": "SHARED123456-if00"})
+    api.dispatch("fw.serial.add", {"name": PICO, "serial": "ABCDEF123456"})
     # A second type cannot claim the same serial through fw.serial.add (that is
     # serial_tracked_elsewhere's job), so the collision is only reachable by
-    # two registry entries sharing a UID under different literal serials -
-    # construct it directly.
+    # two registry entries sharing one literal serial - construct that invalid
+    # configuration directly.
     from mcu_updater.config import Registry
 
     with Registry.mutate(api.paths, "test setup") as live:
-        live.add_serial("pico2", "SHARED123456-if01")
+        live.get("pico2").serials.append("ABCDEF123456")
 
     root, _vol = mounted_bootsel_volume(fake_root)
-    bootsel_device_node(root, serial="SHARED123456")
+    bootsel_device_node(root, serial="ABCDEF123456")
     api.paths = dataclasses.replace(api.paths, bootsel_root=str(root))
 
     device = api.dispatch("fw.bootsel.scan")["devices"][0]

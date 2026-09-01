@@ -18,6 +18,7 @@ from .spec import Flasher, FlashTarget
 
 #: Every flasher. Order is not a batch order - a batch keeps the order its
 #: selection produced - so this is just the set.
+#:
 FLASHERS: tuple[Flasher, ...] = (Flashtool(), Esptool(), DfuUtil(), Bootsel())
 
 _BY_NAME: dict[str, Flasher] = {f.name: f for f in FLASHERS}

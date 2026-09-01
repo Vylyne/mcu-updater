@@ -47,6 +47,8 @@ export interface AgentStoreState {
   status: Record<string, unknown> | null;
   job: Job | null;
   bus: unknown[];
+  canbus: CanbusScan | null;
+  canbusError: NormalizedAgentError | null;
   log: { job_id: string; lines: { i: number; s: string; t: string }[] } | null;
   /** Set when the last resync learned the ring buffer had already evicted
    * lines we asked for, or dropped some - docs/agent-api.md's "The log, and
@@ -71,6 +73,27 @@ export interface AgentStoreState {
   bulkSkipped: BulkSkipped[];
 }
 
+export interface CanbusScan {
+  interfaces: unknown[];
+  devices: CanbusScanDevice[];
+  failures: unknown[];
+  count: number;
+  message: string | null;
+}
+
+export interface CanbusScanDevice {
+  uuid: string;
+  interface: string;
+  application: string;
+  state: string;
+  tracked_by: string | null;
+  ignored: boolean;
+}
+
+export interface CanbusDevice extends CanbusScanDevice {
+  kind: "can";
+}
+
 /** One entry of fw.build_all's `skipped` - a target the batch could not
  * touch at all (never configured, no source tree), with the agent's own
  * reason. */
@@ -88,6 +111,8 @@ export const state: AgentStoreState = reactive({
   status: null,
   job: null,
   bus: [],
+  canbus: null,
+  canbusError: null,
   log: null,
   logOmitted: false,
   events: [],
@@ -168,22 +193,45 @@ export function isBusy(): boolean {
   );
 }
 
+let refreshGeneration = 0;
+
 async function refreshStatus(): Promise<void> {
   if (client === null) return;
-  try {
-    const status = await callAgent<Record<string, unknown>>(
-      client,
-      "fw.status",
-    );
-    state.status = status;
-    // Seeds the untracked-device list from the initial load - the `bus`
-    // notify_agent_event (onBus below) only fires on a later change, so
-    // without this state.bus stays [] until something is unplugged/replugged.
-    state.bus = (status.bus as unknown[] | undefined) ?? state.bus;
-    state.error = null;
-  } catch (error) {
-    state.error = error as NormalizedAgentError;
-  }
+  const generation = ++refreshGeneration;
+  const statusPromise = callAgent<Record<string, unknown>>(client, "fw.status");
+  const canbusPromise = hasCapability("fw.canbus.scan")
+    ? callAgent<CanbusScan>(client, "fw.canbus.scan")
+    : Promise.resolve(null);
+  await Promise.all([
+    statusPromise
+      .then((status) => {
+        if (generation !== refreshGeneration) return;
+        state.status = status;
+        state.bus = (status.bus as unknown[] | undefined) ?? state.bus;
+        state.error = null;
+      })
+      .catch((error) => {
+        if (generation === refreshGeneration)
+          state.error = error as NormalizedAgentError;
+      }),
+    canbusPromise
+      .then((result) => {
+        if (generation !== refreshGeneration) return;
+        if (result === null) {
+          state.canbus = null;
+          state.canbusError = null;
+          return;
+        }
+        state.canbus = result;
+        state.canbusError = null;
+      })
+      .catch((error) => {
+        if (generation === refreshGeneration) {
+          state.canbus = null;
+          state.canbusError = error as NormalizedAgentError;
+        }
+      }),
+  ]);
 }
 
 /** The toolbar's Refresh button - refreshStatus itself stays module-private
@@ -463,6 +511,52 @@ export async function adoptSerial(
     // in this same browser tab to show its own result. `_changed()`'s "state"
     // event covers `state.status`, but only refreshStatus reseeds
     // `state.bus`, the same way it already does on first load.
+    void refreshStatus();
+    return true;
+  } catch (error) {
+    state.error = error as NormalizedAgentError;
+    return false;
+  }
+}
+
+/** Track an unclaimed CAN node under an existing MCU type. CAN UUIDs have no
+ * serial or chipset, so they stay a separate identity at every layer. */
+export async function adoptCanbus(
+  name: string,
+  uuid: string,
+): Promise<boolean> {
+  if (client === null) return false;
+  try {
+    await callAgent(client, "fw.canbus.add", { name, uuid });
+    state.error = null;
+    void refreshStatus();
+    return true;
+  } catch (error) {
+    state.error = error as NormalizedAgentError;
+    return false;
+  }
+}
+
+/** Persistently hide every sighting of an unclaimed CAN UUID. */
+export async function ignoreCanbus(uuid: string): Promise<boolean> {
+  if (client === null) return false;
+  try {
+    await callAgent(client, "fw.canbus.ignore", { uuid });
+    state.error = null;
+    void refreshStatus();
+    return true;
+  } catch (error) {
+    state.error = error as NormalizedAgentError;
+    return false;
+  }
+}
+
+/** Reverse of ignoreCanbus - restores every sighting of the CAN UUID. */
+export async function unignoreCanbus(uuid: string): Promise<boolean> {
+  if (client === null) return false;
+  try {
+    await callAgent(client, "fw.canbus.unignore", { uuid });
+    state.error = null;
     void refreshStatus();
     return true;
   } catch (error) {

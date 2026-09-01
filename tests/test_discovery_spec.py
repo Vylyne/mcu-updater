@@ -56,8 +56,8 @@ def test_state_constants_are_devices_states_verbatim():
 
 def test_a_sighting_carries_identity_separately_from_address():
     sighting = Sighting(
-        id="290055001850304158373620",
-        address="/dev/serial/by-id/usb-Klipper_stm32g0b1xx_290055001850304158373620-if00",
+        id="123456789012345678901",
+        address="/dev/serial/by-id/usb-Klipper_stm32g0b1xx_123456789012345678901-if00",
         state=spec.STATE_KLIPPER,
         source="byid",
     )

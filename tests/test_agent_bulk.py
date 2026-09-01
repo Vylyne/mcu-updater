@@ -26,11 +26,11 @@ from .conftest import make_device, write_settings
 
 EBB = "bttebb36"
 EBB_CHIPSET = "stm32g0b1xx"
-EBB_A = "290055001850304158373620"
-EBB_B = "230048001750304158373620"
+EBB_A = "123456789012345678901"
+EBB_B = "912345678901234567890"
 MMB = "OctopusMAXEZ"
 MMB_CHIPSET = "stm32h723xx"
-MMB_SERIAL = "210008000551333231343036"
+MMB_SERIAL = "49382710567432109845312"
 
 HEAD = "d7cea5bb1aca70849f28d0bb98ab1b96b9f6db65"
 CURRENT_VERSION = "v0.13.0-711-gd7cea5bb"
@@ -60,9 +60,7 @@ def _moonraker(versions: dict[str, str], print_state="standby", idle_state="Read
             if "configfile" in requested:
                 status["configfile"] = {
                     "settings": {
-                        name.lower(): {
-                            "serial": f"/dev/serial/by-id/usb-Klipper_{EBB_CHIPSET}_{serial}"
-                        }
+                        name.lower(): {"serial": f"/dev/serial/by-id/usb-Klipper_{EBB_CHIPSET}_{serial}"}
                         for name, serial in objects.items()
                     }
                 }
@@ -143,17 +141,15 @@ def bulk(paths, live_registry_text, fake_root):
     """Flashing enabled, a fake bus, and a flashtool to call."""
     with open(paths.registry_file, "w", encoding="utf-8") as fh:
         fh.write(live_registry_text)
-    write_settings(
-        paths, dry_run="true", service_backend="null", enable_flashing="true"
-    )
+    write_settings(paths, dry_run="true", service_backend="null", enable_flashing="true")
     (fake_root / "katapult" / "scripts").mkdir(parents=True, exist_ok=True)
     (fake_root / "katapult" / "scripts" / "flashtool.py").write_text("", encoding="utf-8")
 
     runner = JobRunner(
         paths,
-        lambda: __import__(
-            "mcu_updater.settings", fromlist=["load_settings"]
-        ).load_settings(paths.settings_file),
+        lambda: __import__("mcu_updater.settings", fromlist=["load_settings"]).load_settings(
+            paths.settings_file
+        ),
     )
     api = Api(paths, runner=runner, call=_moonraker({}))
     api.KLIPPY_READY_TIMEOUT = 2.0
@@ -184,9 +180,12 @@ def test_bulk_flashing_is_not_offered_while_flashing_is_disabled(paths, live_reg
     with open(paths.registry_file, "w", encoding="utf-8") as fh:
         fh.write(live_registry_text)
     write_settings(paths, dry_run="true", service_backend="null")
-    runner = JobRunner(paths, lambda: __import__(
-        "mcu_updater.settings", fromlist=["load_settings"]
-    ).load_settings(paths.settings_file))
+    runner = JobRunner(
+        paths,
+        lambda: __import__("mcu_updater.settings", fromlist=["load_settings"]).load_settings(
+            paths.settings_file
+        ),
+    )
     caps = Api(paths, runner=runner).dispatch("fw.ping")["capabilities"]
 
     assert "fw.build_all" in caps
@@ -273,7 +272,7 @@ def test_a_named_family_filters_rather_than_forces(bulk, paths):
 
 
 def test_a_fleet_build_reaches_the_screens_too(bulk, paths, tmp_path):
-    """"Build All" meant "build all the MCUs".
+    """ "Build All" meant "build all the MCUs".
 
     Not by decision - the `[mcu ...]` registry was the only list the selection
     had to walk, so a display could not be chosen even in principle. Every screen
@@ -295,7 +294,7 @@ def test_a_fleet_build_reaches_the_screens_too(bulk, paths, tmp_path):
 
 
 def test_a_named_family_leaves_the_screens_alone(bulk, paths, tmp_path):
-    """"Rebuild katapult everywhere" must not touch a PlatformIO env.
+    """ "Rebuild katapult everywhere" must not touch a PlatformIO env.
 
     Correct rather than incidental: a display has no family to be one of, so it
     cannot match a named `fw`. The alternative - treating a missing family as a
@@ -468,13 +467,13 @@ def test_an_untracked_board_is_structurally_excluded(paths, live_registry_text, 
         fh.write(live_registry_text)
     _stage_artifact(paths, EBB)
     make_device(fake_root / "bus", "Klipper", EBB_CHIPSET, EBB_A)
-    make_device(fake_root / "bus", "Klipper", "stm32f072xb", "4B0036000A53594731383520")
+    make_device(fake_root / "bus", "Klipper", "stm32f072xb", "3A0045000B64605442994611")
 
     api = Api(paths, call=_moonraker({EBB_A: OLD_VERSION}))
     monkey_head(api, paths)
 
     serials = [b["serial"] for b in api._boards_to_flash(Registry.load(paths), "all")]
-    assert "4B0036000A53594731383520" not in serials
+    assert "3A0045000B64605442994611" not in serials
 
 
 def test_naming_a_type_narrows_the_batch_to_it(paths, live_registry_text, fake_root):
@@ -491,9 +490,7 @@ def test_naming_a_type_narrows_the_batch_to_it(paths, live_registry_text, fake_r
     monkey_head(api, paths)
 
     reg = Registry.load(paths)
-    assert sorted(b["serial"] for b in api._boards_to_flash(reg, "stale")) == sorted(
-        [EBB_A, MMB_SERIAL]
-    )
+    assert sorted(b["serial"] for b in api._boards_to_flash(reg, "stale")) == sorted([EBB_A, MMB_SERIAL])
     assert [b["serial"] for b in api._boards_to_flash(reg, "stale", MMB)] == [MMB_SERIAL]
 
 
@@ -532,9 +529,12 @@ def test_bulk_flash_is_refused_while_flashing_is_disabled(paths, live_registry_t
     write_settings(paths, dry_run="true", service_backend="null")
     _stage_artifact(paths, EBB)
     make_device(fake_root / "bus", "Klipper", EBB_CHIPSET, EBB_A)
-    runner = JobRunner(paths, lambda: __import__(
-        "mcu_updater.settings", fromlist=["load_settings"]
-    ).load_settings(paths.settings_file))
+    runner = JobRunner(
+        paths,
+        lambda: __import__("mcu_updater.settings", fromlist=["load_settings"]).load_settings(
+            paths.settings_file
+        ),
+    )
     api = Api(paths, runner=runner, call=_moonraker({EBB_A: OLD_VERSION}))
 
     for call in (api.flash_all, api.update_all):
@@ -610,9 +610,7 @@ def test_a_build_failure_does_not_abandon_the_rest_of_the_fleet(bulk, paths, mon
     # Named by target, not by type: a type builds every family it uses and a
     # host builds with more than one build system, so "carto_v4 failed" and
     # "knomi failed" are both ambiguous without the rest of the identity.
-    assert job.result["built"] == [
-        {"type": MMB, "fw": "klipper", "provider": "kconfig_make"}
-    ]
+    assert job.result["built"] == [{"type": MMB, "fw": "klipper", "provider": "kconfig_make"}]
     assert job.result["failures"] == [
         {
             "type": EBB,
@@ -639,9 +637,7 @@ def test_update_all_builds_before_it_chooses_what_to_flash(bulk, paths, fake_roo
     job = bulk.runner.get(res["job_id"])
 
     assert job.state == "succeeded", job.error
-    assert job.result["build"]["built"] == [
-        {"type": EBB, "fw": "klipper", "provider": "kconfig_make"}
-    ]
+    assert job.result["build"]["built"] == [{"type": EBB, "fw": "klipper", "provider": "kconfig_make"}]
     assert [f["serial"] for f in job.result["flash"]["flashed"]] == [EBB_A]
 
 
@@ -690,12 +686,8 @@ def test_each_board_is_waited_for_before_klipper_is_started(bulk, paths, fake_ro
     order: list[str] = []
     svc = NullService()
     monkeypatch.setattr("mcu_updater.service.make_controller", lambda *a, **k: svc)
-    monkeypatch.setattr(
-        flash_mod, "flash_katapult", lambda *a, **k: order.append(f"flash {a[4]}")
-    )
-    monkeypatch.setattr(
-        devices_mod, "wait_for_device", lambda *a, **k: order.append(f"wait {a[2]}")
-    )
+    monkeypatch.setattr(flash_mod, "flash_katapult", lambda *a, **k: order.append(f"flash {a[4]}"))
+    monkeypatch.setattr(devices_mod, "wait_for_device", lambda *a, **k: order.append(f"wait {a[2]}"))
     write_settings(paths, dry_run="false", service_backend="null", enable_flashing="true")
 
     bulk._do_flash_all(_ctx(), [_board(EBB_A), _board(EBB_B)])
@@ -740,17 +732,11 @@ def test_a_write_that_needs_no_stop_stays_outside_the_outage(bulk, paths, monkey
         return svc
 
     monkeypatch.setattr("mcu_updater.service.make_controller", factory)
-    monkeypatch.setattr(
-        flash_mod, "flash_dfu_stm32", lambda *a, **k: order.append("dfu write")
-    )
-    monkeypatch.setattr(
-        flash_mod, "flash_katapult", lambda *a, **k: order.append("board write")
-    )
+    monkeypatch.setattr(flash_mod, "flash_dfu_stm32", lambda *a, **k: order.append("dfu write"))
+    monkeypatch.setattr(flash_mod, "flash_katapult", lambda *a, **k: order.append("board write"))
     write_settings(paths, dry_run="false", service_backend="null", enable_flashing="true")
 
-    bare = flashers.dfu_util.target_for(
-        "/tmp/katapult.bin", chipset=EBB_CHIPSET, dfu_serial="3941335F3434"
-    )
+    bare = flashers.dfu_util.target_for("/tmp/katapult.bin", chipset=EBB_CHIPSET, dfu_serial="3941335F3434")
     result = bulk._do_flash_all(_ctx(), [bare, _board(EBB_A)])
 
     # The DFU write happens first, entirely outside the stop/start pair the
@@ -845,9 +831,7 @@ def test_update_all_can_be_narrowed_to_one_type(bulk, paths, fake_root):
     job = bulk.runner.get(res["job_id"])
 
     assert job.state == "succeeded", job.error
-    assert job.result["build"]["built"] == [
-        {"type": MMB, "fw": "klipper", "provider": "kconfig_make"}
-    ]
+    assert job.result["build"]["built"] == [{"type": MMB, "fw": "klipper", "provider": "kconfig_make"}]
     # ...and only its boards are written to.
     assert [f["serial"] for f in job.result["flash"]["flashed"]] == [MMB_SERIAL]
 
@@ -870,6 +854,4 @@ def test_without_a_name_it_is_still_the_whole_fleet(bulk, paths, fake_root):
     assert sorted(res["types"]) == sorted([EBB, MMB])
     assert bulk.runner.wait(timeout=60)
     job = bulk.runner.get(res["job_id"])
-    assert sorted(f["serial"] for f in job.result["flash"]["flashed"]) == sorted(
-        [EBB_A, MMB_SERIAL]
-    )
+    assert sorted(f["serial"] for f in job.result["flash"]["flashed"]) == sorted([EBB_A, MMB_SERIAL])

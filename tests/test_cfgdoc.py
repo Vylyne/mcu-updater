@@ -16,14 +16,14 @@ SAMPLE = """\
 [mcu sv08Mainboard]
 chipset: stm32f103xe
 serials:
-    36FFD9054755303923891357-if00
+    87654321098765432109-if00
 
 # The buffer patch is specific to this batch of boards.
 [mcu flylllplusbuffer]
 chipset: stm32f072xb
 serials:
-    4C0033000957465331323720-if00
-    3F0037000957465331323720-if00
+    8F1042000957465331323811-if00
+    2E0046000957465331323822-if00
 klipper_makefile_patches:
     src/Makefile -> src-y += buffer.c
 """
@@ -53,8 +53,8 @@ def test_single_line_values():
 def test_multi_line_values_become_lists():
     doc = CfgDocument(SAMPLE)
     assert doc.get_list("mcu flylllplusbuffer", "serials") == [
-        "4C0033000957465331323720-if00",
-        "3F0037000957465331323720-if00",
+        "8F1042000957465331323811-if00",
+        "2E0046000957465331323822-if00",
     ]
 
 
@@ -177,16 +177,16 @@ def test_appending_to_a_list_keeps_the_others():
     serials = doc.get_list("mcu flylllplusbuffer", "serials")
     doc.set("mcu flylllplusbuffer", "serials", serials + ["NEW-if00"])
     out = doc.render()
-    assert "4C0033000957465331323720-if00" in out
+    assert "8F1042000957465331323811-if00" in out
     assert "NEW-if00" in out
     assert "# The buffer patch is specific to this batch of boards." in out
 
 
 def test_shrinking_a_list_removes_only_its_own_lines():
     doc = CfgDocument(SAMPLE)
-    doc.set("mcu flylllplusbuffer", "serials", ["4C0033000957465331323720-if00"])
+    doc.set("mcu flylllplusbuffer", "serials", ["8F1042000957465331323811-if00"])
     out = doc.render()
-    assert "3F0037000957465331323720-if00" not in out
+    assert "2E0046000957465331323822-if00" not in out
     assert "klipper_makefile_patches:" in out, "the next key must not be swallowed"
     assert "src/Makefile -> src-y += buffer.c" in out
 
@@ -212,7 +212,7 @@ def test_removing_an_option_leaves_the_rest_intact():
     assert doc.remove_option("mcu flylllplusbuffer", "klipper_makefile_patches") is True
     out = doc.render()
     assert "src-y += buffer.c" not in out
-    assert "3F0037000957465331323720-if00" in out
+    assert "2E0046000957465331323822-if00" in out
     assert doc.remove_option("mcu flylllplusbuffer", "nope") is False
 
 
@@ -240,12 +240,12 @@ def test_a_document_reparses_equal_after_a_write():
     """Render then reload must give the same view, or edits drift over time."""
     doc = CfgDocument(SAMPLE)
     doc.set("mcu hexa", "chipset", "stm32f072xb")
-    doc.set("mcu hexa", "serials", ["4B0036000A53594731383520-if00"])
+    doc.set("mcu hexa", "serials", ["3A0045000B64605442994611-if00"])
 
     again = CfgDocument(doc.render())
     assert again.section_names() == doc.section_names()
     assert again.get("mcu hexa", "chipset") == "stm32f072xb"
-    assert again.get_list("mcu hexa", "serials") == ["4B0036000A53594731383520-if00"]
+    assert again.get_list("mcu hexa", "serials") == ["3A0045000B64605442994611-if00"]
     assert again.render() == doc.render()
 
 
@@ -268,8 +268,8 @@ COMMENTED = """[mcu bttebb36]
 chipset: stm32g0b1xx
 serials:
     # the toolhead boards
-    230048001750304158373620-if00  #mcu EBBT0
-    290055001850304158373620-if00 ; EBBT1
+    912345678901234567890-if00  #mcu EBBT0
+    123456789012345678901-if00 ; EBBT1
 """
 
 
@@ -278,8 +278,8 @@ def test_a_comment_after_a_serial_is_not_part_of_the_serial():
     the board read as permanently offline."""
     doc = CfgDocument(COMMENTED)
     assert doc.get_list("mcu bttebb36", "serials") == [
-        "230048001750304158373620-if00",
-        "290055001850304158373620-if00",
+        "912345678901234567890-if00",
+        "123456789012345678901-if00",
     ]
 
 
@@ -301,9 +301,7 @@ def test_both_comment_markers_are_honoured():
 def test_a_hash_without_leading_whitespace_is_kept():
     """Klipper requires whitespace before an inline comment marker, which is what
     lets a value contain a bare `#`. A makefile patch is the case that matters."""
-    doc = CfgDocument(
-        "[mcu x]\nklipper_makefile_patches:\n    src/Makefile -> src-y += a#b.c\n"
-    )
+    doc = CfgDocument("[mcu x]\nklipper_makefile_patches:\n    src/Makefile -> src-y += a#b.c\n")
     assert doc.get_list("mcu x", "klipper_makefile_patches") == ["src/Makefile -> src-y += a#b.c"]
 
 
@@ -316,8 +314,8 @@ def test_adopting_a_board_keeps_the_labels_on_the_others():
         "mcu bttebb36",
         "serials",
         [
-            "230048001750304158373620-if00",
-            "290055001850304158373620-if00",
+            "912345678901234567890-if00",
+            "123456789012345678901-if00",
             "NEWBOARD-if00",
         ],
     )
@@ -329,8 +327,8 @@ def test_adopting_a_board_keeps_the_labels_on_the_others():
     assert "NEWBOARD-if00" in out
     # ...and the values are still clean when read back.
     assert CfgDocument(out).get_list("mcu bttebb36", "serials") == [
-        "230048001750304158373620-if00",
-        "290055001850304158373620-if00",
+        "912345678901234567890-if00",
+        "123456789012345678901-if00",
         "NEWBOARD-if00",
     ]
 
@@ -339,11 +337,11 @@ def test_removing_a_board_keeps_the_note_that_followed_it():
     """A note about a board that was just removed is exactly the one worth
     keeping - it says why."""
     doc = CfgDocument(COMMENTED)
-    doc.set("mcu bttebb36", "serials", ["230048001750304158373620-if00"])
+    doc.set("mcu bttebb36", "serials", ["912345678901234567890-if00"])
     out = doc.render()
 
     assert "#mcu EBBT0" in out
-    assert "290055001850304158373620-if00" not in out
+    assert "123456789012345678901-if00" not in out
     # The trailing standalone comment survives even with its item gone.
     assert "# the toolhead boards" in out
 
@@ -384,11 +382,7 @@ def test_a_comment_after_a_section_header_does_not_hide_the_section():
 
 def test_options_below_a_commented_header_are_not_stolen_by_the_section_above():
     doc = CfgDocument(
-        "[updater]\n"
-        "service: klipper\n"
-        "\n"
-        "[mcu bttebb36]  # the toolhead boards\n"
-        "chipset: stm32g0b1xx\n"
+        "[updater]\nservice: klipper\n\n[mcu bttebb36]  # the toolhead boards\nchipset: stm32g0b1xx\n"
     )
     assert doc.get("mcu bttebb36", "chipset") == "stm32g0b1xx"
     assert doc.get("updater", "chipset") is None

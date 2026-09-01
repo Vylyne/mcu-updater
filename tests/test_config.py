@@ -44,8 +44,9 @@ def test_loads_the_live_registry(paths, live_registry_text):
         "cartographer",
         "flylllplusbuffer",
         "hexadistrofusion",
+        "mmb_can",
     ]
-    assert len(reg.all_serials()) == 12
+    assert len(reg.all_serials()) == 13
     assert len(reg.get("flylllplusbuffer").serials) == 6
     assert reg.get("hexadistrofusion").chipset == "stm32f072xb"
 
@@ -53,9 +54,7 @@ def test_loads_the_live_registry(paths, live_registry_text):
 def test_makefile_patches_parse_from_the_arrow_form(paths, live_registry_text):
     _write(paths, live_registry_text)
     patches = Registry.load(paths).get("flylllplusbuffer").fw("klipper").makefile_patches
-    assert [p.to_json() for p in patches] == [
-        {"file": "src/Makefile", "line": "src-y += buffer.c"}
-    ]
+    assert [p.to_json() for p in patches] == [{"file": "src/Makefile", "line": "src-y += buffer.c"}]
 
 
 def test_a_patch_line_containing_an_arrow_or_colon_survives(paths):
@@ -175,7 +174,7 @@ def test_a_new_type_is_appended_and_reloads(paths, live_registry_text):
     again = Registry.load(paths)
     assert again.get("hexa").chipset == "stm32f072xb"
     assert again.get("hexa").serials == ["0000000000000000000000000-if00"]
-    assert len(again) == 6
+    assert len(again) == 7
 
 
 def test_defaults_are_not_restated_in_the_file(paths):
@@ -214,9 +213,7 @@ def test_clearing_extra_args_removes_the_key(paths):
 def test_a_patch_added_programmatically_round_trips(paths):
     reg = Registry.load(paths)
     mcu = reg.add_type("a", "stm32f072xb")
-    mcu.fw("klipper").makefile_patches = [
-        MakefilePatch(file="src/Makefile", line="src-y += buffer.c")
-    ]
+    mcu.fw("klipper").makefile_patches = [MakefilePatch(file="src/Makefile", line="src-y += buffer.c")]
     reg.save(paths)
     assert "src/Makefile -> src-y += buffer.c" in _read(paths)
 
@@ -266,8 +263,7 @@ def test_stop_services_blank_at_the_type_level(paths):
 def test_stop_services_set_at_the_type_level(paths):
     _write(
         paths,
-        "[type a]\nchipset: x\nfirmware: klipper\nstop_services: klipper, knomi_serial\n"
-        "serials:\n",
+        "[type a]\nchipset: x\nfirmware: klipper\nstop_services: klipper, knomi_serial\nserials:\n",
     )
     assert Registry.load(paths).get("a").stop_services == ["klipper", "knomi_serial"]
 
@@ -293,8 +289,7 @@ def test_stop_services_accepts_space_separated_values(paths):
     mangled entry."""
     _write(
         paths,
-        "[type a]\nchipset: x\nfirmware: klipper\nstop_services: klipper knomi_serial\n"
-        "serials:\n",
+        "[type a]\nchipset: x\nfirmware: klipper\nstop_services: klipper knomi_serial\nserials:\n",
     )
     assert Registry.load(paths).get("a").stop_services == ["klipper", "knomi_serial"]
 
@@ -304,8 +299,7 @@ def test_a_space_separated_stop_services_round_trips_as_comma_separated(paths):
     file is rewritten with the comma form."""
     _write(
         paths,
-        "[type a]\nchipset: x\nfirmware: klipper\nstop_services: klipper knomi_serial\n"
-        "serials:\n",
+        "[type a]\nchipset: x\nfirmware: klipper\nstop_services: klipper knomi_serial\nserials:\n",
     )
     reg = Registry.load(paths)
     reg.save(paths)
@@ -359,10 +353,7 @@ def test_add_and_remove_serial_report_whether_they_acted(paths):
 
 def test_resolve_serial_unique_match(paths, live_registry_text):
     _write(paths, live_registry_text)
-    assert (
-        Registry.load(paths).resolve_serial("4B0036000A53594731383520")
-        == "hexadistrofusion"
-    )
+    assert Registry.load(paths).resolve_serial("3A0045000B64605442994611") == "hexadistrofusion"
 
 
 def test_resolve_serial_untracked(paths, live_registry_text):
@@ -385,17 +376,14 @@ def test_resolve_serial_ambiguous(paths):
 def test_resolve_serial_tracked_elsewhere_is_refused_not_offered(paths, live_registry_text):
     _write(paths, live_registry_text)
     with pytest.raises(SerialTrackedElsewhereError) as exc:
-        Registry.load(paths).resolve_serial("4B0036000A53594731383520", "OctopusMAXEZ")
+        Registry.load(paths).resolve_serial("3A0045000B64605442994611", "OctopusMAXEZ")
     assert exc.value.data["tracked_under"] == ["hexadistrofusion"]
 
 
 def test_resolve_serial_with_matching_type(paths, live_registry_text):
     _write(paths, live_registry_text)
     reg = Registry.load(paths)
-    assert (
-        reg.resolve_serial("4B0036000A53594731383520", "hexadistrofusion")
-        == "hexadistrofusion"
-    )
+    assert reg.resolve_serial("3A0045000B64605442994611", "hexadistrofusion") == "hexadistrofusion"
 
 
 def test_application_skips_a_bootloader_listed_first(paths):
@@ -616,8 +604,8 @@ chipset: stm32g0b1xx
 firmware: klipper
 serials:
     # the two toolhead boards
-    230048001750304158373620-if00  #mcu EBBT0
-    290055001850304158373620-if00  #mcu EBBT1
+    912345678901234567890-if00  #mcu EBBT0
+    123456789012345678901-if00  #mcu EBBT1
 """
 
 
@@ -627,8 +615,8 @@ def test_an_annotated_registry_still_tracks_every_board(paths):
 
     reg = Registry.load(paths)
     assert reg.get("bttebb36").serials == [
-        "230048001750304158373620-if00",
-        "290055001850304158373620-if00",
+        "912345678901234567890-if00",
+        "123456789012345678901-if00",
     ]
 
 
@@ -686,13 +674,13 @@ def test_find_types_for_uuid(paths):
 
 
 def test_a_type_with_no_canbus_uuids_never_gets_the_key(paths, live_registry_text):
-    """The live registry predates this key entirely - saving an untouched type
-    must not stamp an empty `canbus_uuids:` stub into every section, unlike
+    """Saving an untouched type with no CAN boards
+    must not stamp an empty `canbus_uuids:` stub into its section, unlike
     `serials:` which is always present."""
     _write(paths, live_registry_text)
     reg = Registry.load(paths)
     reg.save(paths)
-    assert "canbus_uuids" not in _read(paths)
+    assert CfgDocument(_read(paths)).get("type bttebb36", "canbus_uuids") is None
 
 
 def test_canbus_uuid_round_trips_through_save_and_load(paths, live_registry_text):
@@ -721,7 +709,7 @@ def test_removing_the_last_canbus_uuid_drops_the_key_again(paths, live_registry_
     reg.remove_canbus_uuid("hexadistrofusion", "bcb5346fc731")
     reg.save(paths)
 
-    assert "canbus_uuids" not in _read(paths)
+    assert CfgDocument(_read(paths)).get("type hexadistrofusion", "canbus_uuids") is None
     assert Registry.load(paths).get("hexadistrofusion").canbus_uuids == []
 
 

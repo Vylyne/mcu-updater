@@ -110,9 +110,7 @@ def test_a_display_projects_onto_the_same_shape(api, paths, fake_root):
     # The whole point: a display carries everything an MCU does, plus a bag of
     # things only a screen has. A reader that never opens `extra` renders both.
     assert set(display) == mcu_keys | {"extra"}
-    assert set(display["devices"][0]) == set(
-        _targets(api, "kconfig_make")["bttebb36"]["devices"][0]
-    )
+    assert set(display["devices"][0]) == set(_targets(api, "kconfig_make")["bttebb36"]["devices"][0])
     assert display["provider"] == "platformio"
     assert display["descriptor"] == ENV
 
@@ -190,11 +188,16 @@ def test_every_artifact_reason_survives_to_the_target(api, paths, monkeypatch):
     want different words."""
     import mcu_updater.build as build_mod
 
-    for reason in (None, "never_built", "config_changed", "source_changed",
-                   "built_dirty", "foreign_build", "no_provenance"):
-        monkeypatch.setattr(
-            build_mod, "artifact_status", lambda *a, _r=reason, **k: ArtifactStatus(_r)
-        )
+    for reason in (
+        None,
+        "never_built",
+        "config_changed",
+        "source_changed",
+        "built_dirty",
+        "foreign_build",
+        "no_provenance",
+    ):
+        monkeypatch.setattr(build_mod, "artifact_status", lambda *a, _r=reason, **k: ArtifactStatus(_r))
         assert _targets(api)["bttebb36"]["artifact"]["reason"] == reason
 
 
@@ -230,9 +233,7 @@ def test_a_type_whose_boards_are_all_offline_reports_unknown_not_clean(api):
 
 
 def test_a_type_needs_flashing_when_any_one_board_does(api, fake_root):
-    make_device(
-        fake_root / "bus", "katapult", "stm32f072xb", "4B0036000A53594731383520"
-    )
+    make_device(fake_root / "bus", "katapult", "stm32f072xb", "3A0045000B64605442994611")
     hexa = _targets(api)["hexadistrofusion"]
 
     assert hexa["needs_flash"] is True
@@ -268,9 +269,7 @@ def test_a_screen_that_cannot_be_reached_is_offline_not_current(api, paths, fake
     with open(paths.main_config, "a", encoding="utf-8") as fh:
         fh.write(f"\n[type {ENV}]\nchipset: esp32\nfirmware: knomi_serial\nenv: {ENV}\n")
     api._call = serve_klipper(
-        display_objects(
-            {"knomi_serial t0_knomi": {"serial": str(fake_root / "gone")}}
-        ),
+        display_objects({"knomi_serial t0_knomi": {"serial": str(fake_root / "gone")}}),
         reachable=True,
     )
     screen = _targets(api, "platformio")[ENV]["devices"][0]
@@ -348,9 +347,7 @@ def test_a_device_carries_its_own_flash_call(paths, live_registry_text):
     assert flash["blocked"]["code"] == Api.BLOCKED_NO_ARTIFACT
 
 
-def test_a_screen_carries_the_display_flash_call_pinned_to_its_port(
-    api, paths, fake_root
-):
+def test_a_screen_carries_the_display_flash_call_pinned_to_its_port(api, paths, fake_root):
     """A port is never inferred: every screen of a type is an identical CH340,
     and PlatformIO's auto-detect was seen picking between two of them."""
     write_settings(paths, enable_flashing="true")
@@ -364,9 +361,7 @@ def test_a_screen_carries_the_display_flash_call_pinned_to_its_port(
     assert flash["params"] == {"name": ENV, "port": port}
 
 
-def test_untrack_is_offered_per_board_and_never_for_a_screen(
-    paths, live_registry_text, fake_root
-):
+def test_untrack_is_offered_per_board_and_never_for_a_screen(paths, live_registry_text, fake_root):
     """A screen is not in our registry at all - it is Klipper's, named by
     `[knomi_serial ...]` - so there is nothing to stop tracking."""
     with open(paths.registry_file, "w", encoding="utf-8") as fh:
@@ -442,9 +437,7 @@ def test_flash_is_blocked_rather_than_hidden_with_nothing_built(paths, live_regi
     assert set(blocked) == {"code", "message", "data"}
 
 
-def test_flash_is_blocked_with_something_built_but_nothing_connected(
-    paths, live_registry_text
-):
+def test_flash_is_blocked_with_something_built_but_nothing_connected(paths, live_registry_text):
     """The other half of the precondition, and a different thing to tell the
     user: "press build" versus "plug the board in". Every board of this type is
     offline in the fixture."""
@@ -498,12 +491,10 @@ def _ships_seeds(paths, *names: str) -> None:
     for name in names or ("config.BoardUSB", "config.BoardCAN"):
         with open(os.path.join(paths.fw_dir("klipper"), name), "w", encoding="utf-8") as fh:
             fh.write("CONFIG_MACH_STM32=y\n")
-            fh.write(f"CONFIG_BOARD_NAME=\"{name}\"\n")
+            fh.write(f'CONFIG_BOARD_NAME="{name}"\n')
 
 
-def test_a_tree_shipping_profiles_offers_one_instead_of_menuconfig(
-    paths, live_registry_text
-):
+def test_a_tree_shipping_profiles_offers_one_instead_of_menuconfig(paths, live_registry_text):
     """The visibly broken thing this phase exists for: a blocked Build saying
     "run menuconfig", in front of a tree that already ships the answers."""
     with open(paths.registry_file, "w", encoding="utf-8") as fh:
@@ -528,9 +519,7 @@ def test_a_tree_shipping_profiles_offers_one_instead_of_menuconfig(
     assert "configure:klipper" in _ids(target) or not api.kconfig_available()["klipper"]
 
 
-def test_a_customised_target_says_what_it_changed_and_how_to_go_back(
-    paths, live_registry_text
-):
+def test_a_customised_target_says_what_it_changed_and_how_to_go_back(paths, live_registry_text):
     from mcu_updater import profiles
 
     with open(paths.registry_file, "w", encoding="utf-8") as fh:
@@ -575,9 +564,7 @@ def test_a_customised_target_says_what_it_changed_and_how_to_go_back(
     assert back["params"]["force"] is True
 
 
-def test_a_target_with_nothing_to_seed_from_carries_no_profile_actions(
-    paths, live_registry_text
-):
+def test_a_target_with_nothing_to_seed_from_carries_no_profile_actions(paths, live_registry_text):
     with open(paths.registry_file, "w", encoding="utf-8") as fh:
         fh.write(live_registry_text)
     api = Api(paths, runner=_runner())
@@ -593,9 +580,7 @@ def test_build_and_flash_is_not_blocked_by_a_missing_artifact(paths, live_regist
     with open(paths.registry_file, "w", encoding="utf-8") as fh:
         fh.write(live_registry_text)
     write_settings(paths, enable_flashing="true")
-    make_device(
-        _bus(paths), "klipper", "stm32f072xb", "4B0036000A53594731383520"
-    )
+    make_device(_bus(paths), "klipper", "stm32f072xb", "3A0045000B64605442994611")
     api = Api(paths, runner=_runner())
 
     hexa = _targets(api)["hexadistrofusion"]
@@ -612,9 +597,11 @@ def test_configure_is_offered_per_family_not_as_a_fixed_pair(paths, live_registr
     # nothing further to add. This test is specifically about katapult being
     # offered alongside klipper.
     api = Api(paths, runner=_runner())
-    monkeypatch.setattr(Api, "kconfig_available", lambda self, families=None: {
-        "klipper": True, "katapult": True, "cartographer": True
-    })
+    monkeypatch.setattr(
+        Api,
+        "kconfig_available",
+        lambda self, families=None: {"klipper": True, "katapult": True, "cartographer": True},
+    )
 
     assert _ids(_targets(api)["bttebb36"]) & {"configure:klipper", "configure:katapult"} == {
         "configure:klipper",
@@ -651,18 +638,14 @@ def test_every_fact_in_the_old_keys_survives_the_projection(api, paths, fake_roo
     same way.
     """
     port = _add_display(paths, fake_root, api)
-    make_device(
-        fake_root / "bus", "klipper", "stm32f072xb", "4B0036000A53594731383520"
-    )
+    make_device(fake_root / "bus", "klipper", "stm32f072xb", "3A0045000B64605442994611")
 
     reg = api.registry()
     legacy_types = [api.type_status(reg, n, api.mcu_info()) for n in reg.names()]
     legacy_displays = api.pio_status()
     targets = {t["name"]: t for t in api.targets(reg, legacy_types, legacy_displays)}
 
-    assert set(targets) == {t["name"] for t in legacy_types} | {
-        d["name"] for d in legacy_displays
-    }
+    assert set(targets) == {t["name"] for t in legacy_types} | {d["name"] for d in legacy_displays}
 
     for legacy in legacy_types:
         target = targets[legacy["name"]]
@@ -671,20 +654,24 @@ def test_every_fact_in_the_old_keys_survives_the_projection(api, paths, fake_roo
         assert target["needs_flash"] in (legacy["needs_flash"], True, None)
         assert [d["id"] for d in target["devices"]] == [
             s["serial"] for s in legacy["serials"]
-        ]
-        for device, serial in zip(target["devices"], legacy["serials"], strict=True):
+        ] + [can["uuid"] for can in legacy["canbus"]]
+        for device, serial in zip(target["devices"][: len(legacy["serials"])], legacy["serials"], strict=True):
             assert device["needs_flash"] == serial["needs_flash"]
             assert device["reason"] == serial["reason"]
             assert device["state"] == serial["state"]
             assert device["version"] == serial["running_version"]
             assert device["name"] == serial["mcu"]
+        for device, can in zip(target["devices"][len(legacy["serials"]) :], legacy["canbus"], strict=True):
+            assert device["needs_flash"] == can["needs_flash"]
+            assert device["reason"] == can["reason"]
+            assert device["state"] == can["state"]
+            assert device["version"] == can["running_version"]
+            assert device["name"] == can.get("mcu")
 
     for legacy in legacy_displays:
         target = targets[legacy["name"]]
         assert target["descriptor"] == legacy["env"]
-        assert [d["id"] for d in target["devices"]] == [
-            s["configured_path"] for s in legacy["screens"]
-        ]
+        assert [d["id"] for d in target["devices"]] == [s["configured_path"] for s in legacy["screens"]]
         assert target["extra"]["module_version"] == legacy["module_version"]
         assert target["extra"]["source_version"] == legacy["source_version"]
         assert target["extra"]["reachable"] == legacy["reachable"]

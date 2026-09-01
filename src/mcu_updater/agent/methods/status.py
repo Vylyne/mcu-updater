@@ -15,6 +15,7 @@ from ...build import read_sidecar
 from ...config import Registry
 from ...devices import (
     STATE_KATAPULT,
+    STATE_KLIPPER,
     STATE_OFFLINE,
     BusDevice,
     device_state,
@@ -140,6 +141,10 @@ class StatusMixin(_Base):
         # Cached printer-object names; see _all_object_names.
         self._object_names: list[str] | None = None
         self._object_names_at = 0.0
+        # Populated by `mcu_info()` from the same Moonraker reply as the serial
+        # version map. `status()` consumes it immediately, avoiding a second
+        # identical configfile/mcu-object query just to project CAN UUIDs.
+        self._latest_canbus_info: dict[str, dict[str, Any]] = {}
 
     # -- helpers -----------------------------------------------------------
 
@@ -286,6 +291,7 @@ class StatusMixin(_Base):
         reg: Registry,
         name: str,
         versions: dict[str, dict[str, str]] | None = None,
+        canbus: dict[str, dict[str, Any]] | None = None,
     ) -> dict[str, Any]:
         """One type's state, including what each of its boards is *running*.
 
@@ -302,8 +308,12 @@ class StatusMixin(_Base):
         from ...build import git_head
 
         mcu = reg.get(name)
-        if versions is None:
+        loaded_versions = versions is None
+        if loaded_versions:
             versions = self.mcu_info()
+        assert versions is not None
+        if canbus is None:
+            canbus = self._latest_canbus_info if loaded_versions else self.canbus_info()
         families = firmware.load(self.paths)
         application = mcu.application(families)
         fw_head = git_head(firmware.resolve(self.paths, application, families).source_dir(self.paths))
@@ -334,6 +344,28 @@ class StatusMixin(_Base):
             )
             serials.append(entry)
 
+        canbus_devices = []
+        for uuid in mcu.canbus_uuids:
+            cross = canbus.get(uuid.lower())
+            info = self.flash_state(
+                uuid,
+                {uuid: cross} if cross is not None else {},
+                fw_head,
+                artifact_sha=artifact_sha,
+                flashlog=flashlog,
+                built_version=built_version,
+            )
+            canbus_devices.append(
+                {
+                    "uuid": uuid,
+                    # A missing version cannot distinguish an offline node from
+                    # one waiting in Katapult, so it is deliberately unknown -
+                    # never silently dropped as an offline serial would be.
+                    "state": STATE_KLIPPER if info["running_version"] else "unknown",
+                    **info,
+                }
+            )
+
         out: dict[str, Any] = {
             "name": name,
             "chipset": mcu.chipset,
@@ -344,13 +376,16 @@ class StatusMixin(_Base):
             # only artifact anyone looks at is artifacts.klipper.
             "firmware": application,
             "serials": serials,
+            "canbus": canbus_devices,
             "artifacts": {fw: self.artifact(name, fw) for fw in mcu.fw_order()},
             "katapult_installed": mcu.bootloader(families) is not None,
             # True when at least one board is behind the source tree. Distinct from
             # the artifact being stale: "needs rebuilding" and "needs flashing" are
             # different questions, and reporting only the first is what let a board
             # 90 commits behind show as up to date.
-            "needs_flash": any(s.get("needs_flash") for s in serials),
+            "needs_flash": any(
+                s.get("needs_flash") for s in serials + canbus_devices
+            ),
         }
         for fw in mcu.fw_order():
             cfg = mcu.fw_get(fw)
@@ -405,7 +440,8 @@ class StatusMixin(_Base):
         # Built once and projected, rather than computed twice. `targets` says
         # the same things as these two in one shape; if it ever needs a fact
         # they do not carry, that is a missing key here, not there.
-        types = [self.type_status(reg, n, versions) for n in reg.names()]
+        canbus = self._latest_canbus_info
+        types = [self.type_status(reg, n, versions, canbus) for n in reg.names()]
         displays = self.pio_status()
         return {
             "bus": self.bus(reg),
@@ -691,6 +727,44 @@ class StatusMixin(_Base):
                                 }
                             ]
                             if "fw.serial.remove" in allowed
+                            else []
+                        ),
+                    ),
+                }
+            )
+
+        for can in payload["canbus"]:
+            # CAN has no passive equivalent of /dev/serial/by-id liveness: an
+            # unknown UUID may be offline or in Katapult. It stays eligible so
+            # the UI preview agrees with the batch's required flash attempt.
+            devices.append(
+                {
+                    "id": can["uuid"],
+                    "name": can.get("mcu"),
+                    "present": True,
+                    "state": can["state"],
+                    "path": None,
+                    "version": can.get("running_version"),
+                    "confidence": can.get("confidence"),
+                    **self._device_json(DeviceStatus(can.get("reason"))),
+                    "actions": self._device_actions(
+                        allowed,
+                        flash=("fw.flash", {"name": name, "uuid": can["uuid"]}),
+                        present=True,
+                        has_artifact=bool(artifact.get("has_bin")),
+                        what=f"{fw} firmware",
+                        label=can["uuid"],
+                        extra=(
+                            [
+                                {
+                                    "id": "untrack",
+                                    "label": "Stop tracking",
+                                    "method": "fw.canbus.remove",
+                                    "params": {"name": name, "uuid": can["uuid"]},
+                                    "blocked": None,
+                                }
+                            ]
+                            if "fw.canbus.remove" in allowed
                             else []
                         ),
                     ),
@@ -1153,7 +1227,8 @@ class StatusMixin(_Base):
 
         reg = self.registry()
         versions = self.mcu_info()
-        return {"types": [self.type_status(reg, n, versions) for n in reg.names()]}
+        canbus = self._latest_canbus_info
+        return {"types": [self.type_status(reg, n, versions, canbus) for n in reg.names()]}
 
     def target_get(self, args: dict) -> dict[str, Any]:
         """One target's full detail - what a caller used to need two separate
@@ -1887,6 +1962,7 @@ class StatusMixin(_Base):
         """
         names = self._mcu_object_names()
         if not names:
+            self._latest_canbus_info = {}
             return {}
 
         query: dict[str, Any] = {"configfile": ["settings"]}
@@ -1895,6 +1971,7 @@ class StatusMixin(_Base):
         res = self._probe("printer.objects.query", {"objects": query})
         status = (res or {}).get("status")
         if not isinstance(status, dict):
+            self._latest_canbus_info = {}
             return {}
 
         settings = (status.get("configfile") or {}).get("settings") or {}
@@ -1902,14 +1979,23 @@ class StatusMixin(_Base):
         # the case from the config file - so `[mcu EBBT0]` is object "mcu EBBT0" and
         # setting "mcu ebbt0". Match on the lowered form.
         serial_by_section = {}
+        uuid_by_section = {}
         for section, values in settings.items():
             if not (section == "mcu" or section.startswith("mcu ")):
                 continue
             path = (values or {}).get("serial")
             if isinstance(path, str) and path:
                 serial_by_section[section.lower()] = _serial_from_path(path)
+            uuid = (values or {}).get("canbus_uuid")
+            if isinstance(uuid, str) and uuid:
+                interface = (values or {}).get("canbus_interface")
+                uuid_by_section[section.lower()] = (
+                    uuid.lower(),
+                    interface if isinstance(interface, str) and interface else "can0",
+                )
 
         out: dict[str, dict[str, str]] = {}
+        canbus: dict[str, dict[str, Any]] = {}
         for name in names:
             version = (status.get(name) or {}).get("mcu_version")
             serial = serial_by_section.get(name.lower())
@@ -1918,6 +2004,19 @@ class StatusMixin(_Base):
                 # exactly what Mainsail's own System Loads panel shows, and a serial
                 # is meaningless until you know which MCU it is.
                 out[serial] = {"version": version, "mcu": name}
+            mapped = uuid_by_section.get(name.lower())
+            if mapped:
+                uuid, interface = mapped
+                constants = (status.get(name) or {}).get("mcu_constants")
+                canbus[uuid] = {
+                    "mcu": name,
+                    "version": version if isinstance(version, str) and version else None,
+                    "bridge": (
+                        "CANBUS_BRIDGE" in constants if isinstance(constants, dict) else None
+                    ),
+                    "interface": interface,
+                }
+        self._latest_canbus_info = canbus
         return out
 
     def canbus_info(self) -> dict[str, dict[str, Any]]:

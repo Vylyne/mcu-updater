@@ -430,6 +430,15 @@ a type can be offline while its neighbour waits in Katapult. `fw.flash` writes
 both kinds now — a board's action carries `serial`, a screen's carries `port` —
 so the reader never has to branch on which it is holding.
 
+For an MCU target, `devices` contains both tracked USB serials and tracked CAN
+UUIDs. A CAN device's flash action carries `uuid` (rather than `serial`), and a
+UUID whose liveness cannot be established is reported as `state: "unknown"`,
+`version: null`, and `unknown_version`. It deliberately remains `present: true`:
+CAN cannot passively distinguish an offline node from one in Katapult, so the
+flash attempt is the only safe liveness check. Keeping it eligible ensures the
+per-type preview matches `fw.flash_all`, which must attempt an
+unknown-liveness UUID rather than silently omitting it.
+
 `needs_flash` is tri-state at both levels, and the target's is `true` if any
 device is, `false` only if every device provably is not, and `null` otherwise.
 `any()` would read "cannot tell" as "nothing to do" and report a fleet nobody

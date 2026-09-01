@@ -240,6 +240,28 @@ def test_a_type_needs_flashing_when_any_one_board_does(api, fake_root):
     assert waiting and waiting[0]["tone"] == TONE_ATTENTION
 
 
+def test_a_tracked_can_uuid_is_projected_onto_its_type(api):
+    """Removing CAN projection from `_mcu_target` must not hide the board.
+
+    A CAN UUID is a configured board even when Klipper has no matching
+    ``[mcu ...] canbus_uuid:`` cross-reference to establish its liveness.
+    It belongs under its type so the user can see and manage it rather than
+    looking like it vanished after adoption.
+    """
+    uuid = "bcb5346fc731"
+    api.dispatch("fw.canbus.add", {"name": "hexadistrofusion", "uuid": uuid})
+
+    devices = _targets(api)["hexadistrofusion"]["devices"]
+    can = next(device for device in devices if device["id"] == uuid)
+
+    assert can["name"] is None
+    assert can["present"] is True
+    assert can["state"] == "unknown"
+    assert can["version"] is None
+    assert can["needs_flash"] is None
+    assert can["reason"] == "unknown_version"
+
+
 def test_a_screen_that_cannot_be_reached_is_offline_not_current(api, paths, fake_root):
     """A port that does not resolve says nothing about the firmware on the far
     end, and the klippy module swallows the failure entirely."""

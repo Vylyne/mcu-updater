@@ -3,8 +3,35 @@
 from __future__ import annotations
 
 import dataclasses
+import subprocess
+import sys
+from pathlib import Path
 
 from mcu_updater.discovery import usb
+
+
+def test_usb_topology_runs_from_a_checkout_without_an_installed_package(tmp_path):
+    """The documented script command must find this checkout's ``src`` package."""
+    root = tmp_path / "usb"
+    _usb_device(root, "usb1")
+
+    result = subprocess.run(
+        [
+            sys.executable,
+            "-I",
+            "-S",
+            str(Path(__file__).parents[1] / "scripts" / "usb_topology.py"),
+            "--root",
+            str(root),
+        ],
+        cwd=Path(__file__).parents[1],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "usb1" in result.stdout
 
 
 def _usb_device(root, name: str, *, serial: str = "", product: str = "") -> None:

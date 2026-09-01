@@ -1267,6 +1267,7 @@ class StatusMixin(_Base):
         out["interfaces"] = [dataclasses.asdict(interface) for interface in result.interfaces]
         out["failures"] = [dataclasses.asdict(failure) for failure in result.failures]
 
+        ignored = set(settings.ignored_canbus_uuids)
         devices = []
         for sighting in result.sightings:
             elsewhere = reg.find_types_for_uuid(sighting.uuid)
@@ -1277,6 +1278,7 @@ class StatusMixin(_Base):
                     "application": sighting.application,
                     "state": sighting.state,
                     "tracked_by": elsewhere[0] if elsewhere else None,
+                    "ignored": sighting.uuid in ignored,
                 }
             )
         out["devices"] = devices
@@ -1475,6 +1477,8 @@ class StatusMixin(_Base):
         "fw.dfu.scan": "dfu_scan",
         "fw.bootsel.scan": "bootsel_scan",
         "fw.canbus.scan": "canbus_scan",
+        "fw.canbus.ignore": "canbus_ignore",
+        "fw.canbus.unignore": "canbus_unignore",
         "fw.device.list": "device_list",
         "fw.artifacts": "artifacts",
         "fw.settings.get": "settings_get",

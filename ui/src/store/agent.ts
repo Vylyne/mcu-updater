@@ -87,6 +87,7 @@ export interface CanbusScanDevice {
   application: string;
   state: string;
   tracked_by: string | null;
+  ignored: boolean;
 }
 
 export interface CanbusDevice extends CanbusScanDevice {
@@ -527,6 +528,34 @@ export async function adoptCanbus(
   if (client === null) return false;
   try {
     await callAgent(client, "fw.canbus.add", { name, uuid });
+    state.error = null;
+    void refreshStatus();
+    return true;
+  } catch (error) {
+    state.error = error as NormalizedAgentError;
+    return false;
+  }
+}
+
+/** Persistently hide every sighting of an unclaimed CAN UUID. */
+export async function ignoreCanbus(uuid: string): Promise<boolean> {
+  if (client === null) return false;
+  try {
+    await callAgent(client, "fw.canbus.ignore", { uuid });
+    state.error = null;
+    void refreshStatus();
+    return true;
+  } catch (error) {
+    state.error = error as NormalizedAgentError;
+    return false;
+  }
+}
+
+/** Reverse of ignoreCanbus - restores every sighting of the CAN UUID. */
+export async function unignoreCanbus(uuid: string): Promise<boolean> {
+  if (client === null) return false;
+  try {
+    await callAgent(client, "fw.canbus.unignore", { uuid });
     state.error = null;
     void refreshStatus();
     return true;

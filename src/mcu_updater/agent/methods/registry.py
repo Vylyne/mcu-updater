@@ -561,4 +561,24 @@ class RegistryMixin(_Base):
             self._changed()
         return {"serial": serial, "ignored": False}
 
+    def canbus_ignore(self, args: dict) -> dict[str, Any]:
+        """Hide every sighting of a CAN UUID from the new-board flow. Idempotent."""
+        uuid = self._require_str(args, "uuid")
+        current = self.settings()
+        if uuid not in current.ignored_canbus_uuids:
+            current.ignored_canbus_uuids.append(uuid)
+            save_settings(self.paths.settings_file, current)
+            self._changed()
+        return {"uuid": uuid, "ignored": True}
+
+    def canbus_unignore(self, args: dict) -> dict[str, Any]:
+        """Reverse `canbus_ignore`. Idempotent."""
+        uuid = self._require_str(args, "uuid")
+        current = self.settings()
+        if uuid in current.ignored_canbus_uuids:
+            current.ignored_canbus_uuids.remove(uuid)
+            save_settings(self.paths.settings_file, current)
+            self._changed()
+        return {"uuid": uuid, "ignored": False}
+
     # -- jobs --------------------------------------------------------------

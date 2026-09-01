@@ -9,6 +9,7 @@ import {
   disconnect,
   fetchTargetDetail,
   invokeAction,
+  ignoreCanbus,
   kconfigEnter,
   openKconfig,
   refresh,
@@ -16,6 +17,7 @@ import {
   startAddMcu,
   state,
   updateSettings,
+  unignoreCanbus,
 } from "./agent";
 
 class FakeWebSocket implements WebSocketLike {
@@ -705,6 +707,44 @@ describe("Phase 8: settings, bus adoption, add_mcu", () => {
       name: "bttebb36",
       serial: "1100...-if00",
     });
+    socket.message({ jsonrpc: "2.0", id: request.id, result: {} });
+    expect(await call).toBe(true);
+  });
+
+  it("ignoreCanbus calls fw.canbus.ignore with the persistent UUID identity", async () => {
+    let socket!: FakeWebSocket;
+    connect("ws://test/websocket", () => {
+      socket = new FakeWebSocket();
+      return socket;
+    });
+    socket.open();
+    await drainHandshake(socket);
+
+    const before = socket.sent.length;
+    const call = ignoreCanbus("abc123");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const request = JSON.parse(socket.sent[before]);
+    expect(request.params.method).toBe("fw.canbus.ignore");
+    expect(request.params.arguments).toEqual({ uuid: "abc123" });
+    socket.message({ jsonrpc: "2.0", id: request.id, result: {} });
+    expect(await call).toBe(true);
+  });
+
+  it("unignoreCanbus calls fw.canbus.unignore with the persistent UUID identity", async () => {
+    let socket!: FakeWebSocket;
+    connect("ws://test/websocket", () => {
+      socket = new FakeWebSocket();
+      return socket;
+    });
+    socket.open();
+    await drainHandshake(socket);
+
+    const before = socket.sent.length;
+    const call = unignoreCanbus("abc123");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const request = JSON.parse(socket.sent[before]);
+    expect(request.params.method).toBe("fw.canbus.unignore");
+    expect(request.params.arguments).toEqual({ uuid: "abc123" });
     socket.message({ jsonrpc: "2.0", id: request.id, result: {} });
     expect(await call).toBe(true);
   });

@@ -89,6 +89,59 @@ def test_an_unclaimed_board_is_reported_untracked(api, fake_root, monkeypatch):
     assert device["application"] == "Klipper"
     assert device["state"] == "klipper"
     assert device["tracked_by"] is None
+    assert device["ignored"] is False
+
+
+def test_canbus_ignore_marks_every_sighting_but_keeps_it_listed(
+    api, fake_root, monkeypatch
+):
+    net_root = _make_can_interface(fake_root, "can0")
+    _make_can_interface(fake_root, "can1")
+    api.paths = dataclasses.replace(api.paths, can_sysfs_net=net_root)
+    _make_flashtool(api.paths)
+    monkeypatch.setattr(
+        canbus_mod, "run_streamed", _fake_query_answering("bcb5346fc731")
+    )
+
+    first = api.dispatch("fw.canbus.ignore", {"uuid": "bcb5346fc731"})
+    second = api.dispatch("fw.canbus.ignore", {"uuid": "bcb5346fc731"})
+    devices = api.dispatch("fw.canbus.scan")["devices"]
+
+    assert first == second == {"uuid": "bcb5346fc731", "ignored": True}
+    assert len(devices) == 2
+    assert all(device["ignored"] is True for device in devices)
+    assert api.settings().ignored_canbus_uuids == ["bcb5346fc731"]
+
+
+def test_canbus_unignore_reverses_it_and_is_idempotent(api):
+    api.dispatch("fw.canbus.ignore", {"uuid": "bcb5346fc731"})
+
+    first = api.dispatch("fw.canbus.unignore", {"uuid": "bcb5346fc731"})
+    second = api.dispatch("fw.canbus.unignore", {"uuid": "bcb5346fc731"})
+
+    assert first == second == {"uuid": "bcb5346fc731", "ignored": False}
+    assert api.settings().ignored_canbus_uuids == []
+
+
+@pytest.mark.parametrize("method", ["fw.canbus.ignore", "fw.canbus.unignore"])
+@pytest.mark.parametrize("args", [{}, {"uuid": ""}, {"uuid": "  "}])
+def test_canbus_ignore_methods_require_a_uuid(api, method, args):
+    with pytest.raises(RpcError) as exc:
+        api.dispatch(method, args)
+    assert exc.value.code == ERR_INVALID_PARAMS
+
+
+def test_canbus_ignore_announces_only_an_actual_change(paths, live_registry_text):
+    with open(paths.registry_file, "w", encoding="utf-8") as fh:
+        fh.write(live_registry_text)
+    changes: list[int] = []
+    api = Api(paths, on_change=lambda: changes.append(1))
+
+    api.dispatch("fw.canbus.ignore", {"uuid": "bcb5346fc731"})
+    api.dispatch("fw.canbus.ignore", {"uuid": "bcb5346fc731"})
+    api.dispatch("fw.canbus.unignore", {"uuid": "bcb5346fc731"})
+
+    assert len(changes) == 2
 
 
 @pytest.mark.skipif(os.name == "nt", reason="symlink fixtures require POSIX")
@@ -200,6 +253,8 @@ def test_the_scan_is_available_to_a_read_only_agent(api):
     assert "fw.canbus.scan" in caps
     assert "fw.canbus.add" in caps
     assert "fw.canbus.remove" in caps
+    assert "fw.canbus.ignore" in caps
+    assert "fw.canbus.unignore" in caps
 
 
 # --------------------------------------------------------------------------

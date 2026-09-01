@@ -98,6 +98,10 @@ class Settings:
     #: `bus()`'s output once ignored, just marked - see `serialize_device`.
     ignored_serials: list[str] = dataclasses.field(default_factory=list)
 
+    #: CAN UUID counterpart to `ignored_serials`. UUID identity is stable across
+    #: interfaces, so one dismissal applies to every sighting of the board.
+    ignored_canbus_uuids: list[str] = dataclasses.field(default_factory=list)
+
     @property
     def resolved_jobs(self) -> int:
         """make_jobs, or a sensible auto value if it was set to a negative."""
@@ -127,7 +131,7 @@ _INT_FIELDS = {"make_jobs", "log_ring_size"}
 #: needs this same list to validate a browser's string-typed values.
 STR_FIELDS = {"service_backend", "platformio_bin", "flashtool_path", "ui_accent_color"}
 _STR_FIELDS = STR_FIELDS
-_LIST_FIELDS = {"stop_services", "ignored_serials"}
+_LIST_FIELDS = {"stop_services", "ignored_serials", "ignored_canbus_uuids"}
 #: Public for the same reason as `BOOL_FIELDS`/`STR_FIELDS`: a caller outside
 #: this module that needs to know which fields are list-typed should read this
 #: rather than keep its own copy in sync by hand.

@@ -109,7 +109,8 @@ previous updater build happened to leave in `out/`.
 
 The `[updater]` section holds `make_jobs`, `clean_before_build`,
 `reseed_on_build`, `service`, `service_backend`, `dry_run`, `enable_flashing`,
-`allow_flash_while_printing`, `log_ring_size` and `platformio_bin`. All
+`allow_flash_while_printing`, `log_ring_size`, `platformio_bin`, and the
+UI-managed `ignored_serials` and `ignored_canbus_uuids` device lists. All
 optional. A PlatformIO firmware family's own source tree is named on its
 `[firmware ...]` section, not in `[updater]`.
 

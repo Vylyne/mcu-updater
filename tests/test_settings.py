@@ -154,6 +154,16 @@ def test_save_then_load_round_trips_a_blank_ignored_serials(paths):
     assert load_settings(paths.settings_file).ignored_serials == []
 
 
+def test_save_then_load_round_trips_ignored_canbus_uuids(paths):
+    original = Settings(ignored_canbus_uuids=["bcb5346fc731"])
+    save_settings(paths.settings_file, original)
+
+    assert load_settings(paths.settings_file) == original
+    with open(paths.settings_file, encoding="utf-8") as fh:
+        text = fh.read()
+    assert "ignored_canbus_uuids:\n    bcb5346fc731\n" in text
+
+
 def test_save_then_load_round_trips_an_accent_colour(paths):
     original = Settings(ui_accent_color="#2196f3")
     save_settings(paths.settings_file, original)

@@ -20,8 +20,10 @@ import {
   adoptSerial,
   adoptCanbus,
   hasCapability,
+  ignoreCanbus,
   ignoreSerial,
   state,
+  unignoreCanbus,
   unignoreSerial,
 } from "../store/agent";
 import type { BusDevice, Target } from "../api/targets";
@@ -33,6 +35,7 @@ import TypeDialog from "./TypeDialog.vue";
 import {
   mdiCloseCircleOutline,
   mdiHelpCircleOutline,
+  mdiLan,
   mdiPlusCircleOutline,
   mdiUndoVariant,
   mdiUsb,
@@ -43,11 +46,20 @@ const untracked = computed(() =>
   devices.value.filter((d) => !d.tracked_by && !d.ignored),
 );
 const ignored = computed(() => devices.value.filter((d) => d.ignored));
-const canbusDevices = computed<CanbusDevice[]>(
+const canbusSightings = computed<CanbusDevice[]>(
   () =>
     (state.canbus?.devices as CanbusScanDevice[] | undefined)
       ?.filter((d) => !d.tracked_by)
       .map((d) => ({ ...d, kind: "can" as const })) ?? [],
+);
+const canbusDevices = computed(() =>
+  canbusSightings.value.filter((d) => !d.ignored),
+);
+const ignoredCanbus = computed(() =>
+  canbusSightings.value.filter((d) => d.ignored),
+);
+const ignoredCount = computed(
+  () => ignored.value.length + ignoredCanbus.value.length,
 );
 
 // Only MCU types can adopt a serial (fw.serial.add) - a display is a
@@ -61,6 +73,8 @@ const mcuTypeNames = computed(() => {
 
 const canAdopt = computed(() => hasCapability("fw.serial.add"));
 const canAdoptCan = computed(() => hasCapability("fw.canbus.add"));
+const canIgnoreCan = computed(() => hasCapability("fw.canbus.ignore"));
+const canUnignoreCan = computed(() => hasCapability("fw.canbus.unignore"));
 
 const canManageTypes = computed(
   () =>
@@ -158,6 +172,28 @@ async function adoptCan(device: CanbusDevice, name: string): Promise<void> {
   }
 }
 
+async function ignoreCan(device: CanbusDevice): Promise<void> {
+  const key = `can:${device.uuid}`;
+  if (busy[key]) return;
+  busy[key] = true;
+  try {
+    await ignoreCanbus(device.uuid);
+  } finally {
+    busy[key] = false;
+  }
+}
+
+async function unignoreCan(device: CanbusDevice): Promise<void> {
+  const key = `can:${device.uuid}`;
+  if (busy[key]) return;
+  busy[key] = true;
+  try {
+    await unignoreCanbus(device.uuid);
+  } finally {
+    busy[key] = false;
+  }
+}
+
 async function ignore(device: BusDevice): Promise<void> {
   if (busy[device.serial]) return;
   busy[device.serial] = true;
@@ -196,6 +232,7 @@ function openNewType(device: BusDevice): void {
       untracked.length ||
       canbusDevices.length ||
       ignored.length ||
+      ignoredCanbus.length ||
       state.canbusError
     "
     title="Untracked devices"
@@ -274,16 +311,17 @@ function openNewType(device: BusDevice): void {
         </button>
       </li>
       <li v-for="device in canbusDevices" :key="canKey(device)">
-        <UiIcon :path="mdiUsb" size="x-small" />
+        <UiIcon :path="mdiLan" size="x-small" />
         <span class="device-identity">
           <span class="text--secondary">{{ device.uuid }}</span>
           <span class="text--disabled text-caption">
-            CAN {{ device.interface }} · {{ device.application }} ({{
-              device.state
-            }})
+            CAN {{ device.interface }} · {{ device.state }}
           </span>
         </span>
         <span class="spacer" />
+        <span class="device-firmware text-caption text--disabled">{{
+          device.application
+        }}</span>
         <span
           v-if="showCanAdoptItems"
           :ref="(el) => setRowRef(canKey(device), el)"
@@ -311,11 +349,23 @@ function openNewType(device: BusDevice): void {
             </button>
           </div>
         </span>
+        <button
+          v-if="canIgnoreCan"
+          type="button"
+          class="btn-icon btn-icon--small btn-icon--warning"
+          title="Ignore"
+          :disabled="busy[`can:${device.uuid}`]"
+          @click="ignoreCan(device)"
+        >
+          <UiIcon :path="mdiCloseCircleOutline" size="x-small" />
+        </button>
       </li>
     </ul>
 
-    <details v-if="ignored.length" class="ignored-devices">
-      <summary>Ignored ({{ ignored.length }})</summary>
+    <details v-if="ignoredCount" class="ignored-devices">
+      <summary class="text-caption text--disabled">
+        Ignored ({{ ignoredCount }})
+      </summary>
       <ul class="devices">
         <li v-for="device in ignored" :key="device.serial">
           <UiIcon
@@ -337,6 +387,29 @@ function openNewType(device: BusDevice): void {
             title="Restore"
             :disabled="busy[device.serial]"
             @click="unignore(device)"
+          >
+            <UiIcon :path="mdiUndoVariant" size="x-small" />
+          </button>
+        </li>
+        <li v-for="device in ignoredCanbus" :key="canKey(device)">
+          <UiIcon :path="mdiLan" size="x-small" />
+          <span class="device-identity">
+            <span class="text--secondary">{{ device.uuid }}</span>
+            <span class="text--disabled text-caption">
+              CAN {{ device.interface }} · {{ device.state }}
+            </span>
+          </span>
+          <span class="spacer" />
+          <span class="device-firmware text-caption text--disabled">{{
+            device.application
+          }}</span>
+          <button
+            v-if="canUnignoreCan"
+            type="button"
+            class="btn-icon btn-icon--small"
+            title="Restore"
+            :disabled="busy[`can:${device.uuid}`]"
+            @click="unignoreCan(device)"
           >
             <UiIcon :path="mdiUndoVariant" size="x-small" />
           </button>

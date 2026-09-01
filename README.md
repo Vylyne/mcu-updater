@@ -61,7 +61,7 @@ Firmware and boards:
 - [x] Displays re-identified at flash time, once the ports are free
 - [x] Discovery surface — one vocabulary for where a device is and how sure we are
 - [x] CAN device discovery and tracking by `canbus_uuid`
-- [x] Ignore an untracked bus device
+- [x] Ignore an untracked USB or CAN bus device
 
 Interfaces:
 

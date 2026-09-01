@@ -25,6 +25,8 @@ and `discovery/registry.py` each say so in their own docstring.
 
 CAN discovery and flashing are implemented. CAN nodes are identified by their
 UUID and tracked in `canbus_uuids`; Linux interface names are never persisted.
+Ignored untracked nodes follow the same identity rule: `ignored_canbus_uuids`
+stores a UUID once and marks every interface sighting ignored until restored.
 Discovery scans every current network device whose sysfs type is `ARPHRD_CAN`,
 retains successful results when another interface reports an error, and keeps
 non-USB CAN nodes in the result. USB adapter topology metadata is attached when

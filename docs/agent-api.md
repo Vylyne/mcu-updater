@@ -122,6 +122,8 @@ application error (see `data.code`), `-32603` internal.
 | `fw.dfu.scan` | — | `{devices, count, ready, reason, message}` — read-only |
 | `fw.bootsel.scan` | — | `{devices, count, mounts, mount_count, ready, reason, message}` — read-only |
 | `fw.canbus.scan` | — | `{interfaces, devices, failures, count, message}` — read-only, run only when called |
+| `fw.canbus.ignore` | `uuid` (required) | `{uuid, ignored: true}` — hide every sighting of a CAN UUID from the "new board?" flow; idempotent, flag not filter |
+| `fw.canbus.unignore` | `uuid` (required) | `{uuid, ignored: false}` — reverse `fw.canbus.ignore`; idempotent |
 | `fw.add_mcu.start` | `name`, `dfu_serial?` (STM32 only) | `{job_id, job, dfu_serial, bootsel_id}` — **off by default** |
 | `fw.artifacts` | `name` (required) | `{<fw>: Artifact, ...}`, one key per family the type declares |
 | `fw.settings.get` | — | `{settings: Settings}` |
@@ -459,12 +461,11 @@ behaviour preference, and are deliberately absent - editing them from a
 browser risks a real flash proceeding with Klipper never stopped. They stay a
 cfg-file-only edit.
 
-`ignored_serials` is also absent from `SETTABLE`, for a different reason: it
-is a device list, not a behaviour preference, and going through
+`ignored_serials` and `ignored_canbus_uuids` are also absent from `SETTABLE`,
+for a different reason: they are device lists, not behaviour preferences, and going through
 `fw.settings.set` would hit `_coerce_setting`'s int-fallthrough and refuse a
-JSON array as "must be a whole number". It is read and write through
-`fw.bus.ignore` / `fw.bus.unignore` instead - see those in the methods table
-and `BusDevice`'s `ignored` key above.
+JSON array as "must be a whole number". They are read and written through
+their dedicated `fw.bus.*` and `fw.canbus.*` ignore methods instead.
 
 `ui_accent_color` is the one `SETTABLE` key that isn't a behaviour preference
 at all - the agent never reads it, only stores and serves it back, so every
@@ -967,11 +968,9 @@ that question is answered separately, via `printer.cfg`'s own
 
 Runs **only** when called — never from `fw.status`, never swept into
 `discovery.confirm`'s USB-flash sources, never on a timer. The standalone panel
-calls it alongside `fw.status` on initial connection and manual refresh, while
-keeping the two results independent.
-The standalone UI starts this scan alongside `fw.status` on initial connection
-and manual refresh, so USB status is displayed as soon as it arrives even when
-CAN queries are slow or fail. Older scan responses cannot replace a newer
+starts it alongside `fw.status` on initial connection and manual refresh. The
+results stay independent, so USB status is displayed as soon as it arrives even
+when CAN queries are slow or fail. Older scan responses cannot replace a newer
 refresh.
 
 Mirrors `fw.dfu.scan`/`fw.bootsel.scan`'s report-don't-raise shape:
@@ -980,7 +979,7 @@ describing the situation *is* the work here, so this never throws for
 
 | `interfaces` | Every host network device whose sysfs `type` is `280` (`ARPHRD_CAN`) — read from the kernel, never assumed from a name like `can0`. Each entry is `{name, adapter}`; `adapter` is the shared USB inventory record when the interface belongs to a USB adapter, otherwise `null`. Empty means no CAN hardware on this host at all. |
 | --- | --- |
-| `devices` | One entry per unclaimed board that answered, across every interface: `{uuid, interface, application, state, tracked_by}`. `application` is exactly what flashtool printed (`"Klipper"`, `"Katapult"`, or `"Unknown"`); `interface` is informational only for *this* scan — Linux CAN interface names are enumeration order, not stable identity, so nothing here persists one. `tracked_by` is the type name if `uuid` is already in that type's `canbus_uuids:`, else `null` — mirroring `fw.bus.scan`'s `BusDevice.tracked_by`. |
+| `devices` | One entry per unclaimed board that answered, across every interface: `{uuid, interface, application, state, tracked_by, ignored}`. `application` is exactly what flashtool printed (`"Klipper"`, `"Katapult"`, or `"Unknown"`); `interface` is informational only for *this* scan — Linux CAN interface names are enumeration order, not stable identity, so nothing here persists one. `tracked_by` is the type name if `uuid` is already in that type's `canbus_uuids:`, else `null`. `ignored` is set through `fw.canbus.ignore`; it is a flag rather than a filter, and applies to every sighting of the UUID on every interface. |
 | `failures` | Per-interface query failures, `{interface, reason, returncode}`. A failed interface does not discard successful sightings from other interfaces. |
 | `count` | `len(devices)`. |
 | `message` | Set whenever there is nothing to show — no CAN interfaces present, `flashtool.py` itself is missing, every query failed, or no unclaimed board answered — otherwise `null`. |

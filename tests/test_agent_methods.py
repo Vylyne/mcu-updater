@@ -882,6 +882,7 @@ def test_settings_set_does_not_eat_the_registry_it_shares_a_file_with(api, paths
         "cartographer",
         "flylllplusbuffer",
         "hexadistrofusion",
+        "mmb_can",
     ]
     with open(paths.main_config, encoding="utf-8") as fh:
         out = fh.read()

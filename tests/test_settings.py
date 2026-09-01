@@ -229,6 +229,7 @@ def test_saving_settings_keeps_the_mcu_sections_and_the_comments(paths, live_reg
         "cartographer",
         "flylllplusbuffer",
         "hexadistrofusion",
+        "mmb_can",
     ]
     assert len(reg.all_serials()) == 12
     assert load_settings(paths.settings_file).enable_flashing is True

@@ -215,7 +215,7 @@ def test_saving_settings_keeps_the_mcu_sections_and_the_comments(paths, live_reg
 
     with open(paths.main_config, encoding="utf-8") as fh:
         out = fh.read()
-    assert "# mcu-updater configuration." in out
+    assert "# Representative registry for tests." in out
     assert "src/Makefile -> src-y += buffer.c" in out
 
     reg = Registry.load(paths)

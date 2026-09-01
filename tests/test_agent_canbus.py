@@ -345,6 +345,6 @@ def test_a_mutation_preserves_comments_and_other_sections(api, paths):
 
     with open(paths.main_config, encoding="utf-8") as fh:
         out = fh.read()
-    assert "# mcu-updater configuration." in out
+    assert "# Representative registry for tests." in out
     assert "src/Makefile -> src-y += buffer.c" in out
     assert out.count("[type hexadistrofusion]") == 1

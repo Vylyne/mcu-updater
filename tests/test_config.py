@@ -30,7 +30,7 @@ def _read(paths) -> str:
 
 
 # --------------------------------------------------------------------------
-# the real registry
+# the representative test registry
 # --------------------------------------------------------------------------
 
 
@@ -49,6 +49,14 @@ def test_loads_the_live_registry(paths, live_registry_text):
     assert len(reg.all_serials()) == 13
     assert len(reg.get("flylllplusbuffer").serials) == 6
     assert reg.get("hexadistrofusion").chipset == "stm32f072xb"
+
+
+def test_the_documented_example_loads_and_round_trips(paths, example_registry_text):
+    """The root config is documentation, not incidental agent-test data."""
+    _write(paths, example_registry_text)
+    reg = Registry.load(paths)
+    reg.save(paths)
+    assert _read(paths) == example_registry_text
 
 
 def test_makefile_patches_parse_from_the_arrow_form(paths, live_registry_text):
@@ -111,7 +119,7 @@ def test_comments_survive_the_panel_adding_a_serial(paths, live_registry_text):
     reg.save(paths)
 
     out = _read(paths)
-    assert "# mcu-updater configuration." in out
+    assert "# Representative registry for tests." in out
     assert "NEWBOARD-if00" in out
     assert "src/Makefile -> src-y += buffer.c" in out
 
@@ -161,7 +169,7 @@ def test_removing_a_type_removes_only_its_section(paths, live_registry_text):
     out = _read(paths)
     assert "OctopusMAXEZ" not in out
     assert "[type bttebb36]" in out
-    assert "# mcu-updater configuration." in out
+    assert "# Representative registry for tests." in out
 
 
 def test_a_new_type_is_appended_and_reloads(paths, live_registry_text):
@@ -694,7 +702,7 @@ def test_canbus_uuid_round_trips_through_save_and_load(paths, live_registry_text
     assert "bcb5346fc731" in text
     # Comments and the rest of the file survive, same guarantee `serials:`
     # already gets.
-    assert "# mcu-updater configuration." in text
+    assert "# Representative registry for tests." in text
 
     reloaded = Registry.load(paths)
     assert reloaded.get("hexadistrofusion").canbus_uuids == ["bcb5346fc731"]

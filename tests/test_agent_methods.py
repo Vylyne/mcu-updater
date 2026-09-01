@@ -602,7 +602,7 @@ def test_a_mutation_preserves_comments_and_other_sections(api, paths, fake_root)
 
     with open(paths.main_config, encoding="utf-8") as fh:
         out = fh.read()
-    assert "# mcu-updater configuration." in out
+    assert "# Representative registry for tests." in out
     assert "src/Makefile -> src-y += buffer.c" in out
     assert out.count("[type bttebb36]") == 1
 
@@ -878,7 +878,7 @@ def test_settings_set_does_not_eat_the_registry_it_shares_a_file_with(api, paths
     ]
     with open(paths.main_config, encoding="utf-8") as fh:
         out = fh.read()
-    assert "# mcu-updater configuration." in out
+    assert "# Representative registry for tests." in out
     assert "src/Makefile -> src-y += buffer.c" in out
 
 

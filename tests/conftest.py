@@ -17,9 +17,11 @@ from mcu_updater.settings import Settings
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
 
-#: The real registry from the printer, committed at the repo root. Used directly
-#: as a fixture so the test suite fails if that sample is ever broken.
-LIVE_MCUS_CFG = REPO_ROOT / "mcu-updater.cfg"
+#: Representative fixture data for tests that need a populated registry.
+TEST_MCUS_CFG = REPO_ROOT / "tests" / "fixtures" / "registry.cfg"
+
+#: The documented example remains a separate contract target.
+EXAMPLE_MCUS_CFG = REPO_ROOT / "mcu-updater.cfg"
 
 
 @pytest.fixture(autouse=True)
@@ -63,7 +65,12 @@ def settings() -> Settings:
 
 @pytest.fixture
 def live_registry_text() -> str:
-    return LIVE_MCUS_CFG.read_text(encoding="utf-8")
+    return TEST_MCUS_CFG.read_text(encoding="utf-8")
+
+
+@pytest.fixture
+def example_registry_text() -> str:
+    return EXAMPLE_MCUS_CFG.read_text(encoding="utf-8")
 
 
 def cmd_tokens(cmd_line: str) -> list[str]:

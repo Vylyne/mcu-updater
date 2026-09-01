@@ -83,7 +83,7 @@ def test_status_paints_the_whole_panel_in_one_call(api):
         "printing",
         "settings",
     }
-    assert len(res["targets"]) == 6
+    assert len(res["targets"]) == 7
     assert res["job"] is None  # no job runner in this phase
     assert res["recent"] == []
     assert res["read_only"] is True
@@ -364,7 +364,7 @@ def test_a_failing_probe_does_not_break_status(paths, live_registry_text):
     res = Api(paths, call=broken).dispatch("fw.status")
     assert res["klipper_service"] is None
     assert res["printing"] is None
-    assert len(res["targets"]) == 6  # the real payload still arrives
+    assert len(res["targets"]) == 7  # the real payload still arrives
 
 
 def test_service_state_and_print_state_are_parsed(paths, live_registry_text):

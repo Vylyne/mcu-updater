@@ -18,7 +18,7 @@ from mcu_updater.service import Journal, NullService, services_stopped
 
 from .conftest import make_device, write_settings
 
-TRACKED_SERIAL = "290055001850304158373620"
+TRACKED_SERIAL = "123456789012345678901"
 TRACKED_TYPE = "bttebb36"
 TRACKED_CHIPSET = "stm32g0b1xx"
 
@@ -68,9 +68,12 @@ def flashable(paths, live_registry_text, fake_root):
     (fake_root / "katapult" / "scripts" / "flashtool.py").write_text("", encoding="utf-8")
     make_device(fake_root / "bus", "Klipper", TRACKED_CHIPSET, TRACKED_SERIAL)
 
-    runner = JobRunner(paths, lambda: __import__(
-        "mcu_updater.settings", fromlist=["load_settings"]
-    ).load_settings(paths.settings_file))
+    runner = JobRunner(
+        paths,
+        lambda: __import__("mcu_updater.settings", fromlist=["load_settings"]).load_settings(
+            paths.settings_file
+        ),
+    )
     api = Api(paths, runner=runner, call=_moonraker())
     # Keep the readiness poll from dominating the test run.
     api.KLIPPY_READY_TIMEOUT = 2.0
@@ -111,9 +114,12 @@ def flashable_non_klipper(paths, live_registry_text, fake_root):
     (fake_root / "katapult" / "scripts" / "flashtool.py").write_text("", encoding="utf-8")
     make_device(fake_root / "bus", "Klipper", CARTOGRAPHER_CHIPSET, CARTOGRAPHER_SERIAL)
 
-    runner = JobRunner(paths, lambda: __import__(
-        "mcu_updater.settings", fromlist=["load_settings"]
-    ).load_settings(paths.settings_file))
+    runner = JobRunner(
+        paths,
+        lambda: __import__("mcu_updater.settings", fromlist=["load_settings"]).load_settings(
+            paths.settings_file
+        ),
+    )
     api = Api(paths, runner=runner, call=_moonraker())
     api.KLIPPY_READY_TIMEOUT = 2.0
     api.KLIPPY_RESTART_TIMEOUT = 2.0
@@ -134,9 +140,15 @@ def test_flashing_is_not_advertised_by_default(paths, live_registry_text):
     with open(paths.registry_file, "w", encoding="utf-8") as fh:
         fh.write(live_registry_text)
     _write_settings(paths)  # enable_flashing omitted -> false
-    api = Api(paths, runner=JobRunner(paths, lambda: __import__(
-        "mcu_updater.settings", fromlist=["load_settings"]
-    ).load_settings(paths.settings_file)))
+    api = Api(
+        paths,
+        runner=JobRunner(
+            paths,
+            lambda: __import__("mcu_updater.settings", fromlist=["load_settings"]).load_settings(
+                paths.settings_file
+            ),
+        ),
+    )
 
     assert "fw.flash" not in api.dispatch("fw.ping")["capabilities"]
     assert "fw.build" in api.dispatch("fw.ping")["capabilities"]
@@ -155,9 +167,15 @@ def test_the_gate_is_reported_by_code_when_called_directly(paths, live_registry_
     with open(paths.registry_file, "w", encoding="utf-8") as fh:
         fh.write(live_registry_text)
     _write_settings(paths)
-    api = Api(paths, runner=JobRunner(paths, lambda: __import__(
-        "mcu_updater.settings", fromlist=["load_settings"]
-    ).load_settings(paths.settings_file)))
+    api = Api(
+        paths,
+        runner=JobRunner(
+            paths,
+            lambda: __import__("mcu_updater.settings", fromlist=["load_settings"]).load_settings(
+                paths.settings_file
+            ),
+        ),
+    )
     with pytest.raises(RpcError) as exc:
         api.flash({"serial": TRACKED_SERIAL})
     assert exc.value.data["code"] == "flashing_disabled"
@@ -239,6 +257,7 @@ def test_flashing_while_idle_is_allowed(flashable, state):
 def test_an_unreachable_moonraker_does_not_block_a_flash(flashable):
     """The print check is best-effort. Failing closed would make the panel useless
     whenever Moonraker hiccups."""
+
     def broken(method, params, timeout):
         raise OSError("moonraker went away")
 
@@ -384,9 +403,7 @@ def test_shutdown_defers_while_a_flash_is_running(paths, live_registry_text):
     agent.runner.submit("flash", {"serial": "x"}, lambda ctx: release.wait(10) and None)
 
     finished = threading.Event()
-    threading.Thread(
-        target=lambda: (agent.request_stop(20.0), finished.set()), daemon=True
-    ).start()
+    threading.Thread(target=lambda: (agent.request_stop(20.0), finished.set()), daemon=True).start()
 
     # Still waiting, because the flash hasn't finished.
     assert not finished.wait(0.5), "shutdown should not complete during a flash"
@@ -409,9 +426,7 @@ def test_shutdown_does_not_defer_for_a_build(paths, live_registry_text):
     agent.runner.submit("build", {"name": "x"}, lambda ctx: release.wait(10) and None)
     try:
         finished = threading.Event()
-        threading.Thread(
-            target=lambda: (agent.request_stop(20.0), finished.set()), daemon=True
-        ).start()
+        threading.Thread(target=lambda: (agent.request_stop(20.0), finished.set()), daemon=True).start()
         assert finished.wait(5), "a build must not hold up shutdown"
     finally:
         release.set()
@@ -495,6 +510,7 @@ def test_a_shut_down_klippy_triggers_a_firmware_restart(flashable):
 def test_a_klippy_that_stays_broken_is_reported_loudly(flashable):
     """If a firmware restart doesn't fix it, say exactly what to do next rather
     than reporting a clean success."""
+
     def call(method, params, timeout):
         if method == "printer.objects.query":
             return {

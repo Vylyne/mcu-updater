@@ -104,9 +104,7 @@ def test_no_section_yields_defaults(paths):
 
 
 def test_save_then_load_round_trips(paths):
-    original = Settings(
-        make_jobs=3, dry_run=True, stop_services=["klipper-2"], enable_flashing=True
-    )
+    original = Settings(make_jobs=3, dry_run=True, stop_services=["klipper-2"], enable_flashing=True)
     save_settings(paths.settings_file, original)
     assert load_settings(paths.settings_file) == original
 
@@ -128,7 +126,7 @@ def test_save_then_load_round_trips_ignored_serials(paths):
     """A realistic by-id serial - digits and a hyphen, no leading '#' (which
     would read as an inline comment) and no comma (which `get_csv` would split
     on)."""
-    original = Settings(ignored_serials=["290055001850304158373620-if00"])
+    original = Settings(ignored_serials=["123456789012345678901-if00"])
     save_settings(paths.settings_file, original)
     assert load_settings(paths.settings_file) == original
 
@@ -139,9 +137,7 @@ def test_ignored_serials_is_stored_as_a_multi_line_block(paths):
     and so takes `CfgDocument.set`'s own default rendering for a list value - a
     multi-line block, one serial per line. Both forms round-trip identically
     through `get_csv`; this pins which one actually lands on disk."""
-    save_settings(
-        paths.settings_file, Settings(ignored_serials=["AAAA-if00", "BBBB-if00"])
-    )
+    save_settings(paths.settings_file, Settings(ignored_serials=["AAAA-if00", "BBBB-if00"]))
     with open(paths.settings_file, encoding="utf-8") as fh:
         text = fh.read()
     assert "ignored_serials:\n    AAAA-if00\n    BBBB-if00\n" in text
@@ -219,7 +215,7 @@ def test_saving_settings_keeps_the_mcu_sections_and_the_comments(paths, live_reg
 
     with open(paths.main_config, encoding="utf-8") as fh:
         out = fh.read()
-    assert "# mcu-updater configuration." in out
+    assert "# Representative registry for tests." in out
     assert "src/Makefile -> src-y += buffer.c" in out
 
     reg = Registry.load(paths)
@@ -229,8 +225,9 @@ def test_saving_settings_keeps_the_mcu_sections_and_the_comments(paths, live_reg
         "cartographer",
         "flylllplusbuffer",
         "hexadistrofusion",
+        "mmb_can",
     ]
-    assert len(reg.all_serials()) == 12
+    assert len(reg.all_serials()) == 13
     assert load_settings(paths.settings_file).enable_flashing is True
 
 
@@ -313,10 +310,7 @@ def test_platformio_bin_is_read_from_the_updater_section(paths):
 def test_flashtool_path_is_read_from_the_updater_section(paths):
     with open(paths.settings_file, "w", encoding="utf-8") as fh:
         fh.write("[updater]\nflashtool_path: ~/forked-katapult/scripts/flashtool.py\n")
-    assert (
-        load_settings(paths.settings_file).flashtool_path
-        == "~/forked-katapult/scripts/flashtool.py"
-    )
+    assert load_settings(paths.settings_file).flashtool_path == "~/forked-katapult/scripts/flashtool.py"
 
 
 def test_pio_settings_default_to_empty(paths):

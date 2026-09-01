@@ -26,14 +26,17 @@ Found DFU: [0483:df11] ver=0200, devnum=51, cfg=1, intf=0, path="6-1.6.6.1.3", \
 alt=0, name="@Internal Flash /0x08000000/64*02Kg", serial="3941335F3434"
 """
 
-TWO_BOARDS = ONE_BOARD + """\
+TWO_BOARDS = (
+    ONE_BOARD
+    + """\
 Found DFU: [0483:df11] ver=0200, devnum=52, cfg=1, intf=0, path="6-1.6.6.1.4", \
 alt=0, name="@Internal Flash /0x08000000/64*02Kg", serial="205B33753539"
 """
+)
 
-TWO_BOARDS_SAME_SERIAL = ONE_BOARD + ONE_BOARD.replace(
-    "devnum=51", "devnum=52"
-).replace("6-1.6.6.1.3", "6-1.6.6.1.4")
+TWO_BOARDS_SAME_SERIAL = ONE_BOARD + ONE_BOARD.replace("devnum=51", "devnum=52").replace(
+    "6-1.6.6.1.3", "6-1.6.6.1.4"
+)
 
 DENIED = """\
 dfu-util 0.11
@@ -220,8 +223,8 @@ def test_the_probe_never_raises_whatever_dfu_util_does(api, monkeypatch):
 # which is the whole difficulty with several boards in DFU at once.
 # --------------------------------------------------------------------------
 
-#: 27000E000551343438333339 in DFU. Same board as ONE_BOARD's canonical serial.
-KNOWN_UID = "27000E000551343438333339"
+#: A synthetic 96-bit UID that derives to ONE_BOARD's DFU serial.
+KNOWN_UID = "01000000000034345e334139"
 
 
 def test_a_tracked_board_in_dfu_is_named(paths, live_registry_text, monkeypatch):
@@ -241,13 +244,12 @@ def test_an_unrecognised_board_is_simply_unnamed(api, monkeypatch):
     """Which is what a genuinely new board looks like - useful in itself, and not
     an error.
 
-    Deliberately not ONE_BOARD - live_registry_text now tracks the real board
-    its DFU serial derives from (27000E000551343438333339, under
-    bttebb36), so that serial is no longer "unrecognised". This is
+    Deliberately not ONE_BOARD - the test adds the synthetic running UID that
+    derives to its DFU serial, so that serial is no longer "unrecognised". This is
     TWO_BOARDS' second device, which derives from no serial any type here
     tracks."""
     stdout = (
-        'Found DFU: [0483:df11] ver=0200, devnum=52, cfg=1, intf=0, '
+        "Found DFU: [0483:df11] ver=0200, devnum=52, cfg=1, intf=0, "
         'path="6-1.6.6.1.4", alt=0, name="@Internal Flash /0x08000000/64*02Kg", '
         'serial="205B33753539"\n'
     )
@@ -258,9 +260,7 @@ def test_an_unrecognised_board_is_simply_unnamed(api, monkeypatch):
     assert device["known_serial"] is None
 
 
-def test_two_known_boards_mapping_to_one_dfu_serial_name_neither(
-    paths, live_registry_text, monkeypatch
-):
+def test_two_known_boards_mapping_to_one_dfu_serial_name_neither(paths, live_registry_text, monkeypatch):
     """The derivation sums two of the three id words, so a collision is possible.
     An unlabelled board is a small annoyance; a board labelled as the wrong one is
     how you flash the toolhead you meant to leave alone.

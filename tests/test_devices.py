@@ -82,9 +82,7 @@ def test_scan_prefers_the_raw_usb_hardware_serial_via_the_tty_sysfs_link(paths, 
     tty_device = fake_root / "sys" / "class" / "tty" / "ttyACM0" / "device"
     tty_device.parent.mkdir(parents=True)
     tty_device.symlink_to(interface, target_is_directory=True)
-    paths = dataclasses.replace(
-        paths, usb_sysfs=str(usb_root), tty_sysfs=str(tty_device.parents[1])
-    )
+    paths = dataclasses.replace(paths, usb_sysfs=str(usb_root), tty_sysfs=str(tty_device.parents[1]))
 
     assert scan(paths)[0].serial == "RAW-HARDWARE-SERIAL"
 
@@ -111,9 +109,7 @@ def test_find_device_resolves_the_raw_usb_hardware_serial_via_the_tty_sysfs_link
     tty_device = fake_root / "sys" / "class" / "tty" / "ttyACM0" / "device"
     tty_device.parent.mkdir(parents=True)
     tty_device.symlink_to(interface, target_is_directory=True)
-    paths = dataclasses.replace(
-        paths, usb_sysfs=str(usb_root), tty_sysfs=str(tty_device.parents[1])
-    )
+    paths = dataclasses.replace(paths, usb_sysfs=str(usb_root), tty_sysfs=str(tty_device.parents[1]))
 
     dev = find_device(paths, "stm32g0b1xx", "RAW-HARDWARE-SERIAL", fw="klipper")
 
@@ -232,9 +228,7 @@ def test_find_untracked_can_filter_by_fw_and_chipset(paths, fake_root):
     make_device(bus, "Klipper", "chipA", "klip-a")
 
     assert [d.serial for d in find_untracked(paths, set(), fw="katapult")] == ["kat-a", "kat-b"]
-    assert [d.serial for d in find_untracked(paths, set(), fw="katapult", chipset="chipB")] == [
-        "kat-b"
-    ]
+    assert [d.serial for d in find_untracked(paths, set(), fw="katapult", chipset="chipB")] == ["kat-b"]
 
 
 def test_wait_for_device_returns_immediately_when_present(paths, fake_root):
@@ -364,17 +358,16 @@ def test_a_board_in_its_bootloader_is_adoptable(paths, fake_root):
 
 
 def test_the_dfu_serial_is_derived_from_the_running_one():
-    """Captured from a real BTT EBB36: dfu-util reported 3941335F3434, and the
-    same board came back with canonical serial 27000E000551343438333339."""
+    """A synthetic 96-bit UID derives to the expected DFU serial."""
     from mcu_updater.devices import dfu_serial_for
 
-    assert dfu_serial_for("27000E000551343438333339-if00") is None
+    assert dfu_serial_for("01000000000034345e334139-if00") is None
 
 
 def test_it_works_without_the_interface_suffix():
     from mcu_updater.devices import dfu_serial_for
 
-    assert dfu_serial_for("27000E000551343438333339") == "3941335F3434"
+    assert dfu_serial_for("01000000000034345e334139") == "3941335F3434"
 
 
 def test_the_words_are_little_endian_and_the_second_takes_its_TOP_nibbles():
@@ -450,9 +443,7 @@ def test_bootsel_scan_searches_the_automount_globs_with_no_override(paths, tmp_p
     vol = media_user / "RPI-RP2"
     vol.mkdir(parents=True)
     (vol / "INFO_UF2.TXT").write_text("", encoding="utf-8")
-    monkeypatch.setattr(
-        devices_mod, "DEFAULT_BOOTSEL_ROOT_GLOBS", (str(tmp_path / "media" / "*"),)
-    )
+    monkeypatch.setattr(devices_mod, "DEFAULT_BOOTSEL_ROOT_GLOBS", (str(tmp_path / "media" / "*"),))
 
     assert bootsel_scan(paths) == [str(vol)]
 

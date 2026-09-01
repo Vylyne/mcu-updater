@@ -197,7 +197,7 @@ def test_state_is_emitted_once_connected(wired):
     assert server.wait_for(lambda: _events(server, "state"))
 
     state = _events(server, "state")[0]
-    assert len(state["data"]["targets"]) == 6
+    assert len(state["data"]["targets"]) == 7
     assert state["data"]["klipper_service"] == "active"
 
 
@@ -219,7 +219,7 @@ def test_inbound_method_calls_are_served_over_the_wire(wired):
 
     reply = next(r for r in server.responses if r["id"] == 999)
     assert "error" not in reply
-    assert len(reply["result"]["targets"]) == 6
+    assert len(reply["result"]["targets"]) == 7
 
 
 def test_an_unknown_inbound_method_gets_an_error_not_silence(wired):

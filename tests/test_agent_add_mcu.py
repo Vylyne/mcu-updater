@@ -27,7 +27,7 @@ from .test_agent_dfu import ONE_BOARD, TWO_BOARDS, patch_dfu
 
 EBB = "bttebb36"
 EBB_CHIPSET = "stm32g0b1xx"
-TRACKED = "290055001850304158373620"
+TRACKED = "123456789012345678901"
 PICO = "testrp2040"
 PICO_CHIPSET = "rp2040"
 
@@ -35,9 +35,9 @@ PICO_CHIPSET = "rp2040"
 def _runner(paths) -> JobRunner:
     return JobRunner(
         paths,
-        lambda: __import__(
-            "mcu_updater.settings", fromlist=["load_settings"]
-        ).load_settings(paths.settings_file),
+        lambda: __import__("mcu_updater.settings", fromlist=["load_settings"]).load_settings(
+            paths.settings_file
+        ),
     )
 
 
@@ -234,9 +234,7 @@ def test_the_new_board_is_found_by_diffing_the_bus(adder, paths, fake_root, monk
     assert job.result["type"] == EBB
 
 
-def test_a_katapult_board_already_on_the_bus_is_not_reported_as_new(
-    adder, paths, fake_root, monkeypatch
-):
+def test_a_katapult_board_already_on_the_bus_is_not_reported_as_new(adder, paths, fake_root, monkeypatch):
     """The snapshot is taken before the write, so a board already sitting in
     Katapult - a previous adopt that was never finished, say - cannot be mistaken
     for the one this just created. The wait is no longer filtered to Katapult
@@ -256,9 +254,7 @@ def test_a_katapult_board_already_on_the_bus_is_not_reported_as_new(
     assert job.result["candidates"] == [], "the pre-existing board is not this one"
 
 
-def test_the_new_board_is_told_apart_from_one_already_in_katapult(
-    adder, paths, fake_root, monkeypatch
-):
+def test_the_new_board_is_told_apart_from_one_already_in_katapult(adder, paths, fake_root, monkeypatch):
     """Both on the bus at the end; only the one that appeared is offered."""
     make_device(fake_root / "bus", "katapult", EBB_CHIPSET, "WASHERE")
     _stage_katapult(paths)
@@ -277,9 +273,7 @@ def test_the_new_board_is_told_apart_from_one_already_in_katapult(
     assert [c["serial"] for c in job.result["candidates"]] == ["NEWBOARD"]
 
 
-def test_a_board_that_chain_loads_past_katapult_is_still_a_candidate(
-    adder, paths, fake_root, monkeypatch
-):
+def test_a_board_that_chain_loads_past_katapult_is_still_a_candidate(adder, paths, fake_root, monkeypatch):
     """Found on hardware: a board that already carries a valid application does
     not sit in Katapult waiting to be found - Katapult's own first boot chain-
     loads straight into that application. Re-installing a bootloader on such a
@@ -418,9 +412,7 @@ def test_a_type_with_no_katapult_uf2_is_refused_with_the_reason(adder, paths):
 def test_bootsel_no_board_is_refused_before_a_job(adder, paths, fake_root):
     _pico_type(adder, paths)
     _stage_katapult_uf2(paths, PICO)
-    adder.paths = dataclasses.replace(
-        adder.paths, bootsel_root=str(fake_root / "nothing-here")
-    )
+    adder.paths = dataclasses.replace(adder.paths, bootsel_root=str(fake_root / "nothing-here"))
 
     with pytest.raises(RpcError) as exc:
         adder.dispatch("fw.add_mcu.start", {"name": PICO})
@@ -444,9 +436,7 @@ def test_bootsel_unmounted_device_is_refused_before_a_job(adder, paths, fake_roo
     assert adder.runner.current() is None
 
 
-def test_bootsel_ambiguous_mounts_is_refused_before_a_job(
-    adder, paths, fake_root, monkeypatch
-):
+def test_bootsel_ambiguous_mounts_is_refused_before_a_job(adder, paths, fake_root, monkeypatch):
     """Two boards in BOOTSEL at once - unlike DFU there is no serial to pick
     one by, so this is a plain refusal, not a choice the caller can make."""
     import mcu_updater.discovery.bootsel as bootsel_discovery
@@ -466,9 +456,7 @@ def test_bootsel_ambiguous_mounts_is_refused_before_a_job(
     by_id.mkdir()
     for serial in ("AAAAAAAAAAAA", "BBBBBBBBBBBB"):
         (by_id / f"usb-RPI_RP2_{serial}-0-0-part1").write_text("", encoding="utf-8")
-    monkeypatch.setattr(
-        bootsel_discovery, "_BOOTSEL_DISK_BY_ID_GLOB", str(by_id / "usb-RPI_RP2_*-part1")
-    )
+    monkeypatch.setattr(bootsel_discovery, "_BOOTSEL_DISK_BY_ID_GLOB", str(by_id / "usb-RPI_RP2_*-part1"))
     adder.paths = dataclasses.replace(adder.paths, bootsel_root="")
 
     with pytest.raises(RpcError) as exc:
@@ -517,9 +505,7 @@ def test_bootsel_flash_receives_the_uf2_path(adder, paths, fake_root, monkeypatc
     assert calls[0]["chipset"] == PICO_CHIPSET
 
 
-def test_the_new_bootsel_board_is_found_by_diffing_the_bus(
-    adder, paths, fake_root, monkeypatch
-):
+def test_the_new_bootsel_board_is_found_by_diffing_the_bus(adder, paths, fake_root, monkeypatch):
     _pico_type(adder, paths)
     _stage_katapult_uf2(paths, PICO)
     root, _vol = mounted_bootsel_volume(fake_root)

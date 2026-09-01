@@ -92,9 +92,7 @@ def test_a_second_process_is_refused_and_told_who_holds_it(paths, tmp_path):
             time.sleep(30)
         """
     )
-    proc = subprocess.Popen(
-        [sys.executable, "-c", child], stdout=subprocess.PIPE, text=True
-    )
+    proc = subprocess.Popen([sys.executable, "-c", child], stdout=subprocess.PIPE, text=True)
     try:
         assert proc.stdout is not None
         assert proc.stdout.readline().strip() == "HELD"
@@ -128,9 +126,7 @@ def test_the_lock_is_released_when_the_holder_dies(paths, tmp_path):
         time.sleep(30)
         """
     )
-    proc = subprocess.Popen(
-        [sys.executable, "-c", child], stdout=subprocess.PIPE, text=True
-    )
+    proc = subprocess.Popen([sys.executable, "-c", child], stdout=subprocess.PIPE, text=True)
     assert proc.stdout is not None
     assert proc.stdout.readline().strip() == "HELD"
     proc.kill()
@@ -185,8 +181,7 @@ def test_a_leftover_record_with_no_lock_held_is_not_reported(paths):
     """Exactly what kill -9 leaves behind: the payload without the flock."""
     os.makedirs(os.path.dirname(paths.lock_file), exist_ok=True)
     with open(paths.lock_file, "w", encoding="utf-8") as fh:
-        json.dump({"pid": 4242, "label": "flash 230048001750304158373620-if00",
-                   "since": time.time()}, fh)
+        json.dump({"pid": 4242, "label": "flash 912345678901234567890-if00", "since": time.time()}, fh)
 
     assert ExclusiveLock(paths).holder() is None
 

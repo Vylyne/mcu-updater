@@ -137,7 +137,7 @@ def test_a_board_with_no_pairing_is_left_alone(api, paths, fake_root):
 
 
 def test_an_already_tracked_board_is_untouched(api, paths, fake_root):
-    tracked = "290055001850304158373620"
+    tracked = "123456789012345678901"
     Pairings(paths).record(dfu_serial_for(tracked) or "x", "OctopusMAXEZ")
     _appear(fake_root, tracked)
 
@@ -312,9 +312,9 @@ def test_the_flash_records_the_pairing_before_waiting(paths, live_registry_text,
 
     runner = JobRunner(
         paths,
-        lambda: __import__(
-            "mcu_updater.settings", fromlist=["load_settings"]
-        ).load_settings(paths.settings_file),
+        lambda: __import__("mcu_updater.settings", fromlist=["load_settings"]).load_settings(
+            paths.settings_file
+        ),
     )
     api = Api(paths, runner=runner)
     api.ADD_MCU_REENUMERATE_TIMEOUT = 1.0

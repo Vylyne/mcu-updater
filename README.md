@@ -60,6 +60,7 @@ Firmware and boards:
 - [x] Discovery surface - one vocabulary for where a device is and how sure we are
 - [x] CAN device discovery and tracking by `canbus_uuid`
 - [x] Ignore an untracked USB or CAN bus device
+- [x] Explicit provision/clear identity actions for an untracked Roadrunner
 
 Interfaces:
 
@@ -85,7 +86,7 @@ of it. What is still open:
   `flashtool.py` used to flash over USB/CAN) - override with `flashtool_path`
   in `[updater]` if it lives somewhere else, e.g. a fork
 - An ARM toolchain and `make`, i.e. whatever already builds Klipper for you
-- `python3-serial`- Katapult's `flashtool.py` imports it. `install.sh` offers to apt-install it.
+- `python3-serial`- Katapult's `flashtool.py` imports it. `install.sh` offers to apt-install it. It is also the only system package the Roadrunner direct-USB provision/clear helper needs - no separate dependency to install for that feature.
 - `dfu-util`, only for installing Katapult onto a brand-new STM32 board
 - `systemd-mount`, only for installing Katapult onto a brand-new RP2040 board - it mounts the BOOTSEL mass-storage volume so `add-mcu` can copy the `.uf2` onto it without root; `install.sh` offers to add the udev rule that wires it up
 - Passwordless `sudo` for `systemctl {start,stop} klipper`(for cli)
@@ -153,6 +154,18 @@ an empty menu:
 **Boards on the bus that aren't tracked yet, one tap to adopt:**
 
 ![untracked board panel](docs/img/pannel_untracked.png)
+
+A Roadrunner shows up here the same as any other untracked board - discovery
+is entirely read-only, and identifying one takes no board-specific server
+field, just its own USB descriptor (see `docs/agent-api.md`'s
+`fw.roadrunner.provision`/`.clear`). An unprovisioned one offers **Provision
+Roadrunner**; a provisioned one offers **Clear identity**; both require an
+explicit confirmation naming the board before anything is written - there is
+no automatic-provision setting, and neither action tracks the board under an
+MCU type. A freshly provisioned board stays untracked until you separately
+adopt it here, the same as any other new board. The flash UID a provision
+confirmation names and the `/dev/serial/by-id` path shown for every row are
+diagnostics only, not values this panel or the agent ever persists.
 
 `install.sh` sets up the agent and prints the one-line `moonraker.conf` change
 that points Mainsail's Update Manager at the fork instead of upstream. See

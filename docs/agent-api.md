@@ -173,6 +173,21 @@ or a different device now sitting on that port - and its `data` carries
 `roadrunner_timeout` is reserved for the case where nothing on that topology
 was ever seen again.
 
+Neither call is ever triggered automatically - `fw.bus.scan`/`fw.status`
+identify a Roadrunner from its ordinary `BusDevice` fields alone (its
+`usb-Vylyne_Roadrunner_...-if00` descriptor gives `fw: "Vylyne"`,
+`chipset: "Roadrunner"`, and its serial already carries the
+`RR-UNPROVISIONED-...`/`RR-...` shape - discovery stays entirely read-only,
+with no Roadrunner-specific wire field of its own), and the panel's
+untracked-device action is the only thing that ever calls either method -
+each one requires its own explicit, per-board confirmation naming the serial
+first. A board that comes back provisioned stays untracked exactly like any
+other new board until it is separately adopted with `fw.serial.add`. The
+16-byte diagnostic flash ID and the `/dev/serial/by-id` path a confirmation
+names are read back only for that prompt; the agent never writes either one
+to the registry. The helper this uses needs nothing beyond `python3-serial`
+(the same package `flashtool.py` already requires) - no extra system package.
+
 ### `fw.ping`
 
 ```json

@@ -4,6 +4,7 @@ import type { Action } from "../api/targets";
 import {
   adoptSerial,
   cancelJob,
+  clearRoadrunner,
   closeKconfig,
   connect,
   disconnect,
@@ -12,6 +13,7 @@ import {
   ignoreCanbus,
   kconfigEnter,
   openKconfig,
+  provisionRoadrunner,
   refresh,
   scanBareBoard,
   startAddMcu,
@@ -853,6 +855,163 @@ describe("Phase 8: settings, bus adoption, add_mcu", () => {
     });
     socket.message({ jsonrpc: "2.0", id: request.id, result: {} });
     expect(await call).toBe(true);
+  });
+});
+
+describe("roadrunner", () => {
+  afterEach(() => {
+    disconnect();
+  });
+
+  it("provisionRoadrunner calls fw.roadrunner.provision with just the serial", async () => {
+    let socket!: FakeWebSocket;
+    connect("ws://test/websocket", () => {
+      socket = new FakeWebSocket();
+      return socket;
+    });
+    socket.open();
+    await drainHandshake(socket);
+
+    const before = socket.sent.length;
+    const call = provisionRoadrunner("RR-UNPROVISIONED-0123456789ABCDEF");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const request = JSON.parse(socket.sent[before]);
+    expect(request.params.method).toBe("fw.roadrunner.provision");
+    expect(request.params.arguments).toEqual({
+      serial: "RR-UNPROVISIONED-0123456789ABCDEF",
+    });
+    socket.message({
+      jsonrpc: "2.0",
+      id: request.id,
+      result: {
+        serial: "RR-0123456789ABCDEFGHJKMNPQRS",
+        prior_serial: "RR-UNPROVISIONED-0123456789ABCDEF",
+        state: "provisioned",
+      },
+    });
+    expect(await call).toBe(true);
+  });
+
+  it("provisionRoadrunner refreshes fw.status after a confirmed result", async () => {
+    let socket!: FakeWebSocket;
+    connect("ws://test/websocket", () => {
+      socket = new FakeWebSocket();
+      return socket;
+    });
+    socket.open();
+    await drainHandshake(socket);
+
+    const before = socket.sent.length;
+    const call = provisionRoadrunner("RR-UNPROVISIONED-0123456789ABCDEF");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const request = JSON.parse(socket.sent[before]);
+    socket.message({
+      jsonrpc: "2.0",
+      id: request.id,
+      result: {
+        serial: "RR-0123456789ABCDEFGHJKMNPQRS",
+        prior_serial: "RR-UNPROVISIONED-0123456789ABCDEF",
+        state: "provisioned",
+      },
+    });
+    await call;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const refreshed = socket.sent
+      .slice(before + 1)
+      .map((raw) => JSON.parse(raw))
+      .some((msg) => msg.params?.method === "fw.status");
+    expect(refreshed).toBe(true);
+  });
+
+  it("provisionRoadrunner routes a roadrunner_* refusal into state.error and returns false", async () => {
+    let socket!: FakeWebSocket;
+    connect("ws://test/websocket", () => {
+      socket = new FakeWebSocket();
+      return socket;
+    });
+    socket.open();
+    await drainHandshake(socket);
+
+    const call = provisionRoadrunner("RR-UNPROVISIONED-0123456789ABCDEF");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const request = JSON.parse(socket.sent[socket.sent.length - 1]);
+    socket.message({
+      jsonrpc: "2.0",
+      id: request.id,
+      error: {
+        code: -32000,
+        message: "no matching candidate",
+        data: {
+          code: "roadrunner_no_candidate",
+          message: "No matching untracked Roadrunner was found.",
+        },
+      },
+    });
+
+    expect(await call).toBe(false);
+    expect(state.error?.code).toBe("roadrunner_no_candidate");
+    expect(state.error?.message).toBe(
+      "No matching untracked Roadrunner was found.",
+    );
+  });
+
+  it("clearRoadrunner calls fw.roadrunner.clear with just the serial", async () => {
+    let socket!: FakeWebSocket;
+    connect("ws://test/websocket", () => {
+      socket = new FakeWebSocket();
+      return socket;
+    });
+    socket.open();
+    await drainHandshake(socket);
+
+    const before = socket.sent.length;
+    const call = clearRoadrunner("RR-0123456789ABCDEFGHJKMNPQRS");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const request = JSON.parse(socket.sent[before]);
+    expect(request.params.method).toBe("fw.roadrunner.clear");
+    expect(request.params.arguments).toEqual({
+      serial: "RR-0123456789ABCDEFGHJKMNPQRS",
+    });
+    socket.message({
+      jsonrpc: "2.0",
+      id: request.id,
+      result: {
+        serial: "RR-UNPROVISIONED-0123456789ABCDEF",
+        prior_serial: "RR-0123456789ABCDEFGHJKMNPQRS",
+        state: "unprovisioned",
+      },
+    });
+    expect(await call).toBe(true);
+  });
+
+  it("clearRoadrunner routes a roadrunner_* refusal into state.error and returns false", async () => {
+    let socket!: FakeWebSocket;
+    connect("ws://test/websocket", () => {
+      socket = new FakeWebSocket();
+      return socket;
+    });
+    socket.open();
+    await drainHandshake(socket);
+
+    const call = clearRoadrunner("RR-0123456789ABCDEFGHJKMNPQRS");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const request = JSON.parse(socket.sent[socket.sent.length - 1]);
+    socket.message({
+      jsonrpc: "2.0",
+      id: request.id,
+      error: {
+        code: -32000,
+        message: "already tracked",
+        data: {
+          code: "roadrunner_tracked",
+          message: "This board is tracked by a type; untrack it first.",
+        },
+      },
+    });
+
+    expect(await call).toBe(false);
+    expect(state.error?.code).toBe("roadrunner_tracked");
   });
 });
 

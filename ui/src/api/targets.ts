@@ -122,6 +122,57 @@ export interface BusDevice {
   ignored: boolean;
 }
 
+/** Whether a `BusDevice` is a Roadrunner - read straight off the same 8
+ * fields every other discovery source uses, never a Roadrunner-specific wire
+ * field (there isn't one, deliberately - see this file's `BusDevice` note
+ * and docs/decisions.md's "a union of every source's facts would be a fourth
+ * vocabulary to keep in step"). The generic by-id scanner splits a
+ * Roadrunner's `usb-Vylyne_Roadrunner_<serial>-if00` descriptor into exactly
+ * `fw: "Vylyne"`, `chipset: "Roadrunner"`, with `serial` overwritten by the
+ * raw USB hardware serial descriptor, which for Roadrunner *is* its
+ * canonical identity string. */
+export function isRoadrunnerDevice(
+  device: Pick<BusDevice, "fw" | "chipset">,
+): boolean {
+  return device.fw === "Vylyne" && device.chipset === "Roadrunner";
+}
+
+// Bench-validated in this plan's Task 3: `RR-UNPROVISIONED-<16 uppercase
+// hex>` before provisioning, `RR-<26 uppercase Crockford-base32 chars>`
+// after - Crockford base32 excludes I/L/O/U, hence the split character
+// classes rather than a plain [0-9A-Z] run.
+const ROADRUNNER_UNPROVISIONED_RE = /^RR-UNPROVISIONED-[0-9A-F]{16}$/;
+const ROADRUNNER_PROVISIONED_RE = /^RR-[0-9A-HJKMNP-TV-Z]{26}$/;
+const ROADRUNNER_UNPROVISIONED_PREFIX = "RR-UNPROVISIONED-";
+
+export type RoadrunnerIdentityState = "unprovisioned" | "provisioned" | null;
+
+/** A Roadrunner's provisioning state, read straight out of its serial
+ * string. `BusDevice.state` is a red herring here - it falls back to
+ * `fw.toLowerCase()` for a source with no state vocabulary of its own, i.e.
+ * literally `"vylyne"`, and carries no Roadrunner-specific meaning. `null`
+ * means the serial matches neither shape, the same refusal
+ * `fw.roadrunner.provision`/`.clear` would give it server-side. */
+export function roadrunnerIdentityState(
+  serial: string,
+): RoadrunnerIdentityState {
+  if (ROADRUNNER_UNPROVISIONED_RE.test(serial)) return "unprovisioned";
+  if (ROADRUNNER_PROVISIONED_RE.test(serial)) return "provisioned";
+  return null;
+}
+
+/** The 16 trailing hex characters of an unprovisioned serial - the
+ * "diagnostic UID" a provision confirmation names alongside the serial
+ * itself. Purely a label lifted back out of a string the agent already
+ * returned, never sent anywhere on its own. `null` for anything else,
+ * provisioned included - there is no separate diagnostic identity once a
+ * board is provisioned. */
+export function roadrunnerDiagnosticUid(serial: string): string | null {
+  return serial.startsWith(ROADRUNNER_UNPROVISIONED_PREFIX)
+    ? serial.slice(ROADRUNNER_UNPROVISIONED_PREFIX.length)
+    : null;
+}
+
 /** `fw.status`'s `locked_by` - non-null while a CLI build or flash holds the
  * host lock. Distinct from `state.job`: this is activity this UI did not
  * start and cannot cancel, only wait out. */

@@ -114,6 +114,12 @@ UI-managed `ignored_serials` and `ignored_canbus_uuids` device lists. All
 optional. A PlatformIO firmware family's own source tree is named on its
 `[firmware ...]` section, not in `[updater]`.
 
+Roadrunner's `fw.roadrunner.provision`/`.clear` (docs/agent-api.md) write no
+key here at all - not even a "last known identity" - by design: discovery
+stays read-only, provisioning is a direct-USB write to the board itself, and
+a provisioned board remains as untracked as before until it is separately
+adopted through `serials:` above.
+
 **Edit the existing `[updater]` section rather than appending a second one.** A
 duplicate section is refused outright: first-wins would mean
 `enable_flashing: true` in the later copy silently doing nothing, which is a

@@ -596,6 +596,40 @@ export async function unignoreSerial(serial: string): Promise<boolean> {
   }
 }
 
+/** Explicit direct-USB provisioning of one confirmed, untracked Roadrunner -
+ * docs/agent-api.md's `fw.roadrunner.provision`. Deliberately separate from
+ * adoptSerial/fw.serial.add: this only writes the board's identity, it never
+ * tracks the board under a type. Refuses server-side unless `serial` is
+ * currently untracked and carries the `RR-UNPROVISIONED-...` shape. */
+export async function provisionRoadrunner(serial: string): Promise<boolean> {
+  if (client === null) return false;
+  try {
+    await callAgent(client, "fw.roadrunner.provision", { serial });
+    state.error = null;
+    void refreshStatus();
+    return true;
+  } catch (error) {
+    state.error = error as NormalizedAgentError;
+    return false;
+  }
+}
+
+/** Reverse of provisionRoadrunner - `fw.roadrunner.clear` returns one
+ * confirmed, untracked `RR-...` board to its unprovisioned state, still
+ * untracked. */
+export async function clearRoadrunner(serial: string): Promise<boolean> {
+  if (client === null) return false;
+  try {
+    await callAgent(client, "fw.roadrunner.clear", { serial });
+    state.error = null;
+    void refreshStatus();
+    return true;
+  } catch (error) {
+    state.error = error as NormalizedAgentError;
+    return false;
+  }
+}
+
 /** Run a fleet-wide build_all/flash_all/update_all. Deliberately no `name`
  * (agent-api.md's methods table gives fw.build_all only `fw?, scope?`) and no
  * `force` - overriding the print gate stays reachable through the API but

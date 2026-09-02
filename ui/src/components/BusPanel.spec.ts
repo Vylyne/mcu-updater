@@ -51,6 +51,32 @@ const ignoredDevice: BusDevice = {
   ignored: true,
 };
 
+// Roadrunner is identified from the plain 8 BusDevice fields, per the by-id
+// scanner's generic split of `usb-Vylyne_Roadrunner_<serial>-if00` - see
+// api/targets.ts's isRoadrunnerDevice. `state` deliberately carries no
+// Roadrunner-specific meaning (it falls back to fw.toLowerCase()).
+const unprovisionedRoadrunner: BusDevice = {
+  fw: "Vylyne",
+  chipset: "Roadrunner",
+  serial: "RR-UNPROVISIONED-0123456789ABCDEF",
+  path: "/dev/serial/by-id/usb-Vylyne_Roadrunner_RR-UNPROVISIONED-0123456789ABCDEF-if00",
+  state: "vylyne",
+  tracked_by: null,
+  is_mcu: true,
+  ignored: false,
+};
+
+const provisionedRoadrunner: BusDevice = {
+  ...unprovisionedRoadrunner,
+  serial: "RR-0123456789ABCDEFGHJKMNPQRS",
+  path: "/dev/serial/by-id/usb-Vylyne_Roadrunner_RR-0123456789ABCDEFGHJKMNPQRS-if00",
+};
+
+const roadrunnerCapabilities = [
+  "fw.roadrunner.provision",
+  "fw.roadrunner.clear",
+];
+
 const fullCapabilities = [
   "fw.serial.add",
   "fw.type.add",
@@ -455,5 +481,158 @@ describe("BusPanel", () => {
     expect(wrapper.find('[title="Track this CAN device…"]').exists()).toBe(
       false,
     );
+  });
+
+  describe("Roadrunner actions", () => {
+    it("shows Provision Roadrunner for an untracked unprovisioned board, and nothing for Clear identity", () => {
+      state.bus = [unprovisionedRoadrunner];
+      state.ping = { capabilities: roadrunnerCapabilities };
+      const wrapper = mount(BusPanel);
+
+      expect(wrapper.text()).toContain("Provision Roadrunner");
+      expect(wrapper.text()).not.toContain("Clear identity");
+    });
+
+    it("shows only Clear identity for an untracked provisioned board", () => {
+      state.bus = [provisionedRoadrunner];
+      state.ping = { capabilities: roadrunnerCapabilities };
+      const wrapper = mount(BusPanel);
+
+      expect(wrapper.text()).toContain("Clear identity");
+      expect(wrapper.text()).not.toContain("Provision Roadrunner");
+    });
+
+    it("hides both actions without the matching capability", () => {
+      state.bus = [unprovisionedRoadrunner, provisionedRoadrunner];
+      state.ping = { capabilities: [] };
+      const wrapper = mount(BusPanel);
+
+      expect(wrapper.text()).not.toContain("Provision Roadrunner");
+      expect(wrapper.text()).not.toContain("Clear identity");
+    });
+
+    it("offers neither action for a Vylyne/Roadrunner serial matching neither known shape", () => {
+      state.bus = [{ ...unprovisionedRoadrunner, serial: "RR-GARBAGE" }];
+      state.ping = { capabilities: roadrunnerCapabilities };
+      const wrapper = mount(BusPanel);
+
+      expect(wrapper.text()).not.toContain("Provision Roadrunner");
+      expect(wrapper.text()).not.toContain("Clear identity");
+    });
+
+    it("does not offer Roadrunner actions from the ignored disclosure", () => {
+      state.bus = [{ ...unprovisionedRoadrunner, ignored: true }];
+      state.ping = { capabilities: roadrunnerCapabilities };
+      const wrapper = mount(BusPanel);
+
+      expect(wrapper.text()).not.toContain("Provision Roadrunner");
+    });
+
+    it("Provision Roadrunner opens a confirmation naming the serial and diagnostic UID, without calling the API until confirmed", async () => {
+      state.bus = [unprovisionedRoadrunner];
+      state.ping = { capabilities: roadrunnerCapabilities };
+      const spy = vi
+        .spyOn(store, "provisionRoadrunner")
+        .mockResolvedValue(true);
+      const wrapper = mount(BusPanel);
+
+      expect(wrapper.find(".dialog-backdrop").exists()).toBe(false);
+      await wrapper.get("button.roadrunner-provision").trigger("click");
+
+      expect(spy).not.toHaveBeenCalled();
+      const dialog = wrapper.get(".dialog-backdrop");
+      expect(dialog.text()).toContain(unprovisionedRoadrunner.serial);
+      // The diagnostic UID (the 16 trailing hex chars) has to be named on
+      // its own, not merely present as a substring of the full serial the
+      // row already always shows - so this counts both occurrences: once
+      // inside the serial line, once as its own labelled mention.
+      const uid = "0123456789ABCDEF";
+      const occurrences = dialog.text().split(uid).length - 1;
+      expect(occurrences).toBeGreaterThanOrEqual(2);
+      expect(dialog.text()).toContain("diagnostic UID");
+    });
+
+    it("confirming Provision invokes fw.roadrunner.provision once and refreshes afterward", async () => {
+      state.bus = [unprovisionedRoadrunner];
+      state.ping = { capabilities: roadrunnerCapabilities };
+      const spy = vi
+        .spyOn(store, "provisionRoadrunner")
+        .mockResolvedValue(true);
+      const wrapper = mount(BusPanel);
+
+      await wrapper.get("button.roadrunner-provision").trigger("click");
+      await wrapper.get(".dialog-actions button.btn-primary").trigger("click");
+
+      expect(spy).toHaveBeenCalledTimes(1);
+      expect(spy).toHaveBeenCalledWith(unprovisionedRoadrunner.serial);
+      // provisionRoadrunner itself is responsible for the refreshStatus()
+      // call (mirroring adoptSerial/ignoreSerial) - store/agent.spec.ts
+      // asserts that refresh happens; this only asserts the panel called it.
+    });
+
+    it("Clear identity opens its own confirmation naming only the serial", async () => {
+      state.bus = [provisionedRoadrunner];
+      state.ping = { capabilities: roadrunnerCapabilities };
+      const spy = vi.spyOn(store, "clearRoadrunner").mockResolvedValue(true);
+      const wrapper = mount(BusPanel);
+
+      expect(wrapper.find(".dialog-backdrop").exists()).toBe(false);
+      await wrapper.get("button.roadrunner-clear").trigger("click");
+
+      expect(spy).not.toHaveBeenCalled();
+      const dialog = wrapper.get(".dialog-backdrop");
+      expect(dialog.text()).toContain(provisionedRoadrunner.serial);
+      // A provisioned board has no diagnostic UID (it was single-use, tied
+      // to the unprovisioned identity) - the clear dialog must not invent
+      // one.
+      expect(dialog.text()).not.toContain("diagnostic UID");
+    });
+
+    it("confirming Clear invokes fw.roadrunner.clear once with the serial", async () => {
+      state.bus = [provisionedRoadrunner];
+      state.ping = { capabilities: roadrunnerCapabilities };
+      const spy = vi.spyOn(store, "clearRoadrunner").mockResolvedValue(true);
+      const wrapper = mount(BusPanel);
+
+      await wrapper.get("button.roadrunner-clear").trigger("click");
+      await wrapper.get(".dialog-actions button.btn-danger").trigger("click");
+
+      expect(spy).toHaveBeenCalledTimes(1);
+      expect(spy).toHaveBeenCalledWith(provisionedRoadrunner.serial);
+    });
+
+    it("cancelling the confirmation dialog never calls the API", async () => {
+      state.bus = [unprovisionedRoadrunner];
+      state.ping = { capabilities: roadrunnerCapabilities };
+      const spy = vi
+        .spyOn(store, "provisionRoadrunner")
+        .mockResolvedValue(true);
+      const wrapper = mount(BusPanel);
+
+      await wrapper.get("button.roadrunner-provision").trigger("click");
+      await wrapper
+        .get(".dialog-actions button:not(.btn-primary)")
+        .trigger("click");
+
+      expect(spy).not.toHaveBeenCalled();
+      expect(wrapper.find(".dialog-backdrop").exists()).toBe(false);
+    });
+
+    it("does not double-fire Provision on two rapid confirm clicks", async () => {
+      state.bus = [unprovisionedRoadrunner];
+      state.ping = { capabilities: roadrunnerCapabilities };
+      const spy = vi
+        .spyOn(store, "provisionRoadrunner")
+        .mockResolvedValue(true);
+      const wrapper = mount(BusPanel);
+
+      await wrapper.get("button.roadrunner-provision").trigger("click");
+      const confirmBtn = wrapper.get(".dialog-actions button.btn-primary");
+      const first = confirmBtn.trigger("click");
+      const second = confirmBtn.trigger("click");
+      await Promise.all([first, second]);
+
+      expect(spy).toHaveBeenCalledTimes(1);
+    });
   });
 });

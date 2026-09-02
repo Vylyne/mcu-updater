@@ -19,18 +19,27 @@ import { flipMenuIfOffscreen, useClickOutsideToClose } from "../clickOutside";
 import {
   adoptSerial,
   adoptCanbus,
+  clearRoadrunner,
   hasCapability,
   ignoreCanbus,
   ignoreSerial,
+  provisionRoadrunner,
   state,
   unignoreCanbus,
   unignoreSerial,
 } from "../store/agent";
-import type { BusDevice, Target } from "../api/targets";
+import {
+  isRoadrunnerDevice,
+  roadrunnerDiagnosticUid,
+  roadrunnerIdentityState,
+  type BusDevice,
+  type Target,
+} from "../api/targets";
 import type { CanbusDevice, CanbusScanDevice } from "../store/agent";
 import type { Family } from "../api/mcutype";
 import UiPanel from "./UiPanel.vue";
 import UiIcon from "./UiIcon.vue";
+import UiDialog from "./UiDialog.vue";
 import TypeDialog from "./TypeDialog.vue";
 import {
   mdiCloseCircleOutline,
@@ -75,6 +84,24 @@ const canAdopt = computed(() => hasCapability("fw.serial.add"));
 const canAdoptCan = computed(() => hasCapability("fw.canbus.add"));
 const canIgnoreCan = computed(() => hasCapability("fw.canbus.ignore"));
 const canUnignoreCan = computed(() => hasCapability("fw.canbus.unignore"));
+
+// Roadrunner is identified from the plain BusDevice fields, not a
+// server-supplied action list - see api/targets.ts's isRoadrunnerDevice for
+// why there is no Roadrunner-specific wire field to key off instead.
+const canProvisionRoadrunner = computed(() =>
+  hasCapability("fw.roadrunner.provision"),
+);
+const canClearRoadrunner = computed(() => hasCapability("fw.roadrunner.clear"));
+
+/** "unprovisioned" | "provisioned" | null - null both for a non-Roadrunner
+ * device and for a Vylyne/Roadrunner serial matching neither known shape
+ * (never treated as either state, only as "offer nothing"). */
+function roadrunnerRowState(
+  device: BusDevice,
+): "unprovisioned" | "provisioned" | null {
+  if (!isRoadrunnerDevice(device)) return null;
+  return roadrunnerIdentityState(device.serial);
+}
 
 const canManageTypes = computed(
   () =>
@@ -224,6 +251,42 @@ function openNewType(device: BusDevice): void {
   newTypeFor.value = device;
   menuOpenFor.value = null;
 }
+
+// Explicit, separate confirmation per action - never combined into one
+// dialog, since only one of the two ever applies to a given row's state.
+// Neither call tracks the board under a type, so there is nothing here for
+// TypeDialog to prefill afterward.
+const provisionConfirmFor = ref<BusDevice | null>(null);
+const clearConfirmFor = ref<BusDevice | null>(null);
+
+async function confirmProvision(): Promise<void> {
+  const device = provisionConfirmFor.value;
+  if (!device) return;
+  // Synchronous re-entrancy guard, same reasoning as adopt/ignore above:
+  // `:disabled` on the Confirm button lands a patch late, too late to stop a
+  // second click landing in the same tick.
+  if (busy[device.serial]) return;
+  busy[device.serial] = true;
+  try {
+    await provisionRoadrunner(device.serial);
+  } finally {
+    busy[device.serial] = false;
+    provisionConfirmFor.value = null;
+  }
+}
+
+async function confirmClear(): Promise<void> {
+  const device = clearConfirmFor.value;
+  if (!device) return;
+  if (busy[device.serial]) return;
+  busy[device.serial] = true;
+  try {
+    await clearRoadrunner(device.serial);
+  } finally {
+    busy[device.serial] = false;
+    clearConfirmFor.value = null;
+  }
+}
 </script>
 
 <template>
@@ -260,6 +323,30 @@ function openNewType(device: BusDevice): void {
         <span v-if="device.chipset" class="text-caption text--disabled">{{
           device.chipset
         }}</span>
+
+        <button
+          v-if="
+            roadrunnerRowState(device) === 'unprovisioned' &&
+            canProvisionRoadrunner
+          "
+          type="button"
+          class="roadrunner-provision"
+          :disabled="busy[device.serial]"
+          @click="provisionConfirmFor = device"
+        >
+          Provision Roadrunner
+        </button>
+        <button
+          v-if="
+            roadrunnerRowState(device) === 'provisioned' && canClearRoadrunner
+          "
+          type="button"
+          class="roadrunner-clear btn-danger"
+          :disabled="busy[device.serial]"
+          @click="clearConfirmFor = device"
+        >
+          Clear identity
+        </button>
 
         <span
           v-if="device.is_mcu !== false && showPlusMenu"
@@ -425,6 +512,67 @@ function openNewType(device: BusDevice): void {
       :serial="newTypeFor.serial"
       @close="newTypeFor = null"
     />
+
+    <UiDialog
+      v-if="provisionConfirmFor"
+      title="Provision Roadrunner"
+      @close="provisionConfirmFor = null"
+    >
+      <p>
+        Provision <strong>{{ provisionConfirmFor.serial }}</strong> (diagnostic
+        UID
+        <strong>{{
+          roadrunnerDiagnosticUid(provisionConfirmFor.serial)
+        }}</strong
+        >)?
+      </p>
+      <p class="alert alert--info">
+        This is one-shot: the board is given a new random identity that replaces
+        the diagnostic UID above, and the write cannot be reverted back to it.
+        The board is not tracked by any MCU type afterward - if you want it
+        tracked, do that separately once this finishes.
+      </p>
+      <template #actions>
+        <button type="button" @click="provisionConfirmFor = null">
+          Cancel
+        </button>
+        <button
+          type="button"
+          class="btn-primary"
+          :disabled="busy[provisionConfirmFor.serial]"
+          @click="confirmProvision"
+        >
+          Provision
+        </button>
+      </template>
+    </UiDialog>
+
+    <UiDialog
+      v-if="clearConfirmFor"
+      title="Clear Roadrunner identity"
+      @close="clearConfirmFor = null"
+    >
+      <p>
+        Clear the identity of <strong>{{ clearConfirmFor.serial }}</strong
+        >?
+      </p>
+      <p class="alert alert--info">
+        This returns the board to its unprovisioned state - it will need to be
+        provisioned again before it can be tracked under this identity. The
+        board is not tracked by any MCU type either way.
+      </p>
+      <template #actions>
+        <button type="button" @click="clearConfirmFor = null">Cancel</button>
+        <button
+          type="button"
+          class="btn-danger"
+          :disabled="busy[clearConfirmFor.serial]"
+          @click="confirmClear"
+        >
+          Clear
+        </button>
+      </template>
+    </UiDialog>
   </UiPanel>
 </template>
 

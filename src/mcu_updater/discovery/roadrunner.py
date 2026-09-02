@@ -9,6 +9,7 @@ import re
 import subprocess
 import sys
 import time
+from collections.abc import Callable
 from typing import TYPE_CHECKING
 
 from ..errors import UpdaterError
@@ -139,23 +140,71 @@ def find_provisioned(paths: Paths, serial: str) -> RoadrunnerDevice:
     return RoadrunnerDevice(candidate_serial, port, topology)
 
 
-def _await_same_topology(
-    paths: Paths, topology: usb.UsbDevice, serial: str, *, provisioned: bool
+def _await_reenumeration(
+    paths: Paths,
+    topology: usb.UsbDevice,
+    matches_serial: Callable[[str], bool],
+    *,
+    provisioned: bool,
+    error_serial: str,
 ) -> RoadrunnerDevice:
+    """Poll the same physical USB topology until it re-enumerates as expected.
+
+    Every candidate on the same topology is INFO-probed regardless of
+    whether its descriptor serial is the one wanted, so a device that comes
+    back with the *wrong* identity (a corrupted write, or a different device
+    now sitting on that port) is distinguished from one that never comes
+    back at all: the last such observed (serial, state) is remembered, and if
+    the deadline expires having seen one, `roadrunner_mismatch` is raised
+    instead of the generic `roadrunner_timeout`.
+    """
     deadline = time.monotonic() + REENUMERATE_TIMEOUT
+    last_mismatch: tuple[str, bool] | None = None
     while True:
         for candidate_serial, port, candidate_topology in _entry_candidates(paths):
-            if candidate_topology.name != topology.name or candidate_serial != serial:
+            if candidate_topology.name != topology.name:
                 continue
             try:
                 info = _helper(paths, "info", port)
             except RoadrunnerError:
                 continue
-            if _valid_info(info, serial, provisioned=provisioned):
-                return RoadrunnerDevice(serial, port, candidate_topology)
+            if matches_serial(candidate_serial) and _valid_info(info, candidate_serial, provisioned=provisioned):
+                return RoadrunnerDevice(candidate_serial, port, candidate_topology)
+            # Prefer what the wire protocol itself reported: the descriptor's
+            # serial can already equal what was wanted (matches_serial passed)
+            # while INFO disagrees - e.g. a write that updated the USB string
+            # descriptor without the flash identity actually taking. Recording
+            # the descriptor serial in that case would make the diagnostic
+            # read "observed the identity you expected", which is useless.
+            info_serial = info.get("serial")
+            last_mismatch = (
+                info_serial if isinstance(info_serial, str) else candidate_serial,
+                bool(info.get("provisioned")),
+            )
         if time.monotonic() >= deadline:
-            raise _error("roadrunner_timeout", "Roadrunner did not re-enumerate with the expected identity", serial=serial)
+            if last_mismatch is not None:
+                observed_serial, observed_provisioned = last_mismatch
+                raise _error(
+                    "roadrunner_mismatch",
+                    "Roadrunner re-enumerated with an unexpected identity",
+                    serial=error_serial,
+                    observed_serial=observed_serial,
+                    observed_state="provisioned" if observed_provisioned else "unprovisioned",
+                )
+            raise _error(
+                "roadrunner_timeout",
+                "Roadrunner did not re-enumerate with the expected identity",
+                serial=error_serial,
+            )
         time.sleep(0.25)
+
+
+def _await_same_topology(
+    paths: Paths, topology: usb.UsbDevice, serial: str, *, provisioned: bool
+) -> RoadrunnerDevice:
+    return _await_reenumeration(
+        paths, topology, lambda candidate: candidate == serial, provisioned=provisioned, error_serial=serial
+    )
 
 
 def provision_roadrunner(paths: Paths, device: RoadrunnerDevice, uuid: bytes) -> RoadrunnerDevice:
@@ -173,23 +222,16 @@ def provision_roadrunner(paths: Paths, device: RoadrunnerDevice, uuid: bytes) ->
 
 def clear_roadrunner(paths: Paths, device: RoadrunnerDevice) -> RoadrunnerDevice:
     _helper(paths, "clear", device.port)
-    serial = f"RR-UNPROVISIONED-{device.topology.serial or ''}"
     # The USB diagnostic serial may not be the flash UID, so match only the
     # confirmed same hardware and accept its newly reported unprovisioned name.
-    deadline = time.monotonic() + REENUMERATE_TIMEOUT
-    while True:
-        for candidate_serial, port, candidate_topology in _entry_candidates(paths):
-            if candidate_topology.name != device.topology.name or not UNPROVISIONED_RE.fullmatch(candidate_serial):
-                continue
-            try:
-                info = _helper(paths, "info", port)
-            except RoadrunnerError:
-                continue
-            if _valid_info(info, candidate_serial, provisioned=False):
-                return RoadrunnerDevice(candidate_serial, port, candidate_topology)
-        if time.monotonic() >= deadline:
-            raise _error("roadrunner_timeout", "Roadrunner did not return unprovisioned after clear", serial=serial)
-        time.sleep(0.25)
+    error_serial = f"RR-UNPROVISIONED-{device.topology.serial or ''}"
+    return _await_reenumeration(
+        paths,
+        device.topology,
+        lambda candidate: UNPROVISIONED_RE.fullmatch(candidate) is not None,
+        provisioned=False,
+        error_serial=error_serial,
+    )
 
 
 class Roadrunner:

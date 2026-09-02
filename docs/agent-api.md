@@ -163,7 +163,15 @@ Both calls return `{serial, prior_serial, state}` after a confirmed
 re-enumeration. They use the normal exclusive firmware-operation lock; a
 timeout after a write is never retried. Stable refusal codes are
 `roadrunner_no_candidate`, `roadrunner_ambiguous`, `roadrunner_invalid_probe`,
-`roadrunner_helper`, `roadrunner_timeout`, and `roadrunner_tracked`.
+`roadrunner_helper`, `roadrunner_timeout`, `roadrunner_mismatch`, and
+`roadrunner_tracked`. `roadrunner_mismatch` is distinct from
+`roadrunner_timeout`: it fires when the same physical USB topology
+re-enumerates before the deadline but with an identity other than the one
+expected (wrong serial or wrong provisioned state) - e.g. a corrupted write,
+or a different device now sitting on that port - and its `data` carries
+`observed_serial` and `observed_state` alongside the expected `serial`.
+`roadrunner_timeout` is reserved for the case where nothing on that topology
+was ever seen again.
 
 ### `fw.ping`
 

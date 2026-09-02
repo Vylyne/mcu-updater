@@ -14,6 +14,10 @@ from mcu_updater.discovery import roadrunner
 
 UNPROVISIONED = "RR-UNPROVISIONED-50543165187A4D1C"
 PROVISIONED = "RR-0123456789ABCDEFGHJKMNPQRS"
+#: A fake `time.sleep` step large enough that a faked-out re-enumeration
+#: deadline (`roadrunner.REENUMERATE_TIMEOUT`) expires in a handful of loop
+#: passes instead of sixty real 0.25s sleeps.
+REENUMERATE_STEP = roadrunner.REENUMERATE_TIMEOUT / 4
 
 
 def _info(*, provisioned: bool = False, serial: str = UNPROVISIONED) -> dict[str, object]:
@@ -30,7 +34,9 @@ def _info(*, provisioned: bool = False, serial: str = UNPROVISIONED) -> dict[str
     }
 
 
-def _candidate(paths, fake_root: Path, monkeypatch) -> Path:
+def _candidate(
+    paths, fake_root: Path, monkeypatch, *, manufacturer: str = "Vylyne", product: str = "Roadrunner"
+) -> Path:
     entry = fake_root / "bus" / f"usb-Vylyne_Roadrunner_{UNPROVISIONED}-if00"
     entry.touch()
     tty = fake_root / "tty" / "ttyACM0" / "device"
@@ -41,14 +47,14 @@ def _candidate(paths, fake_root: Path, monkeypatch) -> Path:
     for name, value in {
         "idVendor": "2e8a\n",
         "idProduct": "000a\n",
-        "manufacturer": "Vylyne\n",
-        "product": "Roadrunner\n",
+        "manufacturer": f"{manufacturer}\n",
+        "product": f"{product}\n",
         "serial": "not-an-identity\n",
     }.items():
         (usb_root / name).write_text(value, encoding="utf-8")
     topology = roadrunner.usb.UsbDevice(
         name="1-3", path=str(usb_root), vendor_id="2e8a", product_id="000a",
-        product="Roadrunner", manufacturer="Vylyne", serial="not-an-identity", speed="12", ports=0,
+        product=product, manufacturer=manufacturer, serial="not-an-identity", speed="12", ports=0,
     )
     monkeypatch.setattr(roadrunner.usb, "collect", lambda _paths: [topology])
     monkeypatch.setattr(
@@ -86,6 +92,23 @@ def test_discovery_refuses_unconfirmed_info(paths, fake_root, monkeypatch, bad):
     data = _info()
     data.update(bad)
     monkeypatch.setattr(roadrunner, "_helper", lambda *_args: data)
+    assert roadrunner.discover(paths) == []
+
+
+@pytest.mark.parametrize(
+    "manufacturer, product",
+    [
+        ("NotVylyne", "Roadrunner"),
+        ("Vylyne", "NotRoadrunner"),
+    ],
+)
+def test_discovery_refuses_wrong_manufacturer_or_product(paths, fake_root, monkeypatch, manufacturer, product):
+    _candidate(paths, fake_root, monkeypatch, manufacturer=manufacturer, product=product)
+    # If discovery ever called the helper on this candidate, this fake would
+    # happily report a confirmed unprovisioned Roadrunner - so an empty
+    # result here can only mean the manufacturer/product check refused the
+    # candidate before the helper was ever consulted.
+    monkeypatch.setattr(roadrunner, "_helper", lambda *_args: _info())
     assert roadrunner.discover(paths) == []
 
 
@@ -147,6 +170,134 @@ def test_provision_reenumerates_on_the_same_transient_topology(paths, fake_root,
     result = roadrunner.provision_roadrunner(paths, initial, bytes(range(16)))
     assert result.serial == expected
     assert calls == [("provision", "/dev/ttyACM0", "000102030405060708090a0b0c0d0e0f")]
+
+
+def _fake_clock(monkeypatch, *, step: float = REENUMERATE_STEP) -> dict[str, float]:
+    """A monotonic clock driven entirely by fake `time.sleep` calls.
+
+    Neither `_await_reenumeration` nor its callers ever sleep in real time
+    under this fixture: `time.monotonic` reads the fake clock, and
+    `time.sleep` advances it instead of blocking.
+    """
+    clock = {"t": 0.0}
+    monkeypatch.setattr(roadrunner.time, "monotonic", lambda: clock["t"])
+    monkeypatch.setattr(roadrunner.time, "sleep", lambda _seconds: clock.__setitem__("t", clock["t"] + step))
+    return clock
+
+
+def test_await_reenumeration_waits_then_resolves_on_the_same_topology(paths, monkeypatch):
+    topology = _topology()
+    expected = "RR-0123456789ABCDEFGHJKMNPQRS"
+    port = "/dev/ttyACM1"
+    polls: list[int] = []
+
+    def fake_entry_candidates(_paths):
+        polls.append(1)
+        if len(polls) < 3:
+            return []  # not yet re-enumerated
+        return [(expected, port, topology)]
+
+    monkeypatch.setattr(roadrunner, "_entry_candidates", fake_entry_candidates)
+    monkeypatch.setattr(roadrunner, "_helper", lambda *_args: _info(provisioned=True, serial=expected))
+    _fake_clock(monkeypatch)
+
+    result = roadrunner._await_same_topology(paths, topology, expected, provisioned=True)
+
+    assert result == roadrunner.RoadrunnerDevice(expected, port, topology)
+    assert len(polls) == 3  # two empty polls, then the matching one
+
+
+def test_await_reenumeration_times_out_when_nothing_reappears(paths, monkeypatch):
+    topology = _topology()
+    monkeypatch.setattr(roadrunner, "_entry_candidates", lambda _paths: [])
+    helper_calls: list[object] = []
+    monkeypatch.setattr(roadrunner, "_helper", lambda *_args: helper_calls.append(1))
+    _fake_clock(monkeypatch)
+
+    with pytest.raises(roadrunner.RoadrunnerError) as exc:
+        roadrunner._await_same_topology(paths, topology, "RR-0123456789ABCDEFGHJKMNPQRS", provisioned=True)
+
+    assert exc.value.code == "roadrunner_timeout"
+    assert helper_calls == []  # never even probed - nothing was on the bus to probe
+
+
+def test_await_reenumeration_reports_mismatch_when_wrong_identity_reappears(paths, monkeypatch):
+    topology = _topology()
+    expected = "RR-0123456789ABCDEFGHJKMNPQRS"
+    observed = "RR-ZZZZZZZZZZZZZZZZZZZZZZZZZZ"
+    monkeypatch.setattr(
+        roadrunner, "_entry_candidates", lambda _paths: [(observed, "/dev/ttyACM9", topology)]
+    )
+    monkeypatch.setattr(roadrunner, "_helper", lambda *_args: _info(provisioned=True, serial=observed))
+    _fake_clock(monkeypatch)
+
+    with pytest.raises(roadrunner.RoadrunnerError) as exc:
+        roadrunner._await_same_topology(paths, topology, expected, provisioned=True)
+
+    assert exc.value.code == "roadrunner_mismatch"
+    assert exc.value.data["serial"] == expected
+    assert exc.value.data["observed_serial"] == observed
+    assert exc.value.data["observed_state"] == "provisioned"
+
+
+def test_await_reenumeration_diagnoses_the_wire_identity_not_the_descriptor(paths, monkeypatch):
+    """When the USB descriptor already shows the wanted serial but the wire
+    protocol disagrees (e.g. a write that updated the string descriptor
+    without the flash identity taking), the mismatch must report what INFO
+    actually said - reporting the descriptor's (expected) serial back would
+    be a useless "observed the identity you expected" diagnostic.
+    """
+    topology = _topology()
+    expected = "RR-0123456789ABCDEFGHJKMNPQRS"
+    stale_wire_serial = UNPROVISIONED
+    monkeypatch.setattr(
+        roadrunner, "_entry_candidates", lambda _paths: [(expected, "/dev/ttyACM2", topology)]
+    )
+    monkeypatch.setattr(roadrunner, "_helper", lambda *_args: _info(provisioned=False, serial=stale_wire_serial))
+    _fake_clock(monkeypatch)
+
+    with pytest.raises(roadrunner.RoadrunnerError) as exc:
+        roadrunner._await_same_topology(paths, topology, expected, provisioned=True)
+
+    assert exc.value.code == "roadrunner_mismatch"
+    assert exc.value.data["observed_serial"] == stale_wire_serial
+    assert exc.value.data["observed_state"] == "unprovisioned"
+
+
+def test_clear_reenumeration_times_out_when_nothing_reappears(paths, monkeypatch):
+    device = roadrunner.RoadrunnerDevice(PROVISIONED, "/dev/ttyACM0", _topology())
+    monkeypatch.setattr(roadrunner, "_entry_candidates", lambda _paths: [])
+    monkeypatch.setattr(roadrunner, "_helper", lambda *_args, **_kwargs: {})
+    _fake_clock(monkeypatch)
+
+    with pytest.raises(roadrunner.RoadrunnerError) as exc:
+        roadrunner.clear_roadrunner(paths, device)
+
+    assert exc.value.code == "roadrunner_timeout"
+
+
+def test_clear_reenumeration_reports_mismatch_when_still_provisioned(paths, monkeypatch):
+    device = roadrunner.RoadrunnerDevice(PROVISIONED, "/dev/ttyACM0", _topology())
+    # Same topology re-enumerates, but it never sheds its provisioned serial -
+    # e.g. the clear silently failed on-device. That is not "nothing came back".
+    monkeypatch.setattr(
+        roadrunner, "_entry_candidates", lambda _paths: [(PROVISIONED, "/dev/ttyACM0", _topology())]
+    )
+    monkeypatch.setattr(
+        roadrunner,
+        "_helper",
+        lambda _paths, operation, port, uuid_hex=None: {}
+        if operation == "clear"
+        else _info(provisioned=True, serial=PROVISIONED),
+    )
+    _fake_clock(monkeypatch)
+
+    with pytest.raises(roadrunner.RoadrunnerError) as exc:
+        roadrunner.clear_roadrunner(paths, device)
+
+    assert exc.value.code == "roadrunner_mismatch"
+    assert exc.value.data["observed_serial"] == PROVISIONED
+    assert exc.value.data["observed_state"] == "provisioned"
 
 
 def test_agent_provisions_once_without_tracking(paths, monkeypatch):

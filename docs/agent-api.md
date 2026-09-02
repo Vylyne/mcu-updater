@@ -125,6 +125,8 @@ application error (see `data.code`), `-32603` internal.
 | `fw.canbus.ignore` | `uuid` (required) | `{uuid, ignored: true}` — hide every sighting of a CAN UUID from the "new board?" flow; idempotent, flag not filter |
 | `fw.canbus.unignore` | `uuid` (required) | `{uuid, ignored: false}` — reverse `fw.canbus.ignore`; idempotent |
 | `fw.add_mcu.start` | `name`, `dfu_serial?` (STM32 only) | `{job_id, job, dfu_serial, bootsel_id}` — **off by default** |
+| `fw.roadrunner.provision` | `serial` (required) | `{serial, prior_serial, state: "provisioned"}` - explicit direct-USB provisioning of one confirmed, untracked Roadrunner |
+| `fw.roadrunner.clear` | `serial` (required) | `{serial, prior_serial, state: "unprovisioned"}` - explicit direct-USB identity clear of one confirmed, untracked Roadrunner |
 | `fw.artifacts` | `name` (required) | `{<fw>: Artifact, ...}`, one key per family the type declares |
 | `fw.settings.get` | — | `{settings: Settings}` |
 | `fw.settings.set` | `settings` (required, non-empty) | `{settings: Settings, changed: [key]}` — only the `SETTABLE` keys |
@@ -140,6 +142,28 @@ application error (see `data.code`), `-32603` internal.
 | `fw.device.list` | — | `{displays, reachable, watcher}` — read-only |
 | `fw.job.get` | `job_id?`, `log_from?` | `{job, log, log_from, log_next, log_dropped}` |
 | `fw.job.cancel` | `job_id?` | `{cancelling, immediate}` |
+
+### `fw.roadrunner.provision` and `fw.roadrunner.clear`
+
+These direct-USB maintenance actions are deliberately separate from normal MCU
+tracking and flashing. Both require exactly one canonical Roadrunner `serial`
+that is currently untracked, has a matching `usb-Vylyne_Roadrunner_...-if00`
+descriptor, matches the USB topology's `Vylyne` / `Roadrunner` strings, and
+answers the direct-USB INFO protocol as model `roadrunner-v1`.
+
+`fw.roadrunner.provision` accepts only an `RR-UNPROVISIONED-<flash-id>` serial.
+The agent creates one cryptographically random 16-byte UUID, sends it once, and
+waits only for the same transient physical USB topology to re-enumerate with
+the resulting `RR-<base32-uuid>` serial. It never persists either the topology
+or diagnostic flash ID and does not add the device to an MCU type. `clear`
+performs the inverse maintenance action on one provisioned `RR-...` serial and
+returns its new unprovisioned serial, again leaving it untracked.
+
+Both calls return `{serial, prior_serial, state}` after a confirmed
+re-enumeration. They use the normal exclusive firmware-operation lock; a
+timeout after a write is never retried. Stable refusal codes are
+`roadrunner_no_candidate`, `roadrunner_ambiguous`, `roadrunner_invalid_probe`,
+`roadrunner_helper`, `roadrunner_timeout`, and `roadrunner_tracked`.
 
 ### `fw.ping`
 

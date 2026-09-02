@@ -6,6 +6,7 @@ import dataclasses
 import os
 import platform
 import re
+import secrets
 import time
 from collections.abc import Callable
 from typing import Any
@@ -26,6 +27,7 @@ from ...errors import (
     UpdaterError,
 )
 from ...flashers.pairings import PAIRING_TTL as _PAIRING_TTL
+from ...lock import exclusive
 from ...paths import Paths
 from ...settings import Settings, load_settings
 from ...states import (
@@ -1296,6 +1298,53 @@ class StatusMixin(_Base):
             ],
         }
 
+    def _roadrunner_refusal(self, exc: UpdaterError) -> RpcError:
+        return RpcError(exc.message, data=exc.to_dict())
+
+    def _roadrunner_untracked(self, serial: str) -> None:
+        owners = self.registry().find_types_for_serial(serial)
+        if owners:
+            raise RpcError(
+                f"Roadrunner '{serial}' is already tracked under '{owners[0]}'.",
+                data={
+                    "code": "roadrunner_tracked",
+                    "message": "Roadrunner must be untracked before maintenance",
+                    "data": {"serial": serial, "tracked_under": owners},
+                },
+            )
+
+    def roadrunner_provision(self, args: dict) -> dict[str, Any]:
+        """Explicitly provision one confirmed, untracked USB Roadrunner."""
+        from ...discovery import roadrunner
+
+        serial = self._require_str(args, "serial")
+        self._roadrunner_untracked(serial)
+        try:
+            # The lock covers selection, the irreversible write, and its
+            # re-enumeration handoff. A timeout never retries the write.
+            with exclusive(self.paths, f"provision Roadrunner {serial}"):
+                device = roadrunner.find_untracked(self.paths, serial)
+                result = roadrunner.provision_roadrunner(self.paths, device, secrets.token_bytes(16))
+        except UpdaterError as exc:
+            raise self._roadrunner_refusal(exc) from exc
+        self._changed()
+        return {"serial": result.serial, "prior_serial": serial, "state": "provisioned"}
+
+    def roadrunner_clear(self, args: dict) -> dict[str, Any]:
+        """Explicitly clear one confirmed, untracked USB Roadrunner."""
+        from ...discovery import roadrunner
+
+        serial = self._require_str(args, "serial")
+        self._roadrunner_untracked(serial)
+        try:
+            with exclusive(self.paths, f"clear Roadrunner {serial}"):
+                device = roadrunner.find_provisioned(self.paths, serial)
+                result = roadrunner.clear_roadrunner(self.paths, device)
+        except UpdaterError as exc:
+            raise self._roadrunner_refusal(exc) from exc
+        self._changed()
+        return {"serial": result.serial, "prior_serial": serial, "state": "unprovisioned"}
+
     def canbus_scan(self, args: dict) -> dict[str, Any]:
         """Unclaimed CAN boards on every discovered interface.
 
@@ -1554,6 +1603,8 @@ class StatusMixin(_Base):
         "fw.canbus.scan": "canbus_scan",
         "fw.canbus.ignore": "canbus_ignore",
         "fw.canbus.unignore": "canbus_unignore",
+        "fw.roadrunner.provision": "roadrunner_provision",
+        "fw.roadrunner.clear": "roadrunner_clear",
         "fw.device.list": "device_list",
         "fw.artifacts": "artifacts",
         "fw.settings.get": "settings_get",

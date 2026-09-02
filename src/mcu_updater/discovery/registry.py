@@ -18,6 +18,7 @@ from __future__ import annotations
 from .byid import Byid
 from .knomi_serial.listen import Listen
 from .knomi_serial.watcher import Watcher
+from .roadrunner import Roadrunner
 from .spec import Source
 
 #: Every discovery source. Order matters for `confirm()`'s tie-breaking: the
@@ -26,7 +27,7 @@ from .spec import Source
 #: tie keeps whichever the loop saw first, so a knomi sighting is never
 #: displaced by a board one (their `Sighting.id`s - by-id serial vs. knomi
 #: device id - would not collide in practice, but the ordering costs nothing).
-SOURCES: tuple[Source, ...] = (Listen(), Watcher(), Byid())
+SOURCES: tuple[Source, ...] = (Listen(), Watcher(), Roadrunner(), Byid())
 
 _BY_NAME: dict[str, Source] = {s.name: s for s in SOURCES}
 

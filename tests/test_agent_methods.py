@@ -1052,6 +1052,45 @@ def test_open_returns_a_session_and_the_top_menu(kapi):
     assert res["available"]["klipper"] is True
 
 
+def test_open_seeds_from_the_types_own_chipset(kapi, paths, live_registry_text):
+    """`bttebb36`'s real chipset (stm32g0b1xx) has no match in the fixture
+    Kconfig, so this swaps in one that does - the fixture tree's own
+    `testchip-a`/`testchip-b`, from tests/fixtures/kconfig_tree/Kconfig -
+    rather than exercising this through a chipset the fixture tree cannot
+    answer for."""
+    # Not `count=1`: "stm32g0b1xx" is also mmb_can's chipset, listed before
+    # bttebb36's in the fixture registry, so a single-count replace would
+    # rewrite the wrong section's line.
+    text = live_registry_text.replace("chipset: stm32g0b1xx", "chipset: testchip-a")
+    with open(paths.registry_file, "w", encoding="utf-8") as fh:
+        fh.write(text)
+    kapi2 = Api(paths)
+
+    res = open_session(kapi2)
+    assert res["dirty"] is True
+    assert set(res["seeded"]) == {"LOW_LEVEL_OPTIONS", "MACH_STM32", "MACH_STM32_TESTCHIP_A"}
+    assert next(n for n in res["nodes"] if n.get("name") == "LOW_LEVEL_OPTIONS")["value"] == "y"
+
+
+def test_open_reports_no_seeding_once_a_config_is_saved(kapi, paths, live_registry_text):
+    # Not `count=1`: "stm32g0b1xx" is also mmb_can's chipset, listed before
+    # bttebb36's in the fixture registry, so a single-count replace would
+    # rewrite the wrong section's line.
+    text = live_registry_text.replace("chipset: stm32g0b1xx", "chipset: testchip-a")
+    with open(paths.registry_file, "w", encoding="utf-8") as fh:
+        fh.write(text)
+    kapi2 = Api(paths)
+
+    first = open_session(kapi2)
+    kapi2.dispatch("fw.kconfig.save", {"session": first["session"]})
+
+    second = kapi2.dispatch(
+        "fw.kconfig.open", {"name": "bttebb36", "fw": "klipper", "force": True}
+    )
+    assert second["seeded"] == []
+    assert second["dirty"] is False
+
+
 def test_open_refuses_an_unknown_type(kapi):
     """The answers are saved per type, so inventing a directory for a typo would
     not be helpful."""

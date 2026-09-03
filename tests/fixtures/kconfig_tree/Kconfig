@@ -17,6 +17,45 @@ config MACH_RP2040
 
 endchoice
 
+# Placed after the choice above rather than before it - `top_node.list` and
+# `top_node.list.list` are relied on elsewhere in this file to mean "the arch
+# choice" and "its first option", and this fixture is shared rather than
+# rebuilt per test.
+
+# Real Klipper prompts for this; Katapult defaults it on with no prompt at all.
+# `seed_defaults` only has something to turn on when the prompt exists - this
+# fixture exercises the Klipper shape.
+config LOW_LEVEL_OPTIONS
+    bool "Enable extra low-level configuration options"
+
+# Promptless, like Klipper's `config MCU` - never appears in a menu. What
+# `seed_defaults` reads to work out which MACH_* symbols answer for a chipset
+# string, the same way it reads Klipper's real one.
+config MCU
+    string
+    default "testchip-a" if MACH_STM32_TESTCHIP_A
+    default "testchip-b" if MACH_STM32_TESTCHIP_B
+
+# A nested choice guarded by the outer one, the same shape as Klipper's
+# architecture choice -> per-arch "Processor model" choice. Exercises that
+# `seed_defaults` has to answer both levels, not just the inner symbol - the
+# inner one is invisible until MACH_STM32 is also set.
+if MACH_STM32
+
+choice
+    prompt "Processor model"
+    default MACH_STM32_TESTCHIP_A
+
+config MACH_STM32_TESTCHIP_A
+    bool "Test chip A"
+
+config MACH_STM32_TESTCHIP_B
+    bool "Test chip B"
+
+endchoice
+
+endif
+
 # Flipping the choice above must flip `visible` on everything below that depends
 # on it - which is the whole reason dependency evaluation is left to kconfiglib.
 config STM32_CLOCK_REF

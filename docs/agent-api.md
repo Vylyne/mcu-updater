@@ -1572,6 +1572,26 @@ inconsistent inside one directory (`config.CartoV3USBLite` against
 `config.CartoV4USBlite`), and parsing them would teach a generic tool one
 vendor's board family.
 
+### `fw.kconfig.open` also seeds from the type's own chipset
+
+A separate, smaller mechanism from everything above — no vendor file, no
+profile record. When a session opens with no saved `.config` yet, it turns on
+`LOW_LEVEL_OPTIONS` (if the tree prompts for it - Katapult defaults it on with
+no prompt, so this is a no-op there) and pre-selects the `MACH_*` symbols that
+make the tree's own `config MCU` read back as the type's recorded `chipset` -
+the same string already given for `add-type -c` / by-id matching, read once
+more here rather than duplicated into a second table. The response carries
+`seeded`, the `CONFIG_` names actually applied - empty on every response but
+the one that produced them, and always empty once a `.config` has been saved
+for that type.
+
+Abandoned rather than guessed at: if the resulting `config MCU` does not read
+back as `chipset` (unknown chipset, no `MCU` symbol in this tree), nothing from
+either half is applied and the session opens exactly as it would have before
+this existed. A session opened this way is `dirty` - the panel treats it the
+same as any other unsaved edit, offering Save rather than writing anything on
+its own.
+
 ### Your own answers are a profile too
 
 `origin` is `vendor` (shipped in the firmware tree) or `custom` — this type's

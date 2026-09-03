@@ -104,6 +104,31 @@ describe("KconfigDialog", () => {
     expect(spy).toHaveBeenCalled();
   });
 
+  it("shows a dismissible note when the open carried seeded answers", async () => {
+    state.kconfig = {
+      ...menu,
+      dirty: true,
+      seeded: ["LOW_LEVEL_OPTIONS", "MACH_STM32", "MACH_STM32G0B1"],
+    };
+    const wrapper = mount(KconfigDialog);
+    expect(wrapper.text()).toContain("carto_v4");
+    expect(wrapper.text()).toContain(
+      "LOW_LEVEL_OPTIONS, MACH_STM32, MACH_STM32G0B1",
+    );
+
+    await wrapper
+      .findAll("button")
+      .find((b) => b.text() === "Dismiss")
+      ?.trigger("click");
+    expect(wrapper.text()).not.toContain("Pre-set from");
+  });
+
+  it("shows no note when the open carried nothing seeded", () => {
+    state.kconfig = { ...menu, seeded: [] };
+    const wrapper = mount(KconfigDialog);
+    expect(wrapper.text()).not.toContain("Pre-set from");
+  });
+
   it("shows the help overlay from state.kconfig.help", () => {
     state.kconfig = {
       ...menu,

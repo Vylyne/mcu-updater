@@ -2,7 +2,7 @@
 // The fw.kconfig.* session dialog: one open configuration at a time, driven
 // entirely by state.kconfig - see store/agent.ts's applyKconfigMenu. Opened
 // by an ActionButton whose method is fw.kconfig.open; closed from here.
-import { computed, ref } from "vue";
+import { computed, ref, watch } from "vue";
 import {
   clearKconfigSearch,
   closeKconfig,
@@ -25,6 +25,26 @@ import UiIcon from "./UiIcon.vue";
 const query = ref("");
 const confirmDiscard = ref(false);
 const busy = ref(false);
+
+// `seeded` only rides along on the `open` response - applyKconfigMenu
+// spreads a fresh menu on every later call, and none of those carry it, so
+// the field itself would vanish from state.kconfig the moment the user
+// navigates. Captured here instead, keyed off the session id, so the note
+// survives navigating the tree and is dismissed only by the user's own
+// click - not by kconfigEnter/Up/Set doing their normal thing.
+const seededNote = ref<string[] | null>(null);
+watch(
+  () => state.kconfig?.session,
+  () => {
+    seededNote.value = state.kconfig?.seeded?.length
+      ? state.kconfig.seeded
+      : null;
+  },
+  // The dialog mounts fresh exactly when a session opens (v-if="state.kconfig"
+  // in the parent), so the first "change" this would otherwise wait for has
+  // already happened by the time the watcher is created.
+  { immediate: true },
+);
 
 const dirty = computed(() => state.kconfig?.dirty === true);
 const searching = computed(() => state.kconfig?.search != null);
@@ -119,6 +139,14 @@ function forceClose(): void {
       <h2>{{ state.kconfig.type }} / {{ state.kconfig.fw }}</h2>
       <span v-if="dirty" class="chip" data-tone="attention">Unsaved</span>
     </template>
+
+    <p v-if="seededNote" class="alert alert--info kconfig-seeded-note">
+      <span>
+        Pre-set from {{ state.kconfig.type }}'s recorded chipset:
+        {{ seededNote.join(", ") }}.
+      </span>
+      <button type="button" @click="seededNote = null">Dismiss</button>
+    </p>
 
     <nav class="kconfig-breadcrumb text-caption">
       <template
@@ -258,6 +286,13 @@ function forceClose(): void {
   align-items: center;
   gap: 6px;
   margin-bottom: 8px;
+}
+
+/* .alert is already a flex row with a gap - this just pins the button to
+   the far side instead of it hugging the text. */
+.kconfig-seeded-note button {
+  margin-left: auto;
+  white-space: nowrap;
 }
 
 .kconfig-search {

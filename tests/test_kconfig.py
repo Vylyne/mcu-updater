@@ -329,6 +329,69 @@ def test_a_missing_config_file_is_not_an_error(session):
     assert row(session, "BOARD_NAME")["value"] == "testboard"
 
 
+# --------------------------------------------------------------------------
+# seeding a fresh session from the type's own recorded chipset
+# --------------------------------------------------------------------------
+
+
+def test_a_session_with_no_saved_config_seeds_from_the_chipset(store):
+    session = store.open("bttebb36", "klipper", chipset="testchip-a")
+    assert session.dirty is True
+    assert set(session.seeded) == {
+        "LOW_LEVEL_OPTIONS",
+        "MACH_STM32",
+        "MACH_STM32_TESTCHIP_A",
+    }
+    assert session._kconf.syms["MCU"].str_value == "testchip-a"
+    assert row(session, "LOW_LEVEL_OPTIONS")["value"] == "y"
+
+
+def test_seeding_picks_the_right_processor_for_a_different_chipset(store):
+    session = store.open("bttebb36", "klipper", chipset="testchip-b")
+    assert session._kconf.syms["MCU"].str_value == "testchip-b"
+    assert "MACH_STM32_TESTCHIP_B" in session.seeded
+    assert "MACH_STM32_TESTCHIP_A" not in session.seeded
+
+
+def test_a_saved_config_is_never_seeded(store):
+    """A saved `.config` is the user's own answers - seeding would silently
+    override whatever they (or an earlier seed) already chose."""
+    seeded = store.open("bttebb36", "klipper", chipset="testchip-a")
+    seeded.save()
+    store.close(seeded.id)
+
+    reopened = store.open("bttebb36", "klipper", chipset="testchip-b")
+    assert reopened.seeded == []
+    assert reopened.dirty is False
+    assert reopened._kconf.syms["MCU"].str_value == "testchip-a"
+
+
+def test_an_unrecognised_chipset_is_abandoned_rather_than_guessed(store):
+    session = store.open("bttebb36", "klipper", chipset="not-a-real-chip")
+    assert session.seeded == []
+    assert session.dirty is False
+    # Falls back to the tree's own defaults, not a half-applied guess.
+    assert row(session, "LOW_LEVEL_OPTIONS")["value"] == "n"
+
+
+def test_no_recorded_chipset_means_no_seeding(store):
+    session = store.open("bttebb36", "klipper", chipset="")
+    assert session.seeded == []
+    assert session.dirty is False
+
+
+def test_seed_defaults_returns_none_from_the_resolver_on_a_tree_with_no_mcu_symbol(tree):
+    """`_resolve_chipset_symbols` is what tells `seed_defaults` apart from a
+    tree that simply has nothing to seed - Katapult and Klipper both define
+    `MCU`, but nothing requires every Kconfig tree to."""
+    from mcu_updater.providers.kconfig import _resolve_chipset_symbols
+
+    kconf, _ = parse(tree)
+    del kconf.syms["MCU"]  # simulate a tree with no MCU symbol at all
+    mod = load_kconfiglib(str(tree))
+    assert _resolve_chipset_symbols(mod, kconf, "testchip-a") is None
+
+
 def test_a_choice_reports_its_options_not_its_own_tristate(session):
     """kconfiglib's `assignable` on a Choice describes whether the choice is
     enabled - ('y',) for any ordinary one. Reporting that made every choice look

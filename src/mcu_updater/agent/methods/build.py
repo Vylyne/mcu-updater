@@ -226,7 +226,7 @@ class BuildMixin(_Base):
 
         # The type has to exist: the answers are saved per type, and inventing a
         # directory for a typo is not a helpful thing to do.
-        self.registry().get(name)
+        mcu = self.registry().get(name)
 
         store = self._sessions()
         if not bool(args.get("force")):
@@ -244,10 +244,15 @@ class BuildMixin(_Base):
                     },
                 )
 
-        session = store.open(name, fw)
+        session = store.open(name, fw, chipset=mcu.chipset)
         with session.lock:
             payload = session.menu()
         payload["available"] = self.kconfig_available()
+        # Only ever non-empty on the open that produced it - a fresh session
+        # with no saved config, pre-set from this type's own recorded
+        # chipset. Lets the panel say where the defaults came from instead of
+        # presenting them as if the user had already chosen them.
+        payload["seeded"] = session.seeded
         return payload
 
     def kconfig_menu(self, args: dict) -> dict[str, Any]:

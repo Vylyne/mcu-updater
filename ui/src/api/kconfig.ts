@@ -47,6 +47,11 @@ export interface KconfigMenu {
   dirty: boolean;
   breadcrumb: { id: string; prompt: string }[];
   nodes: KconfigNode[];
+  /** CONFIG_ names the agent pre-set from this type's own recorded chipset -
+   * only ever non-empty on the `open` that produced them, and only when
+   * there was no saved config yet to seed over. Absent (not just empty) on
+   * every other call. */
+  seeded?: string[];
 }
 
 export interface KconfigSearchResult {

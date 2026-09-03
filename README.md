@@ -54,6 +54,7 @@ Firmware and boards:
 - [x] Per-type saved menuconfig answers, per firmware
 - [x] Per-type Makefile patches
 - [x] Vendor profile seeding, custom profiles, drift detection
+- [x] A first, unsaved menuconfig session pre-set from the type's own recorded chipset
 - [x] Flash-time bootloader offset check
 - [x] Board tracking by `/dev/serial/by-id` serial
 - [x] Displays re-identified at flash time, once the ports are free
@@ -138,8 +139,11 @@ Same registry, same `mcu-updater.cfg`, same builds - the panel shown at the top
 of this page lists every tracked type, whether its firmware is current, and
 whether each board is online, expandable down to the individual serial.
 
-**Kconfig in the browser**, seeded from a vendor [profile](#profiles) instead of
-an empty menu:
+**Kconfig in the browser**, seeded from a vendor [profile](#profiles) if one has
+been applied - or, for a type's first, unsaved session, pre-set from its own
+recorded `chipset` (architecture and processor model, plus `LOW_LEVEL_OPTIONS`
+where the tree prompts for it) instead of an empty menu. Dismissible, and
+abandoned rather than guessed at if the chipset does not resolve cleanly:
 
 ![menuconfig panel](docs/img/panel_menu_config.png)
 

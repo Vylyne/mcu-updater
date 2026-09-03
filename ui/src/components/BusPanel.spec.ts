@@ -517,9 +517,9 @@ describe("BusPanel", () => {
       // Not visible until the overflow menu is opened - a destructive action
       // does not get a permanently-visible pill next to the device name.
       expect(wrapper.text()).not.toContain("Clear identity");
-      expect(
-        wrapper.find('[aria-label="Roadrunner actions"]').exists(),
-      ).toBe(true);
+      expect(wrapper.find('[aria-label="Roadrunner actions"]').exists()).toBe(
+        true,
+      );
 
       await wrapper.get('[aria-label="Roadrunner actions"]').trigger("click");
 
@@ -569,9 +569,7 @@ describe("BusPanel", () => {
       expect(disabledTrack.exists()).toBe(true);
       expect(disabledTrack.attributes("disabled")).toBeDefined();
 
-      const enabledTrack = provisionedRow!.find(
-        '[title="Track this device…"]',
-      );
+      const enabledTrack = provisionedRow!.find('[title="Track this device…"]');
       expect(enabledTrack.exists()).toBe(true);
       expect(enabledTrack.attributes("disabled")).toBeUndefined();
     });

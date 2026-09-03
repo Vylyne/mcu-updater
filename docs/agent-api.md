@@ -125,8 +125,8 @@ application error (see `data.code`), `-32603` internal.
 | `fw.canbus.ignore` | `uuid` (required) | `{uuid, ignored: true}` — hide every sighting of a CAN UUID from the "new board?" flow; idempotent, flag not filter |
 | `fw.canbus.unignore` | `uuid` (required) | `{uuid, ignored: false}` — reverse `fw.canbus.ignore`; idempotent |
 | `fw.add_mcu.start` | `name`, `dfu_serial?` (STM32 only) | `{job_id, job, dfu_serial, bootsel_id}` — **off by default** |
-| `fw.roadrunner.provision` | `serial` (required) | `{serial, prior_serial, state: "provisioned"}` - explicit direct-USB provisioning of one confirmed, untracked Roadrunner |
-| `fw.roadrunner.clear` | `serial` (required) | `{serial, prior_serial, state: "unprovisioned"}` - explicit direct-USB identity clear of one confirmed, untracked Roadrunner |
+| `fw.roadrunner.provision` | `serial` (required) | `{serial, prior_serial, state: "provisioned"}` - explicit direct-USB provisioning of one confirmed, untracked Roadrunner — **off by default** |
+| `fw.roadrunner.clear` | `serial` (required) | `{serial, prior_serial, state: "unprovisioned"}` - explicit direct-USB identity clear of one confirmed, untracked Roadrunner — **off by default** |
 | `fw.artifacts` | `name` (required) | `{<fw>: Artifact, ...}`, one key per family the type declares |
 | `fw.settings.get` | — | `{settings: Settings}` |
 | `fw.settings.set` | `settings` (required, non-empty) | `{settings: Settings, changed: [key]}` — only the `SETTABLE` keys |
@@ -150,6 +150,14 @@ tracking and flashing. Both require exactly one canonical Roadrunner `serial`
 that is currently untracked, has a matching `usb-Vylyne_Roadrunner_...-if00`
 descriptor, matches the USB topology's `Vylyne` / `Roadrunner` strings, and
 answers the direct-USB INFO protocol as model `roadrunner-v1`.
+
+Both write to a board, so both are gated exactly like `fw.flash` - **off by
+default**, absent from `capabilities`, and answered with `-32601` (unknown
+method) rather than dispatched, whether because `enable_flashing` is off or
+because the agent is read-only (no job runner), even though neither call goes
+through one. As with `enable_flashing`/`allow_flash_while_printing` elsewhere,
+a toggle does not take effect until the agent's next reconnect (see "Settings"
+below).
 
 `fw.roadrunner.provision` accepts only an `RR-UNPROVISIONED-<flash-id>` serial.
 The agent creates one cryptographically random 16-byte UUID, sends it once, and

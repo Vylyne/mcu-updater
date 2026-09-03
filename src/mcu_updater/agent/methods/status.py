@@ -1659,7 +1659,10 @@ class StatusMixin(_Base):
     #: Advertised only when enable_flashing is on. The panel hides its flash
     #: buttons accordingly, rather than offering something that gets refused.
     #: add_mcu.start writes a bootloader to a board, so it belongs here too - even
-    #: though the board is not yet one of ours.
+    #: though the board is not yet one of ours. Every member here is also a
+    #: JOB_METHODS entry, so the read-only branch below pops all of them for
+    #: free; that overlap is coincidental, not load-bearing - see
+    #: HARDWARE_METHODS for the case where it doesn't hold.
     FLASH_METHODS = (
         "fw.flash",
         "fw.flash_all",
@@ -1667,14 +1670,30 @@ class StatusMixin(_Base):
         "fw.add_mcu.start",
     )
 
+    #: Also writes to a board, also gated on enable_flashing like FLASH_METHODS -
+    #: but neither goes through the job runner (each is a synchronous, single-shot
+    #: maintenance action, not a fw.build/fw.flash job), so unlike FLASH_METHODS
+    #: it has no JOB_METHODS entry to ride along with when the agent is
+    #: read-only. Kept as its own tuple, and popped explicitly in both branches
+    #: below, so a read-only agent withholds it too rather than relying on an
+    #: overlap that doesn't exist for it.
+    HARDWARE_METHODS = (
+        "fw.roadrunner.provision",
+        "fw.roadrunner.clear",
+    )
+
     def available_methods(self) -> dict[str, str]:
         out = dict(self.METHODS)
         if self.runner is None:
             for name in self.JOB_METHODS:
                 out.pop(name, None)
+            for name in self.HARDWARE_METHODS:
+                out.pop(name, None)
             return out
         if not self.settings().enable_flashing:
             for name in self.FLASH_METHODS:
+                out.pop(name, None)
+            for name in self.HARDWARE_METHODS:
                 out.pop(name, None)
         return out
 

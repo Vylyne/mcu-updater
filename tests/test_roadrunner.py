@@ -9,8 +9,12 @@ from pathlib import Path
 import pytest
 
 from mcu_updater.agent.methods import Api
-from mcu_updater.agent.rpc import RpcError
+from mcu_updater.agent.rpc import ERR_METHOD_NOT_FOUND, RpcError
 from mcu_updater.discovery import roadrunner
+from mcu_updater.jobs import JobRunner
+from mcu_updater.settings import load_settings
+
+from .conftest import write_settings
 
 UNPROVISIONED = "RR-UNPROVISIONED-50543165187A4D1C"
 PROVISIONED = "RR-0123456789ABCDEFGHJKMNPQRS"
@@ -300,8 +304,62 @@ def test_clear_reenumeration_reports_mismatch_when_still_provisioned(paths, monk
     assert exc.value.data["observed_state"] == "provisioned"
 
 
+def _ready_api(paths) -> Api:
+    """A non-read-only, flashing-enabled agent - what every dispatch test here
+    needs, now that `fw.roadrunner.provision`/`fw.roadrunner.clear` are gated
+    on `enable_flashing`/read-only exactly like every other hardware-writing
+    method (see `test_roadrunner_methods_are_gated_*` below for the gate
+    itself).
+    """
+    write_settings(paths, dry_run="true", service_backend="null", enable_flashing="true")
+    runner = JobRunner(paths, lambda: load_settings(paths.settings_file))
+    return Api(paths, runner=runner)
+
+
+def test_roadrunner_methods_are_not_advertised_by_default(paths):
+    """Installing an update must never silently grant a browser the ability to
+    provision or clear a board's identity - the same invariant `fw.flash`
+    already upholds."""
+    runner = JobRunner(paths, lambda: load_settings(paths.settings_file))
+    api = Api(paths, runner=runner)  # enable_flashing omitted -> false
+
+    capabilities = api.dispatch("fw.ping")["capabilities"]
+    assert "fw.roadrunner.provision" not in capabilities
+    assert "fw.roadrunner.clear" not in capabilities
+    with pytest.raises(RpcError) as exc:
+        api.dispatch("fw.roadrunner.provision", {"serial": UNPROVISIONED})
+    assert exc.value.code == ERR_METHOD_NOT_FOUND
+    with pytest.raises(RpcError) as exc:
+        api.dispatch("fw.roadrunner.clear", {"serial": PROVISIONED})
+    assert exc.value.code == ERR_METHOD_NOT_FOUND
+
+
+def test_roadrunner_methods_are_not_advertised_when_read_only(paths):
+    """A read-only agent (no job runner) must withhold these too, even though
+    neither call goes through the runner - read-only means no writes, not just
+    no jobs."""
+    write_settings(paths, dry_run="true", service_backend="null", enable_flashing="true")
+    api = Api(paths)  # no runner -> read-only
+
+    capabilities = api.dispatch("fw.ping")["capabilities"]
+    assert "fw.roadrunner.provision" not in capabilities
+    assert "fw.roadrunner.clear" not in capabilities
+    with pytest.raises(RpcError) as exc:
+        api.dispatch("fw.roadrunner.provision", {"serial": UNPROVISIONED})
+    assert exc.value.code == ERR_METHOD_NOT_FOUND
+    with pytest.raises(RpcError) as exc:
+        api.dispatch("fw.roadrunner.clear", {"serial": PROVISIONED})
+    assert exc.value.code == ERR_METHOD_NOT_FOUND
+
+
+def test_roadrunner_methods_are_advertised_once_enabled(paths):
+    api = _ready_api(paths)
+    assert "fw.roadrunner.provision" in api.dispatch("fw.ping")["capabilities"]
+    assert "fw.roadrunner.clear" in api.dispatch("fw.ping")["capabilities"]
+
+
 def test_agent_provisions_once_without_tracking(paths, monkeypatch):
-    api = Api(paths)
+    api = _ready_api(paths)
     original = roadrunner.RoadrunnerDevice(UNPROVISIONED, "/dev/ttyACM0", _topology())
     result = roadrunner.RoadrunnerDevice(PROVISIONED, "/dev/ttyACM1", _topology())
     generated: list[int] = []
@@ -326,7 +384,7 @@ def test_agent_provisions_once_without_tracking(paths, monkeypatch):
 
 
 def test_agent_refuses_ambiguous_candidate_before_writing(paths, monkeypatch):
-    api = Api(paths)
+    api = _ready_api(paths)
     wrote: list[bool] = []
     monkeypatch.setattr(
         roadrunner,
@@ -343,7 +401,7 @@ def test_agent_refuses_ambiguous_candidate_before_writing(paths, monkeypatch):
 
 
 def test_agent_does_not_retry_after_a_provision_timeout(paths, monkeypatch):
-    api = Api(paths)
+    api = _ready_api(paths)
     original = roadrunner.RoadrunnerDevice(UNPROVISIONED, "/dev/ttyACM0", _topology())
     writes: list[bool] = []
     monkeypatch.setattr(roadrunner, "find_untracked", lambda *_args: original)
@@ -360,7 +418,7 @@ def test_agent_does_not_retry_after_a_provision_timeout(paths, monkeypatch):
 
 
 def test_agent_clear_returns_to_unprovisioned_without_tracking(paths, monkeypatch):
-    api = Api(paths)
+    api = _ready_api(paths)
     original = roadrunner.RoadrunnerDevice(PROVISIONED, "/dev/ttyACM0", _topology())
     cleared = roadrunner.RoadrunnerDevice(UNPROVISIONED, "/dev/ttyACM1", _topology())
     monkeypatch.setattr(roadrunner, "find_provisioned", lambda *_args: original)

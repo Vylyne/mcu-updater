@@ -521,7 +521,9 @@ describe("BusPanel", () => {
       // untracked until separately configured".
       state.bus = [unprovisionedRoadrunner, provisionedRoadrunner];
       state.status = { targets: [makeTarget("bttebb36")] };
-      state.ping = { capabilities: [...roadrunnerCapabilities, ...fullCapabilities] };
+      state.ping = {
+        capabilities: [...roadrunnerCapabilities, ...fullCapabilities],
+      };
       const wrapper = mount(BusPanel);
 
       const rows = wrapper.findAll("li");

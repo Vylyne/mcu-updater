@@ -173,6 +173,18 @@ export function roadrunnerDiagnosticUid(serial: string): string | null {
     : null;
 }
 
+/** The name shown in a device row - trims an unprovisioned board's 16-hex
+ * flash-UID suffix, since it's already shown in full via the by-id path
+ * underneath and spelled out explicitly as the diagnostic UID in the
+ * provision confirmation dialog. A provisioned Roadrunner's serial has no
+ * such suffix and is returned unchanged, as is every non-Roadrunner
+ * device's serial. */
+export function roadrunnerDisplaySerial(serial: string): string {
+  return serial.startsWith(ROADRUNNER_UNPROVISIONED_PREFIX)
+    ? ROADRUNNER_UNPROVISIONED_PREFIX.slice(0, -1)
+    : serial;
+}
+
 /** `fw.status`'s `locked_by` - non-null while a CLI build or flash holds the
  * host lock. Distinct from `state.job`: this is activity this UI did not
  * start and cannot cancel, only wait out. */

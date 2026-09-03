@@ -233,6 +233,27 @@ class RegistryMixin(_Base):
         name = self._require_str(args, "name")
         serial = self._require_str(args, "serial")
 
+        # An unprovisioned Roadrunner's serial is `RR-UNPROVISIONED-<flash-uid>`
+        # - the trailing 16 hex characters ARE the RP2040 flash UID, which this
+        # plan's constraints forbid ever persisting. The panel hides its own
+        # generic adopt affordance for this row (BusPanel.vue), but this is a
+        # direct RPC too, so the refusal belongs here regardless of whether the
+        # device is currently visible on the bus - unlike `not_an_mcu` below,
+        # this is a property of the serial string itself, not of a live scan.
+        from ...discovery.roadrunner import UNPROVISIONED_RE
+
+        if UNPROVISIONED_RE.fullmatch(serial):
+            raise RpcError(
+                f"'{serial}' is an unprovisioned Roadrunner's diagnostic identity, "
+                f"not a stable serial - provision it first with fw.roadrunner.provision, "
+                f"then track the resulting RR-... serial.",
+                data={
+                    "code": "roadrunner_unprovisioned",
+                    "message": "refusing to track an unprovisioned Roadrunner's diagnostic serial",
+                    "data": {"serial": serial},
+                },
+            )
+
         # The panel only offers `adoptable` devices, but the panel is not the only
         # possible caller - enforce the same rule here so a direct RPC cannot add
         # a Knomi's CH340 as a board. Only refused when we can actually see it:

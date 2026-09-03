@@ -533,6 +533,22 @@ def test_serial_add_allows_a_board_that_is_not_plugged_in(api):
     assert res["added"] is True
 
 
+def test_serial_add_refuses_an_unprovisioned_roadrunner_diagnostic_serial(api):
+    """`RR-UNPROVISIONED-<16 hex>` is a diagnostic identity whose trailing hex
+    IS the RP2040 flash UID - persisting it into a type's tracked serials is
+    exactly what this plan's constraints forbid, and it goes stale the moment
+    the board is actually provisioned. Refused on the string alone, not on
+    whether the device is currently visible on the bus - unlike
+    `not_an_mcu` above."""
+    with pytest.raises(RpcError) as exc:
+        api.dispatch(
+            "fw.serial.add",
+            {"name": "bttebb36", "serial": "RR-UNPROVISIONED-50543165187A4D1C"},
+        )
+    assert exc.value.data["code"] == "roadrunner_unprovisioned"
+    assert "RR-UNPROVISIONED-50543165187A4D1C" not in api.registry().get("bttebb36").serials
+
+
 def test_serial_add_refuses_a_serial_tracked_under_another_type(api, fake_root):
     """One board under two types gets flashed twice with different firmware."""
     make_device(fake_root / "bus", "Klipper", "stm32g0b1xx", "123456789012345678901")

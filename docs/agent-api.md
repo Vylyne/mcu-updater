@@ -181,6 +181,12 @@ or a different device now sitting on that port - and its `data` carries
 `roadrunner_timeout` is reserved for the case where nothing on that topology
 was ever seen again.
 
+A related code, `roadrunner_unprovisioned`, is not raised by either of these
+two methods - `fw.serial.add` (see the "Methods" table above) raises it when
+asked to track an `RR-UNPROVISIONED-<flash-id>` serial, refusing to let the
+diagnostic identity (whose trailing hex is literally the RP2040 flash UID) get
+persisted into a type's tracked serials.
+
 Neither call is ever triggered automatically - `fw.bus.scan`/`fw.status`
 identify a Roadrunner from its ordinary `BusDevice` fields alone (its
 `usb-Vylyne_Roadrunner_...-if00` descriptor gives `fw: "Vylyne"`,

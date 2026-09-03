@@ -511,6 +511,35 @@ describe("BusPanel", () => {
       expect(wrapper.text()).not.toContain("Clear identity");
     });
 
+    it("hides the generic 'track this device' affordance for an unprovisioned Roadrunner, but offers it for a provisioned-untracked one", () => {
+      // An unprovisioned Roadrunner's serial is RR-UNPROVISIONED-<flash-uid>;
+      // adopting it through the generic flow would call fw.serial.add with
+      // that string and persist the RP2040 flash UID into printer.cfg, which
+      // this plan's constraints forbid. A provisioned board carries no such
+      // diagnostic identity, so the generic flow remains open for it - see
+      // docs/roadrunner-provisioning-design.md's "provisioned boards remain
+      // untracked until separately configured".
+      state.bus = [unprovisionedRoadrunner, provisionedRoadrunner];
+      state.status = { targets: [makeTarget("bttebb36")] };
+      state.ping = { capabilities: [...roadrunnerCapabilities, ...fullCapabilities] };
+      const wrapper = mount(BusPanel);
+
+      const rows = wrapper.findAll("li");
+      const unprovisionedRow = rows.find((row) =>
+        row.text().includes(unprovisionedRoadrunner.serial),
+      );
+      const provisionedRow = rows.find((row) =>
+        row.text().includes(provisionedRoadrunner.serial),
+      );
+
+      expect(
+        unprovisionedRow!.find('[title="Track this device…"]').exists(),
+      ).toBe(false);
+      expect(
+        provisionedRow!.find('[title="Track this device…"]').exists(),
+      ).toBe(true);
+    });
+
     it("offers neither action for a Vylyne/Roadrunner serial matching neither known shape", () => {
       state.bus = [{ ...unprovisionedRoadrunner, serial: "RR-GARBAGE" }];
       state.ping = { capabilities: roadrunnerCapabilities };

@@ -348,8 +348,20 @@ async function confirmClear(): Promise<void> {
           Clear identity
         </button>
 
+        <!-- An unprovisioned Roadrunner's serial is
+        `RR-UNPROVISIONED-<flash-uid>` - the generic adopt flow below would
+        call fw.serial.add with that string and persist the RP2040 flash UID
+        into printer.cfg, which this plan's constraints forbid (and which
+        goes stale the moment the board is actually provisioned). Only the
+        "Provision Roadrunner" button above is allowed to touch this row;
+        once provisioned, roadrunnerRowState is no longer 'unprovisioned' and
+        this generic menu returns. -->
         <span
-          v-if="device.is_mcu !== false && showPlusMenu"
+          v-if="
+            device.is_mcu !== false &&
+            showPlusMenu &&
+            roadrunnerRowState(device) !== 'unprovisioned'
+          "
           :ref="(el) => setRowRef(device.serial, el)"
           class="target-menu"
         >

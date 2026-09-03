@@ -238,7 +238,11 @@ class Roadrunner:
     name: str = "roadrunner"
     label: str = "Roadrunner direct USB"
     states: tuple[str, ...] = (STATE_KLIPPER,)
-    needs_ports_free: bool = False
+    #: `sight()` -> `discover()` -> `_helper()` opens a real `serial.Serial`
+    #: connection to probe the device (via the `roadrunner_usb.py` subprocess),
+    #: the same as the knomi listen pass - so it belongs in that category, not
+    #: `Byid`'s or `Watcher`'s, which only read state nobody else is holding.
+    needs_ports_free: bool = True
 
     def sight(self, bench: Bench) -> list[Sighting]:
         return [

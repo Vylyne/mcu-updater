@@ -121,9 +121,16 @@ const showCanAdoptItems = computed(
 const showNewTypeItem = computed(() => canManageTypes.value);
 // Whether the `+` trigger itself is worth showing at all - an empty dropdown
 // (neither capability present) offers nothing, so the button is omitted
-// entirely rather than opening onto a blank menu.
+// entirely rather than opening onto a blank menu. Mirrored by
+// showCanPlusMenu below for the CAN device rows, which otherwise hid their
+// `+` entirely behind "a type already exists to adopt into", gating the
+// "New type from this…" entry point that showPlusMenu already offers serial
+// devices.
 const showPlusMenu = computed(
   () => showAdoptItems.value || showNewTypeItem.value,
+);
+const showCanPlusMenu = computed(
+  () => showCanAdoptItems.value || showNewTypeItem.value,
 );
 
 const families = computed(
@@ -246,10 +253,18 @@ async function unignore(device: BusDevice): Promise<void> {
 // "Declare a board model with nothing plugged in" was only reachable from the
 // toolbar; this is the reverse entry point, for a board already on the bus
 // that has no type yet - the chipset it reported gets pre-filled, and it is
-// adopted automatically once the type exists (TypeDraft.serial).
-const newTypeFor = ref<BusDevice | null>(null);
+// adopted automatically once the type exists (TypeDraft.serial). A CAN
+// device carries no chipset (see CanbusScanDevice), so there is nothing to
+// suggest there, only a uuid to adopt afterward (TypeDraft.canbusUuid).
+const newTypeFor = ref<BusDevice | CanbusDevice | null>(null);
 
-function openNewType(device: BusDevice): void {
+function isCanbusDevice(
+  device: BusDevice | CanbusDevice,
+): device is CanbusDevice {
+  return "uuid" in device;
+}
+
+function openNewType(device: BusDevice | CanbusDevice): void {
   newTypeFor.value = device;
   menuOpenFor.value = null;
 }
@@ -471,7 +486,7 @@ async function confirmClear(): Promise<void> {
           device.application
         }}</span>
         <span
-          v-if="showCanAdoptItems"
+          v-if="showCanPlusMenu"
           :ref="(el) => setRowRef(canKey(device), el)"
           class="target-menu"
         >
@@ -485,15 +500,26 @@ async function confirmClear(): Promise<void> {
             <UiIcon :path="mdiPlusCircleOutline" size="x-small" />
           </button>
           <div v-if="menuOpenFor === canKey(device)" class="menu-list">
+            <template v-if="showCanAdoptItems">
+              <button
+                v-for="name in mcuTypeNames"
+                :key="name"
+                type="button"
+                class="menu-item"
+                :disabled="busy[`can:${device.uuid}`]"
+                @click="adoptCan(device, name)"
+              >
+                {{ name }}
+              </button>
+            </template>
+            <hr v-if="showCanAdoptItems && showNewTypeItem" class="divider" />
             <button
-              v-for="name in mcuTypeNames"
-              :key="name"
+              v-if="showNewTypeItem"
               type="button"
               class="menu-item"
-              :disabled="busy[`can:${device.uuid}`]"
-              @click="adoptCan(device, name)"
+              @click="openNewType(device)"
             >
-              {{ name }}
+              New type from this…
             </button>
           </div>
         </span>
@@ -571,8 +597,11 @@ async function confirmClear(): Promise<void> {
       v-if="newTypeFor"
       :existing-names="mcuTypeNames"
       :families="families"
-      :suggested-chipset="newTypeFor.chipset"
-      :serial="newTypeFor.serial"
+      :suggested-chipset="
+        isCanbusDevice(newTypeFor) ? null : newTypeFor.chipset
+      "
+      :serial="isCanbusDevice(newTypeFor) ? null : newTypeFor.serial"
+      :canbus-uuid="isCanbusDevice(newTypeFor) ? newTypeFor.uuid : null"
       @close="newTypeFor = null"
     />
 

@@ -438,6 +438,98 @@ describe("BusPanel", () => {
     expect(spy).toHaveBeenCalledWith("bttebb36", "abc123");
   });
 
+  it("offers New type from this… in the CAN + menu when canManageTypes", async () => {
+    state.canbus = {
+      interfaces: [],
+      devices: [
+        {
+          uuid: "abc123",
+          interface: "can1",
+          application: "Klipper",
+          state: "klipper",
+          tracked_by: null,
+          ignored: false,
+        },
+      ],
+      failures: [],
+      count: 1,
+      message: null,
+    };
+    state.status = { targets: [makeTarget("bttebb36")] };
+    state.ping = { capabilities: fullCapabilities.concat("fw.canbus.add") };
+    const wrapper = mount(BusPanel);
+    await wrapper.get('[title="Track this CAN device…"]').trigger("click");
+    const items = wrapper.findAll(".menu-item").map((item) => item.text());
+    expect(items).toContain("New type from this…");
+  });
+
+  it("still shows the CAN + button for New type when no type exists to adopt into", () => {
+    state.canbus = {
+      interfaces: [],
+      devices: [
+        {
+          uuid: "abc123",
+          interface: "can1",
+          application: "Klipper",
+          state: "klipper",
+          tracked_by: null,
+          ignored: false,
+        },
+      ],
+      failures: [],
+      count: 1,
+      message: null,
+    };
+    // No targets at all - showCanAdoptItems is false, but canManageTypes
+    // alone used to hide the whole `+` button, gating "New type from this…"
+    // behind a type that couldn't exist yet.
+    state.status = { targets: [] };
+    state.ping = { capabilities: fullCapabilities.concat("fw.canbus.add") };
+    const wrapper = mount(BusPanel);
+    expect(wrapper.find('[title="Track this CAN device…"]').exists()).toBe(
+      true,
+    );
+  });
+
+  it("adopts a newly created type's CAN uuid via fw.canbus.add", async () => {
+    state.canbus = {
+      interfaces: [],
+      devices: [
+        {
+          uuid: "abc123",
+          interface: "can1",
+          application: "Klipper",
+          state: "klipper",
+          tracked_by: null,
+          ignored: false,
+        },
+      ],
+      failures: [],
+      count: 1,
+      message: null,
+    };
+    state.status = { targets: [] };
+    state.ping = { capabilities: fullCapabilities.concat("fw.canbus.add") };
+    const addSpy = vi.spyOn(store, "addType").mockResolvedValue({
+      ok: true,
+      warnings: [],
+    });
+    const wrapper = mount(BusPanel);
+    await wrapper.get('[title="Track this CAN device…"]').trigger("click");
+    await wrapper.get(".menu-item").trigger("click");
+
+    expect(wrapper.text()).toContain("Create a new type");
+    expect(wrapper.text()).toContain("abc123");
+
+    await wrapper.get("input[maxlength]").setValue("newtype");
+    await wrapper.findAll("label input").at(1)!.setValue("stm32g0b1xx");
+    await wrapper.get(".btn-primary").trigger("click");
+
+    expect(addSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "newtype", canbusUuid: "abc123" }),
+    );
+  });
+
   it("keeps duplicate UUID sightings separate by interface", async () => {
     state.canbus = {
       interfaces: [],

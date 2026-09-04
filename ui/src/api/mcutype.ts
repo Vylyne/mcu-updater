@@ -41,6 +41,9 @@ export interface TypeDraft {
   /** A board to adopt once the type exists - the untracked-device entry
    * point. Empty when opened from the toolbar's "New type…". */
   serial?: string;
+  /** A CAN uuid to adopt once the type exists - the CAN-side equivalent of
+   * `serial`, mutually exclusive with it. */
+  canbusUuid?: string;
 }
 
 /** Mirrors config.py's TYPE_NAME_RE/TYPE_NAME_MAX exactly - a whitelist, not

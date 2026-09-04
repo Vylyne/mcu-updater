@@ -666,11 +666,11 @@ export async function runBulk(
 
 /** Register a new board model - no hardware has to be present, which is how
  * a probe still in the post gets a saved menuconfig answer before it
- * arrives. `serial` (from the untracked-devices list) is adopted afterwards
- * as a separate fw.serial.add call, mirroring the fork's
- * createTypeAndTrack: a type created without its board is recoverable in one
- * tap, the reverse is not, so the two calls are sequenced rather than one
- * request doing both. */
+ * arrives. `serial` or `canbusUuid` (from the untracked-devices list) is
+ * adopted afterwards as a separate fw.serial.add/fw.canbus.add call,
+ * mirroring the fork's createTypeAndTrack: a type created without its board
+ * is recoverable in one tap, the reverse is not, so the two calls are
+ * sequenced rather than one request doing both. */
 export async function addType(
   draft: TypeDraft,
 ): Promise<{ ok: boolean; warnings: string[] }> {
@@ -701,6 +701,10 @@ export async function addType(
   }
   if (draft.serial) {
     const adopted = await adoptSerial(draft.name, draft.serial);
+    return { ok: adopted, warnings };
+  }
+  if (draft.canbusUuid) {
+    const adopted = await adoptCanbus(draft.name, draft.canbusUuid);
     return { ok: adopted, warnings };
   }
   return { ok: true, warnings };

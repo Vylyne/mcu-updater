@@ -28,6 +28,9 @@ const props = defineProps<{
   /** A board to adopt once the type exists - the untracked-device entry
    * point. Empty when opened from the toolbar's "New type…". */
   serial?: string | null;
+  /** A CAN uuid to adopt once the type exists - the CAN-side equivalent of
+   * `serial`, mutually exclusive with it. */
+  canbusUuid?: string | null;
 }>();
 
 const emit = defineEmits<{ close: [] }>();
@@ -199,6 +202,7 @@ async function submit(): Promise<void> {
       ),
       katapultInstalled: katapultInstalled.value,
       serial: props.serial ?? undefined,
+      canbusUuid: props.canbusUuid ?? undefined,
     };
     result = await addType(draft);
   }
@@ -321,6 +325,10 @@ async function submit(): Promise<void> {
 
       <p v-if="serial" class="alert alert--info">
         Will also track {{ serial }} under this type once it's created.
+      </p>
+      <p v-if="canbusUuid" class="alert alert--info">
+        Will also track CAN uuid {{ canbusUuid }} under this type once it's
+        created.
       </p>
     </template>
 

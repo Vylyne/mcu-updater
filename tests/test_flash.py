@@ -666,6 +666,13 @@ def test_bootsel_reports_unmounted_device_distinctly_from_no_device(paths, setti
     with pytest.raises(BootselNotMountedError) as exc:
         flashers.Bootsel().write(bench, None, target, flashers.PlainContext(lambda *a: None))
     assert exc.value.data["devices"] == [node]
+    message = exc.value.message.lower()
+    assert "install.sh" in message or "udev" in message
+    # The old fixed mountpoint is not where the current rule mounts, so it must
+    # not be handed out as manual-mount instructions. Mirrors the same guard on
+    # the agent-side message in test_agent_bootsel.py, so the two front ends'
+    # advice cannot drift apart silently.
+    assert "/media/<user>/rpi-rp2" not in message
 
 
 def test_bootsel_target_for_populates_id_from_the_one_attached_device(paths, tmp_path):

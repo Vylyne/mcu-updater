@@ -7,13 +7,24 @@
 # board blocks flashing the one you meant. ID_PATH_TAG (not ID_PATH) is
 # systemd's sanitized form, safe inside a directory name; the path_id builtin
 # in 60-persistent-storage.rules sets it, which runs before this 99- rule.
-# systemd-mount does not create the mountpoint's parent directories, and this
-# path is three levels deep, so a tmpfiles.d entry pre-creates them instead.
+# systemd-mount will create the mountpoint's parent directories itself, but
+# a tmpfiles.d entry pre-creates them anyway so they are owned by %USER% at a
+# known mode rather than whatever systemd-mount's own defaults would leave.
 # See docs/bootsel-mountpoint-design.md.
+#
+# Two rules, not one guarded by ID_PATH_TAG=="?*": if ID_PATH_TAG is ever
+# unset (a hub path_id cannot name, or a device caught by an earlier
+# TEST=="whole_disk" rule), mounting at ".../by-path/" with an empty leaf
+# would mount onto the by-path directory itself - shadowing every other
+# board's mountpoint and the legacy fallback both. The second rule below
+# catches that case and gives it its own fixed leaf instead of a silent
+# no-op or a shadow-mount.
 #
 # Installed by mcu-updater's install.sh. %USER% is substituted there.
 # The version marker below is what install.sh compares to decide whether an
 # already-installed rule needs replacing - bump it whenever this file changes.
 # mcu-updater-bootsel-rule-version: 2
-ACTION=="add", SUBSYSTEM=="block", ENV{DEVTYPE}=="partition", ENV{ID_FS_LABEL}=="RPI-RP2", \
+ACTION=="add", SUBSYSTEM=="block", ENV{DEVTYPE}=="partition", ENV{ID_FS_LABEL}=="RPI-RP2", ENV{ID_PATH_TAG}=="?*", \
   RUN{program}+="/usr/bin/systemd-mount --no-block --collect --owner=%USER% $devnode /media/%USER%/BOOTSEL/by-path/$env{ID_PATH_TAG}"
+ACTION=="add", SUBSYSTEM=="block", ENV{DEVTYPE}=="partition", ENV{ID_FS_LABEL}=="RPI-RP2", ENV{ID_PATH_TAG}!="?*", \
+  RUN{program}+="/usr/bin/systemd-mount --no-block --collect --owner=%USER% $devnode /media/%USER%/BOOTSEL/by-path/unknown"

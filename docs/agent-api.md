@@ -1009,18 +1009,22 @@ not writable regardless of how many are attached.
 | `ambiguous` | More than one RPI-RP2 volume is mounted at once. |
 
 `ambiguous` is a dead end here, unlike DFU's — there is no serial-based
-targeting for a mount-based write (see `fw.add_mcu.start` below), and the udev
-rule mounts every board to the same fixed path, so two boards in BOOTSEL at
-once genuinely collide. Bench convention is one board at a time; unplug the
-others and rescan.
+targeting for a mount-based write (see `fw.add_mcu.start` below). Two boards in
+BOOTSEL mount separately under their own USB topology paths
+(`/media/<user>/BOOTSEL/by-path/<tag>`), but the write itself cannot name which
+port it is for. Bench convention is one board at a time; unplug the others and
+rescan.
 
-Each device carries `id` (the boot ROM's flash-chip unique id, parsed from
+Each device carries `id` (the boot ROM's flash-chip id, parsed from
 `/dev/disk/by-id/usb-RPI_RP2_<id>-...`, or `null` if it couldn't be parsed) and
 `node` (the raw by-id path). Like DFU's `_identify_dfu`, a device already
 matching a tracked rp2040 board's serial carries `known_serial`/`tracked_by` —
-but unlike DFU's derivation, this is an **assumed identity** (the boot-ROM id
-equals Katapult's later running serial), not a computed one; see "A board that
-turns up later is still adopted" below.
+but the boot-ROM id is not unique; two boards from one batch have been observed
+reporting the same `pico_get_unique_board_id()` on hardware. It is a label on
+the flash, used opportunistically for adoption matching. A collision means a
+board is simply never named rather than named wrongly (the existing collision
+guard in `_identify_bootsel` ensures that); see "A board that turns up later is
+still adopted" below.
 
 #### `fw.canbus.scan`
 
@@ -1124,10 +1128,11 @@ The write is pinned to the chosen device even when only one is attached — betw
 the scan and the command, a second board can be jumpered and plugged in.
 
 **BOOTSEL has no equivalent choice.** There is no `bootsel_id` argument to
-`fw.add_mcu.start` — mounting *is* the addressing, the udev rule mounts every
-board to the same fixed path, and the write (`_find_mount`) refuses outright on
-more than one mounted volume. Bench convention is one board at a time; this is
-a deliberate scope line, not a gap left to close later.
+`fw.add_mcu.start` — each board mounts under its own USB topology path, and the
+mounts are distinguishable, but nothing upstream can yet say *which* port a write
+is for. The write (`_find_mount`) refuses outright on more than one mounted
+volume. Bench convention is one board at a time; this is a deliberate scope line
+until a port parameter is added.
 
 Finding no new board **warns rather than failing the job**: the write may have
 succeeded and the board simply be slow or on a marginal port, so the log says to

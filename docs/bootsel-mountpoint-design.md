@@ -1,6 +1,10 @@
 # BOOTSEL mountpoint — design
 
-Status: proposed, 2026-09-04. Not implemented.
+Status: mount path, dual-layout scan and installer migration implemented on
+`develop`, 2026-09-04. NOT yet verified on hardware - see the "To verify on
+hardware before committing to this" section below, all of which is still
+outstanding. The multi-volume refusal, topology correlation,
+`needs_services_stopped` and a real `settled()` remain deliberately deferred.
 
 Verified against mcu-updater `0c446f2`. Every file and line reference below was
 read at that commit; re-check them before implementing if the tree has moved.

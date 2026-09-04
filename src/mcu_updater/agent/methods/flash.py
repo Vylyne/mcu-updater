@@ -407,13 +407,13 @@ class FlashMixin(_Base):
 
         **Two candidate keys, not one.** STM32's `dfu_serial_for` is a real,
         derived transformation of the running serial - it never equals the raw
-        serial itself. RP2040 has no such derivation (see docs/agent-api.md's
-        "RP2040 pairing identity" note): the boot ROM's flash-chip id is
-        *assumed*, unverified, to be the same string Katapult later runs under
-        as the full canonical hardware serial. Interface suffixes belong only
-        to the transport path, and a hardware serial may legitimately contain
-        a hyphen, so the candidate is never shortened. If that assumption is
-        wrong this candidate simply never
+        serial itself. RP2040 has no such derivation (see the id-collision
+        caveat in docs/agent-api.md's `fw.bootsel.scan` section): the boot
+        ROM's flash-chip id is *assumed*, unverified, to be the same string
+        Katapult later runs under as the full canonical hardware serial.
+        Interface suffixes belong only to the transport path, and a hardware
+        serial may legitimately contain a hyphen, so the candidate is never
+        shortened. If that assumption is wrong this candidate simply never
         matches an entry - nothing is ever recorded under a bare running UID
         for an STM32 board either, so trying it for every device is harmless
         in both directions.
@@ -595,15 +595,18 @@ class FlashMixin(_Base):
         """Name the boards in BOOTSEL that we already know about.
 
         Unlike `_identify_dfu` there is no derivation: this assumes - unverified
-        on real hardware, see docs/agent-api.md's "RP2040 pairing identity" note
-        - that the boot ROM's flash-chip unique id is the same string Katapult
-        later reports as its own running USB serial, so a tracked rp2040 board's
-        serial can be compared to a BOOTSEL device's id directly.
+        on real hardware, see the id-collision caveat in docs/agent-api.md's
+        `fw.bootsel.scan` section - that the boot ROM's flash-chip unique id is
+        the same string Katapult later reports as its own running USB serial,
+        so a tracked rp2040 board's serial can be compared to a BOOTSEL
+        device's id directly.
 
         If that assumption is wrong this simply never matches - every device's
         `known_serial`/`tracked_by` stays null, exactly what a genuinely new
         board looks like, never a wrong name. Same collision guard as
-        `_identify_dfu`: two known boards mapping to one id names neither.
+        `_identify_dfu`: two *registry entries* mapping to one id names
+        neither. It does not cover two *physical boards* sharing one id - see
+        docs/agent-api.md's `fw.bootsel.scan` section.
 
         Tracked identities are canonical hardware serials; the by-id interface
         suffix belongs only to the transport path. Compare the full string so

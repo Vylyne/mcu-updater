@@ -1005,7 +1005,7 @@ not writable regardless of how many are attached.
 | --- | --- |
 | `null` | Ready. One board, one mounted volume. |
 | `none` | Nothing in BOOTSEL. Hold BOOTSEL and replug. |
-| `not_mounted` | A board is attached but nothing mounted its volume — this host has no automounter. Re-run `install.sh` to install the udev rule, or mount it manually at `/media/<user>/RPI-RP2`. |
+| `not_mounted` | A board is attached but nothing mounted its volume — this host has no automounter. Re-run `install.sh` to install the udev rule, which mounts each board under `/media/<user>/BOOTSEL/by-path/<port>`. |
 | `ambiguous` | More than one RPI-RP2 volume is mounted at once. |
 
 `ambiguous` is a dead end here, unlike DFU's — there is no serial-based
@@ -1021,10 +1021,14 @@ Each device carries `id` (the boot ROM's flash-chip id, parsed from
 matching a tracked rp2040 board's serial carries `known_serial`/`tracked_by` —
 but the boot-ROM id is not unique; two boards from one batch have been observed
 reporting the same `pico_get_unique_board_id()` on hardware. It is a label on
-the flash, used opportunistically for adoption matching. A collision means a
-board is simply never named rather than named wrongly (the existing collision
-guard in `_identify_bootsel` ensures that); see "A board that turns up later is
-still adopted" below.
+the flash, used opportunistically for adoption matching. `_identify_bootsel`'s
+collision guard covers only one direction: two *registry entries* claiming the
+same id names neither. It does not cover two *physical boards* sharing one id
+— if two boards from a batch report the same id and only one is tracked, both
+devices in this scan will carry that entry's `tracked_by`, and the untracked
+one is named wrongly. Bench convention (see below) is one board at a time
+specifically because this cannot be told apart here; see "A board that turns
+up later is still adopted" below.
 
 #### `fw.canbus.scan`
 

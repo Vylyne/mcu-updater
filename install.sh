@@ -42,6 +42,8 @@ MAIN_CONFIG="${CONFIG_PATH}/mcu-updater.cfg"
 DFU_UDEV_RULE="${DFU_UDEV_RULE:-/etc/udev/rules.d/99-mcu-updater-dfu.rules}"
 # udev rule mounting an RP2040's BOOTSEL mass-storage volume without root.
 BOOTSEL_UDEV_RULE="${BOOTSEL_UDEV_RULE:-/etc/udev/rules.d/99-mcu-updater-bootsel.rules}"
+# tmpfiles.d entry pre-creating the BOOTSEL mountpoint parents as ${USER}.
+BOOTSEL_TMPFILES_CONF="${BOOTSEL_TMPFILES_CONF:-/etc/tmpfiles.d/mcu-updater-bootsel.conf}"
 # Constrained from two directions:
 #  * Moonraker only permits a `managed_services` value equal to the
 #    [update_manager <name>] section, `klipper`, or `moonraker` - so the unit name
@@ -213,14 +215,31 @@ function check_bootsel_permissions {
         printf "[BOOTSEL]  systemd-mount not found - only needed for add-mcu on a bare RP2040.\n\n"
         return 0
     fi
-    if [ -f "${BOOTSEL_UDEV_RULE}" ]; then
-        printf "[BOOTSEL]  udev rule already present.\n\n"
-        return 0
-    fi
+    # A version check, not a presence check. The first rule mounted every board
+    # at one fixed path; a host that already had it would otherwise never
+    # receive the topology-path rule that fixes two-boards-at-once - which is
+    # exactly backwards, since those are the hosts using this feature.
+    local shipped installed
+    shipped="$(grep -m1 -o 'mcu-updater-bootsel-rule-version: [0-9]\+' \
+        "${INSTALL_PATH}/scripts/udev.d-mcu-updater-bootsel.rules" | grep -o '[0-9]\+' || true)"
+    shipped="${shipped:-0}"
 
-    echo "[BOOTSEL]  No udev rule to mount an RP2040's BOOTSEL volume (${BOOTSEL_UDEV_RULE})."
-    echo "           Without it nothing mounts the volume on a headless printer, and"
-    echo "           add-mcu fails on a board whose BOOTSEL mode is perfectly fine."
+    if [ -f "${BOOTSEL_UDEV_RULE}" ]; then
+        installed="$(grep -m1 -o 'mcu-updater-bootsel-rule-version: [0-9]\+' \
+            "${BOOTSEL_UDEV_RULE}" | grep -o '[0-9]\+' || true)"
+        installed="${installed:-0}"
+        if [ "${installed}" -ge "${shipped}" ]; then
+            printf "[BOOTSEL]  udev rule already present (version %s).\n\n" "${installed}"
+            return 0
+        fi
+        echo "[BOOTSEL]  Installed udev rule is version ${installed}, shipped is ${shipped}."
+        echo "           The old rule mounts every RP2040 at one fixed path, so two boards"
+        echo "           in BOOTSEL collide and one spare board blocks flashing the other."
+    else
+        echo "[BOOTSEL]  No udev rule to mount an RP2040's BOOTSEL volume (${BOOTSEL_UDEV_RULE})."
+        echo "           Without it nothing mounts the volume on a headless printer, and"
+        echo "           add-mcu fails on a board whose BOOTSEL mode is perfectly fine."
+    fi
     local answer=""
     read -r -p "[BOOTSEL]  Install the udev rule now? [Y/n]: " answer || answer=""
     case "${answer}" in
@@ -238,6 +257,26 @@ function check_bootsel_permissions {
     rm -f "${tmp}"
 
     sudo udevadm control --reload-rules && sudo udevadm trigger --subsystem-match=block
+
+    # The mountpoint parents, pre-created with known ownership and mode rather
+    # than whatever systemd-mount leaves behind when it creates them itself.
+    # tmpfiles.d reads % as a specifier prefix (%U is the UID), so a %USER%
+    # that survived the sed would not pass through harmlessly the way it does
+    # in a udev rule - refuse to install one rather than create the wrong path.
+    tmp="$(mktemp)"
+    sed -e "s|%USER%|${USER}|g" \
+        "${INSTALL_PATH}/scripts/tmpfiles.d-mcu-updater-bootsel.conf" > "${tmp}"
+    if grep -q '%USER%' "${tmp}"; then
+        rm -f "${tmp}"
+        echo "[ERROR] %USER% is still present in the generated tmpfiles.d entry."
+        echo "        Refusing to install it: systemd-tmpfiles reads % as a specifier"
+        echo "        prefix, so it would create a directory under the wrong name."
+        exit 1
+    fi
+    sudo install -m 0644 -o root -g root "${tmp}" "${BOOTSEL_TMPFILES_CONF}"
+    rm -f "${tmp}"
+    sudo systemd-tmpfiles --create "${BOOTSEL_TMPFILES_CONF}"
+
     echo "[BOOTSEL]  Rule installed. Replug a board in BOOTSEL mode for it to take effect."
     printf "\n"
 }

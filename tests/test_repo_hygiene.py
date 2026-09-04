@@ -255,6 +255,36 @@ def test_install_sh_names_every_scripts_file_it_needs_at_runtime():
         assert (REPO_ROOT / relative).is_file(), f"{relative} does not exist"
 
 
+def test_the_bootsel_rule_version_marker_agrees_across_rule_installer_and_python():
+    """install.sh decides whether an already-installed BOOTSEL udev rule needs
+    replacing by comparing a `mcu-updater-bootsel-rule-version: N` marker in
+    the shipped rule against the same marker in the installed one - see
+    `check_bootsel_permissions` in install.sh. Nothing else keeps the rule
+    file, the installer's regex, and the Python that parses its mount layout
+    in step; a rename or reword in any one of them would let the version
+    check silently stop upgrading anyone, or leave `bootsel_scan` looking in
+    the wrong place.
+    """
+    import re
+
+    rule = (
+        REPO_ROOT / "scripts" / "udev.d-mcu-updater-bootsel.rules"
+    ).read_text(encoding="utf-8")
+    install_sh = (REPO_ROOT / "install.sh").read_text(encoding="utf-8")
+
+    assert re.search(r"mcu-updater-bootsel-rule-version: [0-9]+", rule), (
+        "scripts/udev.d-mcu-updater-bootsel.rules has no version marker"
+    )
+    assert "mcu-updater-bootsel-rule-version" in install_sh, (
+        "install.sh no longer looks for the rule's version marker"
+    )
+    assert "/BOOTSEL/by-path/" in rule
+
+    from mcu_updater.discovery.bootsel import BOOTSEL_BY_PATH_SUBDIR
+
+    assert BOOTSEL_BY_PATH_SUBDIR == ("BOOTSEL", "by-path")
+
+
 def test_the_ui_update_manager_conf_agrees_with_install_sh_defaults():
     """scripts/moonraker-update-manager-ui.conf hardcodes `path:` and `repo:`
     rather than being templated, so nothing keeps it in sync with install.sh's

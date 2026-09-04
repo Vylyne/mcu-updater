@@ -673,6 +673,7 @@ def test_bootsel_reports_unmounted_device_distinctly_from_no_device(paths, setti
     # the agent-side message in test_agent_bootsel.py, so the two front ends'
     # advice cannot drift apart silently.
     assert "/media/<user>/rpi-rp2" not in message
+    assert "bootsel/by-path" in message
 
 
 def test_bootsel_target_for_populates_id_from_the_one_attached_device(paths, tmp_path):

@@ -78,6 +78,7 @@ def test_an_unmounted_board_is_never_reported_as_no_board(api, fake_root):
     # The old fixed mountpoint is not where the current rule mounts, so it must
     # not be handed out as manual-mount instructions.
     assert "/media/<user>/rpi-rp2" not in message
+    assert "bootsel/by-path" in message
 
 
 def test_two_mounted_boards_is_ambiguous_with_no_way_to_choose(api, fake_root, monkeypatch):

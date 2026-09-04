@@ -640,8 +640,7 @@ class FlashMixin(_Base):
             Nothing in BOOTSEL. Hold BOOTSEL and replug the board.
         ``not_mounted``
             A board is attached but nothing mounted its volume - this host has
-            no automounter. Re-run install.sh to install the udev rule, or
-            mount it manually.
+            no automounter. Re-run install.sh to install the udev rule.
         ``ambiguous``
             More than one RPI-RP2 volume is mounted at once. Unlike DFU there
             is no serial to pick one by - the udev rule mounts every board to
@@ -677,8 +676,8 @@ class FlashMixin(_Base):
             out["message"] = (
                 f"An RP2040 in BOOTSEL is attached ({', '.join(present)}) but "
                 f"nothing mounted its volume - this host has no automounter. "
-                f"Re-run install.sh to install the udev rule, or mount it "
-                f"manually at /media/<user>/RPI-RP2."
+                f"Re-run install.sh to install the udev rule, which mounts each "
+                f"board under /media/<user>/BOOTSEL/by-path/<port>."
             )
             return out
         if len(mounts) > 1:

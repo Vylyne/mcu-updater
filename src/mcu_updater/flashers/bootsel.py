@@ -100,8 +100,8 @@ def _find_mount(paths: Any) -> str:
             raise BootselNotMountedError(
                 f"an RP2040 in BOOTSEL is attached ({', '.join(present)}) but "
                 f"nothing mounted its volume - this host has no automounter. "
-                f"Re-run install.sh to install the udev rule, or mount it "
-                f"manually at /media/<user>/RPI-RP2.",
+                f"Re-run install.sh to install the udev rule, which mounts each "
+                f"board under /media/<user>/BOOTSEL/by-path/<port>.",
                 devices=present,
             )
         raise DeviceNotFoundError(

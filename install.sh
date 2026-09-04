@@ -208,8 +208,10 @@ RULE
 # returns 0. install.sh re-runs unattended after every Moonraker update, and
 # under `set -e` a nonzero exit here would abort the whole installer before
 # check_config, install_service and restart_moonraker, leaving a half-applied
-# update over a directory-ownership hint.
+# update over a directory-ownership hint. Sets BOOTSEL_TMPFILES_DONE to 1 only
+# if the entry really landed, so no caller claims it did when it did not.
 function install_bootsel_tmpfiles {
+    BOOTSEL_TMPFILES_DONE=0
     if [ -z "${USER:-}" ]; then
         echo "[WARN] USER is empty; skipping ${BOOTSEL_TMPFILES_CONF}."
         echo "       Substituting nothing would declare /media/BOOTSEL owned by no one."
@@ -217,8 +219,17 @@ function install_bootsel_tmpfiles {
     fi
     local tmp
     tmp="$(mktemp)"
-    sed -e "s|%USER%|${USER}|g" \
-        "${INSTALL_PATH}/scripts/tmpfiles.d-mcu-updater-bootsel.conf" > "${tmp}"
+    # Not `sed ... > tmp` bare: an INSTALL_PATH that does not resolve, or a
+    # renamed template, would exit nonzero and take the installer with it - and
+    # the self-heal caller reaches here with no prompt in front of it.
+    if ! sed -e "s|%USER%|${USER}|g" \
+        "${INSTALL_PATH}/scripts/tmpfiles.d-mcu-updater-bootsel.conf" > "${tmp}" 2>/dev/null; then
+        rm -f "${tmp}"
+        echo "[WARN] Could not read"
+        echo "       ${INSTALL_PATH}/scripts/tmpfiles.d-mcu-updater-bootsel.conf;"
+        echo "       skipping ${BOOTSEL_TMPFILES_CONF}. BOOTSEL flashing still works."
+        return 0
+    fi
     # tmpfiles.d reads % as a specifier prefix (%U is the UID), so a %USER% that
     # outlived the sed - a USER containing sed's & is how that happens - would
     # name a directory nobody meant to create. Belt and braces after the -n test.
@@ -240,6 +251,7 @@ function install_bootsel_tmpfiles {
         echo "       The entry is installed and will be applied at next boot; until"
         echo "       then systemd-mount creates the parents itself, root-owned."
     fi
+    BOOTSEL_TMPFILES_DONE=1
     return 0
 }
 
@@ -342,9 +354,14 @@ function check_bootsel_permissions {
     sudo udevadm control --reload-rules && sudo udevadm trigger --subsystem-match=block
 
     install_bootsel_tmpfiles
-
-    echo "[BOOTSEL]  Rule and tmpfiles.d entry installed. Replug a board in BOOTSEL"
-    echo "           mode for it to take effect."
+    if [ "${BOOTSEL_TMPFILES_DONE:-0}" -eq 1 ]; then
+        echo "[BOOTSEL]  Rule and tmpfiles.d entry installed. Replug a board in BOOTSEL"
+        echo "           mode for it to take effect."
+    else
+        echo "[BOOTSEL]  Rule installed; the tmpfiles.d entry was skipped for the reason"
+        echo "           above. Replug a board in BOOTSEL mode for the rule to take"
+        echo "           effect - the mountpoint parents will just be root-owned."
+    fi
     printf "\n"
 }
 

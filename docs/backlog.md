@@ -117,12 +117,12 @@ CANBus UUID Query Complete
 - **Flaky teardown** `RuntimeError` in
   `test_an_unknown_inbound_method_gets_an_error_not_silence`. Unreproduced;
   order/timing-dependent agent-service teardown.
-- **Verify the BOOTSEL topology-path rule on real hardware.** Nothing in
-  `docs/bootsel-mountpoint-design.md`'s "To verify on hardware before
-  committing to this" section has been checked against a board yet - nested
-  mountpoint creation, `ID_PATH_TAG` actually being set for the partition,
-  two boards mounting simultaneously, stale directory accumulation, and the
-  prefix-normalization pairing itself.
+- **Re-verify the BOOTSEL rule after the version-3 bump.** The version-2 rule
+  was verified on hestia 2026-09-04 (see `docs/bootsel-mountpoint-design.md`'s
+  "Verified on hardware" section). Version 3 adds `ACTION=="remove"` rules to
+  `rmdir` the mountpoint on unplug, which has *not* been exercised on a board:
+  confirm the directory actually goes away on unplug, and that a replug in the
+  same port still mounts cleanly.
 
 ---
 

@@ -1,9 +1,11 @@
 # BOOTSEL mountpoint — design
 
 Status: mount path, dual-layout scan and installer migration implemented on
-`develop`, 2026-09-04. NOT yet verified on hardware - see the "To verify on
-hardware before committing to this" section below, all of which is still
-outstanding. The multi-volume refusal, topology correlation,
+`develop`, and **verified on hestia 2026-09-04** - `ID_PATH_TAG` populated, the
+three-deep mountpoint created, two boards mounted at distinct paths, and the
+serial/disk `by-path` pair captured (see "Correlating a board" below). One
+finding: mountpoint directories are not cleaned up on unplug, addressed in rule
+version 3. The multi-volume refusal, topology correlation,
 `needs_services_stopped` and a real `settled()` remain deliberately deferred.
 
 Verified against mcu-updater `0c446f2`. Every file and line reference below was
@@ -114,15 +116,31 @@ went away.
 **The flash UID cannot do this** — see Problem 3. Topology is the only key.
 
 The two paths are *not* string-equal, and that is the detail most likely to be
-got wrong:
+got wrong. Measured on hestia, 2026-09-04, one board across the reboot:
 
 ```
-serial (CDC)      …-usb-0:1.2:1.0
-mass storage      …-usb-0:1.2:1.0-scsi-0:0:0:0
+serial (CDC)    /dev/serial/by-path/platform-fd880000.usb-usb-0:1.3:1.0            -> ttyACM10
+mass storage    /dev/disk/by-path/platform-fd880000.usb-usb-0:1.3:1.0-scsi-0:0:0:0-part1 -> sda1
+mountpoint      /media/klipper/BOOTSEL/by-path/platform-fd880000_usb-usb-0_1_3_1_0-scsi-0_0_0_0
 ```
 
-The USB port prefix is stable across the reboot; the trailing interface and SCSI
+The USB port prefix is stable across the reboot; the trailing SCSI and partition
 segments are not. **The match must be prefix-normalized, never equality.**
+
+Two wrinkles the measurement exposed, neither of them guessable from the code:
+
+1. **Every device appears twice in both `by-path` namespaces**, once as `usb-`
+   and once as `usbv2-` (`platform-fd880000.usb-usb-0:1.3:1.0` and
+   `platform-fd880000.usb-usbv2-0:1.3:1.0`, both symlinking to the same
+   `ttyACM10`). A correlation pass must either normalize the alias away or
+   accept that one physical board yields two candidate paths.
+2. **The mountpoint name is not the `by-path` name.** `ID_PATH_TAG` is the
+   sanitized form: `.` and `:` both become `_`. So
+   `platform-fd880000.usb-usb-0:1.3:1.0-scsi-0:0:0:0` on disk is
+   `platform-fd880000_usb-usb-0_1_3_1_0-scsi-0_0_0_0` as a directory. Going from
+   a mountpoint back to a device path means comparing sanitized forms, not raw
+   ones — and the sanitization is lossy, since `.` and `:` map to the same
+   character.
 
 `/dev/serial/by-path` ↔ `/dev/disk/by-path` is the pairing. Note that nothing in
 mcu-updater reads `by-path` today — this is new code. `discovery/usb.py`'s
@@ -166,27 +184,40 @@ layouts: the old `/media/<user>/RPI-RP2` and the new
 `INFO_UF2.TXT` marker rather than the directory name, supporting both is a
 matter of globbing two roots.
 
-## To verify on hardware before committing to this
+## Verified on hardware (hestia, 2026-09-04)
 
-None of the following can be settled by reading code:
+None of the following could be settled by reading code. All five were run on a
+bench board; results recorded here so nobody has to re-derive them.
 
-- **`systemd-mount` creating a nested mountpoint.** systemd creates the mount
-  directory, but `BOOTSEL/by-path/<tag>` is three levels deep and the parents
-  may not exist. If it does not create them, the rule needs an `mkdir -p` or a
-  tmpfiles.d entry.
-- **`ID_PATH_TAG` actually being set for the partition.** The `path_id` builtin
-  runs for block devices including partitions — that is how `/dev/disk/by-path`
-  gets its `-partN` entries — but confirm the variable is populated in the rule's
-  environment with `udevadm test`.
-- **Two boards in BOOTSEL simultaneously**, mounting at distinct paths, both
-  readable and writable.
-- **Stale directory accumulation.** `--collect` garbage-collects the transient
-  mount *unit*; it does not remove the directory. Check whether empty
-  `by-path/<tag>` directories pile up across replugs, and whether that matters.
-- **The prefix normalization**, against a real board: capture its
-  `/dev/serial/by-path` entry, reboot it to BOOTSEL, capture its
-  `/dev/disk/by-path` entry, and confirm the intended prefix rule actually
-  matches the pair.
+- **`systemd-mount` creating a nested mountpoint** — ✅ created.
+  `findmnt` showed `/dev/sda1` mounted at
+  `/media/klipper/BOOTSEL/by-path/platform-fd880000_usb-usb-0_1_3_1_0-scsi-0_0_0_0`,
+  three levels deep, `uid=1001,gid=1001`. The shipped tmpfiles.d entry is
+  belt-and-braces rather than load-bearing: `systemd.mount(5)`'s `DirectoryMode=`
+  creates mountpoint parents anyway. It buys known ownership and mode, nothing
+  more.
+- **`ID_PATH_TAG` set for the partition** — ✅ populated.
+  `udevadm test /sys/class/block/sda1` expanded the RUN line to a non-empty leaf
+  (`…/by-path/platform-fd880000_usb-usb-0_1_3_1_0-scsi-0_0_0_0`), never a bare
+  `by-path/`. The empty-tag fallback rule has therefore not been exercised in
+  practice — it remains as a guard, not as a tested path.
+- **Two boards in BOOTSEL simultaneously** — ✅ distinct paths.
+  Two directories (`platform-fd800000_usb-usb-0_1_6_3_1_1_1_0-scsi-0_0_0_0` and
+  `platform-fd880000_usb-usb-0_1_3_1_0-scsi-0_0_0_0`), and `bootsel_scan()`
+  returned both. Note what this now produces downstream: two mounts is an
+  `ambiguous` refusal, so the spec's failure #2 (a bystander board blocking a
+  flash) is *not* fixed by this change — it needs the deferred port parameter.
+- **Stale directory accumulation** — ⚠️ confirmed, and fixed in rule version 3.
+  `--collect` reaps the transient mount *unit* and leaves the directory, so an
+  empty directory per port accumulated across replugs. It was never a
+  correctness problem — `bootsel_scan` gates on `INFO_UF2.TXT`, so an empty
+  leftover never reads as an attached board — but the clutter is real. Version 3
+  adds `ACTION=="remove"` rules that `rmdir` the leaf; `rmdir` only removes an
+  empty directory, so a not-yet-completed unmount fails the call harmlessly and
+  leaves things exactly as version 2 did.
+- **The prefix normalization** — ✅ captured; see "Correlating a board across the
+  BOOTSEL reboot" above for the measured pair and the two wrinkles it exposed
+  (the `usbv2` alias, and `ID_PATH_TAG`'s lossy `.`/`:` → `_` sanitization).
 
 ## Not in scope
 

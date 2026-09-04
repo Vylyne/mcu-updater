@@ -643,9 +643,9 @@ class FlashMixin(_Base):
             no automounter. Re-run install.sh to install the udev rule.
         ``ambiguous``
             More than one RPI-RP2 volume is mounted at once. Unlike DFU there
-            is no serial to pick one by - the udev rule mounts every board to
-            the same fixed path - so this is a refusal to report clearly, not
-            something a caller can resolve by naming a device.
+            is no serial to pick one by - the mounts are now distinguishable
+            (each names its USB port), but nothing upstream can yet say which
+            one this write is for, so this stays a refusal rather than a choice.
         """
         from ...devices import bootsel_devices, bootsel_id_for
         from ...devices import bootsel_scan as bootsel_mounts

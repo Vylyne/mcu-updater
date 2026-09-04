@@ -81,9 +81,10 @@ def test_an_unmounted_board_is_never_reported_as_no_board(api, fake_root):
 
 
 def test_two_mounted_boards_is_ambiguous_with_no_way_to_choose(api, fake_root, monkeypatch):
-    """Unlike DFU, there is no serial to disambiguate a mount-based write with -
-    the udev rule mounts every board to the same fixed path. This is a plain
-    refusal, not a choice the caller can make."""
+    """Unlike DFU, there is no serial to disambiguate a mount-based write with.
+    The topology-path rule does give each mount its own name, but no caller can
+    yet say which port it means, so this stays a plain refusal rather than a
+    choice - see docs/bootsel-mountpoint-design.md."""
     import mcu_updater.discovery.bootsel as bootsel_discovery
     from mcu_updater import devices as devices_mod
 

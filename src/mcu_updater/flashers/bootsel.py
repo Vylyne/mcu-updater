@@ -88,6 +88,11 @@ def _find_mount(paths: Any) -> str:
     More than one mounted at once means guessing which board this write is
     for, which this refuses exactly the way `DfuUtil`'s ambiguity guard does.
 
+    The mounts are no longer indistinguishable - each names its USB port since
+    the topology-path udev rule - but nothing upstream of here can yet say
+    *which* port this write is for, so the refusal stands rather than guessing.
+    Giving it a port parameter is what turns this into a selection.
+
     A board can still be genuinely absent from the *volume* search while
     present on the bus - a headless host with no automounter mounts nothing at
     all - so an empty `bootsel_scan` is split against `bootsel_devices` to
@@ -122,14 +127,21 @@ def target_for(uf2_file: str, *, chipset: str, paths: Any = None) -> FlashTarget
     """A bare RP2040, as a target.
 
     BOOTSEL has no protocol to address a specific board through - unlike DFU,
-    the write cannot be aimed at one device among several - but the boot ROM
-    does publish the flash chip's unique ID as a USB mass-storage serial, so a
-    flash can still be *recorded* against a real identity when exactly one
-    board is attached. `paths` is optional and only used for that lookup
-    (via `bootsel_devices`); callers that omit it, or that hit zero or more
-    than one device, get `id=""` - the multi-volume case is still refused in
-    `write`, once it is known whether more than one volume is actually
-    mounted.
+    the write cannot be aimed at one device among several. The boot ROM does
+    publish the flash chip's id as a USB mass-storage serial, and it is
+    recorded here, but **it is not an identity**: two boards from one batch
+    have been observed on hardware reporting the same
+    `pico_get_unique_board_id()`. It is a label on the flash, nothing more,
+    and nothing downstream keys on it - `Bootsel.write` and `Bootsel.settled`
+    never read `target.id`, and the add-mcu pairing key is looked up
+    separately in `agent.methods.flash`.
+
+    Correlating a board across the BOOTSEL reboot needs the USB topology path
+    instead; see docs/bootsel-mountpoint-design.md.
+
+    `paths` is optional and only used for that lookup (via `bootsel_devices`);
+    callers that omit it, or that hit zero or more than one device, get
+    `id=""` - the multi-volume case is still refused in `write`.
     """
     device_id = ""
     if paths is not None:

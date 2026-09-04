@@ -347,7 +347,17 @@ function check_bootsel_permissions {
 
     local tmp
     tmp="$(mktemp)"
-    sed -e "s|%USER%|${USER}|g" "${INSTALL_PATH}/scripts/udev.d-mcu-updater-bootsel.rules" > "${tmp}"
+    # Not `sed ... > tmp` bare: the "could not read the template" warning above
+    # is reachable (shipped=0), and this would otherwise abort the installer
+    # right after it, taking install_service and restart_moonraker down with it.
+    if ! sed -e "s|%USER%|${USER}|g" \
+        "${INSTALL_PATH}/scripts/udev.d-mcu-updater-bootsel.rules" > "${tmp}" 2>/dev/null; then
+        rm -f "${tmp}"
+        echo "[WARN] Could not read"
+        echo "       ${INSTALL_PATH}/scripts/udev.d-mcu-updater-bootsel.rules;"
+        echo "       skipping the BOOTSEL udev rule. BOOTSEL flashing will need a manual mount."
+        return 0
+    fi
     sudo install -m 0644 -o root -g root "${tmp}" "${BOOTSEL_UDEV_RULE}"
     rm -f "${tmp}"
 

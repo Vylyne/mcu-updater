@@ -202,6 +202,47 @@ RULE
     printf "\n"
 }
 
+# The BOOTSEL mountpoint parents, pre-created with known ownership and mode
+# instead of the root-owned ones systemd-mount creates implicitly. That is a
+# nicety, not what makes the mount work - so every failure in here warns and
+# returns 0. install.sh re-runs unattended after every Moonraker update, and
+# under `set -e` a nonzero exit here would abort the whole installer before
+# check_config, install_service and restart_moonraker, leaving a half-applied
+# update over a directory-ownership hint.
+function install_bootsel_tmpfiles {
+    if [ -z "${USER:-}" ]; then
+        echo "[WARN] USER is empty; skipping ${BOOTSEL_TMPFILES_CONF}."
+        echo "       Substituting nothing would declare /media/BOOTSEL owned by no one."
+        return 0
+    fi
+    local tmp
+    tmp="$(mktemp)"
+    sed -e "s|%USER%|${USER}|g" \
+        "${INSTALL_PATH}/scripts/tmpfiles.d-mcu-updater-bootsel.conf" > "${tmp}"
+    # tmpfiles.d reads % as a specifier prefix (%U is the UID), so a %USER% that
+    # outlived the sed - a USER containing sed's & is how that happens - would
+    # name a directory nobody meant to create. Belt and braces after the -n test.
+    if grep -q '%USER%' "${tmp}"; then
+        rm -f "${tmp}"
+        echo "[WARN] %USER% survived substitution; skipping ${BOOTSEL_TMPFILES_CONF}."
+        echo "       systemd-mount creates the mountpoint parents either way, so"
+        echo "       BOOTSEL flashing still works - they will just be root-owned."
+        return 0
+    fi
+    if ! sudo install -m 0644 -o root -g root "${tmp}" "${BOOTSEL_TMPFILES_CONF}"; then
+        rm -f "${tmp}"
+        echo "[WARN] Could not install ${BOOTSEL_TMPFILES_CONF}; continuing."
+        return 0
+    fi
+    rm -f "${tmp}"
+    if ! sudo systemd-tmpfiles --create "${BOOTSEL_TMPFILES_CONF}"; then
+        echo "[WARN] systemd-tmpfiles --create ${BOOTSEL_TMPFILES_CONF} failed."
+        echo "       The entry is installed and will be applied at next boot; until"
+        echo "       then systemd-mount creates the parents itself, root-owned."
+    fi
+    return 0
+}
+
 function check_bootsel_permissions {
     # An RP2040 in BOOTSEL mounts as USB mass storage. A headless printer has no
     # desktop automounter, so nothing mounts it and bootsel_scan finds nothing -
@@ -215,21 +256,54 @@ function check_bootsel_permissions {
         printf "[BOOTSEL]  systemd-mount not found - only needed for add-mcu on a bare RP2040.\n\n"
         return 0
     fi
+    # Both files installed here are templated on ${USER}. An empty one does not
+    # fail loudly: it would mount at /media//BOOTSEL and hand the volume to no
+    # one, so refuse the whole thing rather than install a rule that misfires.
+    if [ -z "${USER:-}" ]; then
+        echo "[WARN] USER is empty; skipping the BOOTSEL udev rule and tmpfiles.d entry."
+        echo "       Both are templated on it - see docs/bootsel-mountpoint-design.md."
+        printf "\n"
+        return 0
+    fi
     # A version check, not a presence check. The first rule mounted every board
     # at one fixed path; a host that already had it would otherwise never
     # receive the topology-path rule that fixes two-boards-at-once - which is
     # exactly backwards, since those are the hosts using this feature.
-    local shipped installed
+    local shipped installed=0 have_rule=0
     shipped="$(grep -m1 -o 'mcu-updater-bootsel-rule-version: [0-9]\+' \
-        "${INSTALL_PATH}/scripts/udev.d-mcu-updater-bootsel.rules" | grep -o '[0-9]\+' || true)"
+        "${INSTALL_PATH}/scripts/udev.d-mcu-updater-bootsel.rules" 2>/dev/null \
+        | grep -o '[0-9]\+' || true)"
     shipped="${shipped:-0}"
+    if [ "${shipped}" -eq 0 ]; then
+        # Failing open here degrades to exactly the bug this check exists to fix:
+        # every installed rule compares as up to date, so a host on the old
+        # fixed-path rule silently keeps it. Say so instead of returning quietly.
+        echo "[WARN] Could not read a version marker from"
+        echo "       ${INSTALL_PATH}/scripts/udev.d-mcu-updater-bootsel.rules."
+        echo "       Any already-installed rule will therefore look current, so a host"
+        echo "       still on the old fixed-path rule would not be upgraded. Check the"
+        echo "       file exists and carries its mcu-updater-bootsel-rule-version line."
+    fi
 
     if [ -f "${BOOTSEL_UDEV_RULE}" ]; then
+        have_rule=1
         installed="$(grep -m1 -o 'mcu-updater-bootsel-rule-version: [0-9]\+' \
-            "${BOOTSEL_UDEV_RULE}" | grep -o '[0-9]\+' || true)"
+            "${BOOTSEL_UDEV_RULE}" 2>/dev/null | grep -o '[0-9]\+' || true)"
         installed="${installed:-0}"
         if [ "${installed}" -ge "${shipped}" ]; then
-            printf "[BOOTSEL]  udev rule already present (version %s).\n\n" "${installed}"
+            printf "[BOOTSEL]  udev rule already present (version %s).\n" "${installed}"
+            # Self-heal only where consent already exists. A rule on disk means
+            # this prompt was answered yes at some point; anyone who installed
+            # between the rule's version bump and the tmpfiles.d entry being
+            # wired in is current with no conf, and the version check alone
+            # would never bring them one. No rule on disk means no consent, so
+            # this never runs for someone who declined.
+            if [ ! -f "${BOOTSEL_TMPFILES_CONF}" ]; then
+                echo "[BOOTSEL]  Mountpoint parents are not declared yet - installing"
+                echo "           ${BOOTSEL_TMPFILES_CONF}."
+                install_bootsel_tmpfiles
+            fi
+            printf "\n"
             return 0
         fi
         echo "[BOOTSEL]  Installed udev rule is version ${installed}, shipped is ${shipped}."
@@ -240,11 +314,20 @@ function check_bootsel_permissions {
         echo "           Without it nothing mounts the volume on a headless printer, and"
         echo "           add-mcu fails on a board whose BOOTSEL mode is perfectly fine."
     fi
+    echo "           Installing writes ${BOOTSEL_UDEV_RULE}"
+    echo "           and ${BOOTSEL_TMPFILES_CONF} as root, then runs"
+    echo "           udevadm and systemd-tmpfiles --create."
     local answer=""
-    read -r -p "[BOOTSEL]  Install the udev rule now? [Y/n]: " answer || answer=""
+    read -r -p "[BOOTSEL]  Install the udev rule and its tmpfiles.d entry now? [Y/n]: " answer || answer=""
     case "${answer}" in
         n | N | no | NO)
-            echo "[WARN] Skipped. add-mcu on a bare RP2040 will need a manual mount until you add it."
+            if [ "${have_rule}" -eq 1 ]; then
+                echo "[WARN] Skipped. Keeping the version ${installed} rule, which still mounts"
+                echo "       one board fine - but two RP2040s in BOOTSEL at once still collide"
+                echo "       on its single mountpoint, and one spare blocks flashing the other."
+            else
+                echo "[WARN] Skipped. add-mcu on a bare RP2040 will need a manual mount until you add it."
+            fi
             printf "\n"
             return 0
             ;;
@@ -258,26 +341,10 @@ function check_bootsel_permissions {
 
     sudo udevadm control --reload-rules && sudo udevadm trigger --subsystem-match=block
 
-    # The mountpoint parents, pre-created with known ownership and mode rather
-    # than whatever systemd-mount leaves behind when it creates them itself.
-    # tmpfiles.d reads % as a specifier prefix (%U is the UID), so a %USER%
-    # that survived the sed would not pass through harmlessly the way it does
-    # in a udev rule - refuse to install one rather than create the wrong path.
-    tmp="$(mktemp)"
-    sed -e "s|%USER%|${USER}|g" \
-        "${INSTALL_PATH}/scripts/tmpfiles.d-mcu-updater-bootsel.conf" > "${tmp}"
-    if grep -q '%USER%' "${tmp}"; then
-        rm -f "${tmp}"
-        echo "[ERROR] %USER% is still present in the generated tmpfiles.d entry."
-        echo "        Refusing to install it: systemd-tmpfiles reads % as a specifier"
-        echo "        prefix, so it would create a directory under the wrong name."
-        exit 1
-    fi
-    sudo install -m 0644 -o root -g root "${tmp}" "${BOOTSEL_TMPFILES_CONF}"
-    rm -f "${tmp}"
-    sudo systemd-tmpfiles --create "${BOOTSEL_TMPFILES_CONF}"
+    install_bootsel_tmpfiles
 
-    echo "[BOOTSEL]  Rule installed. Replug a board in BOOTSEL mode for it to take effect."
+    echo "[BOOTSEL]  Rule and tmpfiles.d entry installed. Replug a board in BOOTSEL"
+    echo "           mode for it to take effect."
     printf "\n"
 }
 

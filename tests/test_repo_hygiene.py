@@ -248,6 +248,8 @@ def test_install_sh_names_every_scripts_file_it_needs_at_runtime():
         "scripts/nginx.conf.d-mcu-updater.conf",
         "scripts/nginx.sites-available-mcu-updater",
         "scripts/moonraker-update-manager-ui.conf",
+        "scripts/udev.d-mcu-updater-bootsel.rules",
+        "scripts/tmpfiles.d-mcu-updater-bootsel.conf",
     ):
         assert relative in install_sh, f"install.sh no longer references {relative}"
         assert (REPO_ROOT / relative).is_file(), f"{relative} does not exist"

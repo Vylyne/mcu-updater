@@ -20,6 +20,11 @@ DEFAULT_BOOTSEL_ROOT_GLOBS = ("/media/*", "/run/media/*")
 #: The RP2040 boot ROM's own volume label.
 BOOTSEL_VOLUME_NAME = "RPI-RP2"
 
+#: Where the current udev rule mounts, relative to an automount root: one
+#: directory per USB topology path, so two boards in BOOTSEL at once cannot
+#: collide. See docs/bootsel-mountpoint-design.md.
+BOOTSEL_BY_PATH_SUBDIR: tuple[str, str] = ("BOOTSEL", "by-path")
+
 #: Every UF2 bootloader publishes this file at the volume root. Required so an
 #: unrelated drive that happens to share the label is never mistaken for one.
 _BOOTSEL_MARKER = "INFO_UF2.TXT"
@@ -35,6 +40,11 @@ def bootsel_scan(paths: Paths) -> list[str]:
     the standard automount locations), or one exact directory to look in
     instead - which a test points at a tmp_path, and which a real deployment
     with a non-standard automount setup could point at the real one.
+
+    Two layouts are searched. Older installs still carry the first udev rule,
+    which mounts every board at ``<root>/RPI-RP2``; the current rule mounts at
+    ``<root>/BOOTSEL/by-path/<topology tag>``. Both are accepted until every
+    install has been upgraded by ``install.sh``.
     """
     if paths.bootsel_root:
         roots = [paths.bootsel_root]
@@ -51,9 +61,18 @@ def bootsel_scan(paths: Paths) -> list[str]:
 
     found = []
     for root in sorted(roots):
-        candidate = os.path.join(root, BOOTSEL_VOLUME_NAME)
-        if os.path.isfile(os.path.join(candidate, _BOOTSEL_MARKER)):
-            found.append(candidate)
+        # Two layouts, deliberately: the current rule's topology-named
+        # directories, and the fixed RPI-RP2 path older installs still have
+        # until install.sh replaces their rule.
+        candidates = [os.path.join(root, BOOTSEL_VOLUME_NAME)]
+        candidates += sorted(glob.glob(os.path.join(root, *BOOTSEL_BY_PATH_SUBDIR, "*")))
+        for candidate in candidates:
+            # Load-bearing, not belt-and-braces: a topology-named directory's
+            # name says nothing about what is mounted there, so this marker is
+            # the only thing separating a bootloader volume from any other
+            # directory - including an empty mountpoint left behind by a replug.
+            if os.path.isfile(os.path.join(candidate, _BOOTSEL_MARKER)):
+                found.append(candidate)
     return found
 
 

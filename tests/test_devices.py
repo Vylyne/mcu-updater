@@ -448,6 +448,61 @@ def test_bootsel_scan_searches_the_automount_globs_with_no_override(paths, tmp_p
     assert bootsel_scan(paths) == [str(vol)]
 
 
+def test_bootsel_scan_finds_a_volume_under_the_by_path_layout(paths, tmp_path):
+    """The new udev rule mounts under BOOTSEL/by-path/<topology tag>, so the
+    directory name no longer says RPI-RP2 - the marker file is what proves it.
+
+    Real ID_PATH_TAGs contain `:`, which NTFS reads as an ADS separator;
+    dropped here since nothing under test parses the tag."""
+    root = tmp_path / "bootsel_root"
+    vol = root / "BOOTSEL" / "by-path" / "pci-0000-01-00.0-usb-0-1.2-1.0-scsi-0-0-0-0"
+    vol.mkdir(parents=True)
+    (vol / "INFO_UF2.TXT").write_text("UF2 Bootloader v3.0\n", encoding="utf-8")
+
+    found = bootsel_scan(dataclasses.replace(paths, bootsel_root=str(root)))
+    assert found == [str(vol)]
+
+
+def test_bootsel_scan_finds_two_boards_under_distinct_topology_paths(paths, tmp_path):
+    """The point of the whole change: two boards in BOOTSEL at once are two
+    separately addressable mounts, not one path fighting over itself."""
+    root = tmp_path / "bootsel_root"
+    tags = ("usb-0-1.2-1.0-scsi-0-0-0-0", "usb-0-1.3-1.0-scsi-0-0-0-0")
+    for tag in tags:
+        vol = root / "BOOTSEL" / "by-path" / tag
+        vol.mkdir(parents=True)
+        (vol / "INFO_UF2.TXT").write_text("", encoding="utf-8")
+
+    found = bootsel_scan(dataclasses.replace(paths, bootsel_root=str(root)))
+    assert len(found) == 2
+    assert {os.path.basename(p) for p in found} == set(tags)
+
+
+def test_bootsel_scan_finds_both_layouts_during_the_migration_window(paths, tmp_path):
+    """A host mid-upgrade can have an old fixed mount and a new topology one at
+    the same time. Neither may be dropped."""
+    root = tmp_path / "bootsel_root"
+    old = root / "RPI-RP2"
+    old.mkdir(parents=True)
+    (old / "INFO_UF2.TXT").write_text("", encoding="utf-8")
+    new = root / "BOOTSEL" / "by-path" / "usb-0-1.3-1.0-scsi-0-0-0-0"
+    new.mkdir(parents=True)
+    (new / "INFO_UF2.TXT").write_text("", encoding="utf-8")
+
+    found = bootsel_scan(dataclasses.replace(paths, bootsel_root=str(root)))
+    assert set(found) == {str(old), str(new)}
+
+
+def test_bootsel_scan_ignores_a_by_path_directory_with_no_marker(paths, tmp_path):
+    """With topology-named directories the name proves nothing at all, so an
+    empty leftover mountpoint must never read as an attached board."""
+    root = tmp_path / "bootsel_root"
+    (root / "BOOTSEL" / "by-path" / "usb-0-1.2-1.0-scsi-0-0-0-0").mkdir(parents=True)
+
+    found = bootsel_scan(dataclasses.replace(paths, bootsel_root=str(root)))
+    assert found == []
+
+
 # --------------------------------------------------------------------------
 # bootsel_devices - present on the bus whether mounted or not
 # --------------------------------------------------------------------------

@@ -239,12 +239,26 @@ bench board; results recorded here so nobody has to re-derive them.
   Version 5 keeps that as the backstop and adds prompt cleanup, by dispatching
   rather than waiting: the remove rule runs
   `systemd-run --no-block --on-active=10 /bin/rmdir <dir>`, which returns
-  immediately (udev is never blocked) and fires the `rmdir` ten seconds later,
-  once the unmount has settled. Waiting inside the udev rule instead was
-  considered and rejected — udev blocks its worker on a `RUN` program and kills
-  long-running ones, and waiting on systemd from udev is a known deadlock shape.
-  Asking `systemd-mount --umount` from the remove rule is also pointless: the
-  transient unit is `BindsTo=` the device, so systemd is already unmounting.
+  immediately (udev is never blocked) and fires the `rmdir` once the unmount
+  has settled. Confirmed on hestia, 2026-09-05 — the directory goes:
+
+  ```text
+  14:20:13 Started run-ra1ec….timer   - [systemd-run] /bin/rmdir /media/klipper/BOOTSEL/by-path/platform-fd880000_usb-…
+  14:20:41 Started run-ra1ec….service - [systemd-run] /bin/rmdir /media/klipper/BOOTSEL/by-path/platform-fd880000_usb-…
+  ```
+
+  Note the 28 seconds, not 10: `--on-active=` is the *earliest* fire time, and
+  a transient timer inherits `AccuracySec=1min`, so systemd coalesces it into a
+  wakeup window. `--timer-property=AccuracySec=1s` would tighten it, and is
+  deliberately not used — the delay is invisible (the directory is empty and
+  `bootsel_scan` ignores it either way), and every rule-version bump costs an
+  install prompt on every host.
+
+  Waiting inside the udev rule instead was considered and rejected — udev blocks
+  its worker on a `RUN` program and kills long-running ones, and waiting on
+  systemd from udev is a known deadlock shape. Asking `systemd-mount --umount`
+  from the remove rule is also pointless: the transient unit is `BindsTo=` the
+  device, so systemd is already unmounting.
 
   The safety property underneath all of these: an active mountpoint is busy and
   the kernel refuses to remove it, so no cleanup pass can take out a live

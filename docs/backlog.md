@@ -117,14 +117,15 @@ CANBus UUID Query Complete
 - **Flaky teardown** `RuntimeError` in
   `test_an_unknown_inbound_method_gets_an_error_not_silence`. Unreproduced;
   order/timing-dependent agent-service teardown.
-- **Confirm the version-5 BOOTSEL mountpoint cleanup fires on unplug.** The
-  mount path and the tmpfiles.d sweep are both verified on hestia (see
-  `docs/bootsel-mountpoint-design.md`'s "Verified on hardware" section) - the
-  sweep is just daily, so version 5 adds a `systemd-run --on-active=10` rmdir
-  to the udev remove rule for promptness. Unexercised: check the directory
-  disappears about ten seconds after an unplug, that a board replugged into the
-  same port inside that window keeps its mount, and that no failed transient
-  units pile up (`systemctl list-units --failed`).
+- **Check a BOOTSEL replug inside the cleanup window.** Everything else about
+  the topology mountpoint is verified on hestia (see
+  `docs/bootsel-mountpoint-design.md`'s "Verified on hardware" section),
+  including version 5's scheduled `rmdir`. The one case never exercised: a
+  board replugged into the same port before the pending `rmdir` fires. It
+  should be a non-event, since `rmdir` cannot remove a mounted directory - but
+  that is reasoning, not a measurement. Watch for a mount that vanishes seconds
+  after a replug, and for failed transient units
+  (`systemctl list-units --failed`).
 
 ---
 

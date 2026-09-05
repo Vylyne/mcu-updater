@@ -22,7 +22,7 @@ all, and its firmware is built by hand and copied by hand.
 
 The tree also builds **six images from one invocation**:
 
-```
+```text
 roadrunner_v1_{uart,i2c,usbserial}_{rgb,grb}.uf2
 ```
 
@@ -39,14 +39,27 @@ outputs to stage.**
 [firmware roadrunner]
 source: ~/roadrunner/rp2040     # the cmake directory, not the repo root
 builder: cmake
+cmake_args: -DROADRUNNER_FIRMWARE_VERSION=${git_describe}
 
 [type roadrunner]
 chipset: rp2040
 firmware: roadrunner
-variant: i2c_rgb                # -> build/roadrunner_v1_i2c_rgb.uf2
+variant: roadrunner_v1_i2c_rgb  # -> build/roadrunner_v1_i2c_rgb.uf2
 serials:
     RR-ABCDEFGHIJKLMNOPQRSTUVWXYZ
 ```
+
+### `variant:` is the cmake target name, spelled out
+
+Not a short form like `i2c_rgb`. A short form would mean this provider knows
+how to expand one into `roadrunner_v1_i2c_rgb` — that is a naming convention
+belonging to one vendor's `CMakeLists.txt`, and the next cmake tree will not
+share it. The target name is what CMake itself uses, so `build/<variant>.uf2`
+is a fact rather than an invented rule, and `make <variant>` stays available
+without a second mapping to keep in step.
+
+It costs the user a longer value once, in a file they edit by hand with the
+target list in front of them.
 
 ### One `make` builds all six; the variant selects which is staged
 
@@ -110,10 +123,21 @@ outside this tool, and therefore a skip rather than a failure:
 - `source:` unset, or naming a directory that does not exist (the
   `pio.source_problem` split — the fixes differ, so the messages must);
 - no `CMakeLists.txt` in it;
-- `pico-sdk/pico_sdk_init.cmake` missing — an uninitialized submodule, whose
-  fix is `git submodule update --init --recursive`, and worth naming because
-  the CMake error for it is unreadable;
-- `variant:` naming no `roadrunner_v1_<variant>` target in the tree.
+- a `.gitmodules` listing a submodule whose directory is empty — the
+  uninitialized-submodule case, whose fix is
+  `git submodule update --init --recursive`, and worth naming because the
+  CMake error for it is unreadable. Read from `.gitmodules` rather than
+  hardcoding `pico-sdk/`, which is the Pico SDK's path and not a fact about
+  cmake trees in general;
+- `variant:` naming no target the tree declares (see below).
+
+**How `blocked()` knows the target list.** After a successful configure,
+`cmake --build <build> --target help` enumerates them; before one, there is no
+build directory to ask. So this check is *conditional*: with a configured
+build directory it is a real check, and without one it is skipped and the
+mistyped variant surfaces as a `make` failure instead. Deliberate — the
+alternative is parsing `CMakeLists.txt`, which means reimplementing CMake, and
+a first build on a fresh clone would have nothing to check against anyway.
 
 Not a prediction that the build will succeed. A missing ARM toolchain, a syntax
 error, a full disk are all things to find out by trying — the protocol
@@ -127,16 +151,37 @@ docstring is explicit that reporting them as failures beats pretending we knew.
 2. `make -C <source>/build`, with `-j` from `settings.make_jobs` under the same
    rule `kconfig_make` uses (`0` means no flag at all, negative means one per
    CPU);
-3. `ROADRUNNER_FIRMWARE_VERSION` passed as a CMake cache variable, from the
-   source tree's `git describe`, so a board's `INFO` response reports something
-   truthful instead of `dev`;
-4. stage `build/roadrunner_v1_<variant>.uf2` → `paths.uf2_file(type, fw)`,
-   which is what `build.py:755-762` already does for a katapult `.uf2`;
+3. any `cmake_args:` from the `[firmware ...]` section appended to the
+   configure step (see below);
+4. stage `build/<variant>.uf2` → `paths.uf2_file(type, fw)`, which is what
+   `build.py:755-762` already does for a katapult `.uf2`;
 5. record the sidecar (below).
 
 Both subprocesses go through `build.run_streamed`, so cancellation, dry-run and
 log streaming behave as they do everywhere else. `build()` returns `None` per
 the protocol.
+
+**`cmake_args:` on the firmware family**, because a cache variable is a fact
+about one tree and not about cmake:
+
+```ini
+[firmware roadrunner]
+source: ~/roadrunner/rp2040
+builder: cmake
+cmake_args: -DROADRUNNER_FIRMWARE_VERSION=${git_describe}
+```
+
+`${git_describe}` is the one substitution, expanded from the source tree's
+`git describe --tags --always --dirty`. It exists because the alternative is a
+version string that goes stale the moment it is written, and because the
+Roadrunner's `INFO` response reports this value — a board answering `dev`
+forever is a diagnostic we would have given up for nothing. An unresolvable
+`git describe` (no tags, not a checkout) expands to `dev`, which is the
+CMakeLists' own default.
+
+The key lives on `[firmware ...]` rather than `[type ...]` because it
+describes the tree, and every type sharing that tree wants the same answer.
+`variant:` is the only per-type key this provider adds.
 
 **`artifact_status(install, target)`** — modelled on `pio.artifact_status`, and
 using `paths.sidecar_file(type, fw)` and `build.sha256_file`:
@@ -157,6 +202,17 @@ fast path (this runs on the `fw.status` poll), content hash only when something
 looks changed.
 
 **`describe(target)`** — the type name, as `PlatformIO.describe` does.
+
+### `src/mcu_updater/firmware.py`
+
+One field on `FirmwareFamily`: `cmake_args: str = ""`, read from the section
+and carried in `to_json()` beside `builder`. Optional and empty by default, so
+every existing family is unaffected — the same shape `source:` and `artifact:`
+already have.
+
+Only the cmake provider reads it. That is consistent with how the module
+already works: `[firmware ...]` is *the family*, not one provider's slice of
+it, and `Install` already carries both section maps for the same reason.
 
 ### `src/mcu_updater/providers/registry.py`
 
@@ -214,6 +270,8 @@ saying so.
 - `blocked()`: one test per case, each asserting the message names the fix.
 - `build()` under `dry_run`, asserting the argv for both subprocesses and that
   nothing is staged.
+- `cmake_args:` reaches the configure argv verbatim; `${git_describe}` expands
+  against a fixture checkout, and falls back to `dev` outside one.
 - `build()` against a fixture tree with a stub
   `build/roadrunner_v1_i2c_rgb.uf2`, asserting the staged path is
   `paths.uf2_file(type, fw)` and that the sidecar was written.
@@ -231,9 +289,11 @@ Per AGENTS.md "Finishing a plan", in this plan and not as a follow-up:
 
 - `mcu-updater.cfg` — the worked `[firmware roadrunner]` / `[type roadrunner]`
   example above, commented in the file's existing voice.
-- `README.md` — `builder: cmake` in the firmware-family key list, `variant:` in
-  the type key list, and the one-line note that a mixed RGB/GRB fleet takes two
-  `[type]` sections.
+- `README.md` — `builder: cmake` and `cmake_args:` in the firmware-family key
+  list, `variant:` in the type key list, and the one-line note that a mixed
+  RGB/GRB fleet takes two `[type]` sections.
+- `docs/agent-api.md` — `cmake_args` joins `builder` in the family payload
+  `agent/methods/status.py:203` emits.
 - `docs/layout.md` — the staged `.uf2` path for a cmake type.
 - `docs/decisions.md` — no entry. Nothing here closes an avenue; the per-board
   variant question is recorded in this spec instead, since it is deferred

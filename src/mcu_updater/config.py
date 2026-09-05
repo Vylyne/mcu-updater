@@ -117,20 +117,24 @@ class FwConfig:
         return out
 
 
-def _is_platformio_only(
+def _is_foreign_builder(
     paths: Paths, doc: CfgDocument, section: str, families_map: dict[str, Any]
 ) -> bool:
-    """Whether a `[type ...]` section's only declared firmware is built by
-    platformio - meaning the type belongs to `providers/pio.py`'s registry,
-    not this one.
+    """Whether a `[type ...]` section belongs to some *other* provider.
+
+    Ownership is positive, not a list of exclusions: this registry holds the
+    `kconfig_make` types and nothing else. Written as an exclusion it was a
+    closed set of two builders, and every builder added after that silently
+    fell through to here - which for `save()` means deleting the user's
+    section. See docs/cmake-provider-design.md.
     """
     declared_fws = doc.get_csv(section, "firmware") or []
     if not declared_fws:
-        # Vacuously false, not "defaults to klipper" - load() refuses a
+        # Vacuously not foreign, not "defaults to klipper" - load() refuses a
         # section with no firmware: key before this is ever reachable for one.
         return False
-    return all(
-        firmware.resolve(paths, fw, families_map).builder == "platformio"
+    return any(
+        firmware.resolve(paths, fw, families_map).builder != "kconfig_make"
         for fw in declared_fws
     )
 
@@ -387,16 +391,16 @@ class Registry:
             builders = {
                 firmware.resolve(paths, fw, families_map).builder for fw in declared_fws
             }
-            if declared_fws and builders == {"platformio"}:
-                # A type whose only declared firmware is built by platformio
-                # belongs to providers/pio.py's registry, not this one - a
-                # type with no explicit firmware: at all defaults to klipper
-                # (kconfig_make) and is unaffected. See pio.load().
-                continue
             if len(builders) > 1:
                 # A type is built by exactly one provider - the seam that
                 # compiles it is chosen from its families' builder, so a type
                 # whose declared families disagree has no single answer.
+                #
+                # Checked *before* the ownership skip below. Under the old
+                # `== {"platformio"}` form the order did not matter, because a
+                # mixed set never equalled it; under `!= {"kconfig_make"}` a
+                # mixed set matches, and letting the skip run first would turn
+                # this error into a silently ignored section.
                 raise ConfigCorruptError(
                     f"{path}: '{name}' declares firmware families built by "
                     f"different tools ({', '.join(sorted(builders))}): "
@@ -407,6 +411,14 @@ class Registry:
                     type=name,
                     value=declared_fws,
                 )
+            if declared_fws and builders != {"kconfig_make"}:
+                # A type whose declared firmware is built by anything other
+                # than kconfig+make belongs to that provider's registry, not
+                # this one - providers/pio.py's load() and providers/cmake.py's
+                # apply the same rule from their own side. A type with no
+                # explicit firmware: at all defaults to klipper (kconfig_make)
+                # and is unaffected.
+                continue
             mcu.firmwares = declared_fws
             mcu.profile = (doc.get(section, "profile") or "").strip()
             mcu.stop_services = doc.get_csv(section, "stop_services")
@@ -469,7 +481,7 @@ class Registry:
         for declared in sections.read(doc):
             if declared.name in self.types:
                 continue
-            if _is_platformio_only(paths, doc, declared.section, families_map):
+            if _is_foreign_builder(paths, doc, declared.section, families_map):
                 # Not one of ours by its declared firmware's builder - load()
                 # excludes it from self.types for the same reason. Leaving it
                 # alone here is what stops that exclusion from reading as "the

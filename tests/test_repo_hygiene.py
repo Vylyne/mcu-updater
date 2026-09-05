@@ -285,6 +285,31 @@ def test_the_bootsel_rule_version_marker_agrees_across_rule_installer_and_python
     assert BOOTSEL_BY_PATH_SUBDIR == ("BOOTSEL", "by-path")
 
 
+def test_install_sh_prints_through_its_output_helpers():
+    """install.sh's output layout lives in one place - the `section`, `ok`,
+    `skip`, `warn`, `err`, `step` and `note` helpers at the top of the file.
+
+    It got its ragged tags and doubled blank lines one `echo "[TAG] ..."` at a
+    time, each perfectly reasonable on its own, so the guard is against the
+    first one coming back rather than against the state it produced. Two
+    deliberate exceptions: the `MCU_UPDATER_UI_CHANNEL` validation runs before
+    the helpers are defined, and the `printf "\\n"` calls inside the
+    moonraker.conf append blocks write to that file, not to the terminal.
+    """
+    import re
+
+    lines = (REPO_ROOT / "install.sh").read_text(encoding="utf-8").splitlines()
+    offenders = [
+        (number, line.strip())
+        for number, line in enumerate(lines, start=1)
+        if re.match(r'\s+(echo|printf) +"\[', line)
+    ]
+    assert not offenders, (
+        "install.sh prints a bracketed tag directly instead of using its "
+        f"output helpers: {offenders}"
+    )
+
+
 def test_the_ui_update_manager_conf_agrees_with_install_sh_defaults():
     """scripts/moonraker-update-manager-ui.conf hardcodes `path:` and `repo:`
     rather than being templated, so nothing keeps it in sync with install.sh's

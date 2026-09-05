@@ -58,21 +58,108 @@ PYTHON_BIN="${PYTHON_BIN:-$(command -v python3)}"
 set -eu
 export LC_ALL=C
 
+# --- output ---------------------------------------------------------------
+# Every line this script prints goes through the helpers below, so the layout
+# is defined in one place instead of re-hand-aligned at each of a hundred call
+# sites - which is how the tags drifted to different widths and the blank
+# lines doubled up in the first place.
+#
+# Deliberately plain `printf` with no command substitution and no arithmetic:
+# this file runs unattended under `set -eu` after every Moonraker update, and
+# a helper that can fail would take the whole install down with it.
+if [ -t 1 ] && [ -z "${NO_COLOR:-}" ]; then
+    C_HEAD=$'\033[1m'
+    C_DIM=$'\033[2m'
+    C_OK=$'\033[32m'
+    C_SKIP=$'\033[36m'
+    C_WARN=$'\033[33m'
+    C_ERR=$'\033[31m'
+    C_OFF=$'\033[0m'
+else
+    C_HEAD=""
+    C_DIM=""
+    C_OK=""
+    C_SKIP=""
+    C_WARN=""
+    C_ERR=""
+    C_OFF=""
+fi
+
+# A phase header: one blank line before, none after. The status lines under it
+# start immediately, which is what makes a section read as one block. The name
+# is padded to a fixed width rather than the rule being computed to fill the
+# line - a constant-width format string cannot fail, and arithmetic in here can.
+function section {
+    printf '\n%s── %-11s ─────────────────────────────────%s\n' \
+        "${C_HEAD}" "$1" "${C_OFF}"
+}
+
+# Status lines. The word sits in a fixed eight-column gutter so every message
+# starts at the same column, and `note` indents to that same width for
+# continuation text. `step` is for something in progress whose result gets its
+# own line afterwards.
+function ok {
+    printf '  %sok%s    %s\n' "${C_OK}" "${C_OFF}" "$*"
+}
+
+function skip {
+    printf '  %sskip%s  %s\n' "${C_SKIP}" "${C_OFF}" "$*"
+}
+
+function warn {
+    printf '  %swarn%s  %s\n' "${C_WARN}" "${C_OFF}" "$*"
+}
+
+function err {
+    printf '  %serror%s %s\n' "${C_ERR}" "${C_OFF}" "$*"
+}
+
+function step {
+    printf '  %s...%s   %s\n' "${C_DIM}" "${C_OFF}" "$*"
+}
+
+function note {
+    printf '        %s%s%s\n' "${C_DIM}" "$*" "${C_OFF}"
+}
+
+# A yes/no prompt in the same gutter. The default is passed in rather than
+# guessed: the two permission rules default to yes, the optional extras to no,
+# and an empty answer (no tty, which is every Moonraker-triggered re-run) takes
+# that default - exactly as each of these prompts behaved before.
+function ask {
+    local prompt="$1" default="$2" answer="" hint="[Y/n]"
+    if [ "${default}" = "n" ]; then
+        hint="[y/N]"
+    fi
+    read -r -p "  ?     ${prompt} ${hint}: " answer || answer=""
+    if [ "${default}" = "n" ]; then
+        case "${answer}" in
+            y | Y | yes | YES) return 0 ;;
+            *) return 1 ;;
+        esac
+    fi
+    case "${answer}" in
+        n | N | no | NO) return 1 ;;
+        *) return 0 ;;
+    esac
+}
+
 function preflight_checks {
+    section "Checks"
     if [ "$EUID" -eq 0 ]; then
-        echo "[PRE-CHECK] This script must not be run as root!"
+        err "this script must not be run as root."
         exit 1
     fi
 
     if [ "$(sudo systemctl list-units --full -all -t service --no-legend | grep -F 'moonraker.service')" ]; then
-        printf "[PRE-CHECK] Moonraker service found! Continuing...\n\n"
+        ok "moonraker.service found"
     else
-        echo "[ERROR] Moonraker service not found. This agent is useless without it."
+        err "moonraker.service not found. This agent is useless without it."
         exit 1
     fi
 
     if [ -z "${PYTHON_BIN}" ]; then
-        echo "[ERROR] python3 not found on PATH."
+        err "python3 not found on PATH."
         exit 1
     fi
 
@@ -82,29 +169,28 @@ function preflight_checks {
     # sys.executable and needs apt's python3-serial, which a plain venv cannot
     # see. Do not "fix" this by pointing PYTHON_BIN at one.
     if ! "${PYTHON_BIN}" -c 'import sys; sys.exit(0 if sys.version_info >= (3, 11) else 1)'; then
-        echo "[ERROR] python3 >= 3.11 required, found $(${PYTHON_BIN} -V)"
+        err "python3 >= 3.11 required, found $(${PYTHON_BIN} -V)"
         exit 1
     fi
-    printf "[PRE-CHECK] Using %s (%s)\n\n" "${PYTHON_BIN}" "$(${PYTHON_BIN} -V)"
+    ok "$(${PYTHON_BIN} -V) at ${PYTHON_BIN}"
 }
 
 function check_paths {
     # Warnings, not errors: the agent is still worth having for status alone, and
     # the individual capabilities degrade rather than the whole thing failing.
     if [ ! -d "${KLIPPER_PATH}" ]; then
-        echo "[WARN] ${KLIPPER_PATH} not found - klipper firmware cannot be built."
+        warn "${KLIPPER_PATH} not found - klipper firmware cannot be built"
     fi
     if [ ! -f "${KATAPULT_PATH}/scripts/flashtool.py" ]; then
-        echo "[WARN] ${KATAPULT_PATH}/scripts/flashtool.py not found - flashing unavailable."
+        warn "${KATAPULT_PATH}/scripts/flashtool.py not found - flashing unavailable"
     fi
     if [ ! -f "${KLIPPER_PATH}/lib/kconfiglib/kconfiglib.py" ]; then
-        echo "[WARN] vendored kconfiglib not found - the web config editor will be unavailable."
+        warn "vendored kconfiglib not found - the web config editor is unavailable"
     fi
     if [ ! -S "${PRINTER_DATA}/comms/moonraker.sock" ]; then
-        echo "[WARN] ${PRINTER_DATA}/comms/moonraker.sock not present yet."
-        echo "       The agent retries on a loop, so this resolves itself once Moonraker is up."
+        warn "${PRINTER_DATA}/comms/moonraker.sock not present yet"
+        note "The agent retries on a loop, so this resolves itself once Moonraker is up."
     fi
-    printf "\n"
 }
 
 function check_flash_deps {
@@ -112,32 +198,28 @@ function check_flash_deps {
     # middle of a flash, with klipper already stopped - so check it up front and
     # offer to fix it.
     if "${PYTHON_BIN}" -c 'import serial' >/dev/null 2>&1; then
-        printf "[DEPS] pyserial present.\n\n"
+        ok "pyserial present"
         return 0
     fi
 
-    echo "[DEPS] python3-serial is missing. katapult's flashtool.py needs it, and"
-    echo "       without it a flash fails part-way with klipper already stopped."
-    local answer=""
-    read -r -p "[DEPS] Install python3-serial with apt now? [Y/n]: " answer || answer=""
-    case "${answer}" in
-        n | N | no | NO)
-            echo "[WARN] Skipped. Flashing will not work until you run:"
-            printf "       sudo apt install python3-serial\n\n"
-            return 0
-            ;;
-    esac
+    warn "python3-serial is missing"
+    note "katapult's flashtool.py needs it, and without it a flash fails"
+    note "part-way with klipper already stopped."
+    if ! ask "Install python3-serial with apt now?" y; then
+        skip "flashing will not work until you run: sudo apt install python3-serial"
+        return 0
+    fi
 
     if sudo apt-get install -y python3-serial; then
         if "${PYTHON_BIN}" -c 'import serial' >/dev/null 2>&1; then
-            printf "[DEPS] Installed.\n\n"
+            ok "python3-serial installed"
         else
             # e.g. PYTHON_BIN is a venv without system site-packages.
-            echo "[WARN] python3-serial installed, but ${PYTHON_BIN} still cannot import it."
-            printf "       Flashing will not work until that interpreter can.\n\n"
+            warn "python3-serial installed, but ${PYTHON_BIN} cannot import it"
+            note "Flashing will not work until that interpreter can."
         fi
     else
-        printf "[WARN] apt install failed. Run 'sudo apt install python3-serial' yourself.\n\n"
+        warn "apt install failed - run 'sudo apt install python3-serial' yourself"
     fi
 }
 
@@ -151,27 +233,24 @@ function check_dfu_permissions {
     #
     # Only relevant for installing Katapult onto a bare STM32 (add-mcu). Boards
     # that already have Katapult never touch dfu-util.
+    section "Permissions"
     if ! command -v dfu-util >/dev/null 2>&1; then
-        printf "[DFU]  dfu-util not installed - only needed for add-mcu on a bare board.\n\n"
+        skip "DFU: dfu-util not installed - only needed for add-mcu on a bare board"
         return 0
     fi
     if [ -f "${DFU_UDEV_RULE}" ]; then
-        printf "[DFU]  udev rule already present.\n\n"
+        skip "DFU: udev rule already present"
         return 0
     fi
 
-    echo "[DFU]  No udev rule for STM32 DFU mode (${DFU_UDEV_RULE})."
-    echo "       Without it dfu-util cannot open a board in DFU mode, and add-mcu"
-    echo "       fails on a board whose boot jumper is perfectly fine."
-    local answer=""
-    read -r -p "[DFU]  Install the udev rule now? [Y/n]: " answer || answer=""
-    case "${answer}" in
-        n | N | no | NO)
-            echo "[WARN] Skipped. add-mcu on a bare board will need sudo until you add it."
-            printf "\n"
-            return 0
-            ;;
-    esac
+    warn "DFU: no udev rule for STM32 DFU mode"
+    note "${DFU_UDEV_RULE}"
+    note "Without it dfu-util cannot open a board in DFU mode, and add-mcu"
+    note "fails on a board whose boot jumper is perfectly fine."
+    if ! ask "Install the DFU udev rule now?" y; then
+        skip "DFU: add-mcu on a bare board will need sudo until you add it"
+        return 0
+    fi
 
     local tmp
     tmp="$(mktemp)"
@@ -189,17 +268,17 @@ RULE
     # which install_service does later anyway.
     if getent group plugdev >/dev/null 2>&1; then
         if ! id -nG "${USER}" | tr ' ' '\n' | grep -qx plugdev; then
-            echo "[DFU]  Adding ${USER} to the plugdev group..."
             sudo usermod -aG plugdev "${USER}"
-            echo "[DFU]  Log out and back in for your shell to pick that up."
+            ok "added ${USER} to the plugdev group"
+            note "Log out and back in for your shell to pick that up."
         fi
     else
-        echo "[WARN] No plugdev group on this system; relying on TAG+=\"uaccess\"."
+        warn "no plugdev group on this system; relying on TAG+=\"uaccess\""
     fi
 
     sudo udevadm control --reload-rules && sudo udevadm trigger --subsystem-match=usb
-    echo "[DFU]  Rule installed. Replug a board in DFU mode for it to take effect."
-    printf "\n"
+    ok "DFU: udev rule installed"
+    note "Replug a board in DFU mode for it to take effect."
 }
 
 # The BOOTSEL mountpoint parents, pre-created with known ownership and mode
@@ -213,8 +292,8 @@ RULE
 function install_bootsel_tmpfiles {
     BOOTSEL_TMPFILES_DONE=0
     if [ -z "${USER:-}" ]; then
-        echo "[WARN] USER is empty; skipping ${BOOTSEL_TMPFILES_CONF}."
-        echo "       Substituting nothing would declare /media/BOOTSEL owned by no one."
+        warn "USER is empty; skipping ${BOOTSEL_TMPFILES_CONF}"
+        note "Substituting nothing would declare /media/BOOTSEL owned by no one."
         return 0
     fi
     local tmp
@@ -225,9 +304,9 @@ function install_bootsel_tmpfiles {
     if ! sed -e "s|%USER%|${USER}|g" \
         "${INSTALL_PATH}/scripts/tmpfiles.d-mcu-updater-bootsel.conf" > "${tmp}" 2>/dev/null; then
         rm -f "${tmp}"
-        echo "[WARN] Could not read"
-        echo "       ${INSTALL_PATH}/scripts/tmpfiles.d-mcu-updater-bootsel.conf;"
-        echo "       skipping ${BOOTSEL_TMPFILES_CONF}. BOOTSEL flashing still works."
+        warn "could not read the tmpfiles.d template; skipping ${BOOTSEL_TMPFILES_CONF}"
+        note "${INSTALL_PATH}/scripts/tmpfiles.d-mcu-updater-bootsel.conf"
+        note "BOOTSEL flashing still works."
         return 0
     fi
     # tmpfiles.d reads % as a specifier prefix (%U is the UID), so a %USER% that
@@ -235,21 +314,21 @@ function install_bootsel_tmpfiles {
     # name a directory nobody meant to create. Belt and braces after the -n test.
     if grep -q '%USER%' "${tmp}"; then
         rm -f "${tmp}"
-        echo "[WARN] %USER% survived substitution; skipping ${BOOTSEL_TMPFILES_CONF}."
-        echo "       systemd-mount creates the mountpoint parents either way, so"
-        echo "       BOOTSEL flashing still works - they will just be root-owned."
+        warn "%USER% survived substitution; skipping ${BOOTSEL_TMPFILES_CONF}"
+        note "systemd-mount creates the mountpoint parents either way, so BOOTSEL"
+        note "flashing still works - they will just be root-owned."
         return 0
     fi
     if ! sudo install -m 0644 -o root -g root "${tmp}" "${BOOTSEL_TMPFILES_CONF}"; then
         rm -f "${tmp}"
-        echo "[WARN] Could not install ${BOOTSEL_TMPFILES_CONF}; continuing."
+        warn "could not install ${BOOTSEL_TMPFILES_CONF}; continuing"
         return 0
     fi
     rm -f "${tmp}"
     if ! sudo systemd-tmpfiles --create "${BOOTSEL_TMPFILES_CONF}"; then
-        echo "[WARN] systemd-tmpfiles --create ${BOOTSEL_TMPFILES_CONF} failed."
-        echo "       The entry is installed and will be applied at next boot; until"
-        echo "       then systemd-mount creates the parents itself, root-owned."
+        warn "systemd-tmpfiles --create ${BOOTSEL_TMPFILES_CONF} failed"
+        note "The entry is installed and will be applied at next boot; until then"
+        note "systemd-mount creates the parents itself, root-owned."
     fi
     BOOTSEL_TMPFILES_DONE=1
     return 0
@@ -265,16 +344,15 @@ function check_bootsel_permissions {
     # Only relevant for writing the first bootloader onto a bare RP2040
     # (add-mcu). Boards that already have Katapult never touch this path.
     if ! command -v systemd-mount >/dev/null 2>&1; then
-        printf "[BOOTSEL]  systemd-mount not found - only needed for add-mcu on a bare RP2040.\n\n"
+        skip "BOOTSEL: systemd-mount not found - only needed for add-mcu on a bare RP2040"
         return 0
     fi
     # Both files installed here are templated on ${USER}. An empty one does not
     # fail loudly: it would mount at /media//BOOTSEL and hand the volume to no
     # one, so refuse the whole thing rather than install a rule that misfires.
     if [ -z "${USER:-}" ]; then
-        echo "[WARN] USER is empty; skipping the BOOTSEL udev rule and tmpfiles.d entry."
-        echo "       Both are templated on it - see docs/bootsel-mountpoint-design.md."
-        printf "\n"
+        warn "BOOTSEL: USER is empty; skipping the udev rule and tmpfiles.d entry"
+        note "Both are templated on it - see docs/bootsel-mountpoint-design.md."
         return 0
     fi
     # A version check, not a presence check. The first rule mounted every board
@@ -290,11 +368,11 @@ function check_bootsel_permissions {
         # Failing open here degrades to exactly the bug this check exists to fix:
         # every installed rule compares as up to date, so a host on the old
         # fixed-path rule silently keeps it. Say so instead of returning quietly.
-        echo "[WARN] Could not read a version marker from"
-        echo "       ${INSTALL_PATH}/scripts/udev.d-mcu-updater-bootsel.rules."
-        echo "       Any already-installed rule will therefore look current, so a host"
-        echo "       still on the old fixed-path rule would not be upgraded. Check the"
-        echo "       file exists and carries its mcu-updater-bootsel-rule-version line."
+        warn "BOOTSEL: no version marker in the shipped rule"
+        note "${INSTALL_PATH}/scripts/udev.d-mcu-updater-bootsel.rules"
+        note "Any already-installed rule will therefore look current, so a host"
+        note "still on the old fixed-path rule would not be upgraded. Check the"
+        note "file exists and carries its mcu-updater-bootsel-rule-version line."
     fi
 
     if [ -f "${BOOTSEL_UDEV_RULE}" ]; then
@@ -303,7 +381,7 @@ function check_bootsel_permissions {
             "${BOOTSEL_UDEV_RULE}" 2>/dev/null | grep -o '[0-9]\+' || true)"
         installed="${installed:-0}"
         if [ "${installed}" -ge "${shipped}" ]; then
-            printf "[BOOTSEL]  udev rule already present (version %s).\n" "${installed}"
+            skip "BOOTSEL: udev rule already present (version ${installed})"
             # Self-heal only where consent already exists. A rule on disk means
             # this prompt was answered yes at some point; anyone who installed
             # between the rule's version bump and the tmpfiles.d entry being
@@ -311,39 +389,35 @@ function check_bootsel_permissions {
             # would never bring them one. No rule on disk means no consent, so
             # this never runs for someone who declined.
             if [ ! -f "${BOOTSEL_TMPFILES_CONF}" ]; then
-                echo "[BOOTSEL]  Mountpoint parents are not declared yet - installing"
-                echo "           ${BOOTSEL_TMPFILES_CONF}."
+                step "mountpoint parents not declared yet - installing ${BOOTSEL_TMPFILES_CONF}"
                 install_bootsel_tmpfiles
+                if [ "${BOOTSEL_TMPFILES_DONE:-0}" -eq 1 ]; then
+                    ok "BOOTSEL: tmpfiles.d entry installed"
+                fi
             fi
-            printf "\n"
             return 0
         fi
-        echo "[BOOTSEL]  Installed udev rule is version ${installed}, shipped is ${shipped}."
-        echo "           The old rule mounts every RP2040 at one fixed path, so two boards"
-        echo "           in BOOTSEL collide and one spare board blocks flashing the other."
+        warn "BOOTSEL: udev rule is version ${installed}, shipped is ${shipped}"
+        note "The old rule mounts every RP2040 at one fixed path, so two boards"
+        note "in BOOTSEL collide and one spare board blocks flashing the other."
     else
-        echo "[BOOTSEL]  No udev rule to mount an RP2040's BOOTSEL volume (${BOOTSEL_UDEV_RULE})."
-        echo "           Without it nothing mounts the volume on a headless printer, and"
-        echo "           add-mcu fails on a board whose BOOTSEL mode is perfectly fine."
+        warn "BOOTSEL: no udev rule to mount an RP2040's BOOTSEL volume"
+        note "${BOOTSEL_UDEV_RULE}"
+        note "Without it nothing mounts the volume on a headless printer, and"
+        note "add-mcu fails on a board whose BOOTSEL mode is perfectly fine."
     fi
-    echo "           Installing writes ${BOOTSEL_UDEV_RULE}"
-    echo "           and ${BOOTSEL_TMPFILES_CONF} as root, then runs"
-    echo "           udevadm and systemd-tmpfiles --create."
-    local answer=""
-    read -r -p "[BOOTSEL]  Install the udev rule and its tmpfiles.d entry now? [Y/n]: " answer || answer=""
-    case "${answer}" in
-        n | N | no | NO)
-            if [ "${have_rule}" -eq 1 ]; then
-                echo "[WARN] Skipped. Keeping the version ${installed} rule, which still mounts"
-                echo "       one board fine - but two RP2040s in BOOTSEL at once still collide"
-                echo "       on its single mountpoint, and one spare blocks flashing the other."
-            else
-                echo "[WARN] Skipped. add-mcu on a bare RP2040 will need a manual mount until you add it."
-            fi
-            printf "\n"
-            return 0
-            ;;
-    esac
+    note "Installing writes that rule and ${BOOTSEL_TMPFILES_CONF} as root,"
+    note "then runs udevadm and systemd-tmpfiles --create."
+    if ! ask "Install the BOOTSEL udev rule and its tmpfiles.d entry now?" y; then
+        if [ "${have_rule}" -eq 1 ]; then
+            skip "BOOTSEL: keeping the version ${installed} rule"
+            note "One board still mounts fine, but two RP2040s in BOOTSEL at once"
+            note "collide on its single mountpoint, and one spare blocks the other."
+        else
+            skip "BOOTSEL: add-mcu on a bare RP2040 will need a manual mount"
+        fi
+        return 0
+    fi
 
     local tmp
     tmp="$(mktemp)"
@@ -353,9 +427,9 @@ function check_bootsel_permissions {
     if ! sed -e "s|%USER%|${USER}|g" \
         "${INSTALL_PATH}/scripts/udev.d-mcu-updater-bootsel.rules" > "${tmp}" 2>/dev/null; then
         rm -f "${tmp}"
-        echo "[WARN] Could not read"
-        echo "       ${INSTALL_PATH}/scripts/udev.d-mcu-updater-bootsel.rules;"
-        echo "       skipping the BOOTSEL udev rule. BOOTSEL flashing will need a manual mount."
+        warn "could not read the BOOTSEL rule template; skipping it"
+        note "${INSTALL_PATH}/scripts/udev.d-mcu-updater-bootsel.rules"
+        note "BOOTSEL flashing will need a manual mount."
         return 0
     fi
     sudo install -m 0644 -o root -g root "${tmp}" "${BOOTSEL_UDEV_RULE}"
@@ -365,27 +439,27 @@ function check_bootsel_permissions {
 
     install_bootsel_tmpfiles
     if [ "${BOOTSEL_TMPFILES_DONE:-0}" -eq 1 ]; then
-        echo "[BOOTSEL]  Rule and tmpfiles.d entry installed. Replug a board in BOOTSEL"
-        echo "           mode for it to take effect."
+        ok "BOOTSEL: udev rule and tmpfiles.d entry installed"
+        note "Replug a board in BOOTSEL mode for it to take effect."
     else
-        echo "[BOOTSEL]  Rule installed; the tmpfiles.d entry was skipped for the reason"
-        echo "           above. Replug a board in BOOTSEL mode for the rule to take"
-        echo "           effect - the mountpoint parents will just be root-owned."
+        ok "BOOTSEL: udev rule installed"
+        note "The tmpfiles.d entry was skipped for the reason above; the mountpoint"
+        note "parents will just be root-owned. Replug a board for the rule to apply."
     fi
-    printf "\n"
 }
 
 function check_config {
+    section "Config"
     mkdir -p "${CONFIG_PATH}" "${DATA_PATH}"
 
     # A registry left at the pre-0.10 location would otherwise read as "no MCU
     # types configured", and the next add-type would write a fresh file while the
     # real one sat untouched. Refuse loudly instead.
     if [ -f "${HOME}/mcus/mcus.json" ] && [ ! -f "${MAIN_CONFIG}" ]; then
-        echo "[ERROR] Found an old registry at ${HOME}/mcus/mcus.json but nothing at"
-        echo "        ${MAIN_CONFIG}."
-        echo "        The layout moved - see docs/layout.md for the handful of commands."
-        echo "        Refusing to continue so an empty registry cannot overwrite anything."
+        err "found an old registry at ${HOME}/mcus/mcus.json but nothing at"
+        note "${MAIN_CONFIG}"
+        note "The layout moved - see docs/layout.md for the handful of commands."
+        note "Refusing to continue so an empty registry cannot overwrite anything."
         exit 1
     fi
 
@@ -394,27 +468,29 @@ function check_config {
     # read, and enable_flashing silently reverting to false is worth saying out
     # loud rather than leaving someone to wonder where the flash buttons went.
     if [ -f "${CONFIG_PATH}/updater.conf" ]; then
-        echo "[WARN]  ${CONFIG_PATH}/updater.conf is no longer read."
-        echo "        Settings moved into the [updater] section of ${MAIN_CONFIG}."
-        echo "        Copy anything you had set across, then delete it."
-        printf "\n"
+        warn "${CONFIG_PATH}/updater.conf is no longer read"
+        note "Settings moved into the [updater] section of ${MAIN_CONFIG}."
+        note "Copy anything you had set across, then delete it."
     fi
     if [ -f "${CONFIG_PATH}/mcus.cfg" ] && [ ! -f "${MAIN_CONFIG}" ]; then
-        echo "[ERROR] The registry is now ${MAIN_CONFIG}, not ${CONFIG_PATH}/mcus.cfg."
-        echo "        Rename it (settings and the [mcu ...] sections share one file now):"
-        echo "            mv ${CONFIG_PATH}/mcus.cfg ${MAIN_CONFIG}"
+        err "the registry is now ${MAIN_CONFIG}, not ${CONFIG_PATH}/mcus.cfg"
+        note "Rename it (settings and the [mcu ...] sections share one file now):"
+        note "    mv ${CONFIG_PATH}/mcus.cfg ${MAIN_CONFIG}"
         exit 1
     fi
 
     # A broken registry is surfaced here, loudly, rather than by the agent
     # reporting it as an error to the UI after the fact.
     if [ ! -f "${MAIN_CONFIG}" ]; then
-        printf "[CONFIG] No config at %s yet - nothing to validate.\n\n" "${MAIN_CONFIG}"
+        skip "no config at ${MAIN_CONFIG} yet - nothing to validate"
         return 0
     fi
-    # A traceback here would be noise: the exception message already says exactly
-    # what is wrong and how to fix it, so print that and nothing else.
-    if PYTHONPATH="${INSTALL_PATH}/src" "${PYTHON_BIN}" -c '
+    # The Python side prints facts, one per line, and this formats them - so the
+    # gutter and the colours stay defined in exactly one place. A traceback would
+    # be noise: the exception message already says what is wrong and how to fix
+    # it, so print that and nothing else.
+    local summary="" line=""
+    if summary="$(PYTHONPATH="${INSTALL_PATH}/src" "${PYTHON_BIN}" -c '
 import sys
 from mcu_updater.config import Registry
 from mcu_updater.errors import UpdaterError
@@ -423,19 +499,29 @@ from mcu_updater.settings import load_settings
 paths = Paths.from_env()
 try:
     reg = Registry.load(paths)
-    print(f"[CONFIG] {len(reg)} MCU type(s), {len(reg.all_serials())} tracked serial(s).")
+    print(f"{len(reg)} MCU type(s), {len(reg.all_serials())} tracked serial(s)")
     # Same file, so a typo in [updater] is worth catching here too - the agent
     # would otherwise fall back to defaults with only a line in its log.
     s = load_settings(paths.settings_file)
     state = "ENABLED" if s.enable_flashing else "disabled"
-    print(f"[CONFIG] Flashing from the web UI is {state}.")
+    print(f"flashing from the web UI is {state}")
 except UpdaterError as exc:
-    print(f"[ERROR] {exc}", file=sys.stderr)
+    print(f"{exc}", file=sys.stderr)
     sys.exit(1)
-'; then
-        printf "\n"
+' 2>&1)"; then
+        while IFS= read -r line; do
+            if [ -n "${line}" ]; then
+                ok "${line}"
+            fi
+        done <<< "${summary}"
     else
-        echo "[ERROR] Fix ${MAIN_CONFIG}, then re-run."
+        err "the config at ${MAIN_CONFIG} is not loadable"
+        while IFS= read -r line; do
+            if [ -n "${line}" ]; then
+                note "${line}"
+            fi
+        done <<< "${summary}"
+        note "Fix that file, then re-run."
         exit 1
     fi
 }
@@ -454,7 +540,7 @@ function migrate_legacy_service {
     for legacy_name in ${LEGACY_SERVICE_NAMES}; do
         legacy_unit="/etc/systemd/system/${legacy_name}.service"
         if [ -f "${legacy_unit}" ]; then
-            echo "[MIGRATE] Removing the old ${legacy_name} service..."
+            step "removing the old ${legacy_name} service"
             sudo systemctl stop "${legacy_name}.service" 2>/dev/null || true
             sudo systemctl disable "${legacy_name}.service" 2>/dev/null || true
             sudo rm -f "${legacy_unit}"
@@ -462,7 +548,7 @@ function migrate_legacy_service {
         fi
 
         if [ -f "${asvc}" ] && grep -qxF "${legacy_name}" "${asvc}"; then
-            echo "[MIGRATE] Dropping stale ${legacy_name} from moonraker.asvc..."
+            ok "dropped stale ${legacy_name} from moonraker.asvc"
             sed -i "/^${legacy_name}\$/d" "${asvc}"
         fi
 
@@ -474,7 +560,7 @@ function migrate_legacy_service {
                 cp "${conf}" "${conf}.bak-mcu-updater"
                 backed_up=1
             fi
-            echo "[MIGRATE] Renaming the ${legacy_name} update_manager entry..."
+            ok "renamed the ${legacy_name} update_manager entry"
             sed -i "s|^\[update_manager ${legacy_name}\]|[update_manager ${SERVICE_NAME}]|" "${conf}"
             sed -i "s|^managed_services:[[:space:]]*${legacy_name}[[:space:]]*\$|managed_services: ${SERVICE_NAME}|" "${conf}"
 
@@ -512,28 +598,27 @@ function migrate_legacy_service {
             # shellcheck disable=SC2088
             case "${declared}" in "~/"*) declared="${HOME}/${declared#\~/}" ;; esac
             if [ ! -d "${declared}" ]; then
-                echo "[WARN] moonraker.conf's update_manager path does not exist: ${declared}"
-                echo "       Moonraker will error on that section. Expected ${INSTALL_PATH}."
+                warn "moonraker.conf's update_manager path does not exist: ${declared}"
+                note "Moonraker will error on that section. Expected ${INSTALL_PATH}."
             fi
         fi
     fi
 
     if [ "${backed_up}" -eq 1 ]; then
-        printf "[MIGRATE] moonraker.conf updated (backup at %s.bak-mcu-updater).\n" "${conf}"
+        ok "moonraker.conf updated (backup at ${conf}.bak-mcu-updater)"
     fi
 
     # An earlier install.sh used `sudo cp` from a mktemp file, so the unit could
     # be mode 0600 and unreadable to anything scanning /etc/systemd/system.
     local unit="/etc/systemd/system/${SERVICE_NAME}.service"
     if [ -f "${unit}" ] && [ ! -r "${unit}" ]; then
-        echo "[MIGRATE] Fixing permissions on ${unit}..."
         sudo chmod 0644 "${unit}"
+        ok "fixed permissions on ${unit}"
     fi
-    printf "\n"
 }
 
 function install_service {
-    echo "[INSTALL] Installing systemd unit ${SERVICE_NAME}.service..."
+    section "Agent"
     local tmp
     tmp="$(mktemp)"
     sed -e "s|%USER%|${USER}|g" \
@@ -550,52 +635,51 @@ function install_service {
     sudo systemctl daemon-reload
     sudo systemctl enable "${SERVICE_NAME}.service" >/dev/null 2>&1 || true
     sudo systemctl restart "${SERVICE_NAME}.service"
-    printf "[INSTALL] Service installed and started.\n\n"
+    ok "systemd unit ${SERVICE_NAME}.service installed and started"
 }
 
 function add_asvc {
     # Lets you restart the agent from Mainsail's own Services UI.
+    section "Moonraker"
     local asvc="${PRINTER_DATA}/moonraker.asvc"
     if [ ! -f "${asvc}" ]; then
-        echo "[MOONRAKER] ${asvc} not found, skipping allow-list entry."
+        skip "${asvc} not found - no allow-list entry"
         return 0
     fi
     if grep -qxF "${SERVICE_NAME}" "${asvc}"; then
-        printf "[MOONRAKER] %s already in moonraker.asvc.\n\n" "${SERVICE_NAME}"
+        skip "${SERVICE_NAME} already in moonraker.asvc"
     else
         echo "${SERVICE_NAME}" >> "${asvc}"
-        printf "[MOONRAKER] Added %s to moonraker.asvc.\n\n" "${SERVICE_NAME}"
+        ok "added ${SERVICE_NAME} to moonraker.asvc"
     fi
 }
 
 function add_update_manager {
     local conf="${PRINTER_DATA}/config/moonraker.conf"
     if [ ! -f "${conf}" ]; then
-        echo "[MOONRAKER] ${conf} not found, skipping update_manager entry."
+        skip "${conf} not found - no update_manager entry"
         return 0
     fi
     if grep -q "^\[update_manager ${SERVICE_NAME}\]" "${conf}"; then
-        printf "[MOONRAKER] update_manager entry already present.\n\n"
+        skip "update_manager entry already present"
     else
-        echo "[MOONRAKER] Adding update_manager entry to moonraker.conf..."
         {
             printf "\n"
             cat "${INSTALL_PATH}/scripts/moonraker-update-manager.conf"
         } >> "${conf}"
-        printf "[MOONRAKER] Added. Restart Moonraker for it to take effect.\n\n"
+        ok "added the update_manager entry to moonraker.conf"
     fi
 }
 
 function add_update_manager_ui {
     local conf="${PRINTER_DATA}/config/moonraker.conf"
     if [ ! -f "${conf}" ]; then
-        echo "[MOONRAKER] ${conf} not found, skipping mcu-updater-ui update_manager entry."
+        skip "${conf} not found - no mcu-updater-ui update_manager entry"
         return 0
     fi
     if grep -q "^\[update_manager mcu-updater-ui\]" "${conf}"; then
-        printf "[MOONRAKER] mcu-updater-ui update_manager entry already present.\n\n"
+        skip "mcu-updater-ui update_manager entry already present"
     else
-        echo "[MOONRAKER] Adding mcu-updater-ui update_manager entry to moonraker.conf..."
         {
             printf "\n"
             # The shipped conf hardcodes channel: stable; swap it when this
@@ -606,7 +690,7 @@ function add_update_manager_ui {
                 cat "${INSTALL_PATH}/scripts/moonraker-update-manager-ui.conf"
             fi
         } >> "${conf}"
-        printf "[MOONRAKER] Added. Restart Moonraker for it to take effect.\n\n"
+        ok "added the mcu-updater-ui update_manager entry (channel: ${MCU_UPDATER_UI_CHANNEL})"
     fi
 }
 
@@ -615,17 +699,18 @@ function install_ui_release {
     # release_info.json means _is_valid=False, and it never downloads (see
     # docs/decisions.md). This performs that first fetch so the update
     # manager has something to compare against from the start.
+    section "Web UI"
     if [ -f "${UI_PATH}/release_info.json" ]; then
-        printf "[UI] %s already has a release installed.\n\n" "${UI_PATH}"
+        skip "${UI_PATH} already has a release installed"
         return 0
     fi
 
     if ! command -v curl >/dev/null 2>&1 || ! command -v unzip >/dev/null 2>&1; then
-        printf "[UI] curl and unzip are required to fetch the UI release - skipping.\n\n"
+        skip "curl and unzip are required to fetch the UI release"
         return 0
     fi
 
-    echo "[UI] Fetching the latest mcu-updater-ui release (channel: ${MCU_UPDATER_UI_CHANNEL})..."
+    step "fetching the latest mcu-updater-ui release (channel: ${MCU_UPDATER_UI_CHANNEL})"
     # This is only the *bootstrap* fetch - it just needs to land some
     # release_info.json so Moonraker's own update_manager stops refusing to
     # ever check (see the comment above). Every later check follows whatever
@@ -648,9 +733,12 @@ function install_ui_release {
     fi
     if [ -z "${asset_url}" ]; then
         if [ "${MCU_UPDATER_UI_CHANNEL}" = "stable" ]; then
-            printf "[UI] No stable release published yet - leaving the placeholder.\n       Re-run install.sh once one exists, or MCU_UPDATER_UI_CHANNEL=beta ./install.sh to track the beta channel instead.\n\n"
+            skip "no stable release published yet - leaving the placeholder"
+            note "Re-run install.sh once one exists, or track betas with"
+            note "MCU_UPDATER_UI_CHANNEL=beta ./install.sh"
         else
-            printf "[UI] No release published yet (or the fetch failed) - leaving the placeholder.\n       Re-run install.sh once a release exists.\n\n"
+            skip "no release published yet (or the fetch failed) - leaving the placeholder"
+            note "Re-run install.sh once a release exists."
         fi
         return 0
     fi
@@ -659,7 +747,7 @@ function install_ui_release {
     local tmp_zip
     tmp_zip="$(mktemp)"
     if ! curl -fsSL "${asset_url}" -o "${tmp_zip}"; then
-        echo "[UI] Download failed - leaving the placeholder."
+        warn "download failed - leaving the placeholder"
         rm -f "${tmp_zip}"
         return 0
     fi
@@ -669,7 +757,7 @@ function install_ui_release {
     local tmp_dir
     tmp_dir="$(mktemp -d)"
     if ! unzip -q -o "${tmp_zip}" -d "${tmp_dir}"; then
-        echo "[UI] Unzip failed - leaving the placeholder."
+        warn "unzip failed - leaving the placeholder"
         rm -f "${tmp_zip}"
         rm -rf "${tmp_dir}"
         return 0
@@ -679,7 +767,7 @@ function install_ui_release {
     find "${UI_PATH}" -mindepth 1 -maxdepth 1 -exec rm -rf {} +
     cp -r "${tmp_dir}/." "${UI_PATH}/"
     rm -rf "${tmp_dir}"
-    printf "[UI] Installed to %s.\n\n" "${UI_PATH}"
+    ok "UI release installed to ${UI_PATH}"
 }
 
 function allow_sudo_fallback {
@@ -687,34 +775,25 @@ function allow_sudo_fallback {
     # machine.services API. This is purely the safety net for Moonraker dying
     # between the stop and the start, when that API is unreachable and the agent
     # would otherwise be unable to bring klipper back.
+    section "Safety net"
     local target="/etc/sudoers.d/mcu-updater"
     if [ -f "${target}" ]; then
-        printf "[SUDO] Fallback rule already installed.\n\n"
+        skip "sudoers fallback rule already installed"
         return 0
     fi
 
-    cat <<EOF
-[SUDO] Optional safety net.
-
-  The agent stops klipper via Moonraker, which needs no special privileges. But
-  if Moonraker dies *between* the stop and the start, the agent cannot put
-  klipper back, and the printer stays down until you notice.
-
-  Installing a narrow sudoers rule (three exact systemctl commands for the
-  klipper unit, no wildcards) lets the agent recover on its own. Declining is
-  safe - the systemd unit's ExecStopPost still covers some cases - but the net
-  is weaker, and the CLI will prompt for a password when it stops klipper.
-
-EOF
-    local answer=""
-    read -r -p "[SUDO] Install /etc/sudoers.d/mcu-updater? [y/N]: " answer || answer=""
-    case "${answer}" in
-        y | Y | yes | YES) ;;
-        *)
-            printf "[SUDO] Skipped.\n\n"
-            return 0
-            ;;
-    esac
+    note "The agent stops klipper via Moonraker, which needs no special privileges."
+    note "But if Moonraker dies *between* the stop and the start, the agent cannot"
+    note "put klipper back, and the printer stays down until you notice."
+    note ""
+    note "A narrow sudoers rule (three exact systemctl commands for the klipper"
+    note "unit, no wildcards) lets it recover on its own. Declining is safe - the"
+    note "unit's ExecStopPost still covers some cases - but the net is weaker, and"
+    note "the CLI will prompt for a password when it stops klipper."
+    if ! ask "Install ${target}?" n; then
+        skip "no sudoers fallback - the agent relies on Moonraker being up"
+        return 0
+    fi
 
     local tmp
     tmp="$(mktemp)"
@@ -723,9 +802,9 @@ EOF
     # sudo entirely, so never copy one in unchecked.
     if sudo visudo -c -f "${tmp}" >/dev/null 2>&1; then
         sudo install -m 0440 -o root -g root "${tmp}" "${target}"
-        printf "[SUDO] Installed %s\n\n" "${target}"
+        ok "installed ${target}"
     else
-        echo "[ERROR] Generated sudoers file failed validation; not installing it."
+        err "the generated sudoers file failed validation; not installing it"
         sudo visudo -c -f "${tmp}" || true
     fi
     rm -f "${tmp}"
@@ -737,7 +816,7 @@ function install_nginx_site {
     # nginx/proxy layer be verified independently - curl localhost:PORT/server/info
     # should return Moonraker's JSON even with nothing but a placeholder root.
     if ! command -v nginx >/dev/null 2>&1; then
-        printf "[NGINX] nginx not installed - skipping the standalone UI site.\n\n"
+        skip "nginx not installed - no standalone UI site"
         return 0
     fi
 
@@ -746,26 +825,17 @@ function install_nginx_site {
     local confd_dest="/etc/nginx/conf.d/${SERVICE_NAME}.conf"
 
     if [ -f "${site_dest}" ]; then
-        printf "[NGINX] Site already installed at %s.\n\n" "${site_dest}"
+        skip "nginx site already installed at ${site_dest}"
         return 0
     fi
 
-    cat <<EOF
-[NGINX] Optional: a dedicated nginx site for the standalone mcu-updater UI,
-        served on its own port alongside Mainsail/Fluidd rather than folded
-        into either. Serves from ${UI_PATH} (override with UI_PATH before
-        re-running), which the UI's own installer populates.
-
-EOF
-    local answer=""
-    read -r -p "[NGINX] Install the nginx site now? [y/N]: " answer || answer=""
-    case "${answer}" in
-        y | Y | yes | YES) ;;
-        *)
-            printf "[NGINX] Skipped.\n\n"
-            return 0
-            ;;
-    esac
+    note "A dedicated nginx site for the standalone UI, served on its own port"
+    note "alongside Mainsail/Fluidd rather than folded into either. Serves from"
+    note "${UI_PATH} (override with UI_PATH before re-running)."
+    if ! ask "Install the nginx site on port ${MCU_UPDATER_UI_PORT}?" n; then
+        skip "no nginx site - the standalone UI is not served from this host"
+        return 0
+    fi
 
     mkdir -p "${UI_PATH}"
     # A placeholder so the site has something to serve before the standalone
@@ -800,9 +870,9 @@ HTML
     # other site (Mainsail, Fluidd) on this host, not just the one being added.
     if sudo nginx -t >/dev/null 2>&1; then
         sudo systemctl reload nginx
-        printf "[NGINX] Site installed and nginx reloaded. UI will be at http://<host>:%s/\n\n" "${MCU_UPDATER_UI_PORT}"
+        ok "nginx site installed and reloaded - UI at http://<host>:${MCU_UPDATER_UI_PORT}/"
     else
-        echo "[ERROR] Generated nginx config failed validation; rolling back."
+        err "the generated nginx config failed validation; rolling back"
         sudo nginx -t || true
         sudo rm -f "${enabled_dest}" "${site_dest}" "${confd_dest}"
         return 0
@@ -810,67 +880,41 @@ HTML
 }
 
 function restart_moonraker {
-    echo "[MOONRAKER] Restarting Moonraker so the new config applies..."
+    section "Finish"
     sudo systemctl restart moonraker
-    printf "[MOONRAKER] Done.\n\n"
+    ok "Moonraker restarted so the new config applies"
 }
 
+# What a person actually does next. The rationale that used to live here - why
+# the unit is not called klipper-*, why the Mainsail fork is deprecated, how the
+# standalone UI's channels work - is in the docs named below, where it can be
+# read once rather than scrolled past after every update.
 function print_next_steps {
-    cat <<EOF
-================================================================
- mcu-updater agent installed.
-
- Check it registered with Moonraker:
-
-   curl -s http://localhost:7125/server/extensions/list
-
- ...should list an agent named "mcu_updater". Then try it:
-
-   curl -s -X POST http://localhost:7125/server/extensions/request \\
-     -H 'Content-Type: application/json' \\
-     -d '{"agent":"mcu_updater","method":"fw.status","arguments":{}}'
-
- Logs:   ${PRINTER_DATA}/logs/mcu-updater.log
-         (not in Mainsail's Logfiles panel - that lists a fixed set - but it is
-          downloadable through Moonraker's file manager)
- Status: sudo systemctl status ${SERVICE_NAME}
-
- The CLI is unchanged and still works:  ${INSTALL_PATH}/mcu-updater.py status
-
- The systemd unit is 'mcu-updater', deliberately not 'klipper-*': KIAUH
- matches ^klipper(-[0-9a-zA-Z]+)?.service$ and would mistake it for a Klipper
- instance.
-
- The Mainsail fork (Vylyne/mainsail) is DEPRECATED - the standalone UI below
- is the supported client now. Existing fork installs keep working, but a new
- install should skip this step. See docs/mainsail-fork.md if you still need
- it:
-
-   [update_manager mainsail]
-   repo: Vylyne/mainsail        # was mainsail-crew/mainsail
-
- Config:    ${MAIN_CONFIG}     (backed up, editable in Mainsail)
-              one file: the [updater] section and one [mcu ...] per board
- Artifacts: ${DATA_PATH}        (generated, not backed up)
-
- Flashing from the web UI is OFF by default. To enable it, add to the
- [updater] section of ${MAIN_CONFIG}:
-
-   [updater]
-   enable_flashing: true
-
- ...then: sudo systemctl restart ${SERVICE_NAME}
-
- Standalone UI: [update_manager mcu-updater-ui] tracks the latest release at
- ${UI_PATH} (see docs/standalone-ui.md). If none has been published yet, or
- the fetch failed, it still serves the placeholder - Moonraker's Update
- Manager will offer the real thing once a release exists; re-run install.sh
- to fetch it immediately instead of waiting for that panel. If you accepted
- the nginx prompt, it is reachable on port ${MCU_UPDATER_UI_PORT}. Re-run
- install.sh with UI_PATH/MCU_UPDATER_UI_PORT set to change either, or with
- MCU_UPDATER_UI_CHANNEL=beta to track beta releases (currently: ${MCU_UPDATER_UI_CHANNEL}).
-================================================================
-EOF
+    section "Installed"
+    printf '\n'
+    printf '  Verify the agent registered with Moonraker:\n'
+    printf '    %scurl -s http://localhost:7125/server/extensions/list%s\n' "${C_DIM}" "${C_OFF}"
+    printf '    %s(should list an agent named "mcu_updater")%s\n' "${C_DIM}" "${C_OFF}"
+    printf '\n'
+    printf '  Config     %s\n' "${MAIN_CONFIG}"
+    printf '             %sone file: the [updater] section and one [mcu ...] per board%s\n' \
+        "${C_DIM}" "${C_OFF}"
+    printf '  Artifacts  %s\n' "${DATA_PATH}"
+    printf '  Log        %s/logs/mcu-updater.log\n' "${PRINTER_DATA}"
+    printf '  Status     sudo systemctl status %s\n' "${SERVICE_NAME}"
+    printf '  CLI        %s/mcu-updater.py status\n' "${INSTALL_PATH}"
+    printf '  Web UI     http://<host>:%s/  %s(docs/standalone-ui.md)%s\n' \
+        "${MCU_UPDATER_UI_PORT}" "${C_DIM}" "${C_OFF}"
+    printf '\n'
+    printf '  Flashing from the web UI is OFF by default. To enable it, add to the\n'
+    printf '  [updater] section of the config above:\n'
+    printf '    %s[updater]%s\n' "${C_DIM}" "${C_OFF}"
+    printf '    %senable_flashing: true%s\n' "${C_DIM}" "${C_OFF}"
+    printf '  then: sudo systemctl restart %s\n' "${SERVICE_NAME}"
+    printf '\n'
+    printf '  %sThe Mainsail fork (Vylyne/mainsail) is deprecated - see docs/mainsail-fork.md%s\n' \
+        "${C_DIM}" "${C_OFF}"
+    printf '\n'
 }
 
 preflight_checks

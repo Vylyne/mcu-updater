@@ -185,3 +185,127 @@ def expand_args(cmake_args: str, state: SourceState) -> list[str]:
     return [
         arg.replace(GIT_DESCRIBE_TOKEN, version) for arg in shlex.split(cmake_args)
     ]
+
+
+#: Where the configure step puts the build tree, relative to `source:`.
+BUILD_SUBDIR = "build"
+
+
+def build_dir(source: str) -> str:
+    return os.path.join(os.path.expanduser(source or ""), BUILD_SUBDIR)
+
+
+def staged_uf2(source: str, cmake_target: str) -> str:
+    """Where cmake leaves this target's image, before we stage it.
+
+    Not routed through `firmware.built_artifact`, which hardcodes
+    `out/<artifact>.<ext>` - a Klipper-Makefile convention this build system
+    does not share.
+    """
+    return os.path.join(build_dir(source), f"{cmake_target}.uf2")
+
+
+def _run(argv: list[str], cwd: str) -> str | None:
+    """Capture a short command's stdout, or None if it could not answer."""
+    try:
+        out = subprocess.check_output(
+            argv, cwd=cwd, stderr=subprocess.DEVNULL, timeout=30
+        )
+    except Exception:  # noqa: BLE001 - no cmake, an unconfigured tree, a timeout
+        return None
+    return out.decode("utf-8", "replace")
+
+
+def declared_targets(source: str) -> set[str] | None:
+    """Every target this tree declares, or None when it cannot be asked.
+
+    Only answerable *after* a configure - the target list lives in the
+    generated build system, not in `CMakeLists.txt`. None rather than an empty
+    set on purpose: empty would read as "this tree declares no targets" and
+    block every type that names one.
+
+    Parsing `CMakeLists.txt` instead was rejected - that is reimplementing
+    CMake, and a first build on a fresh clone would have nothing to check
+    against either way.
+    """
+    build = build_dir(source)
+    if not os.path.isdir(build):
+        return None
+    text = _run(["cmake", "--build", build, "--target", "help"], cwd=build)
+    if text is None:
+        return None
+    found: set[str] = set()
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("..."):
+            continue
+        name = stripped[3:].strip().split(" ", 1)[0].strip()
+        if name:
+            found.add(name)
+    return found or None
+
+
+def _uninitialised_submodule(source: str) -> str | None:
+    """A submodule declared in `.gitmodules` whose directory is empty.
+
+    Named explicitly because the CMake failure for it is unreadable - the Pico
+    SDK's include of `pico_sdk_init.cmake` fails several layers down. Read from
+    `.gitmodules` rather than hardcoding `pico-sdk/`, which is one SDK's path
+    and not a fact about cmake trees in general.
+    """
+    modules = os.path.join(source, ".gitmodules")
+    try:
+        with open(modules, encoding="utf-8") as fh:
+            text = fh.read()
+    except OSError:
+        return None
+    for line in text.splitlines():
+        key, sep, value = line.partition("=")
+        if not sep or key.strip() != "path":
+            continue
+        rel = value.strip()
+        if not rel:
+            continue
+        directory = os.path.join(source, rel)
+        if os.path.isdir(directory) and not os.listdir(directory):
+            return rel
+    return None
+
+
+def source_problem(target: CmakeType) -> str | None:
+    """Why this type cannot be built, or None if it can be attempted.
+
+    A module function, mirroring `pio.source_problem`, so a status payload can
+    ask without assembling an `Install` it does not need.
+
+    Only setup that has to happen *outside this tool*. A missing ARM
+    toolchain, a syntax error or a full disk are all things to find out by
+    trying: reporting them as failures is more useful than pretending we knew.
+    """
+    source = os.path.expanduser(target.source or "")
+    if not source:
+        return (
+            f"'{target.name}' has no source tree configured - set 'source:' on "
+            f"its firmware family."
+        )
+    if not os.path.isdir(source):
+        return f"source directory {source} not found for '{target.name}'."
+    if not os.path.isfile(os.path.join(source, "CMakeLists.txt")):
+        return (
+            f"no CMakeLists.txt in {source} - 'source:' should name the "
+            f"directory holding it, not the repository root."
+        )
+    empty = _uninitialised_submodule(source)
+    if empty is not None:
+        return (
+            f"submodule '{empty}' in {source} is empty - run "
+            f"'git submodule update --init --recursive' in that tree first."
+        )
+
+    known = declared_targets(source)
+    if known is not None and target.cmake_target not in known:
+        return (
+            f"'{target.name}' names cmake_target '{target.cmake_target}', which "
+            f"this tree does not declare. Known: {', '.join(sorted(known))}."
+        )
+    return None

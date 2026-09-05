@@ -183,3 +183,106 @@ def test_args_are_split_as_a_shell_would(repo):
     """One config string, several arguments - and a quoted value stays one."""
     state = cmake.source_state(str(repo / "rp2040"))
     assert cmake.expand_args('-DA=1 -DB="two words"', state) == ["-DA=1", "-DB=two words"]
+
+
+def _cmake_type(source, target="roadrunner_v1_i2c_rgb"):
+    return cmake.CmakeType(
+        name="roadrunner", cmake_target=target, source=str(source), firmware="roadrunner"
+    )
+
+
+def test_no_source_names_the_missing_key(tmp_path):
+    problem = cmake.source_problem(cmake.CmakeType(name="roadrunner", cmake_target="t"))
+    assert problem is not None
+    assert "source:" in problem
+
+
+def test_a_source_that_does_not_exist_says_so_differently(tmp_path):
+    """Absent and non-existent are separated because the fixes differ - one is
+    a missing key, the other a path that is there and wrong. Same split as
+    pio.source_problem."""
+    missing = tmp_path / "nope"
+    problem = cmake.source_problem(_cmake_type(missing))
+    assert problem is not None
+    assert str(missing) in problem
+    assert "source:" not in problem
+
+
+def test_a_tree_with_no_cmakelists_is_blocked(tmp_path):
+    problem = cmake.source_problem(_cmake_type(tmp_path))
+    assert problem is not None
+    assert "CMakeLists.txt" in problem
+
+
+def test_an_uninitialised_submodule_is_named_with_its_fix(tmp_path):
+    """The CMake error for this is unreadable, so it is worth catching first.
+    Read from .gitmodules rather than hardcoding pico-sdk/, which is the Pico
+    SDK's path and not a fact about cmake trees."""
+    (tmp_path / "CMakeLists.txt").write_text("project(rr)\n", encoding="utf-8")
+    (tmp_path / ".gitmodules").write_text(
+        '[submodule "pico-sdk"]\n\tpath = pico-sdk\n\turl = https://example/x\n',
+        encoding="utf-8",
+    )
+    (tmp_path / "pico-sdk").mkdir()
+    problem = cmake.source_problem(_cmake_type(tmp_path))
+    assert problem is not None
+    assert "pico-sdk" in problem
+    assert "git submodule update --init --recursive" in problem
+
+
+def test_a_populated_submodule_is_not_a_problem(tmp_path):
+    (tmp_path / "CMakeLists.txt").write_text("project(rr)\n", encoding="utf-8")
+    (tmp_path / ".gitmodules").write_text(
+        '[submodule "pico-sdk"]\n\tpath = pico-sdk\n', encoding="utf-8"
+    )
+    (tmp_path / "pico-sdk").mkdir()
+    (tmp_path / "pico-sdk" / "pico_sdk_init.cmake").write_text("", encoding="utf-8")
+    assert cmake.source_problem(_cmake_type(tmp_path)) is None
+
+
+def test_target_list_is_unknown_before_a_configure(tmp_path):
+    """No build directory means nothing to ask. Returning None rather than an
+    empty set matters: empty would read as 'this tree declares no targets' and
+    block every type."""
+    (tmp_path / "CMakeLists.txt").write_text("project(rr)\n", encoding="utf-8")
+    assert cmake.declared_targets(str(tmp_path)) is None
+
+
+def test_a_mistyped_target_is_blocked_once_the_list_is_known(tmp_path, monkeypatch):
+    (tmp_path / "CMakeLists.txt").write_text("project(rr)\n", encoding="utf-8")
+    monkeypatch.setattr(
+        cmake, "declared_targets", lambda source: {"roadrunner_v1_i2c_rgb", "clean"}
+    )
+    problem = cmake.source_problem(_cmake_type(tmp_path, target="roadrunner_v1_i2c_rbg"))
+    assert problem is not None
+    assert "roadrunner_v1_i2c_rbg" in problem
+    assert "roadrunner_v1_i2c_rgb" in problem
+
+
+def test_a_known_target_is_not_blocked(tmp_path, monkeypatch):
+    (tmp_path / "CMakeLists.txt").write_text("project(rr)\n", encoding="utf-8")
+    monkeypatch.setattr(cmake, "declared_targets", lambda source: {"roadrunner_v1_i2c_rgb"})
+    assert cmake.source_problem(_cmake_type(tmp_path)) is None
+
+
+def test_the_target_help_output_is_parsed(tmp_path, monkeypatch):
+    """`cmake --build <dir> --target help` prints one '... <name>' per line,
+    with the default target annotated."""
+    (tmp_path / "build").mkdir()
+    monkeypatch.setattr(
+        cmake,
+        "_run",
+        lambda *a, **k: (
+            "The following are some of the valid targets for this Makefile:\n"
+            "... all (the default if no target is provided)\n"
+            "... clean\n"
+            "... roadrunner_v1_i2c_rgb\n"
+            "... roadrunner_v1_uart_grb\n"
+        ),
+    )
+    assert cmake.declared_targets(str(tmp_path)) == {
+        "all",
+        "clean",
+        "roadrunner_v1_i2c_rgb",
+        "roadrunner_v1_uart_grb",
+    }

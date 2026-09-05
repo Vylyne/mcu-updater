@@ -7,6 +7,8 @@ provider owns - have their own tests saying why.
 
 from __future__ import annotations
 
+import subprocess
+
 import pytest
 
 from mcu_updater.errors import ConfigError
@@ -71,3 +73,113 @@ def test_a_cmake_type_with_no_target_is_refused(paths, tmp_path):
 def test_a_missing_config_file_is_not_an_error(paths):
     """No config means no cmake types, which is what every install has today."""
     assert cmake.load(paths) == {}
+
+
+def _git(directory, *args) -> str:
+    return subprocess.run(
+        ("git",) + args, cwd=directory, text=True, capture_output=True, check=True
+    ).stdout.strip()
+
+
+@pytest.fixture
+def repo(tmp_path):
+    """A repo whose firmware source is a *subdirectory*, with a sibling.
+
+    This is the Roadrunner's shape: rp2040/ beside klippy/, both edited
+    independently. It is what makes repo-wide git wrong here.
+    """
+    root = tmp_path / "roadrunner"
+    (root / "rp2040").mkdir(parents=True)
+    (root / "klippy").mkdir()
+    (root / "rp2040" / "CMakeLists.txt").write_text("project(rr)\n", encoding="utf-8")
+    (root / "klippy" / "extra.py").write_text("x = 1\n", encoding="utf-8")
+    _git(root, "init", "-q")
+    _git(root, "config", "user.email", "t@example.com")
+    _git(root, "config", "user.name", "t")
+    _git(root, "add", "-A")
+    _git(root, "commit", "-qm", "initial")
+    return root
+
+
+def test_provenance_ignores_a_commit_outside_the_source_subtree(repo):
+    """The reason this provider does not reuse pio.source_state().
+
+    A commit to klippy/ moves repo HEAD but changes nothing the firmware is
+    built from. Reporting it as a source change rebuilds the .uf2 to produce
+    byte-identical output, on every unrelated commit.
+    """
+    source = str(repo / "rp2040")
+    before = cmake.source_state(source)
+
+    (repo / "klippy" / "extra.py").write_text("x = 2\n", encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", "touch klippy only")
+
+    after = cmake.source_state(source)
+    assert after.sha == before.sha
+    assert _git(repo, "rev-parse", "HEAD") != before.sha
+
+
+def test_provenance_follows_a_commit_inside_the_source_subtree(repo):
+    source = str(repo / "rp2040")
+    before = cmake.source_state(source)
+
+    (repo / "rp2040" / "main.c").write_text("int main(void){return 0;}\n", encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", "touch rp2040")
+
+    assert cmake.source_state(source).sha != before.sha
+
+
+def test_dirtiness_is_scoped_to_the_subtree_too(repo):
+    """A dirty sibling must not stamp -dirty on a clean firmware build."""
+    source = str(repo / "rp2040")
+    (repo / "klippy" / "extra.py").write_text("uncommitted\n", encoding="utf-8")
+    state = cmake.source_state(source)
+    assert state.dirty is False
+    assert state.version is not None and not state.version.endswith("-dirty")
+
+    (repo / "rp2040" / "CMakeLists.txt").write_text("project(rr2)\n", encoding="utf-8")
+    dirty = cmake.source_state(source)
+    assert dirty.dirty is True
+    assert dirty.version.endswith("-dirty")
+
+
+def test_the_version_string_is_repo_wide_and_carries_the_hash(repo):
+    """A tag is a fact about a repository, not one directory in it. With no
+    tags, --always still yields the commit hash, which is what makes this
+    usable on develop."""
+    state = cmake.source_state(str(repo / "rp2040"))
+    assert state.version
+    assert state.version != "dev"
+
+    _git(repo, "tag", "v1.0")
+    assert cmake.source_state(str(repo / "rp2040")).version == "v1.0"
+
+
+def test_a_non_checkout_yields_no_provenance(tmp_path):
+    assert cmake.source_state(str(tmp_path)) == cmake.SourceState()
+    assert cmake.source_state("") == cmake.SourceState()
+
+
+def test_git_describe_is_substituted_into_the_configure_args(repo):
+    state = cmake.source_state(str(repo / "rp2040"))
+    args = cmake.expand_args("-DROADRUNNER_FIRMWARE_VERSION=${git_describe}", state)
+    assert args == [f"-DROADRUNNER_FIRMWARE_VERSION={state.version}"]
+
+
+def test_git_describe_falls_back_to_dev_outside_a_checkout(tmp_path):
+    """`dev` is the CMakeLists' own default, so the fallback agrees with the
+    firmware rather than inventing a third answer."""
+    state = cmake.source_state(str(tmp_path))
+    assert cmake.expand_args("-DV=${git_describe}", state) == ["-DV=dev"]
+
+
+def test_empty_args_produce_no_arguments():
+    assert cmake.expand_args("", cmake.SourceState()) == []
+
+
+def test_args_are_split_as_a_shell_would(repo):
+    """One config string, several arguments - and a quoted value stays one."""
+    state = cmake.source_state(str(repo / "rp2040"))
+    assert cmake.expand_args('-DA=1 -DB="two words"', state) == ["-DA=1", "-DB=two words"]

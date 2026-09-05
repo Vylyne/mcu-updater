@@ -22,6 +22,9 @@ is a fact about a repository and not about one directory in it.
 from __future__ import annotations
 
 import dataclasses
+import os
+import shlex
+import subprocess
 
 from .. import firmware, sections
 from ..cfgdoc import CfgDocument
@@ -102,3 +105,83 @@ def load(paths: Paths) -> dict[str, CmakeType]:
             cmake_args=family.cmake_args,
         )
     return out
+
+
+#: The one substitution `cmake_args:` supports. Deliberately one: a general
+#: templating language in a config file is a debugging surface nobody asked
+#: for, and this is the only value that cannot be written down in advance.
+GIT_DESCRIBE_TOKEN = "${git_describe}"
+
+#: What the CMakeLists itself defaults to, so an unresolvable describe agrees
+#: with the firmware rather than inventing a third answer.
+UNKNOWN_VERSION_STRING = "dev"
+
+
+@dataclasses.dataclass(frozen=True)
+class SourceState:
+    """What this source subtree would build right now.
+
+    `sha` and `dirty` are subtree-scoped and decide rebuilds; `version` is
+    repo-wide and is what gets compiled into the firmware for a board to
+    report back. They routinely disagree, and both are recorded.
+    """
+
+    #: Last commit touching the source directory. None when it is not a
+    #: checkout, or nothing has ever been committed there.
+    sha: str | None = None
+    #: Uncommitted changes *inside the source directory*.
+    dirty: bool = False
+    #: `git describe` for the whole repository, plus a `-dirty` suffix taken
+    #: from the subtree-scoped status above. None when not a checkout.
+    version: str | None = None
+
+
+def _git(directory: str, *args: str) -> str | None:
+    """Run git in `directory`, or None if it could not answer.
+
+    Not a checkout, no git on PATH, and a timeout are all the same answer
+    here: we cannot vouch for this tree. Mirrors `pio._git`.
+    """
+    try:
+        out = subprocess.check_output(
+            ("git",) + args, cwd=directory, stderr=subprocess.DEVNULL, timeout=10
+        )
+    except Exception:  # noqa: BLE001 - not a checkout, no git, or a timeout
+        return None
+    return out.decode("utf-8", "replace").strip()
+
+
+def source_state(source: str) -> SourceState:
+    """Read the source subtree's identity. Everything optional.
+
+    The `-- .` pathspecs are the whole point; see the module docstring. Note
+    that `git describe` takes no pathspec, which is why `--dirty` is not used
+    and the suffix is appended from the subtree-scoped status instead - a
+    dirty sibling directory must not stamp `-dirty` on a clean firmware build.
+    """
+    path = os.path.expanduser(source or "")
+    if not path or not os.path.isdir(path):
+        return SourceState()
+
+    sha = _git(path, "log", "-1", "--format=%H", "--", ".") or None
+    if sha is None:
+        return SourceState()
+
+    dirty = bool(_git(path, "status", "--porcelain", "--", "."))
+    described = _git(path, "describe", "--tags", "--always") or UNKNOWN_VERSION_STRING
+    version = f"{described}-dirty" if dirty else described
+    return SourceState(sha=sha, dirty=dirty, version=version)
+
+
+def expand_args(cmake_args: str, state: SourceState) -> list[str]:
+    """The family's `cmake_args:`, split and substituted.
+
+    Split with `shlex` so a quoted value stays one argument - these go
+    straight into an argv, never through a shell.
+    """
+    if not cmake_args.strip():
+        return []
+    version = state.version or UNKNOWN_VERSION_STRING
+    return [
+        arg.replace(GIT_DESCRIBE_TOKEN, version) for arg in shlex.split(cmake_args)
+    ]

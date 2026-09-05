@@ -4,8 +4,9 @@ Status: mount path, dual-layout scan and installer migration implemented on
 `develop`, and **verified on hestia 2026-09-04** - `ID_PATH_TAG` populated, the
 three-deep mountpoint created, two boards mounted at distinct paths, and the
 serial/disk `by-path` pair captured (see "Correlating a board" below). One
-finding: mountpoint directories are not cleaned up on unplug, addressed in rule
-version 3. The multi-volume refusal, topology correlation,
+finding: mountpoint directories are not cleaned up on unplug; a udev remove rule
+(version 3) proved to lose an unwinnable race, so version 4 sweeps them from
+tmpfiles.d instead. The multi-volume refusal, topology correlation,
 `needs_services_stopped` and a real `settled()` remain deliberately deferred.
 
 Verified against mcu-updater `0c446f2`. Every file and line reference below was
@@ -207,14 +208,34 @@ bench board; results recorded here so nobody has to re-derive them.
   returned both. Note what this now produces downstream: two mounts is an
   `ambiguous` refusal, so the spec's failure #2 (a bystander board blocking a
   flash) is *not* fixed by this change — it needs the deferred port parameter.
-- **Stale directory accumulation** — ⚠️ confirmed, and fixed in rule version 3.
-  `--collect` reaps the transient mount *unit* and leaves the directory, so an
-  empty directory per port accumulated across replugs. It was never a
-  correctness problem — `bootsel_scan` gates on `INFO_UF2.TXT`, so an empty
-  leftover never reads as an attached board — but the clutter is real. Version 3
-  adds `ACTION=="remove"` rules that `rmdir` the leaf; `rmdir` only removes an
-  empty directory, so a not-yet-completed unmount fails the call harmlessly and
-  leaves things exactly as version 2 did.
+- **Stale directory accumulation** — ⚠️ confirmed, and the obvious fix does not
+  work. `--collect` reaps the transient mount *unit* and leaves the directory,
+  so an empty directory per port accumulates across replugs. Never a
+  correctness problem — `bootsel_scan` gates on `INFO_UF2.TXT`, so a leftover
+  never reads as an attached board — but the clutter is real.
+
+  Version 3 tried `ACTION=="remove"` rules that `rmdir` the leaf. **It loses a
+  race it cannot win.** The rule matched and ran (so `ID_FS_LABEL` and
+  `ID_PATH_TAG` *are* available from the udev database on remove — worth
+  knowing separately), but udev processes the remove event while systemd is
+  still tearing the mount down, so `rmdir` always found the directory still
+  mounted:
+
+  ```
+  (udev-worker)[66892]: sda1: Process '/bin/rmdir /media/klipper/BOOTSEL/by-path/
+  platform-fd880000_usb-usb-0_1_3_1_0-scsi-0_0_0_0' failed with exit code 1.
+  ```
+
+  Three unplugs, three identical failures, directory still there afterwards
+  (unmounted and empty by then, `root:root` — the leaf is created by
+  systemd-mount, not by the tmpfiles.d entry, which only owns the two parents).
+
+  Version 4 removes those rules and puts an age on the tmpfiles.d `by-path`
+  entry instead, so `systemd-tmpfiles-clean.timer` sweeps leftovers long after
+  any unmount has settled. The safety property that makes any sweeper correct
+  here: an active mountpoint is busy and the kernel refuses to remove it, so a
+  cleanup pass can never take out a live board's directory — only timing decides
+  whether it succeeds, and a timer has the timing a udev event cannot.
 - **The prefix normalization** — ✅ captured; see "Correlating a board across the
   BOOTSEL reboot" above for the measured pair and the two wrinkles it exposed
   (the `usbv2` alias, and `ID_PATH_TAG`'s lossy `.`/`:` → `_` sanitization).

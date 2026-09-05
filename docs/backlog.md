@@ -117,12 +117,14 @@ CANBus UUID Query Complete
 - **Flaky teardown** `RuntimeError` in
   `test_an_unknown_inbound_method_gets_an_error_not_silence`. Unreproduced;
   order/timing-dependent agent-service teardown.
-- **Re-verify the BOOTSEL rule after the version-3 bump.** The version-2 rule
-  was verified on hestia 2026-09-04 (see `docs/bootsel-mountpoint-design.md`'s
-  "Verified on hardware" section). Version 3 adds `ACTION=="remove"` rules to
-  `rmdir` the mountpoint on unplug, which has *not* been exercised on a board:
-  confirm the directory actually goes away on unplug, and that a replug in the
-  same port still mounts cleanly.
+- **Confirm the BOOTSEL mountpoint sweep actually fires.** The mount path
+  itself is verified on hestia (see `docs/bootsel-mountpoint-design.md`'s
+  "Verified on hardware" section). Cleanup of the leftover directories moved
+  from a udev remove rule to an age on the tmpfiles.d `by-path` entry in rule
+  version 4, which is unexercised: check `systemd-tmpfiles-clean.timer` is
+  enabled on the printer hosts, and that a leftover directory is gone within an
+  hour of the unplug while a board left in BOOTSEL across that window keeps its
+  mount.
 
 ---
 

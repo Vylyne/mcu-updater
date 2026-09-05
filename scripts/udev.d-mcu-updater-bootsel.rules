@@ -21,22 +21,22 @@
 # no-op or a shadow-mount.
 #
 # On unplug, `--collect` garbage-collects the transient mount *unit* but leaves
-# the mountpoint directory behind - confirmed on hardware, an empty directory
-# per port accumulates across replugs. `bootsel_scan` ignores them (it gates on
-# INFO_UF2.TXT, never on the directory name), so this is tidiness rather than
-# correctness. `rmdir` removes only an empty directory: if the unmount has not
-# landed yet the call fails harmlessly and the directory stays, which is exactly
-# the old behaviour.
+# the mountpoint directory behind, so an empty directory per port accumulates.
+# There is deliberately no ACTION=="remove" rule here to clean that up: version
+# 3 had one, and hardware showed it loses a race it cannot win. udev runs the
+# remove event while systemd is still tearing the mount down, so the rmdir hit
+# a still-mounted directory and failed EBUSY on every unplug, logging an error
+# each time and removing nothing. The cleanup lives in the tmpfiles.d entry
+# instead, where the daily sweep runs long after any unmount has settled.
+# `bootsel_scan` ignores stale directories regardless - it gates on
+# INFO_UF2.TXT, never on the directory name - so this is tidiness, not
+# correctness.
 #
 # Installed by mcu-updater's install.sh. %USER% is substituted there.
 # The version marker below is what install.sh compares to decide whether an
 # already-installed rule needs replacing - bump it whenever this file changes.
-# mcu-updater-bootsel-rule-version: 3
+# mcu-updater-bootsel-rule-version: 4
 ACTION=="add", SUBSYSTEM=="block", ENV{DEVTYPE}=="partition", ENV{ID_FS_LABEL}=="RPI-RP2", ENV{ID_PATH_TAG}=="?*", \
   RUN{program}+="/usr/bin/systemd-mount --no-block --collect --owner=%USER% $devnode /media/%USER%/BOOTSEL/by-path/$env{ID_PATH_TAG}"
 ACTION=="add", SUBSYSTEM=="block", ENV{DEVTYPE}=="partition", ENV{ID_FS_LABEL}=="RPI-RP2", ENV{ID_PATH_TAG}!="?*", \
   RUN{program}+="/usr/bin/systemd-mount --no-block --collect --owner=%USER% $devnode /media/%USER%/BOOTSEL/by-path/unknown"
-ACTION=="remove", SUBSYSTEM=="block", ENV{DEVTYPE}=="partition", ENV{ID_FS_LABEL}=="RPI-RP2", ENV{ID_PATH_TAG}=="?*", \
-  RUN{program}+="/bin/rmdir /media/%USER%/BOOTSEL/by-path/$env{ID_PATH_TAG}"
-ACTION=="remove", SUBSYSTEM=="block", ENV{DEVTYPE}=="partition", ENV{ID_FS_LABEL}=="RPI-RP2", ENV{ID_PATH_TAG}!="?*", \
-  RUN{program}+="/bin/rmdir /media/%USER%/BOOTSEL/by-path/unknown"

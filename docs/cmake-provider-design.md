@@ -171,17 +171,82 @@ builder: cmake
 cmake_args: -DROADRUNNER_FIRMWARE_VERSION=${git_describe}
 ```
 
-`${git_describe}` is the one substitution, expanded from the source tree's
-`git describe --tags --always --dirty`. It exists because the alternative is a
-version string that goes stale the moment it is written, and because the
-Roadrunner's `INFO` response reports this value — a board answering `dev`
-forever is a diagnostic we would have given up for nothing. An unresolvable
-`git describe` (no tags, not a checkout) expands to `dev`, which is the
-CMakeLists' own default.
+`${git_describe}` is the one substitution, expanded from `git describe --tags
+--always` plus a `-dirty` suffix we append ourselves (see "Subtree scoping"
+below for why not `--dirty`). Measured on the roadrunner repo, 2026-09-05:
 
-The key lives on `[firmware ...]` rather than `[type ...]` because it
-describes the tree, and every type sharing that tree wants the same answer.
-`variant:` is the only per-type key this provider adds.
+| Tree state | Expansion |
+| --- | --- |
+| 93 commits past `v1.0` | `v1.0-93-g1d7660f` |
+| exactly on the tag, clean | `v1.0` |
+| either of the above, dirty subtree | same, with `-dirty` |
+| no tags at all | `1d7660f` — the `--always` fallback |
+| not a git checkout | `dev`, the CMakeLists' own default |
+
+A tag improves readability but never removes the commit hash, except when
+sitting exactly on one. That is what makes this usable on `develop`.
+
+The key lives on `[firmware ...]` rather than `[type ...]` because it describes
+the tree, and every type sharing that tree wants the same answer. `variant:` is
+the only per-type key this provider adds.
+
+### Subtree scoping — `source:` is not the repo root
+
+**The Roadrunner is the first source tree that is a subdirectory of its
+repository**, and git does not scope itself to a subdirectory. Run from
+`~/roadrunner/rp2040`, `git rev-parse HEAD` and `git status --porcelain` walk
+up and answer about the whole repo. Measured on the roadrunner repo,
+2026-09-05:
+
+```text
+repo HEAD                        1d7660f
+last commit touching rp2040/     35864cd
+```
+
+`pio.source_state()` uses the repo-wide form, and was always right to: knomi
+serial's `source:` *is* its repo root. Copying it here would mean every commit
+to `klippy/extras`, `docs/` or the README marks the built `.uf2`
+`SOURCE_CHANGED` and triggers a rebuild that produces byte-identical output.
+
+So this provider's `source_state()` splits two questions that used to be one:
+
+- **"Did the firmware source change?"** — subtree-scoped.
+  `git log -1 --format=%H -- .` for the sha, `git status --porcelain -- .` for
+  dirty. This is the provenance recorded in the sidecar and the thing
+  `artifact_status` compares, so it is what decides a rebuild.
+- **"What release is this?"** — repo-wide `git describe`. A tag is a fact about
+  the repository, not about one directory in it, and this is the string the
+  board reports back.
+
+The two legitimately disagree, and both are recorded. `git describe --dirty`
+takes no pathspec, which is why the dirty suffix is appended from the
+subtree-scoped status instead — otherwise a dirty `klippy/extras` would stamp
+`-dirty` on a clean firmware build.
+
+A `source:` that *is* a repo root gets identical answers from both forms, so
+nothing else changes shape.
+
+### What "the flashed binary is what we built" actually gets you
+
+The goal is correlating a board against a build, and the existing flash log
+already does it — this provider only has to feed it well. Three levels, and the
+third is a real ceiling worth writing down:
+
+1. **The bytes we sent.** `bin_sha256` in the sidecar, already passed to
+   `FlashLog.record()` at `flashers/flash.py:216`. Exact, and ours.
+2. **The source the board reports.** The Roadrunner's `INFO` response returns
+   the compiled-in `ROADRUNNER_FIRMWARE_VERSION` — surfaced by its klippy extra
+   as `identity.firmware_version` — so feeding `${git_describe}` there makes
+   `FlashLog.entry_for()`'s existing `version` clause do the correlation with
+   no new mechanism. That clause discards our record when the board's string
+   disagrees, which is exactly "something else flashed this board since".
+3. **The ceiling.** A board cannot report its own binary hash; the maintenance
+   protocol has no opcode for it. Source-level identity is as far as board-side
+   attestation goes, and byte-level stays our own record.
+
+This is why `cmake_args:` earns its place rather than being a convenience: the
+version string is the only channel through which a Roadrunner can tell us
+anything about what it is running.
 
 **`artifact_status(install, target)`** — modelled on `pio.artifact_status`, and
 using `paths.sidecar_file(type, fw)` and `build.sha256_file`:
@@ -189,9 +254,13 @@ using `paths.sidecar_file(type, fw)` and `build.sha256_file`:
 - no staged `.uf2` → `NEVER_BUILT`;
 - no sidecar, or bytes on disk that are not the bytes we recorded →
   `NO_PROVENANCE`;
-- recorded from a dirty tree → `BUILT_DIRTY`;
-- recorded sha ≠ `git rev-parse HEAD` → `SOURCE_CHANGED`;
+- recorded from a dirty subtree → `BUILT_DIRTY`;
+- recorded sha ≠ the subtree's last commit → `SOURCE_CHANGED`;
 - otherwise current.
+
+Both comparisons are subtree-scoped; the sidecar also carries the repo-wide
+`version` string, which is recorded rather than compared. See "Subtree
+scoping" above.
 
 Not optional. Without it every answer is `NO_PROVENANCE` and every sweep
 rebuilds — and `providers.select()` treats anything not provably current as
@@ -272,6 +341,14 @@ saying so.
   nothing is staged.
 - `cmake_args:` reaches the configure argv verbatim; `${git_describe}` expands
   against a fixture checkout, and falls back to `dev` outside one.
+- **Subtree scoping**, against a fixture repo whose `source:` is a
+  subdirectory: a commit touching only a sibling directory leaves
+  `artifact_status` `current`; a commit touching the source subtree makes it
+  `SOURCE_CHANGED`; a dirty sibling does *not* produce `BUILT_DIRTY` or a
+  `-dirty` version suffix, and a dirty source subtree produces both. This is
+  the regression that `pio`'s repo-wide form would fail.
+- A `source:` that is itself a repo root gets the same answers from the
+  subtree-scoped and repo-wide forms.
 - `build()` against a fixture tree with a stub
   `build/roadrunner_v1_i2c_rgb.uf2`, asserting the staged path is
   `paths.uf2_file(type, fw)` and that the sidecar was written.
@@ -323,3 +400,12 @@ there is a flasher for it to select.
 
 **Narrowing the compile to one `make` target.** See "One `make` builds all six"
 above.
+
+**Retrofitting subtree scoping onto `pio.source_state()`.** It has the same
+latent issue — a PlatformIO `source:` pointing at a subdirectory of a larger
+repo would over-report `SOURCE_CHANGED` the same way. No such install exists:
+knomi serial's `source:` is its repo root, which is why the repo-wide form has
+always been correct there. Changing it would alter the rebuild behaviour of
+every existing display install to fix a case nobody has, so the two
+implementations differ deliberately until a real one turns up. Recorded here
+rather than in `decisions.md` because it is deferred, not refused.

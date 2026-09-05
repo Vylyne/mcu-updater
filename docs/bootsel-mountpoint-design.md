@@ -5,8 +5,9 @@ Status: mount path, dual-layout scan and installer migration implemented on
 three-deep mountpoint created, two boards mounted at distinct paths, and the
 serial/disk `by-path` pair captured (see "Correlating a board" below). One
 finding: mountpoint directories are not cleaned up on unplug; a udev remove rule
-(version 3) proved to lose an unwinnable race, so version 4 sweeps them from
-tmpfiles.d instead. The multi-volume refusal, topology correlation,
+that ran `rmdir` directly (version 3) lost an unwinnable race, so version 5
+schedules it through `systemd-run` with a tmpfiles.d sweep behind it. The
+multi-volume refusal, topology correlation,
 `needs_services_stopped` and a real `settled()` remain deliberately deferred.
 
 Verified against mcu-updater `0c446f2`. Every file and line reference below was
@@ -230,12 +231,25 @@ bench board; results recorded here so nobody has to re-derive them.
   (unmounted and empty by then, `root:root` — the leaf is created by
   systemd-mount, not by the tmpfiles.d entry, which only owns the two parents).
 
-  Version 4 removes those rules and puts an age on the tmpfiles.d `by-path`
-  entry instead, so `systemd-tmpfiles-clean.timer` sweeps leftovers long after
-  any unmount has settled. The safety property that makes any sweeper correct
-  here: an active mountpoint is busy and the kernel refuses to remove it, so a
-  cleanup pass can never take out a live board's directory — only timing decides
-  whether it succeeds, and a timer has the timing a udev event cannot.
+  Version 4 replaced those rules with an age on the tmpfiles.d `by-path` entry,
+  and `systemd-tmpfiles --clean` was confirmed on hestia to remove the leftover.
+  That works but is slow: `systemd-tmpfiles-clean.timer` is daily, so the age
+  only decides when a directory becomes *eligible*.
+
+  Version 5 keeps that as the backstop and adds prompt cleanup, by dispatching
+  rather than waiting: the remove rule runs
+  `systemd-run --no-block --on-active=10 /bin/rmdir <dir>`, which returns
+  immediately (udev is never blocked) and fires the `rmdir` ten seconds later,
+  once the unmount has settled. Waiting inside the udev rule instead was
+  considered and rejected — udev blocks its worker on a `RUN` program and kills
+  long-running ones, and waiting on systemd from udev is a known deadlock shape.
+  Asking `systemd-mount --umount` from the remove rule is also pointless: the
+  transient unit is `BindsTo=` the device, so systemd is already unmounting.
+
+  The safety property underneath all of these: an active mountpoint is busy and
+  the kernel refuses to remove it, so no cleanup pass can take out a live
+  board's directory. Only timing decides whether one succeeds, which is why the
+  fix is about *when* the `rmdir` runs and never about what it guards.
 - **The prefix normalization** — ✅ captured; see "Correlating a board across the
   BOOTSEL reboot" above for the measured pair and the two wrinkles it exposed
   (the `usbv2` alias, and `ID_PATH_TAG`'s lossy `.`/`:` → `_` sanitization).

@@ -2,7 +2,7 @@ __pycache__/
 *.pyc
 .vscode/
 NOTES.md
-docs/superpowers/
+.superpowers/
 
 # packaging / tooling
 build/

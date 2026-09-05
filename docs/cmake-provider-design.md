@@ -32,7 +32,7 @@ given board, and nothing in this tool can currently say which.
 
 ## Decision
 
-**Add a third provider, `cmake`, and a `variant:` key naming which of its build
+**Add a third provider, `cmake`, and a `cmake_target:` key naming which of its build
 outputs to stage.**
 
 ```ini
@@ -44,37 +44,51 @@ cmake_args: -DROADRUNNER_FIRMWARE_VERSION=${git_describe}
 [type roadrunner]
 chipset: rp2040
 firmware: roadrunner
-variant: roadrunner_v1_i2c_rgb  # -> build/roadrunner_v1_i2c_rgb.uf2
+cmake_target: roadrunner_v1_i2c_rgb  # -> build/roadrunner_v1_i2c_rgb.uf2
 serials:
     RR-ABCDEFGHIJKLMNOPQRSTUVWXYZ
 ```
 
-### `variant:` is the cmake target name, spelled out
+### `cmake_target:` is the cmake target name, spelled out
 
 Not a short form like `i2c_rgb`. A short form would mean this provider knows
 how to expand one into `roadrunner_v1_i2c_rgb` — that is a naming convention
 belonging to one vendor's `CMakeLists.txt`, and the next cmake tree will not
-share it. The target name is what CMake itself uses, so `build/<variant>.uf2`
-is a fact rather than an invented rule, and `make <variant>` stays available
+share it. The target name is what CMake itself uses, so `build/<cmake_target>.uf2`
+is a fact rather than an invented rule, and `make <cmake_target>` stays available
 without a second mapping to keep in step.
 
 It costs the user a longer value once, in a file they edit by hand with the
 target list in front of them.
 
-### One `make` builds all six; the variant selects which is staged
+**The key is named for CMake's own vocabulary, not ours.** `add_executable()`
+creates a *target*; you address it as `make <target>` or
+`cmake --build . --target <name>`. An earlier draft called this `variant:`,
+which was wrong twice over: it is not CMake's word, and CMake Tools already
+uses "variant" for something else entirely — the build type (Debug, Release,
+MinSizeRel). A user reading `variant:` would reasonably expect to put `Release`
+in it.
+
+Namespaced as `cmake_target:` rather than a bare `target:` because *target* is
+heavily loaded in this codebase already — `BuildTarget`, `FlashTarget`, and the
+`targets[]` wire shape are three different things a bare key would sit
+ambiguously beside. The prefix matches `cmake_args:` and says which vocabulary
+the word belongs to.
+
+### One `make` builds all six; the target selects which is staged
 
 This was the shape decision. `cmake .. && make` produces every image, so
-`variant:` is *which output gets copied to `paths.uf2_file()`*, not a
+`cmake_target:` is *which output gets copied to `paths.uf2_file()`*, not a
 configure-time narrowing. That is why build-time and flash-time selection come
 out of the same key with no extra machinery: the flasher reads the same staged
-path it always has, and the variant has already been resolved before it looks.
+path it always has, and the target has already been resolved before it looks.
 
 `make <target>` could narrow the compile later if build time bites on a
 printer. Deliberately not designed for now — the whole tree is small, and a
 narrowed build would make `artifact_status` answer for one image while five
 stale ones sit beside it.
 
-### `variant:` is per-`[type]`, not per-board
+### `cmake_target:` is per-`[type]`, not per-board
 
 RGB vs GRB is a property of the physical neopixel, so two Roadrunners on one
 printer can genuinely differ. They get two `[type]` sections, each with its own
@@ -83,7 +97,7 @@ exactly, and needs no new machinery. One staged `.uf2` per type keeps
 `paths.uf2_file(type, fw)` as it is.
 
 Per-board would need a per-serial value shape in the config, a staged `.uf2`
-per variant, and per-device selection at flash time. Revisit only when a real
+per target, and per-device selection at flash time. Revisit only when a real
 mixed fleet exists.
 
 ### `source:` points at `rp2040/`, not the repo root
@@ -110,7 +124,7 @@ yet. Split it when a second caller appears, not before.
 Implements the `Provider` protocol from `providers/spec.py`:
 
 **`load(paths) -> dict[str, CmakeType]`** — mirrors `pio.load()`. A type is
-ours when the family it declares has `builder: cmake`. `variant:` absent is a
+ours when the family it declares has `builder: cmake`. `cmake_target:` absent is a
 `ConfigError` naming the type, the same refusal `pio.load()` gives a PlatformIO
 type with no `env:`.
 
@@ -129,13 +143,13 @@ outside this tool, and therefore a skip rather than a failure:
   CMake error for it is unreadable. Read from `.gitmodules` rather than
   hardcoding `pico-sdk/`, which is the Pico SDK's path and not a fact about
   cmake trees in general;
-- `variant:` naming no target the tree declares (see below).
+- `cmake_target:` naming no target the tree declares (see below).
 
 **How `blocked()` knows the target list.** After a successful configure,
 `cmake --build <build> --target help` enumerates them; before one, there is no
 build directory to ask. So this check is *conditional*: with a configured
 build directory it is a real check, and without one it is skipped and the
-mistyped variant surfaces as a `make` failure instead. Deliberate — the
+mistyped target surfaces as a `make` failure instead. Deliberate — the
 alternative is parsing `CMakeLists.txt`, which means reimplementing CMake, and
 a first build on a fresh clone would have nothing to check against anyway.
 
@@ -153,7 +167,7 @@ docstring is explicit that reporting them as failures beats pretending we knew.
    CPU);
 3. any `cmake_args:` from the `[firmware ...]` section appended to the
    configure step (see below);
-4. stage `build/<variant>.uf2` → `paths.uf2_file(type, fw)`, which is what
+4. stage `build/<cmake_target>.uf2` → `paths.uf2_file(type, fw)`, which is what
    `build.py:755-762` already does for a katapult `.uf2`;
 5. record the sidecar (below).
 
@@ -187,7 +201,7 @@ A tag improves readability but never removes the commit hash, except when
 sitting exactly on one. That is what makes this usable on `develop`.
 
 The key lives on `[firmware ...]` rather than `[type ...]` because it describes
-the tree, and every type sharing that tree wants the same answer. `variant:` is
+the tree, and every type sharing that tree wants the same answer. `cmake_target:` is
 the only per-type key this provider adds.
 
 ### Subtree scoping — `source:` is not the repo root
@@ -322,14 +336,14 @@ down. Every case is listed under `blocked()` above.
 `type`, `fw` and `returncode`, matching `pio.build`'s shape. The transcript is
 already streamed by `run_streamed`.
 
-A `variant:` that names no target is deliberately *blocked*, not failed: it is
+A `cmake_target:` that names no target is deliberately *blocked*, not failed: it is
 a config mistake with a clear fix, discoverable before spending a compile, and
-failing a whole sweep over one mistyped variant is worse than skipping it and
+failing a whole sweep over one mistyped target is worse than skipping it and
 saying so.
 
 ## Testing
 
-- `load()`: a cmake type parses; a cmake type with no `variant:` raises
+- `load()`: a cmake type parses; a cmake type with no `cmake_target:` raises
   `ConfigError`; a type whose family has no `builder:` is untouched (defaults
   to `kconfig_make`).
 - **The save regression**: build a `Registry` from a config containing both a
@@ -367,13 +381,13 @@ Per AGENTS.md "Finishing a plan", in this plan and not as a follow-up:
 - `mcu-updater.cfg` — the worked `[firmware roadrunner]` / `[type roadrunner]`
   example above, commented in the file's existing voice.
 - `README.md` — `builder: cmake` and `cmake_args:` in the firmware-family key
-  list, `variant:` in the type key list, and the one-line note that a mixed
+  list, `cmake_target:` in the type key list, and the one-line note that a mixed
   RGB/GRB fleet takes two `[type]` sections.
 - `docs/agent-api.md` — `cmake_args` joins `builder` in the family payload
   `agent/methods/status.py:203` emits.
 - `docs/layout.md` — the staged `.uf2` path for a cmake type.
 - `docs/decisions.md` — no entry. Nothing here closes an avenue; the per-board
-  variant question is recorded in this spec instead, since it is deferred
+  target question is recorded in this spec instead, since it is deferred
   rather than refused.
 
 ## Deliberately not in scope

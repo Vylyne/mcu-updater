@@ -68,19 +68,10 @@ without a second mapping to keep in step.
 It costs the user a longer value once, in a file they edit by hand with the
 target list in front of them.
 
-**The key is named for CMake's own vocabulary, not ours.** `add_executable()`
-creates a *target*; you address it as `make <target>` or
-`cmake --build . --target <name>`. An earlier draft called this `variant:`,
-which was wrong twice over: it is not CMake's word, and CMake Tools already
-uses "variant" for something else entirely — the build type (Debug, Release,
-MinSizeRel). A user reading `variant:` would reasonably expect to put `Release`
-in it.
-
-Namespaced as `cmake_target:` rather than a bare `target:` because *target* is
-heavily loaded in this codebase already — `BuildTarget`, `FlashTarget`, and the
-`targets[]` wire shape are three different things a bare key would sit
-ambiguously beside. The prefix matches `cmake_args:` and says which vocabulary
-the word belongs to.
+**The key is named for CMake's own vocabulary, not ours**, and the namespacing
+follows from the same rule. This argument was general enough to outlive the
+feature, so it now lives in [decisions.md](decisions.md) as "Config keys borrow
+the upstream tool's own vocabulary".
 
 ### One `make` builds all six; the target selects which is staged
 

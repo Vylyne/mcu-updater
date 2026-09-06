@@ -63,14 +63,12 @@ arbitrary execution in a process that holds the exclusive lock and has NOPASSWD
 `systemctl` — the case [decisions.md](decisions.md) already refuses for plugin
 auto-discovery. `submodules:` is the narrow capability instead.
 
-**The key is `cmake_target:`, spelled out, in CMake's own vocabulary.** Not a
-short form like `i2c_rgb` — expanding one into `roadrunner_v1_i2c_rgb` means
-knowing a naming convention that belongs to one vendor's `CMakeLists.txt`. Not
-`variant:`, which is wrong twice over: it is not CMake's word, and CMake Tools
-already uses "variant" for the build type, so a user would reasonably put
-`Release` in it. Namespaced rather than a bare `target:`, because *target* is
-already three different things here — `BuildTarget`, `FlashTarget`, and the
-`targets[]` wire shape.
+**The key is `cmake_target:`, spelled out.** Not a short form like `i2c_rgb` —
+expanding one into `roadrunner_v1_i2c_rgb` means knowing a naming convention
+that belongs to one vendor's `CMakeLists.txt`. The name and the namespacing
+follow the standing rule in [decisions.md](decisions.md), "Config keys borrow
+the upstream tool's own vocabulary", which this key is the worked example
+for.
 
 **Correlation has a ceiling, and `cmake_args:` is what buys the middle tier.**
 Three levels: the bytes we sent (`bin_sha256` in the sidecar, ours and exact);

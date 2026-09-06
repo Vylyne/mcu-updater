@@ -149,6 +149,27 @@ Three tones and a tri-state `safe_to_write`, built the way `states.py` is. A
 `DeviceStatus.needs_flash` already enforces: absence of evidence is not
 evidence.
 
+### Config keys borrow the upstream tool's own vocabulary
+
+When a key names a concept some external tool already owns, spell it that
+tool's way rather than inventing a house word for it. `cmake_target:` names
+what `add_executable()` creates and what `make <target>` / `cmake --build
+--target <name>` address; an earlier draft called it `variant:`, which was
+wrong twice — it is not CMake's word, and CMake Tools already uses "variant"
+for the *build type* (Debug, Release, MinSizeRel), so a user would reasonably
+have put `Release` in it. `env:` for PlatformIO is the same rule, already
+applied: that is what `platformio.ini` calls the section.
+
+The user reading the key has the upstream tool's documentation open, not ours.
+A house synonym means they have to learn a mapping, and a synonym that
+*collides* with a real upstream term means they learn the wrong one first.
+
+Namespace it when the bare word is already loaded here. `cmake_target:` rather
+than `target:`, because `BuildTarget`, `FlashTarget` and the `targets[]` wire
+shape are three different things a bare `target:` would sit ambiguously
+beside. The prefix also says which vocabulary the word belongs to, which is
+the point.
+
 ### Do not spell the stop-list key `managed_services:`
 
 `docs/backlog.md` sketched `managed_services:`, borrowed from Moonraker's

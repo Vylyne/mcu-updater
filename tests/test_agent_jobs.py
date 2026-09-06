@@ -243,6 +243,11 @@ def test_build_reaches_a_cmake_type_named_on_its_own(api, paths, tmp_path):
     job = api.runner.get(res["job_id"])
     assert job.state == "succeeded", job.error
     assert job.result["cmake_target"] == "roadrunner_v1_i2c_rgb"
+    # Kind `build` like any other compile, and carrying the `type` key every
+    # other job of that kind carries - a client reading `result.type` off a
+    # build job must not get `undefined` for this one.
+    assert job.kind == "build"
+    assert job.result["type"] == "roadrunner"
     # The staged path this build would have written. `api`'s settings are a dry
     # run, so nothing is copied - which is the point of a rehearsal, and why
     # this asserts the path rather than the file.

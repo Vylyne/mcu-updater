@@ -357,6 +357,23 @@ def test_building_a_cmake_type_stages_exactly_the_named_image(
     assert staged.read_bytes() == b"roadrunner_v1_i2c_rgb"
 
 
+def test_the_build_parser_accepts_a_cmake_family_as_the_fw():
+    """The bench command, at the layer the other cmake tests skip.
+
+    `--fw` is `required` with `choices`, and the choices are the *declared*
+    families (`main()` passes `firmware.names(paths)`), so `build -t roadrunner
+    -f roadrunner` has to parse before `build_fw_cmd` ever sees it. The branch
+    itself ignores `fw` - a cmake family names the tree and `cmake_target:`
+    names the image - but the parser still insists on one, exactly as it does
+    for a PlatformIO type.
+    """
+    parser = cli.build_parser(["klipper", "katapult", "roadrunner"])
+    args = parser.parse_args(["build", "-t", "roadrunner", "-f", "roadrunner"])
+
+    assert (args.type, args.fw) == ("roadrunner", "roadrunner")
+    assert args.func is cli.build_fw_cmd
+
+
 def test_building_a_cmake_type_with_no_tree_refuses_before_the_lock(
     c, capsys, fake_root
 ):

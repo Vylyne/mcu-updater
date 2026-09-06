@@ -222,6 +222,12 @@ class BuildMixin(_Base):
             )
             ctx.step(f"Built {entry.cmake_target}", 1, 1)
             return {
+                # Both keys, deliberately. `type` is what every other job of
+                # kind `build` carries, and reusing the kind without it would
+                # leave a client reading `result.type` with `undefined`;
+                # `name` is what `_pio_build` returns and what this method was
+                # called with.
+                "type": name,
                 "name": name,
                 "fw": entry.firmware,
                 "cmake_target": entry.cmake_target,

@@ -17,6 +17,8 @@ from mcu_updater.errors import BuildError, ConfigError
 from mcu_updater.providers import cmake
 from mcu_updater.states import BUILT_DIRTY, NEVER_BUILT, NO_PROVENANCE, SOURCE_CHANGED
 
+from .conftest import cmd_tokens
+
 
 def write_config(paths, text: str) -> None:
     with open(paths.main_config, "w", encoding="utf-8") as fh:
@@ -338,7 +340,11 @@ def test_a_dry_run_stages_nothing_and_runs_both_steps(paths, settings, tmp_path,
 
     cmds = [line for stream, line in capture_reporter.lines if stream == "cmd"]
     assert any("cmake" in c and "-S" in c for c in cmds)
-    assert any("make" in c for c in cmds)
+    # Not `any("make" in c for c in cmds)`: that is also true of the *cmake*
+    # line ("make" is a substring of "cmake"), so it stayed green with the
+    # entire make invocation deleted from build(). Check the command's own
+    # first token instead.
+    assert any(cmd_tokens(c)[0] == "make" for c in cmds)
     assert not os.path.exists(paths.uf2_file("roadrunner", "roadrunner"))
 
 
@@ -363,8 +369,14 @@ def test_a_successful_build_stages_the_named_target(paths, settings, repo, monke
 
 
 def test_a_nonzero_exit_raises_build_error(paths, settings, tmp_path, monkeypatch):
+    """A bare, unconfigured source would let `needs_configure` consume this rc
+    on the configure branch and never reach the make check at all - the tree
+    already carries a matching cache so this exercises `make`'s own rc."""
     source = tmp_path / "rp2040"
-    source.mkdir()
+    (source / "build").mkdir(parents=True)
+    (source / "build" / "CMakeCache.txt").write_text(
+        f"CMAKE_HOME_DIRECTORY:INTERNAL={source}\n", encoding="utf-8"
+    )
     monkeypatch.setattr(cmake.build_mod, "run_streamed", lambda *a, **k: 2)
     with pytest.raises(BuildError) as exc:
         cmake.build(paths, settings, _cmake_type(source))
@@ -399,7 +411,10 @@ def test_the_sidecar_records_the_subtree_commit_and_the_bytes(paths, settings, r
     assert record["sha"] == cmake.source_state(str(source)).sha
     assert record["version"] == cmake.source_state(str(source)).version
     assert record["bin_sha256"] is not None
-    assert record["dirty"] is False
+    # `record["dirty"] is False` dropped here: it would pass just as well if
+    # `dirty` were hardcoded False. Dirtiness is exercised where it can
+    # actually be forced true or false - see
+    # test_a_build_from_a_dirty_subtree_is_built_dirty below.
 
 
 def test_configure_args_carry_the_expanded_version(paths, settings, repo, monkeypatch):
@@ -422,6 +437,78 @@ def test_configure_args_carry_the_expanded_version(paths, settings, repo, monkey
     assert [f"-DROADRUNNER_FIRMWARE_VERSION={version}"] == [
         a for a in seen[0] if a.startswith("-DROADRUNNER")
     ]
+
+
+def _fake_configure_and_build(source):
+    """A run_streamed stand-in that leaves a matching cache after `cmake`,
+    so a second build() call sees `needs_configure() is False` - exactly
+    the state a real second build finds a real tree in."""
+
+    def fake_run(cmd, *, cwd, reporter, cancel=None, dry_run=False, **kw):
+        (source / "build").mkdir(exist_ok=True)
+        (source / "build" / "roadrunner_v1_i2c_rgb.uf2").write_bytes(b"IMAGE")
+        if cmd[0] == "cmake":
+            (source / "build" / "CMakeCache.txt").write_text(
+                f"CMAKE_HOME_DIRECTORY:INTERNAL={source}\n", encoding="utf-8"
+            )
+        return 0
+
+    return fake_run
+
+
+def test_a_second_build_with_cmake_args_still_reconfigures(paths, settings, repo, monkeypatch):
+    """cmake `-D` cache entries persist across invocations once set, and are
+    only ever refreshed by passing them again - so `cmake_args:` (almost
+    always carrying `${git_describe}`) must reach cmake on *every* build, or
+    every board flashed after the first reports the first build's version
+    forever, which is the sole board-side correlation channel this design
+    relies on."""
+    source = repo / "rp2040"
+    monkeypatch.setattr(cmake.build_mod, "run_streamed", _fake_configure_and_build(source))
+    target = dataclasses.replace(
+        _cmake_type(source), cmake_args="-DROADRUNNER_FIRMWARE_VERSION=${git_describe}"
+    )
+
+    cmake.build(paths, settings, target)
+    assert cmake.needs_configure(str(source)) is False  # cache now matches the tree
+
+    seen: list[list[str]] = []
+    monkeypatch.setattr(
+        cmake.build_mod,
+        "run_streamed",
+        lambda cmd, **kw: (seen.append(list(cmd)), _fake_configure_and_build(source)(cmd, **kw))[
+            1
+        ],
+    )
+    cmake.build(paths, settings, target)
+
+    configure_cmds = [c for c in seen if c[0] == "cmake"]
+    assert configure_cmds, "cmake_args: must reconfigure every build so ${git_describe} refreshes"
+
+
+def test_a_second_build_without_cmake_args_still_skips_reconfigure(paths, settings, repo, monkeypatch):
+    """A tree declaring no cmake_args: has no cache variable to refresh, so
+    the brief's 're-running configure is slow and changes nothing' skip
+    still applies on a second build."""
+    source = repo / "rp2040"
+    monkeypatch.setattr(cmake.build_mod, "run_streamed", _fake_configure_and_build(source))
+    target = _cmake_type(source)  # no cmake_args
+
+    cmake.build(paths, settings, target)
+    assert cmake.needs_configure(str(source)) is False  # cache now matches the tree
+
+    seen: list[list[str]] = []
+    monkeypatch.setattr(
+        cmake.build_mod,
+        "run_streamed",
+        lambda cmd, **kw: (seen.append(list(cmd)), _fake_configure_and_build(source)(cmd, **kw))[
+            1
+        ],
+    )
+    cmake.build(paths, settings, target)
+
+    configure_cmds = [c for c in seen if c[0] == "cmake"]
+    assert not configure_cmds
 
 
 def _staged(paths, data=b"IMAGE"):

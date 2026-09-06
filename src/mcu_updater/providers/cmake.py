@@ -352,7 +352,9 @@ def needs_configure(source: str) -> bool:
                 key, sep, value = line.partition("=")
                 if sep and key.split(":", 1)[0].strip() == "CMAKE_HOME_DIRECTORY":
                     return os.path.realpath(value.strip()) != want
-    except OSError:
+    except (OSError, ValueError):
+        # ValueError also catches UnicodeDecodeError: a cache we cannot read
+        # is no more trustworthy than one that is not there.
         return True
     return True
 
@@ -420,10 +422,19 @@ def build(
     source = os.path.expanduser(target.source or "")
     build_path = build_dir(source)
     state = source_state(source)
+    args = expand_args(target.cmake_args, state)
 
-    if needs_configure(source):
-        argv = ["cmake", "-S", source, "-B", build_path]
-        argv += expand_args(target.cmake_args, state)
+    # A cache is only stale in the filesystem sense `needs_configure` checks
+    # for - but cmake's `-D` cache entries persist across invocations once
+    # set, and are only ever refreshed by passing them again. A tree with
+    # `cmake_args:` (almost always carrying `${git_describe}`) must therefore
+    # be reconfigured on *every* build, or every board flashed after the
+    # first carries the first build's version string forever - the one
+    # channel this design uses to correlate a board against its source. A
+    # tree with no `cmake_args:` has nothing to refresh, so the brief's
+    # "re-running configure changes nothing" skip still applies to it.
+    if needs_configure(source) or args:
+        argv = ["cmake", "-S", source, "-B", build_path, *args]
         reporter("info", f"Configuring {source}...")
         rc = build_mod.run_streamed(
             argv,

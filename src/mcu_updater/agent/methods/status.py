@@ -1611,6 +1611,7 @@ class StatusMixin(_Base):
         "fw.settings.get": "settings_get",
         "fw.settings.set": "settings_set",
         "fw.build": "build",
+        "fw.clean": "clean",
         "fw.flash": "flash",
         "fw.job.get": "job_get",
         "fw.job.cancel": "job_cancel",

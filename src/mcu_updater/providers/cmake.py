@@ -231,6 +231,38 @@ def build_dir(source: str) -> str:
     return os.path.join(os.path.expanduser(source or ""), BUILD_SUBDIR)
 
 
+def clean_build_dir(source: str) -> str | None:
+    """Remove this tree's `build/`. Returns the path, or None if it was absent.
+
+    The recovery for a build directory that outlived its toolchain.
+    `CMakeCache.txt` pins the absolute path of every tool the configure step
+    found, so a tree configured against a `picotool` that has since moved or
+    been upgraded keeps failing with an error about the old one - through any
+    number of rebuilds, because `needs_configure()` sees a cache naming the
+    right source tree and correctly says the build system is generated. It is;
+    it is just generated against a world that no longer exists.
+
+    Deliberately narrow: this removes exactly `build/`, never the source tree
+    around it. It is also the only destructive operation a provider offers, so
+    it refuses anything that is not a directory rather than unlinking whatever
+    happens to sit at that path.
+
+    Nothing else is touched. The staged `.uf2` lives under `printer_data`, and
+    the provenance sidecar beside it, so a clean costs a recompile and never an
+    artifact or the record of where it came from.
+    """
+    path = build_dir(source)
+    if not os.path.exists(path):
+        return None
+    if not os.path.isdir(path):
+        raise BuildError(
+            f"{path} is not a directory - refusing to remove it. Something "
+            f"other than a cmake build directory is at that path."
+        )
+    shutil.rmtree(path)
+    return path
+
+
 def staged_uf2(source: str, cmake_target: str) -> str:
     """Where cmake leaves this target's image, before we stage it.
 
@@ -698,3 +730,9 @@ class Cmake:
 
     def describe(self, target: BuildTarget) -> str:
         return target.name
+
+    def clean(self, install: Install, target: BuildTarget) -> str | None:
+        entry = install.cmake.get(target.name)
+        if entry is None:
+            raise BuildError(f"no cmake type '{target.name}' is configured.", type=target.name)
+        return clean_build_dir(entry.source)

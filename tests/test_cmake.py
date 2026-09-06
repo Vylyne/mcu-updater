@@ -1058,3 +1058,84 @@ def test_the_shipped_example_config_declares_a_loadable_cmake_type(paths):
     types = cmake.load(paths)
     assert "roadrunner" in types
     assert types["roadrunner"].cmake_target == "roadrunner_v1_i2c_rgb"
+
+
+def test_cleaning_removes_the_build_dir_and_says_what_it_removed(paths, repo):
+    """The recovery for a cache that outlived its toolchain. Returns the path
+    because the caller reports it - "cleaned" is not a checkable sentence."""
+    source = repo / "rp2040"
+    (source / "build").mkdir()
+    (source / "build" / "CMakeCache.txt").write_text("stale\n", encoding="utf-8")
+
+    removed = cmake.clean_build_dir(str(source))
+
+    assert removed == str(source / "build")
+    assert not (source / "build").exists()
+
+
+def test_cleaning_a_tree_with_no_build_dir_is_not_an_error(paths, repo):
+    """Nothing to remove is a successful clean, not a failure. A user reaching
+    for this is already fixing something; a second error helps nobody."""
+    assert cmake.clean_build_dir(str(repo / "rp2040")) is None
+
+
+def test_cleaning_refuses_a_build_path_that_is_not_a_directory(paths, repo):
+    """The only destructive operation a provider offers, so it refuses to
+    unlink whatever happens to sit at that path."""
+    source = repo / "rp2040"
+    (source / "build").write_text("not a directory\n", encoding="utf-8")
+
+    with pytest.raises(BuildError):
+        cmake.clean_build_dir(str(source))
+
+    assert (source / "build").exists()
+
+
+def test_cleaning_leaves_the_staged_image_and_its_provenance(paths, settings, repo, monkeypatch):
+    """A clean costs a recompile, never an artifact. The staged .uf2 and the
+    sidecar live under printer_data, not in the tree being removed."""
+    source = repo / "rp2040"
+
+    def fake_run(cmd, *, cwd, reporter, cancel=None, dry_run=False, **kw):
+        (source / "build").mkdir(exist_ok=True)
+        (source / "build" / "roadrunner_v1_i2c_rgb.uf2").write_bytes(b"IMAGE")
+        return 0
+
+    monkeypatch.setattr(cmake.build_mod, "run_streamed", fake_run)
+    target = _cmake_type(source)
+    staged = cmake.build(paths, settings, target)
+    before = cmake.read_sidecar(paths, target)
+
+    cmake.clean_build_dir(str(source))
+
+    assert os.path.exists(staged)
+    assert cmake.read_sidecar(paths, target) == before
+
+
+def test_a_cleaned_tree_reconfigures_on_the_next_build(paths, settings, repo, monkeypatch):
+    """The point of the whole operation: `needs_configure` sees a cache naming
+    the right source tree and skips configure, which is exactly what keeps a
+    stale toolchain path alive. Removing the directory is what breaks that."""
+    source = repo / "rp2040"
+    seen: list[list[str]] = []
+
+    def fake_run(cmd, *, cwd, reporter, cancel=None, dry_run=False, **kw):
+        seen.append(list(cmd))
+        (source / "build").mkdir(exist_ok=True)
+        (source / "build" / "CMakeCache.txt").write_text(
+            f"CMAKE_HOME_DIRECTORY:INTERNAL={source}\n", encoding="utf-8"
+        )
+        (source / "build" / "roadrunner_v1_i2c_rgb.uf2").write_bytes(b"IMAGE")
+        return 0
+
+    monkeypatch.setattr(cmake.build_mod, "run_streamed", fake_run)
+    target = _cmake_type(source)
+    cmake.build(paths, settings, target)
+    assert cmake.needs_configure(str(source)) is False
+
+    cmake.clean_build_dir(str(source))
+    assert cmake.needs_configure(str(source)) is True
+
+    seen.clear()
+    cmake.build(paths, settings, target)
+    assert [c[0] for c in seen] == ["cmake", "make"]

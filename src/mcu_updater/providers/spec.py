@@ -214,3 +214,23 @@ class Provider(Protocol):
         truth about their target, and neither reads well in the other's shape.
         """
         ...
+
+    def clean(self, install: Install, target: BuildTarget) -> str | None:
+        """Discard this target's generated build tree. Returns what it removed.
+
+        `None` means this provider keeps no such tree - not that cleaning
+        failed. Only cmake has one today: its configure step writes a `build/`
+        directory whose `CMakeCache.txt` pins absolute paths to the toolchain
+        it found, so a tree configured against a since-upgraded `picotool`
+        stays broken through any number of rebuilds. `make clean` does not
+        help; only removing the directory does.
+
+        kconfig and PlatformIO both answer `None` on purpose. Their equivalent
+        already runs inside the build (`clean_before_build`), and a second door
+        onto it would be a different feature wearing this one's name.
+
+        The path rather than a bool, because the caller reports it: "removed
+        ~/roadrunner/rp2040/build" is a sentence a user can check, and
+        "cleaned" is not.
+        """
+        ...

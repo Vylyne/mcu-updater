@@ -91,7 +91,10 @@ API; the prose is not. Most come from `errors.py`: `config_corrupt`,
 `print_in_progress`, `cancelled`, `profile`, `profile_not_found`,
 `profile_customised`, `offset_mismatch`, `kconfig`, `no_session`. A few are
 built inline at the call site rather than from a typed exception -
-`no_artifact`, `nothing_to_do`, `unknown_job` (`fw.job.get`/`fw.job.cancel`),
+`no_artifact`, `nothing_to_do`, `build_blocked` (`fw.build` on a cmake type
+whose source tree is missing, has no `CMakeLists.txt`, has an uninitialised
+submodule, or does not declare the configured `cmake_target:` - the refusal
+arrives before a job is created), `unknown_job` (`fw.job.get`/`fw.job.cancel`),
 `unknown_target` (`fw.target.get` - one code for either provider, deliberately;
 an unknown MCU name through `fw.artifacts` still reports `unknown_type`
 because that path raises `UnknownTypeError` directly, but `fw.target.get`
@@ -1813,6 +1816,9 @@ does it with the validation.
 **`fw.flash_type` was never implemented and never will be.** It is
 `fw.flash_all {name}`: the same selection and the same loop with a filter, rather
 than a second implementation to keep in step with the first.
+
+`fw.build` on a cmake type refuses synchronously with `build_blocked` when the
+source tree cannot be built in, exactly as the CLI does - no job is created.
 
 `fw.build` refuses a type with no saved `.config`, returning `no_saved_config`.
 `make menuconfig` is an ncurses UI and cannot run inside the agent, so the

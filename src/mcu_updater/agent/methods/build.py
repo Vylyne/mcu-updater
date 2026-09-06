@@ -213,9 +213,33 @@ class BuildMixin(_Base):
             )
         entry = types[name]
 
-        def run(ctx) -> dict[str, Any]:
-            from ...providers import cmake as cmake_mod
+        # Refuse synchronously, as the CLI's cmake branch does, rather than
+        # submitting a job that will fail. `build()` refuses authoritatively on
+        # its own - it will not stage an image from a target this tree no
+        # longer declares - but that answer arrives inside a job, as a failed
+        # build somebody has to go and read. This is the readable one.
+        #
+        # `source_problem()` rather than `Cmake().blocked()`: they return the
+        # identical string here (`blocked()`'s only other branch is the missing
+        # entry, and `name` was just looked up in `types`), and reaching the
+        # adapter would mean building an `Install`, which parses the config a
+        # third time in this method and would make a malformed `[mcu ...]` or
+        # PlatformIO section refuse a cmake build that has nothing to do with
+        # either.
+        from ...providers import cmake as cmake_mod
 
+        problem = cmake_mod.source_problem(entry)
+        if problem:
+            raise RpcError(
+                problem,
+                data={
+                    "code": "build_blocked",
+                    "message": "this type cannot be built here",
+                    "data": {"name": name, "fw": entry.firmware, "reason": problem},
+                },
+            )
+
+        def run(ctx) -> dict[str, Any]:
             ctx.step(f"Building {entry.cmake_target}", 0, 1)
             path = cmake_mod.build(
                 self.paths, self.settings(), entry, reporter=ctx.reporter, cancel=ctx.cancel

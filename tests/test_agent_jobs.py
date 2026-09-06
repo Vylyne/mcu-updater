@@ -254,6 +254,34 @@ def test_build_reaches_a_cmake_type_named_on_its_own(api, paths, tmp_path):
     assert job.result["uf2_path"] == paths.uf2_file("roadrunner", "roadrunner")
 
 
+def test_a_cmake_type_with_no_source_tree_is_refused_before_a_job_exists(
+    api, paths, tmp_path
+):
+    """The CLI's cmake branch refuses synchronously and the agent did not, so
+    the same misconfiguration arrived as a failed job somebody had to open and
+    read. `build()` still refuses on its own - that is what guarantees no wrong
+    image is staged - but this is the readable answer, and it is the only one
+    that costs no job at all."""
+    missing = tmp_path / "not-cloned"
+    with open(paths.main_config, "a", encoding="utf-8") as fh:
+        fh.write(
+            f"\n[firmware roadrunner]\nsource: {missing}\nbuilder: cmake\n\n"
+            f"[type roadrunner]\nchipset: rp2040\nfirmware: roadrunner\n"
+            f"cmake_target: roadrunner_v1_i2c_rgb\n"
+        )
+
+    before = len(api.runner.recent(limit=50))
+    with pytest.raises(RpcError) as exc:
+        api.dispatch("fw.build", {"name": "roadrunner"})
+
+    assert exc.value.data["code"] == "build_blocked"
+    assert str(missing) in str(exc.value)
+    # The load-bearing half: no job was created, so nothing ran and nothing
+    # has to be read to find out why.
+    assert api.runner.current() is None
+    assert len(api.runner.recent(limit=50)) == before
+
+
 def test_a_second_build_while_one_runs_is_refused(api, paths):
     _stage_config(paths)
     _stage_config(paths, "OctopusMAXEZ")

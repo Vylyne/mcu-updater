@@ -984,3 +984,31 @@ def test_cleaning_a_kconfig_type_over_the_agent_is_a_no_op(paths, live_registry_
 
     assert got["removed"] is None
     assert got["provider"] == "kconfig_make"
+
+
+def test_the_status_poll_never_shells_out_for_a_cmake_type(paths, tmp_path, monkeypatch):
+    """`declared_targets()` runs `cmake` with a 30s timeout. That is fine once
+    before a build; on the poll path a panel refreshing every few seconds would
+    hang for half a minute per cmake type on a host where cmake is missing or
+    the build directory is wedged."""
+    from mcu_updater.providers import cmake as cmake_mod
+
+    source = _cmake_config(paths, tmp_path)
+    # A configured tree, or `declared_targets()` returns before it ever runs
+    # anything and this test proves nothing.
+    (source / "build").mkdir()
+    (source / "build" / "CMakeCache.txt").write_text(
+        f"CMAKE_HOME_DIRECTORY:INTERNAL={source}\n", encoding="utf-8"
+    )
+
+    calls: list[list[str]] = []
+
+    def refuse(argv, cwd):
+        calls.append(list(argv))
+        raise AssertionError(f"fw.status shelled out: {argv}")
+
+    monkeypatch.setattr(cmake_mod, "_run", refuse)
+
+    Api(paths, runner=_runner()).dispatch("fw.status")
+
+    assert calls == []

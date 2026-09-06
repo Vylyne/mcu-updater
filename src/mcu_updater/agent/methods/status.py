@@ -966,7 +966,13 @@ class StatusMixin(_Base):
                     ),
                     "source_version": state.version,
                     "source_dirty": state.dirty,
-                    "build_blocked": cmake_mod.source_problem(entry),
+                    # probe_targets=False: this is the poll path. See
+                    # `source_problem`'s docstring - the target probe
+                    # shells out to cmake with a 30s timeout, and a
+                    # panel refresh must not pay that per type.
+                    "build_blocked": cmake_mod.source_problem(
+                        entry, probe_targets=False
+                    ),
                 }
             )
         return out

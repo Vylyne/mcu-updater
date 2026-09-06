@@ -340,7 +340,7 @@ def _uninitialised_submodule(source: str) -> str | None:
     return None
 
 
-def source_problem(target: CmakeType) -> str | None:
+def source_problem(target: CmakeType, *, probe_targets: bool = True) -> str | None:
     """Why this type cannot be built, or None if it can be attempted.
 
     A module function, mirroring `pio.source_problem`, so a status payload can
@@ -349,6 +349,15 @@ def source_problem(target: CmakeType) -> str | None:
     Only setup that has to happen *outside this tool*. A missing ARM
     toolchain, a syntax error or a full disk are all things to find out by
     trying: reporting them as failures is more useful than pretending we knew.
+
+    `probe_targets=False` drops the last check, which is the only one that
+    runs a subprocess. `declared_targets()` shells out to `cmake` with a 30
+    second timeout, which is fine once before a build and unacceptable on the
+    `fw.status` poll path - a panel refreshing every few seconds would hang
+    for half a minute per cmake type on a host where cmake is missing or the
+    build directory is wedged. The status row wants the cheap answers (no
+    tree, no CMakeLists, an empty submodule); the build path wants all of
+    them, and `build()` re-asks authoritatively after `make` regardless.
     """
     source = os.path.expanduser(target.source or "")
     if not source:
@@ -374,6 +383,9 @@ def source_problem(target: CmakeType) -> str | None:
                 f"submodule '{empty}' in {source} is empty - run "
                 f"'git submodule update --init --recursive' in that tree first."
             )
+
+    if not probe_targets:
+        return None
 
     known = declared_targets(source)
     if known is not None and target.cmake_target not in known:

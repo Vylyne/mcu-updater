@@ -7,11 +7,13 @@ provider owns - have their own tests saying why.
 
 from __future__ import annotations
 
+import dataclasses
+import os
 import subprocess
 
 import pytest
 
-from mcu_updater.errors import ConfigError
+from mcu_updater.errors import BuildError, ConfigError
 from mcu_updater.providers import cmake
 
 
@@ -286,3 +288,136 @@ def test_the_target_help_output_is_parsed(tmp_path, monkeypatch):
         "roadrunner_v1_i2c_rgb",
         "roadrunner_v1_uart_grb",
     }
+
+
+@pytest.fixture
+def capture_reporter():
+    class Capture:
+        def __init__(self):
+            self.lines: list[tuple[str, str]] = []
+
+        def reporter(self, stream: str, line: str) -> None:
+            self.lines.append((stream, line))
+
+    return Capture()
+
+
+def test_a_configured_tree_is_not_reconfigured(tmp_path):
+    """Re-running configure on every build is slow and changes nothing."""
+    source = tmp_path / "rp2040"
+    (source / "build").mkdir(parents=True)
+    assert cmake.needs_configure(str(source)) is True
+
+    (source / "build" / "CMakeCache.txt").write_text(
+        f"CMAKE_HOME_DIRECTORY:INTERNAL={source}\n", encoding="utf-8"
+    )
+    assert cmake.needs_configure(str(source)) is False
+
+
+def test_a_cache_from_another_tree_forces_a_reconfigure(tmp_path):
+    """A moved or copied build directory points at the wrong sources."""
+    source = tmp_path / "rp2040"
+    (source / "build").mkdir(parents=True)
+    (source / "build" / "CMakeCache.txt").write_text(
+        "CMAKE_HOME_DIRECTORY:INTERNAL=/somewhere/else\n", encoding="utf-8"
+    )
+    assert cmake.needs_configure(str(source)) is True
+
+
+def test_a_dry_run_stages_nothing_and_runs_both_steps(paths, settings, tmp_path, capture_reporter):
+    """A rehearsal must never leave an artifact behind, or the next status
+    poll vouches for a build that did not happen."""
+    source = tmp_path / "rp2040"
+    source.mkdir()
+    (source / "CMakeLists.txt").write_text("project(rr)\n", encoding="utf-8")
+    target = _cmake_type(source)
+
+    dry = dataclasses.replace(settings, dry_run=True)
+    cmake.build(paths, dry, target, reporter=capture_reporter.reporter)
+
+    cmds = [line for stream, line in capture_reporter.lines if stream == "cmd"]
+    assert any("cmake" in c and "-S" in c for c in cmds)
+    assert any("make" in c for c in cmds)
+    assert not os.path.exists(paths.uf2_file("roadrunner", "roadrunner"))
+
+
+def test_a_successful_build_stages_the_named_target(paths, settings, repo, monkeypatch):
+    """The whole point of cmake_target: one make produces six images and
+    exactly one is staged."""
+    source = repo / "rp2040"
+    (source / "build").mkdir()
+    target = _cmake_type(source)
+
+    def fake_run(cmd, *, cwd, reporter, cancel=None, dry_run=False, **kw):
+        reporter("cmd", " ".join(cmd))
+        for name in ("roadrunner_v1_i2c_rgb", "roadrunner_v1_uart_grb"):
+            (source / "build" / f"{name}.uf2").write_bytes(name.encode())
+        return 0
+
+    monkeypatch.setattr(cmake.build_mod, "run_streamed", fake_run)
+    staged = cmake.build(paths, settings, target)
+
+    assert staged == paths.uf2_file("roadrunner", "roadrunner")
+    assert open(staged, "rb").read() == b"roadrunner_v1_i2c_rgb"
+
+
+def test_a_nonzero_exit_raises_build_error(paths, settings, tmp_path, monkeypatch):
+    source = tmp_path / "rp2040"
+    source.mkdir()
+    monkeypatch.setattr(cmake.build_mod, "run_streamed", lambda *a, **k: 2)
+    with pytest.raises(BuildError) as exc:
+        cmake.build(paths, settings, _cmake_type(source))
+    assert exc.value.data["returncode"] == 2
+
+
+def test_a_missing_output_is_a_build_error_naming_the_target(paths, settings, repo, monkeypatch):
+    """make succeeded but the named target produced nothing - a typo that
+    survived because the tree was never configured when blocked() ran."""
+    source = repo / "rp2040"
+    (source / "build").mkdir()
+    monkeypatch.setattr(cmake.build_mod, "run_streamed", lambda *a, **k: 0)
+    with pytest.raises(BuildError) as exc:
+        cmake.build(paths, settings, _cmake_type(source))
+    assert "roadrunner_v1_i2c_rgb" in str(exc.value)
+
+
+def test_the_sidecar_records_the_subtree_commit_and_the_bytes(paths, settings, repo, monkeypatch):
+    source = repo / "rp2040"
+    (source / "build").mkdir()
+
+    def fake_run(cmd, *, cwd, reporter, cancel=None, dry_run=False, **kw):
+        (source / "build" / "roadrunner_v1_i2c_rgb.uf2").write_bytes(b"IMAGE")
+        return 0
+
+    monkeypatch.setattr(cmake.build_mod, "run_streamed", fake_run)
+    target = _cmake_type(source)
+    cmake.build(paths, settings, target)
+
+    record = cmake.read_sidecar(paths, target)
+    assert record is not None
+    assert record["sha"] == cmake.source_state(str(source)).sha
+    assert record["version"] == cmake.source_state(str(source)).version
+    assert record["bin_sha256"] is not None
+    assert record["dirty"] is False
+
+
+def test_configure_args_carry_the_expanded_version(paths, settings, repo, monkeypatch):
+    source = repo / "rp2040"
+    seen: list[list[str]] = []
+
+    def fake_run(cmd, *, cwd, reporter, cancel=None, dry_run=False, **kw):
+        seen.append(list(cmd))
+        (source / "build").mkdir(exist_ok=True)
+        (source / "build" / "roadrunner_v1_i2c_rgb.uf2").write_bytes(b"IMAGE")
+        return 0
+
+    monkeypatch.setattr(cmake.build_mod, "run_streamed", fake_run)
+    target = dataclasses.replace(
+        _cmake_type(source), cmake_args="-DROADRUNNER_FIRMWARE_VERSION=${git_describe}"
+    )
+    cmake.build(paths, settings, target)
+
+    version = cmake.source_state(str(source)).version
+    assert [f"-DROADRUNNER_FIRMWARE_VERSION={version}"] == [
+        a for a in seen[0] if a.startswith("-DROADRUNNER")
+    ]

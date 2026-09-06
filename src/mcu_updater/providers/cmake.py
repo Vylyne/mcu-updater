@@ -22,14 +22,21 @@ is a fact about a repository and not about one directory in it.
 from __future__ import annotations
 
 import dataclasses
+import json
 import os
 import shlex
+import shutil
 import subprocess
+import threading
+import time
 
+from .. import build as build_mod
 from .. import firmware, sections
+from ..build import Reporter, null_reporter
 from ..cfgdoc import CfgDocument
-from ..errors import ConfigError
+from ..errors import BuildError, ConfigError
 from ..paths import Paths
+from ..settings import Settings
 
 #: What this provider's `builder:` value is, in `[firmware ...]`.
 BUILDER = "cmake"
@@ -158,6 +165,14 @@ def source_state(source: str) -> SourceState:
     that `git describe` takes no pathspec, which is why `--dirty` is not used
     and the suffix is appended from the subtree-scoped status instead - a
     dirty sibling directory must not stamp `-dirty` on a clean firmware build.
+
+    The dirty check also excludes `BUILD_SUBDIR`. It lives inside the source
+    subtree by design (see `build_dir`), and once a build has run it holds
+    generated artifacts git has never seen - without the exclusion, every
+    call to this function *after the first build* would report the tree
+    dirty forever, on account of output the tree itself produced. What this
+    function answers is "what would this tree build", which must not be
+    perturbed by "what this tree already built".
     """
     path = os.path.expanduser(source or "")
     if not path or not os.path.isdir(path):
@@ -167,7 +182,9 @@ def source_state(source: str) -> SourceState:
     if sha is None:
         return SourceState()
 
-    dirty = bool(_git(path, "status", "--porcelain", "--", "."))
+    dirty = bool(
+        _git(path, "status", "--porcelain", "--", ".", f":(exclude){BUILD_SUBDIR}")
+    )
     described = _git(path, "describe", "--tags", "--always") or UNKNOWN_VERSION_STRING
     version = f"{described}-dirty" if dirty else described
     return SourceState(sha=sha, dirty=dirty, version=version)
@@ -309,3 +326,147 @@ def source_problem(target: CmakeType) -> str | None:
             f"this tree does not declare. Known: {', '.join(sorted(known))}."
         )
     return None
+
+
+def needs_configure(source: str) -> bool:
+    """Does the configure step have to run?
+
+    A cache naming this same source tree means the build system is generated
+    and current enough for `make` to pick up any `CMakeLists.txt` change
+    itself - cmake re-runs configure on its own when it needs to. A cache
+    naming a *different* tree is a build directory that was moved or copied,
+    and building in it would compile somebody else's sources.
+    """
+    cache = os.path.join(build_dir(source), "CMakeCache.txt")
+    want = os.path.realpath(os.path.expanduser(source or ""))
+    try:
+        with open(cache, encoding="utf-8") as fh:
+            for line in fh:
+                key, sep, value = line.partition("=")
+                if sep and key.split(":", 1)[0].strip() == "CMAKE_HOME_DIRECTORY":
+                    return os.path.realpath(value.strip()) != want
+    except OSError:
+        return True
+    return True
+
+
+def record_build(paths: Paths, target: CmakeType, state: SourceState) -> None:
+    """Note which commit produced the image now staged.
+
+    Records a hash of the staged bytes, which is what makes "is this still our
+    build?" answerable at all - see `pio.record_build` for the argument. Both
+    git facts are kept: `sha` is subtree-scoped and decides rebuilds, `version`
+    is repo-wide and is what the board reports back.
+    """
+    path = paths.uf2_file(target.name, target.firmware)
+    try:
+        stat = os.stat(path)
+    except OSError:
+        return
+
+    record = {
+        "sha": state.sha,
+        "version": state.version,
+        "dirty": state.dirty,
+        "cmake_target": target.cmake_target,
+        "at": time.time(),
+        "bin_sha256": build_mod.sha256_file(path),
+        "bin_size": stat.st_size,
+        "bin_mtime": stat.st_mtime,
+    }
+    sidecar = paths.sidecar_file(target.name, target.firmware)
+    os.makedirs(os.path.dirname(sidecar), exist_ok=True)
+    tmp = sidecar + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as fh:
+        json.dump(record, fh, indent=2, sort_keys=True)
+    os.replace(tmp, sidecar)
+
+
+def read_sidecar(paths: Paths, target: CmakeType) -> dict | None:
+    """This type's build record, or None when there is not a usable one.
+
+    Degrades to None on every failure - missing, unreadable and non-dict all
+    mean "no provenance", and telling them apart would not change any answer.
+    """
+    try:
+        with open(paths.sidecar_file(target.name, target.firmware), encoding="utf-8") as fh:
+            record = json.load(fh)
+    except (OSError, ValueError):
+        return None
+    return record if isinstance(record, dict) else None
+
+
+def build(
+    paths: Paths,
+    settings: Settings,
+    target: CmakeType,
+    *,
+    reporter: Reporter = null_reporter,
+    cancel: threading.Event | None = None,
+) -> str:
+    """Configure if needed, build every target, stage the one named.
+
+    Returns the staged path. One `make` produces every image the tree
+    declares; `cmake_target` selects which of them is staged, so build-time
+    and flash-time selection come out of one config key.
+    """
+    source = os.path.expanduser(target.source or "")
+    build_path = build_dir(source)
+    state = source_state(source)
+
+    if needs_configure(source):
+        argv = ["cmake", "-S", source, "-B", build_path]
+        argv += expand_args(target.cmake_args, state)
+        reporter("info", f"Configuring {source}...")
+        rc = build_mod.run_streamed(
+            argv,
+            cwd=source,
+            reporter=reporter,
+            cancel=cancel,
+            dry_run=settings.dry_run,
+        )
+        if rc != 0:
+            raise BuildError(
+                f"cmake configure failed for '{target.name}': cmake exited {rc}.",
+                type=target.name,
+                fw=target.firmware,
+                returncode=rc,
+            )
+
+    reporter("info", f"Building {target.cmake_target}...")
+    rc = build_mod.run_streamed(
+        ["make", "-C", build_path, *settings.make_flags()],
+        cwd=source,
+        reporter=reporter,
+        cancel=cancel,
+        dry_run=settings.dry_run,
+    )
+    if rc != 0:
+        raise BuildError(
+            f"cmake build failed for '{target.name}': make exited {rc}.",
+            type=target.name,
+            fw=target.firmware,
+            returncode=rc,
+        )
+
+    staged = paths.uf2_file(target.name, target.firmware)
+    if settings.dry_run:
+        # Never stage on a rehearsal. An artifact left behind here is one the
+        # next status poll would vouch for, having never been compiled.
+        return staged
+
+    produced = staged_uf2(source, target.cmake_target)
+    if not os.path.exists(produced):
+        raise BuildError(
+            f"make succeeded but produced no {produced} - does this tree declare "
+            f"a target named '{target.cmake_target}'?",
+            type=target.name,
+            fw=target.firmware,
+        )
+    os.makedirs(os.path.dirname(staged), exist_ok=True)
+    shutil.copyfile(produced, staged)
+    reporter("info", f"Staged {staged}")
+
+    # After the copy, so the record describes the bytes that now exist.
+    record_build(paths, target, state)
+    return staged

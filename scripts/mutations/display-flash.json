@@ -30,8 +30,8 @@
     {
       "name": "displays are projected into targets too",
       "file": "src/mcu_updater/agent/methods/status.py",
-      "find": "        ] + [self._pio_target(payload, allowed) for payload in displays]",
-      "replace": "        ]"
+      "find": "            self._pio_target(payload, allowed) for payload in displays",
+      "replace": ""
     },
     {
       "name": "identity is verified once the ports are free",

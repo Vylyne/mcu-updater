@@ -673,7 +673,11 @@ class StatusMixin(_Base):
         return [
             self._mcu_target(reg, payload, allowed, configurable, families)
             for payload in types
-        ] + [self._pio_target(payload, allowed) for payload in displays]
+        ] + [
+            self._pio_target(payload, allowed) for payload in displays
+        ] + [
+            self._cmake_target(payload, allowed) for payload in self.cmake_status()
+        ]
 
     def _mcu_target(
         self,
@@ -934,6 +938,106 @@ class StatusMixin(_Base):
                 }
             )
         return out
+
+    def cmake_status(self) -> list[dict[str, Any]]:
+        """One payload per cmake type: what it builds, and whether it is current.
+
+        The cmake counterpart of `pio_status()`. Thinner than either of the
+        others on purpose - there is no device half yet. A cmake type's boards
+        are flashed over BOOTSEL, which is its own piece of work, and
+        `fw.flash` refuses a cmake name today. Listing devices here would
+        advertise a write that cannot happen.
+        """
+        from ...providers import cmake as cmake_mod
+
+        out: list[dict[str, Any]] = []
+        for name, entry in cmake_mod.load(self.paths).items():
+            state = cmake_mod.source_state(entry.source)
+            status = cmake_mod.artifact_status(self.paths, entry, state)
+            out.append(
+                {
+                    "name": name,
+                    "firmware": entry.firmware,
+                    "cmake_target": entry.cmake_target,
+                    "source": entry.source,
+                    "artifact_reason": status.reason,
+                    "has_firmware": os.path.exists(
+                        self.paths.uf2_file(name, entry.firmware)
+                    ),
+                    "source_version": state.version,
+                    "source_dirty": state.dirty,
+                    "build_blocked": cmake_mod.source_problem(entry),
+                }
+            )
+        return out
+
+    def _cmake_target(
+        self, payload: dict[str, Any], allowed: set[str]
+    ) -> dict[str, Any]:
+        """A cmake type in the shared `targets[]` shape.
+
+        Until this existed, `fw.build_all` built Roadrunners the panel had
+        never listed a row for - a build appearing in `builds[]` for a target
+        `targets[]` did not contain. The row is the fix.
+        """
+        name = payload["name"]
+        status = ArtifactStatus(payload["artifact_reason"])
+        problem = payload.get("build_blocked")
+
+        actions: list[dict[str, Any]] = []
+        if "fw.build" in allowed:
+            actions.append(
+                {
+                    "id": "build",
+                    "label": "Build",
+                    "method": "fw.build",
+                    "params": {"name": name},
+                    "blocked": (
+                        None
+                        if not problem
+                        else self._blocked(self.BLOCKED_NO_SOURCE, problem, name=name)
+                    ),
+                }
+            )
+        if "fw.clean" in allowed:
+            # Never blocked by `build_blocked`: a wedged build directory is
+            # one of the things that makes a tree unbuildable, so gating the
+            # repair on the tree being healthy would withhold it exactly when
+            # it is wanted. Removing a directory that is already absent is a
+            # no-op, not an error.
+            actions.append(
+                {
+                    "id": "clean",
+                    "label": "Clean build dir",
+                    "method": "fw.clean",
+                    "params": {"name": name},
+                    "blocked": None,
+                }
+            )
+
+        return {
+            "provider": providers.Cmake.name,
+            "name": name,
+            "descriptor": payload["cmake_target"],
+            "firmware": payload["firmware"],
+            "artifact": self._artifact_json(status),
+            # No menuconfig, so nothing for a profile to seed. Present and null
+            # for the same reason PlatformIO's is: one shape a reader can trust.
+            "profile": None,
+            # No devices, so nothing to aggregate. Not False - that would claim
+            # we looked and found everything current.
+            "needs_flash": None,
+            "devices": [],
+            "actions": actions,
+            "extra": {
+                "source": payload["source"],
+                "source_version": payload["source_version"],
+                "source_dirty": payload["source_dirty"],
+                # Flashing a cmake type is not wired up yet, so a panel can say
+                # why the row has no device half instead of looking broken.
+                "flashable": False,
+            },
+        }
 
     def _pio_target(
         self, payload: dict[str, Any], allowed: set[str]
@@ -1268,6 +1372,19 @@ class StatusMixin(_Base):
                     return {"provider": provider, "target": payload}
             raise RpcError(
                 f"no such display: {name}",
+                data={
+                    "code": "unknown_target",
+                    "message": "target not found",
+                    "data": {"name": name, "provider": provider},
+                },
+            )
+
+        if provider == providers.Cmake.name:
+            for payload in self.cmake_status():
+                if payload["name"] == name:
+                    return {"provider": provider, "target": payload}
+            raise RpcError(
+                f"no such cmake type: {name}",
                 data={
                     "code": "unknown_target",
                     "message": "target not found",
@@ -1656,6 +1773,13 @@ class StatusMixin(_Base):
         # .config and touches no hardware - but a job is a job, and a read-only
         # agent has no runner to submit one to.
         "fw.profile.apply",
+        # Not a job at all - it is synchronous, and deliberately so. It is here
+        # because this tuple's real question is "would a read-only deployment
+        # be advertising a control it should not have", and deleting a build
+        # directory is exactly that. Gated on the runner rather than on
+        # enable_flashing, which is about writing to hardware; this writes to
+        # the host's own disk.
+        "fw.clean",
     )
 
     #: Advertised only when enable_flashing is on. The panel hides its flash

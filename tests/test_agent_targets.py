@@ -883,3 +883,104 @@ def test_changing_nothing_warns_about_nothing(paths, live_registry_text):
 
     res = api.dispatch("fw.type.update", {"name": "bttebb36", "firmware": "klipper"})
     assert res["warnings"] == []
+
+
+def _cmake_config(paths, tmp_path):
+    """A configured cmake type with a real-enough tree behind it."""
+    from mcu_updater.cfgdoc import CfgDocument
+
+    source = tmp_path / "rp2040"
+    source.mkdir(parents=True, exist_ok=True)
+    (source / "CMakeLists.txt").write_text("project(rr)\n", encoding="utf-8")
+
+    doc = CfgDocument("")
+    doc.set("firmware roadrunner", "source", str(source))
+    doc.set("firmware roadrunner", "builder", "cmake")
+    doc.set("type roadrunner", "chipset", "rp2040")
+    doc.set("type roadrunner", "firmware", "roadrunner")
+    doc.set("type roadrunner", "cmake_target", "roadrunner_v1_i2c_rgb")
+    with open(paths.main_config, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(doc.render())
+    return source
+
+
+def test_a_cmake_type_gets_a_row_in_targets(paths, tmp_path):
+    """`fw.build_all` built Roadrunners the panel had never listed a row for -
+    a build turning up in builds[] for a target targets[] did not contain."""
+    _cmake_config(paths, tmp_path)
+
+    targets = {t["name"]: t for t in Api(paths).dispatch("fw.status")["targets"]}
+
+    assert "roadrunner" in targets
+    row = targets["roadrunner"]
+    assert row["provider"] == "cmake"
+    assert row["descriptor"] == "roadrunner_v1_i2c_rgb"
+    assert row["firmware"] == "roadrunner"
+    # No device half yet: fw.flash refuses a cmake name, so listing devices
+    # would advertise a write that cannot happen.
+    assert row["devices"] == []
+    assert row["needs_flash"] is None
+    assert row["extra"]["flashable"] is False
+
+
+def test_a_cmake_row_offers_build_and_clean(paths, tmp_path):
+    _cmake_config(paths, tmp_path)
+
+    api = Api(paths, runner=_runner())
+    targets = {t["name"]: t for t in api.dispatch("fw.status")["targets"]}
+    actions = {a["id"]: a for a in targets["roadrunner"]["actions"]}
+
+    assert actions["build"]["method"] == "fw.build"
+    assert actions["clean"]["method"] == "fw.clean"
+    assert actions["clean"]["params"] == {"name": "roadrunner"}
+
+
+def test_the_clean_action_is_offered_even_when_the_build_is_blocked(paths, tmp_path):
+    """A wedged build directory is one of the things that makes a tree
+    unbuildable, so gating the repair on the tree being healthy would withhold
+    it exactly when it is wanted."""
+    source = _cmake_config(paths, tmp_path)
+    (source / "CMakeLists.txt").unlink()
+
+    api = Api(paths, runner=_runner())
+    targets = {t["name"]: t for t in api.dispatch("fw.status")["targets"]}
+    actions = {a["id"]: a for a in targets["roadrunner"]["actions"]}
+
+    assert actions["build"]["blocked"] is not None
+    assert actions["clean"]["blocked"] is None
+
+
+def test_target_get_answers_for_a_cmake_type(paths, tmp_path):
+    """It used to raise "unknown provider: cmake" for a row fw.status listed."""
+    _cmake_config(paths, tmp_path)
+
+    got = Api(paths).dispatch(
+        "fw.target.get", {"name": "roadrunner", "provider": "cmake"}
+    )
+
+    assert got["provider"] == "cmake"
+    assert got["target"]["cmake_target"] == "roadrunner_v1_i2c_rgb"
+
+
+def test_cleaning_over_the_agent_removes_the_build_dir(paths, tmp_path):
+    source = _cmake_config(paths, tmp_path)
+    build = source / "build"
+    build.mkdir()
+    (build / "CMakeCache.txt").write_text("stale\n", encoding="utf-8")
+
+    got = Api(paths, runner=_runner()).dispatch("fw.clean", {"name": "roadrunner"})
+
+    assert got["removed"] == str(build)
+    assert not build.exists()
+
+
+def test_cleaning_a_kconfig_type_over_the_agent_is_a_no_op(paths, live_registry_text):
+    """`removed: null` rather than an error, so a panel can offer the action on
+    any row and get a true answer instead of having to know which build
+    systems keep a directory of their own."""
+    with open(paths.registry_file, "w", encoding="utf-8") as fh:
+        fh.write(live_registry_text)
+    got = Api(paths, runner=_runner()).dispatch("fw.clean", {"name": "mmb_can"})
+
+    assert got["removed"] is None
+    assert got["provider"] == "kconfig_make"

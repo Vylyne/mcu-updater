@@ -800,6 +800,14 @@ Each provider enumerates its own targets:
 | --- | --- | --- |
 | `kconfig_make` | one `[type ...]` × one firmware family it names | the family |
 | `platformio` | one `[type ...]` whose firmware's builder is `platformio` | `null` — the env *is* the type |
+| `cmake` | one `[type ...]` whose firmware's builder is `cmake` | the family — one tree, one image per `cmake_target:` |
+
+A known limit, stated so a client author is not surprised by it: `fw.status`'s
+`targets[]` and `fw.target.get` do **not** cover cmake types, even though
+`fw.build_all` builds them and reports them in `builds[]` / `skipped[]` with
+`"provider": "cmake"`. A cmake type can be built by name (`fw.build {name}`,
+no `fw` — the family names the tree and `cmake_target:` names the image, so
+there is no family axis to choose on) but it has no `targets[]` row yet.
 
 Three rules follow, and each of them was a bug first:
 

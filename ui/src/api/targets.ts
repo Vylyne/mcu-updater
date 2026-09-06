@@ -2,7 +2,7 @@
 // mirrored from docs/agent-api.md the same way the Mainsail panel's types.ts
 // is - see tests/test_agent_methods.py for the Python half of that contract.
 
-export type Provider = "kconfig_make" | "platformio";
+export type Provider = "kconfig_make" | "platformio" | "cmake";
 
 export type Tone = "ok" | "unknown" | "attention";
 

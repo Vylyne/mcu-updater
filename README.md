@@ -239,10 +239,13 @@ all.
 `builder:` takes three values: `kconfig_make` (the default, above), `platformio`
 (see [ESP32 displays](#esp32-displays)) and `cmake` (see
 [RP2040 cmake trees](#rp2040-cmake-trees)). A cmake family also takes
-`cmake_args:`, appended to the configure step verbatim - `${git_describe}` is
-the one substitution it supports, expanding to the source tree's own `git
-describe` so the board's `INFO` reports a version you can trace back to a
-commit:
+`cmake_args:`, split shell-style and appended to the configure step - quoting
+groups words (`-DX="two words"` arrives as one argument) and is consumed, the
+same way a shell consumes it. `${git_describe}` is the one substitution it
+supports, expanding to the source tree's own `git describe` so the board's
+`INFO` reports a version you can trace back to a commit - and, in a tree that
+is not a git checkout, to the literal `dev` rather than failing, so firmware
+reporting `dev` means the tree it came from could not be identified:
 
 ```ini
 [firmware roadrunner]

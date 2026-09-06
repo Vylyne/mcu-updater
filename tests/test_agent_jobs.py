@@ -218,6 +218,37 @@ def test_build_completes_and_records_its_artifact(api, paths):
     assert types["bttebb36"]["artifacts"]["klipper"]["reason"] is None
 
 
+def test_build_reaches_a_cmake_type_named_on_its_own(api, paths, tmp_path):
+    """`fw.build {name: "roadrunner"}` raised "no type is configured".
+
+    `_provider_of` knew two sources - the PlatformIO displays and the kconfig
+    registry - and a cmake type is in neither, so the only way to compile one
+    through the agent was `fw.build_all`. No `fw` here on purpose: the family
+    names the tree and `cmake_target:` names the image, so there is no family
+    axis to choose on, exactly as for a PlatformIO env.
+    """
+    source = tmp_path / "rp2040"
+    source.mkdir()
+    (source / "CMakeLists.txt").write_text("project(roadrunner)\n", encoding="utf-8")
+    with open(paths.main_config, "a", encoding="utf-8") as fh:
+        fh.write(
+            f"\n[firmware roadrunner]\nsource: {source}\nbuilder: cmake\n\n"
+            f"[type roadrunner]\nchipset: rp2040\nfirmware: roadrunner\n"
+            f"cmake_target: roadrunner_v1_i2c_rgb\n"
+        )
+
+    res = api.dispatch("fw.build", {"name": "roadrunner"})
+    assert api.runner.wait(timeout=30)
+
+    job = api.runner.get(res["job_id"])
+    assert job.state == "succeeded", job.error
+    assert job.result["cmake_target"] == "roadrunner_v1_i2c_rgb"
+    # The staged path this build would have written. `api`'s settings are a dry
+    # run, so nothing is copied - which is the point of a rehearsal, and why
+    # this asserts the path rather than the file.
+    assert job.result["uf2_path"] == paths.uf2_file("roadrunner", "roadrunner")
+
+
 def test_a_second_build_while_one_runs_is_refused(api, paths):
     _stage_config(paths)
     _stage_config(paths, "OctopusMAXEZ")

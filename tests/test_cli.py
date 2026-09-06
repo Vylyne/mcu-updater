@@ -307,6 +307,78 @@ def test_building_a_platformio_type_with_no_tree_refuses_before_the_lock(
     assert "no_tree_fw" in err
 
 
+@pytest.fixture
+def cmake_type(c, fake_root):
+    """A cmake type with a source tree and no build directory.
+
+    No `build/` on purpose: `blocked()` asks a *configured* tree for its target
+    list by running real cmake, and a fixture that invited that would make this
+    test depend on the toolchain being installed.
+    """
+    tree = fake_root / "roadrunner" / "rp2040"
+    tree.mkdir(parents=True)
+    (tree / "CMakeLists.txt").write_text("project(roadrunner)\n", encoding="utf-8")
+    with open(c.paths.main_config, "a", encoding="utf-8") as fh:
+        fh.write(
+            f"\n[firmware roadrunner]\nsource: {tree}\nbuilder: cmake\n\n"
+            f"[type roadrunner]\nchipset: rp2040\nfirmware: roadrunner\n"
+            f"cmake_target: roadrunner_v1_i2c_rgb\n"
+        )
+    return tree
+
+
+def test_building_a_cmake_type_stages_exactly_the_named_image(
+    c, cmake_type, monkeypatch
+):
+    """`build -t roadrunner` was "MCU type 'roadrunner' does not exist".
+
+    A cmake type is in neither the registry nor the display map, so the only
+    route that reached it was a whole-fleet sweep - which is not what somebody
+    who just edited one board's firmware wants to run. One make produces every
+    image the tree declares; the point of `cmake_target:` is that exactly one
+    of them is staged.
+    """
+    from mcu_updater.providers import cmake as cmake_mod
+
+    def fake_run(cmd, *, cwd, reporter, cancel=None, dry_run=False, **kw):
+        build = cmake_type / "build"
+        build.mkdir(exist_ok=True)
+        for name in ("roadrunner_v1_i2c_rgb", "roadrunner_v1_uart_grb"):
+            (build / f"{name}.uf2").write_bytes(name.encode())
+        return 0
+
+    monkeypatch.setattr(cmake_mod.build_mod, "run_streamed", fake_run)
+
+    cli.build_fw_cmd(
+        argparse.Namespace(type="roadrunner", fw=None, jobs=None, no_reseed=False)
+    )
+
+    staged = pathlib.Path(c.paths.uf2_file("roadrunner", "roadrunner"))
+    assert staged.read_bytes() == b"roadrunner_v1_i2c_rgb"
+
+
+def test_building_a_cmake_type_with_no_tree_refuses_before_the_lock(
+    c, capsys, fake_root
+):
+    """The same shape as the PlatformIO refusal above, and for the same reason:
+    a missing tree is setup that has to happen outside this tool, so it is said
+    plainly rather than discovered as a cmake traceback."""
+    with open(c.paths.main_config, "a", encoding="utf-8") as fh:
+        fh.write(
+            f"\n[firmware rr_no_tree]\nsource: {fake_root / 'nowhere'}\n"
+            f"builder: cmake\n\n[type rr_no_tree]\nchipset: rp2040\n"
+            f"firmware: rr_no_tree\ncmake_target: t\n"
+        )
+
+    with pytest.raises(SystemExit) as exc:
+        cli.build_fw_cmd(
+            argparse.Namespace(type="rr_no_tree", fw=None, jobs=None, no_reseed=False)
+        )
+
+    assert exc.value.code == 1
+    assert "not found" in capsys.readouterr().err
+
+
 def test_an_empty_device_map_falls_back_to_asking_the_devices(
     c, pio_type, captured, fake_root, monkeypatch
 ):

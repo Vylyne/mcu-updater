@@ -130,6 +130,12 @@ overrides a refused [bootloader offset check](#profiles), never a whole type or
 `update-all`, where one board's exception would otherwise force every board in
 the batch past a check that exists to stop a fleet-wide brick.
 
+The offset check writes nothing, but asking is not free: it speaks katapult's
+handshake, and against a board running its application that means rebooting it
+into the bootloader. So a *refused* flash leaves that board sitting in katapult
+rather than running Klipper - the refusal says so. It comes back on the next
+flash or a power cycle; nothing was written to it.
+
 ## Web UI
 
 Everything above also works from a browser instead of SSH, via the standalone UI

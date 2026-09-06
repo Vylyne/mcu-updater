@@ -13,7 +13,7 @@
   "mutations": [
     {
       "name": "the pre-write probe is wired into the write path",
-      "find": "        _verify_offset_before_write(\n            paths, settings, flashtool, dev, fw_bin, mcu_type, fw, serial, side, reporter, force\n        )",
+      "find": "        dev = _verify_offset_before_write(\n            paths, settings, flashtool, bench, dev, fw_bin, mcu_type, chipset,\n            fw, serial, side, reporter, force, timeout,\n        )",
       "replace": "        pass"
     },
     {
@@ -24,13 +24,37 @@
     },
     {
       "name": "a mismatch found before writing is refused, not waved through",
-      "find": "        else:\n            raise OffsetMismatchError(\n                message,\n                type=mcu_type,\n                serial=serial,\n                fw=fw,\n                app_address=f\"{app_address:#x}\",\n                board_address=f\"{board_address:#x}\",\n            )",
+      "find": "        else:\n            raise OffsetMismatchError(\n                message + aftermath,\n                type=mcu_type,\n                serial=serial,\n                fw=fw,\n                app_address=f\"{app_address:#x}\",\n                board_address=f\"{board_address:#x}\",\n            )",
       "replace": "        else:\n            pass"
     },
     {
       "name": "an unreadable probe is refused too, before writing",
-      "find": "            raise OffsetMismatchError(message, type=mcu_type, serial=serial, fw=fw)",
+      "find": "            raise OffsetMismatchError(\n                message + aftermath, type=mcu_type, serial=serial, fw=fw\n            )",
       "replace": "            pass"
+    },
+    {
+      "_comment": "The 2026-09-05 hardware failure. -s shares -f's handshake, which includes the app-to-bootloader transition, and has no finish step to jump back - so a board running Klipper is left in katapult under a different by-id path. Writing to the path the probe was handed is writing to a symlink that no longer exists.",
+      "name": "the write follows the board to wherever the probe left it",
+      "find": "    if not moved:\n        return dev",
+      "replace": "    return dev\n    if not moved:\n        return dev"
+    },
+    {
+      "_comment": "Decided from flashtool's own words, not from what is on the bus now: udev creates the bootloader's by-id symlink after the probe returns, and the dead Klipper one can still be present alongside it, so a bus reading here is a race.",
+      "name": "a probe that rebooted the board is recognised as having rebooted it",
+      "find": "    moved = bool(_BOOTLOADER_REQUEST_RE.search(\"\\n\".join(transcript)))",
+      "replace": "    moved = False"
+    },
+    {
+      "_comment": "The re-resolve insists on katapult state rather than taking the first sighting - the stale Klipper symlink can outlive the reboot by a moment, and accepting it reintroduces the original bug with extra steps.",
+      "name": "the re-resolved device must actually be in its bootloader",
+      "find": "        if dev is not None and state_for_firmware(dev.fw) == STATE_KATAPULT:",
+      "replace": "        if dev is not None:"
+    },
+    {
+      "_comment": "Falling back to the caller's path when the board never reappears IS the original bug. It must raise - and say the board is in its bootloader, or a device-not-found after a reboot nobody asked for reads as a brick.",
+      "name": "a board that never reappears refuses, and says where it is",
+      "find": "    if rebooted is None:",
+      "replace": "    if False:"
     },
     {
       "name": "a disagreement is still reported if the board changed after the probe",

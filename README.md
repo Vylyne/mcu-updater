@@ -252,7 +252,23 @@ reporting `dev` means the tree it came from could not be identified:
 source: ~/roadrunner/rp2040
 builder: cmake
 cmake_args: -DROADRUNNER_FIRMWARE_VERSION=${git_describe}
+submodules: yes
 ```
+
+`submodules:` runs `git submodule update --init --recursive` in the source tree
+before each build, for trees that vendor their SDK that way. It defaults to
+**no**, and is opt-in rather than automatic because it is not free: that command
+also resets an *already* initialized submodule to the recorded commit, throwing
+away a checkout you made on purpose while working on a vendored dependency. With
+it off, a tree whose submodules are empty is refused before the build with a
+message naming the one to run by hand. Turning it on suppresses that refusal,
+since the build now runs the command the message asks for.
+
+It syncs before reading the tree's provenance, not after, so the recorded commit
+describes what was actually compiled. Note that a submodule sitting at any commit
+other than the recorded one makes the parent tree **dirty** - so with
+`submodules:` off, that state is visible in `updatefw status`, and with it on, it
+is silently corrected at the start of every build.
 
 Per-type keys:
 
@@ -579,6 +595,7 @@ staged for a given board:
 source: ~/roadrunner/rp2040     ; the cmake directory, not the repo root
 builder: cmake
 cmake_args: -DROADRUNNER_FIRMWARE_VERSION=${git_describe}
+submodules: yes                 ; the tree vendors its SDK as a submodule
 
 [type roadrunner]
 chipset: rp2040

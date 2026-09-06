@@ -70,6 +70,11 @@ class CmakeType:
     #: unexpanded, because the value that reaches cmake depends on what the
     #: tree describes as at the moment of the build.
     cmake_args: str = ""
+    #: Projected from the family's `submodules:`. Held on the type for the
+    #: same reason `cmake_args` is: `build()` is handed a target, not an
+    #: `Install`, and looking a family back up from inside it would be a
+    #: second config parse to answer something load() already knew.
+    submodules: bool = False
 
     def to_json(self) -> dict:
         return {
@@ -78,6 +83,7 @@ class CmakeType:
             "source": self.source,
             "firmware": self.firmware,
             "cmake_args": self.cmake_args,
+            "submodules": self.submodules,
         }
 
 
@@ -122,6 +128,7 @@ def load(paths: Paths) -> dict[str, CmakeType]:
             source=family.source_dir(paths),
             firmware=first_fw,
             cmake_args=family.cmake_args,
+            submodules=family.submodules,
         )
     return out
 
@@ -324,12 +331,17 @@ def source_problem(target: CmakeType) -> str | None:
             f"no CMakeLists.txt in {source} - 'source:' should name the "
             f"directory holding it, not the repository root."
         )
-    empty = _uninitialised_submodule(source)
-    if empty is not None:
-        return (
-            f"submodule '{empty}' in {source} is empty - run "
-            f"'git submodule update --init --recursive' in that tree first."
-        )
+    # Not a problem for a tree that asked us to sync it: `build()` runs the
+    # very command this message tells the user to run, before it configures.
+    # Refusing here anyway would make `submodules: yes` unreachable in the one
+    # case it exists for - the first build after a fresh clone.
+    if not target.submodules:
+        empty = _uninitialised_submodule(source)
+        if empty is not None:
+            return (
+                f"submodule '{empty}' in {source} is empty - run "
+                f"'git submodule update --init --recursive' in that tree first."
+            )
 
     known = declared_targets(source)
     if known is not None and target.cmake_target not in known:
@@ -443,6 +455,30 @@ def build(
     """
     source = os.path.expanduser(target.source or "")
     build_path = build_dir(source)
+
+    # Before `source_state`, deliberately. A submodule at a commit other than
+    # the one recorded shows up in the parent's `git status` as a modified
+    # gitlink, so syncing after the sample would record provenance for a tree
+    # that no longer exists - and syncing after the *build* would describe
+    # bytes compiled from the old submodule with the new one's state.
+    if target.submodules:
+        reporter("info", "Syncing submodules...")
+        rc = build_mod.run_streamed(
+            ["git", "submodule", "update", "--init", "--recursive"],
+            cwd=source,
+            reporter=reporter,
+            cancel=cancel,
+            dry_run=settings.dry_run,
+        )
+        if rc != 0:
+            raise BuildError(
+                f"git submodule update failed for '{target.name}': git exited "
+                f"{rc}. The tree is left as it was; nothing was built.",
+                type=target.name,
+                fw=target.firmware,
+                returncode=rc,
+            )
+
     state = source_state(source)
     args = expand_args(target.cmake_args, state)
 

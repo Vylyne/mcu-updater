@@ -55,6 +55,20 @@ def test_a_cmake_type_loads_with_its_target_and_args(paths, tmp_path):
     assert rr.firmware == "roadrunner"
     assert rr.source == str(tmp_path)
     assert rr.cmake_args == "-DROADRUNNER_FIRMWARE_VERSION=${git_describe}"
+    assert rr.submodules is False
+
+
+def test_the_families_submodules_key_reaches_the_type(paths, tmp_path):
+    """`submodules:` is a fact about the tree, so it is written on the family
+    and projected onto every type that family builds - the same route
+    `cmake_args:` takes, and for the same reason."""
+    write_config(
+        paths,
+        ROADRUNNER_CFG.format(source=tmp_path).replace(
+            "builder: cmake", "builder: cmake\nsubmodules: yes"
+        ),
+    )
+    assert cmake.load(paths)["roadrunner"].submodules is True
 
 
 def test_a_kconfig_type_is_not_ours(paths):
@@ -239,6 +253,22 @@ def test_an_uninitialised_submodule_is_named_with_its_fix(tmp_path):
     assert problem is not None
     assert "pico-sdk" in problem
     assert "git submodule update --init --recursive" in problem
+
+
+def test_a_tree_that_syncs_its_own_submodules_is_not_blocked_by_an_empty_one(tmp_path):
+    """The refusal above tells the user to run the command that `submodules:
+    yes` runs for them. Keeping it would make the key unreachable in the one
+    case it exists for: the first build after a fresh clone."""
+    (tmp_path / "CMakeLists.txt").write_text("project(rr)\n", encoding="utf-8")
+    (tmp_path / ".gitmodules").write_text(
+        '[submodule "pico-sdk"]\n\tpath = pico-sdk\n\turl = https://example/x\n',
+        encoding="utf-8",
+    )
+    (tmp_path / "pico-sdk").mkdir()
+    target = _cmake_type(tmp_path)
+    target.submodules = True
+    problem = cmake.source_problem(target)
+    assert problem is None or "submodule" not in problem
 
 
 def test_a_populated_submodule_is_not_a_problem(tmp_path):
@@ -636,6 +666,75 @@ def test_an_edit_discarded_during_the_build_is_still_recorded_dirty(
     record = cmake.read_sidecar(paths, target)
     assert record["dirty"] is True
     assert cmake.artifact_status(paths, target, after).reason == BUILT_DIRTY
+
+
+def test_a_tree_that_asks_for_submodules_syncs_before_it_configures(
+    paths, settings, repo, monkeypatch
+):
+    """Order is the whole point. A submodule at a commit other than the
+    recorded one is a modified gitlink in the parent, so a sync landing after
+    the provenance sample would record a tree that no longer exists."""
+    source = repo / "rp2040"
+    seen: list[list[str]] = []
+
+    def fake_run(cmd, *, cwd, reporter, cancel=None, dry_run=False, **kw):
+        seen.append(list(cmd))
+        (source / "build").mkdir(exist_ok=True)
+        (source / "build" / "roadrunner_v1_i2c_rgb.uf2").write_bytes(b"IMAGE")
+        return 0
+
+    monkeypatch.setattr(cmake.build_mod, "run_streamed", fake_run)
+    target = _cmake_type(source)
+    target.submodules = True
+    cmake.build(paths, settings, target)
+
+    assert seen[0][:3] == ["git", "submodule", "update"]
+    assert "--recursive" in seen[0]
+    assert [c[0] for c in seen[1:]] == ["cmake", "make"]
+
+
+def test_a_tree_that_does_not_ask_for_submodules_never_runs_git(
+    paths, settings, repo, monkeypatch
+):
+    """Opt-in. Syncing unasked would reset a submodule somebody deliberately
+    checked out elsewhere, and silently make that dirty tree clean."""
+    source = repo / "rp2040"
+    seen: list[list[str]] = []
+
+    def fake_run(cmd, *, cwd, reporter, cancel=None, dry_run=False, **kw):
+        seen.append(list(cmd))
+        (source / "build").mkdir(exist_ok=True)
+        (source / "build" / "roadrunner_v1_i2c_rgb.uf2").write_bytes(b"IMAGE")
+        return 0
+
+    monkeypatch.setattr(cmake.build_mod, "run_streamed", fake_run)
+    cmake.build(paths, settings, _cmake_type(source))
+
+    assert [c[0] for c in seen] == ["cmake", "make"]
+
+
+def test_a_failed_submodule_sync_refuses_before_anything_is_built(
+    paths, settings, repo, monkeypatch
+):
+    """Fail closed. A sync that could not complete leaves a tree that is
+    part one revision and part another - building it would stage an image no
+    commit describes."""
+    source = repo / "rp2040"
+    seen: list[list[str]] = []
+
+    def fake_run(cmd, *, cwd, reporter, cancel=None, dry_run=False, **kw):
+        seen.append(list(cmd))
+        return 128 if cmd[0] == "git" else 0
+
+    monkeypatch.setattr(cmake.build_mod, "run_streamed", fake_run)
+    target = _cmake_type(source)
+    target.submodules = True
+    with pytest.raises(BuildError) as excinfo:
+        cmake.build(paths, settings, target)
+
+    assert "submodule" in str(excinfo.value)
+    assert [c[0] for c in seen] == ["git"]
+    assert cmake.read_sidecar(paths, target) is None
 
 
 def test_the_recorded_version_is_the_one_compiled_in(

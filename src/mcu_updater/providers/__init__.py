@@ -12,6 +12,7 @@ it does.
 
 from __future__ import annotations
 
+from .cmake import Cmake, CmakeType
 from .kconfig_make import KconfigMake
 from .platformio import PlatformIO
 from .registry import PROVIDERS, Selection, by_name, select
@@ -20,6 +21,8 @@ from .spec import BuildTarget, Install, Provider, Skipped
 __all__ = [
     "PROVIDERS",
     "BuildTarget",
+    "Cmake",
+    "CmakeType",
     "Install",
     "KconfigMake",
     "PlatformIO",

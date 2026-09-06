@@ -1,5 +1,5 @@
 {
-  "_comment": "A type's provider is derived from its declared firmware's builder, not a provider: key - config.py and providers/pio.py each have to claim the right sections and leave the other's alone, or a type is silently built by the wrong tool, or dropped from the file entirely on the next save.",
+  "_comment": "A type's provider is derived from its declared firmware's builder, not a provider: key - config.py owns the kconfig_make types and every other provider owns its own, and each has to claim the right sections and leave the others' alone, or a type is silently built by the wrong tool, or dropped from the file entirely on the next save. The rule is general, not a platformio special case: config.py excludes any builder that is not kconfig_make.",
   "file": "src/mcu_updater/config.py",
   "command": [
     "python",
@@ -18,13 +18,13 @@
       "replace": "            if False:"
     },
     {
-      "name": "a platformio-only type is excluded from this registry",
-      "find": "            if declared_fws and builders == {\"platformio\"}:",
+      "name": "a type built by a foreign builder is excluded from this registry",
+      "find": "            if declared_fws and builders != {\"kconfig_make\"}:",
       "replace": "            if False:"
     },
     {
-      "name": "a platformio-only type's section survives a save",
-      "find": "            if _is_platformio_only(paths, doc, declared.section, families_map):",
+      "name": "a foreign-builder type's section survives a save",
+      "find": "            if _is_foreign_builder(paths, doc, declared.section, families_map):",
       "replace": "            if False:"
     },
     {

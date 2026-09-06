@@ -10,7 +10,7 @@ tree it happens to be.
 
 Both are gone. A type's provider is derived from its declared firmware's
 builder (see :mod:`~mcu_updater.firmware`, :mod:`~mcu_updater.config`'s
-``_is_platformio_only``, and ``providers/pio.py``'s ``load()``) - a fact about
+``_is_foreign_builder``, and ``providers/pio.py``'s ``load()``) - a fact about
 the ``[firmware ...]`` section it names, not about how its own section is
 spelled or what key it carries. This module now only knows one spelling,
 ``[type <name>]``, and only answers "which sections declare a type" - naming

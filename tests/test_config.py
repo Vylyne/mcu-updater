@@ -731,3 +731,57 @@ def test_canbus_uuid_is_a_separate_namespace_from_serial(paths):
     reg.add_canbus_uuid("a", "SHARED")
     assert reg.find_types_for_uuid("SHARED") == ["a"]
     assert reg.find_types_for_serial("SHARED") == ["a"]
+
+
+def _cfg_with_a_cmake_type() -> str:
+    return (
+        "[firmware roadrunner]\n"
+        "source: ~/roadrunner/rp2040\n"
+        "builder: cmake\n"
+        "\n"
+        "[type bttebb36]\n"
+        "chipset: stm32g0b1xx\n"
+        "firmware: klipper, katapult\n"
+        "serials:\n"
+        "    912345678901234567890\n"
+        "\n"
+        "[type roadrunner]\n"
+        "chipset: rp2040\n"
+        "firmware: roadrunner\n"
+        "cmake_target: roadrunner_v1_i2c_rgb\n"
+        "serials:\n"
+        "    RR-ABCDEFGHIJKLMNOPQRSTUVWXYZ\n"
+    )
+
+
+def test_a_type_built_by_a_third_builder_is_not_loaded_into_this_registry(paths):
+    """Provider is derived from the declared family's builder. A cmake type
+    belongs to providers/cmake.py, exactly as a platformio one belongs to
+    providers/pio.py."""
+    with open(paths.registry_file, "w", encoding="utf-8") as fh:
+        fh.write(_cfg_with_a_cmake_type())
+    registry = Registry.load(paths)
+    assert "bttebb36" in registry.types
+    assert "roadrunner" not in registry.types
+
+
+def test_saving_does_not_delete_a_type_this_registry_does_not_own(paths):
+    """The data-loss guard.
+
+    `save()` removes any declared type absent from `self.types`, so a type
+    excluded by `load()` is one `save()` would delete - silently, from a
+    hand-edited file in printer_data/config. The platformio exclusion has
+    always been paired with a matching save-time skip; a third builder needs
+    the same, and gets it by inverting both checks rather than adding a second
+    special case.
+    """
+    with open(paths.registry_file, "w", encoding="utf-8") as fh:
+        fh.write(_cfg_with_a_cmake_type())
+    registry = Registry.load(paths)
+    registry.save(paths)
+
+    text = open(paths.registry_file, encoding="utf-8").read()
+    assert "[type roadrunner]" in text
+    assert "cmake_target: roadrunner_v1_i2c_rgb" in text
+    assert "RR-ABCDEFGHIJKLMNOPQRSTUVWXYZ" in text
+    assert "[type bttebb36]" in text

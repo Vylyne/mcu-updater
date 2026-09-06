@@ -80,6 +80,19 @@ class FirmwareFamily:
     #: What builds this tree. ``kconfig_make`` for Klipper, Katapult and every
     #: fork of either; ``platformio`` is the other one today.
     builder: str = DEFAULT_BUILDER
+    #: Extra arguments for this tree's configure step, as one shell-quoted
+    #: string. Only the cmake provider reads it - a cache variable is a fact
+    #: about one tree and not about cmake, so it belongs in config rather
+    #: than hardcoded in a general-purpose provider. `${git_describe}` is the
+    #: one substitution; see `providers/cmake.py`.
+    cmake_args: str = ""
+    #: Sync this tree's git submodules before building it. Opt-in, and off
+    #: everywhere it is not written, because it is not free: `git submodule
+    #: update --init --recursive` resets an *already* initialized submodule
+    #: to the recorded commit, discarding a checkout somebody made on purpose
+    #: while hacking on a vendored dependency. Only the cmake provider reads
+    #: it - a tree that vendors its SDK that way is a fact about that tree.
+    submodules: bool = False
     #: A bootloader, not an application - Katapult, not Klipper or a fork of
     #: it. Determines whether a sweep builds this family only when named
     #: (`providers.spec.on_demand`) and, with the application, whether the two
@@ -122,6 +135,7 @@ class FirmwareFamily:
             "source": self.source,
             "artifact": self.artifact_name(),
             "builder": self.builder,
+            "cmake_args": self.cmake_args,
             "bootloader": self.bootloader,
         }
 
@@ -142,6 +156,8 @@ def load_from_doc(doc: CfgDocument) -> dict[str, FirmwareFamily]:
             source=(doc.get(section, "source") or "").strip(),
             artifact=(doc.get(section, "artifact") or "").strip(),
             builder=(doc.get(section, "builder") or "").strip() or DEFAULT_BUILDER,
+            cmake_args=(doc.get(section, "cmake_args") or "").strip(),
+            submodules=bool(parse_bool(doc.get(section, "submodules"), False)),
             # Absent means "whatever this name defaults to" - True only for
             # katapult - not a blanket False, so overriding one key on an
             # existing [firmware katapult] section can't silently turn its

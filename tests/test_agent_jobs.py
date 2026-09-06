@@ -218,6 +218,70 @@ def test_build_completes_and_records_its_artifact(api, paths):
     assert types["bttebb36"]["artifacts"]["klipper"]["reason"] is None
 
 
+def test_build_reaches_a_cmake_type_named_on_its_own(api, paths, tmp_path):
+    """`fw.build {name: "roadrunner"}` raised "no type is configured".
+
+    `_provider_of` knew two sources - the PlatformIO displays and the kconfig
+    registry - and a cmake type is in neither, so the only way to compile one
+    through the agent was `fw.build_all`. No `fw` here on purpose: the family
+    names the tree and `cmake_target:` names the image, so there is no family
+    axis to choose on, exactly as for a PlatformIO env.
+    """
+    source = tmp_path / "rp2040"
+    source.mkdir()
+    (source / "CMakeLists.txt").write_text("project(roadrunner)\n", encoding="utf-8")
+    with open(paths.main_config, "a", encoding="utf-8") as fh:
+        fh.write(
+            f"\n[firmware roadrunner]\nsource: {source}\nbuilder: cmake\n\n"
+            f"[type roadrunner]\nchipset: rp2040\nfirmware: roadrunner\n"
+            f"cmake_target: roadrunner_v1_i2c_rgb\n"
+        )
+
+    res = api.dispatch("fw.build", {"name": "roadrunner"})
+    assert api.runner.wait(timeout=30)
+
+    job = api.runner.get(res["job_id"])
+    assert job.state == "succeeded", job.error
+    assert job.result["cmake_target"] == "roadrunner_v1_i2c_rgb"
+    # Kind `build` like any other compile, and carrying the `type` key every
+    # other job of that kind carries - a client reading `result.type` off a
+    # build job must not get `undefined` for this one.
+    assert job.kind == "build"
+    assert job.result["type"] == "roadrunner"
+    # The staged path this build would have written. `api`'s settings are a dry
+    # run, so nothing is copied - which is the point of a rehearsal, and why
+    # this asserts the path rather than the file.
+    assert job.result["uf2_path"] == paths.uf2_file("roadrunner", "roadrunner")
+
+
+def test_a_cmake_type_with_no_source_tree_is_refused_before_a_job_exists(
+    api, paths, tmp_path
+):
+    """The CLI's cmake branch refuses synchronously and the agent did not, so
+    the same misconfiguration arrived as a failed job somebody had to open and
+    read. `build()` still refuses on its own - that is what guarantees no wrong
+    image is staged - but this is the readable answer, and it is the only one
+    that costs no job at all."""
+    missing = tmp_path / "not-cloned"
+    with open(paths.main_config, "a", encoding="utf-8") as fh:
+        fh.write(
+            f"\n[firmware roadrunner]\nsource: {missing}\nbuilder: cmake\n\n"
+            f"[type roadrunner]\nchipset: rp2040\nfirmware: roadrunner\n"
+            f"cmake_target: roadrunner_v1_i2c_rgb\n"
+        )
+
+    before = len(api.runner.recent(limit=50))
+    with pytest.raises(RpcError) as exc:
+        api.dispatch("fw.build", {"name": "roadrunner"})
+
+    assert exc.value.data["code"] == "build_blocked"
+    assert str(missing) in str(exc.value)
+    # The load-bearing half: no job was created, so nothing ran and nothing
+    # has to be read to find out why.
+    assert api.runner.current() is None
+    assert len(api.runner.recent(limit=50)) == before
+
+
 def test_a_second_build_while_one_runs_is_refused(api, paths):
     _stage_config(paths)
     _stage_config(paths, "OctopusMAXEZ")

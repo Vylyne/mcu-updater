@@ -397,6 +397,25 @@ def build_fw_cmd(args: argparse.Namespace) -> None:
             provider.build(install, target, reporter=stdout_reporter)
         return
 
+    # A cmake type is in neither the `[mcu ...]` registry - `config.py` keeps
+    # foreign builders out of it - nor the display map, so without this it
+    # reached `_build_interactive` and was told it does not exist. Its family
+    # names the tree and `cmake_target:` names the image, so `-f` says nothing
+    # here either, and there is no menuconfig behind it to offer.
+    if args.type in install.cmake:
+        entry = install.cmake[args.type]
+        target = providers.BuildTarget(
+            providers.Cmake.name, args.type, entry.firmware
+        )
+        provider = providers.by_name(providers.Cmake.name)
+        blocked = provider.blocked(install, target)
+        if blocked:
+            print(f"ERROR: {blocked}", file=sys.stderr)
+            sys.exit(1)
+        with exclusive(c.paths, f"build {args.type}"):
+            provider.build(install, target, reporter=stdout_reporter)
+        return
+
     with exclusive(c.paths, f"build {args.fw}/{args.type}"):
         _build_interactive(
             c,

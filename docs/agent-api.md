@@ -91,7 +91,10 @@ API; the prose is not. Most come from `errors.py`: `config_corrupt`,
 `print_in_progress`, `cancelled`, `profile`, `profile_not_found`,
 `profile_customised`, `offset_mismatch`, `kconfig`, `no_session`. A few are
 built inline at the call site rather than from a typed exception -
-`no_artifact`, `nothing_to_do`, `unknown_job` (`fw.job.get`/`fw.job.cancel`),
+`no_artifact`, `nothing_to_do`, `build_blocked` (`fw.build` on a cmake type
+whose source tree is missing, has no `CMakeLists.txt`, has an uninitialised
+submodule, or does not declare the configured `cmake_target:` - the refusal
+arrives before a job is created), `unknown_job` (`fw.job.get`/`fw.job.cancel`),
 `unknown_target` (`fw.target.get` - one code for either provider, deliberately;
 an unknown MCU name through `fw.artifacts` still reports `unknown_type`
 because that path raises `UnknownTypeError` directly, but `fw.target.get`
@@ -557,8 +560,8 @@ should say so rather than hand over a button that fails.
 
 ```json
 {"name": "cartographer", "source": "/home/biqu/MCU-Firmware---Based-on-Klipper",
- "artifact": "klipper", "builder": "kconfig_make", "bootloader": false,
- "present": true, "configurable": true, "builtin": false}
+ "artifact": "klipper", "builder": "kconfig_make", "cmake_args": "",
+ "bootloader": false, "present": true, "configurable": true, "builtin": false}
 ```
 
 Every firmware family this install knows about, for a picker to offer. `present`
@@ -570,10 +573,14 @@ removed by editing a config file.
 
 `builder` is `[firmware ...]`'s own `builder:` key (default `kconfig_make`) —
 how a tree compiles is a property of the tree, not of a type that happens to
-use it, so it lives here rather than on `TypeStatus` or `Target`. `bootloader`
-marks a family as `katapult`-shaped: not an application, so it is never the
-thing a build failure or a staleness check is really about, and a type omits
-it from `firmware:` entirely rather than carrying a `katapult_installed` flag.
+use it, so it lives here rather than on `TypeStatus` or `Target`. `cmake_args`
+joins it for the same reason: it is `[firmware ...]`'s own `cmake_args:` key,
+verbatim (the `${git_describe}` substitution is expanded at build time, not
+here), and empty string for every family that isn't `builder: cmake`.
+`bootloader` marks a family as `katapult`-shaped: not an application, so it is
+never the thing a build failure or a staleness check is really about, and a
+type omits it from `firmware:` entirely rather than carrying a
+`katapult_installed` flag.
 
 ## Jobs
 
@@ -796,6 +803,14 @@ Each provider enumerates its own targets:
 | --- | --- | --- |
 | `kconfig_make` | one `[type ...]` × one firmware family it names | the family |
 | `platformio` | one `[type ...]` whose firmware's builder is `platformio` | `null` — the env *is* the type |
+| `cmake` | one `[type ...]` whose firmware's builder is `cmake` | the family — one tree, one image per `cmake_target:` |
+
+A known limit, stated so a client author is not surprised by it: `fw.status`'s
+`targets[]` and `fw.target.get` do **not** cover cmake types, even though
+`fw.build_all` builds them and reports them in `builds[]` / `skipped[]` with
+`"provider": "cmake"`. A cmake type can be built by name (`fw.build {name}`,
+no `fw` — the family names the tree and `cmake_target:` names the image, so
+there is no family axis to choose on) but it has no `targets[]` row yet.
 
 Three rules follow, and each of them was a bug first:
 
@@ -1801,6 +1816,9 @@ does it with the validation.
 **`fw.flash_type` was never implemented and never will be.** It is
 `fw.flash_all {name}`: the same selection and the same loop with a filter, rather
 than a second implementation to keep in step with the first.
+
+`fw.build` on a cmake type refuses synchronously with `build_blocked` when the
+source tree cannot be built in, exactly as the CLI does - no job is created.
 
 `fw.build` refuses a type with no saved `.config`, returning `no_saved_config`.
 `make menuconfig` is an ncurses UI and cannot run inside the agent, so the

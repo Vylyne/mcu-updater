@@ -464,3 +464,33 @@ def test_a_board_with_no_bootloader_lists_only_its_application(paths):
     reg.add_type("bare", "stm32f072xb", katapult_installed=False)
     reg.save(paths)
     assert Registry.load(paths).get("bare").families() == ["klipper"]
+
+
+def test_cmake_args_is_read_from_the_section(paths):
+    """A cache variable is a fact about one tree, not about cmake, so it lives
+    in config rather than in the provider."""
+    with open(paths.main_config, "w", encoding="utf-8") as fh:
+        fh.write(
+            "[firmware roadrunner]\n"
+            "source: ~/roadrunner/rp2040\n"
+            "builder: cmake\n"
+            "cmake_args: -DROADRUNNER_FIRMWARE_VERSION=${git_describe}\n"
+        )
+    family = firmware.load(paths)["roadrunner"]
+    assert family.builder == "cmake"
+    assert family.cmake_args == "-DROADRUNNER_FIRMWARE_VERSION=${git_describe}"
+
+
+def test_cmake_args_defaults_to_empty_for_every_existing_family(paths):
+    """Optional, so no existing install changes shape."""
+    with open(paths.main_config, "w", encoding="utf-8") as fh:
+        fh.write("[firmware cartographer]\nsource: ~/cartographer-klipper\n")
+    assert firmware.load(paths)["cartographer"].cmake_args == ""
+    assert firmware.resolve(paths, "klipper").cmake_args == ""
+
+
+def test_cmake_args_reaches_the_json_payload(paths):
+    """`agent/methods/status.py` emits the family payload; a key the panel
+    cannot see is a key nobody can debug."""
+    family = firmware.FirmwareFamily(name="roadrunner", cmake_args="-DFOO=1")
+    assert family.to_json()["cmake_args"] == "-DFOO=1"

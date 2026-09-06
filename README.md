@@ -37,6 +37,7 @@ Build systems ("builders" - one module + one registry line to add another):
 
 - [x] `kconfig_make` - Klipper, Katapult, and forks (menuconfig + make)
 - [x] `platformio` - anything with a `platformio.ini`
+- [x] `cmake` - a `CMakeLists.txt` tree, `cmake_target:` picks which of its executables gets staged
 - [ ] prebuilt images - download a release asset instead of building
 
 Flashing:
@@ -128,6 +129,12 @@ confirmation prompts; `--force` where a prompt guards something destructive. On
 overrides a refused [bootloader offset check](#profiles), never a whole type or
 `update-all`, where one board's exception would otherwise force every board in
 the batch past a check that exists to stop a fleet-wide brick.
+
+The offset check writes nothing, but asking is not free: it speaks katapult's
+handshake, and against a board running its application that means rebooting it
+into the bootloader. So a *refused* flash leaves that board sitting in katapult
+rather than running Klipper - the refusal says so. It comes back on the next
+flash or a power cycle; nothing was written to it.
 
 ## Web UI
 
@@ -229,6 +236,40 @@ to override their defaults; every type that lists them resolves the plain
 `~/<name>` / `kconfig_make` / `out/<name>.bin` convention with no section at
 all.
 
+`builder:` takes three values: `kconfig_make` (the default, above), `platformio`
+(see [ESP32 displays](#esp32-displays)) and `cmake` (see
+[RP2040 cmake trees](#rp2040-cmake-trees)). A cmake family also takes
+`cmake_args:`, split shell-style and appended to the configure step - quoting
+groups words (`-DX="two words"` arrives as one argument) and is consumed, the
+same way a shell consumes it. `${git_describe}` is the one substitution it
+supports, expanding to the source tree's own `git describe` so the board's
+`INFO` reports a version you can trace back to a commit - and, in a tree that
+is not a git checkout, to the literal `dev` rather than failing, so firmware
+reporting `dev` means the tree it came from could not be identified:
+
+```ini
+[firmware roadrunner]
+source: ~/roadrunner/rp2040
+builder: cmake
+cmake_args: -DROADRUNNER_FIRMWARE_VERSION=${git_describe}
+submodules: yes
+```
+
+`submodules:` runs `git submodule update --init --recursive` in the source tree
+before each build, for trees that vendor their SDK that way. It defaults to
+**no**, and is opt-in rather than automatic because it is not free: that command
+also resets an *already* initialized submodule to the recorded commit, throwing
+away a checkout you made on purpose while working on a vendored dependency. With
+it off, a tree whose submodules are empty is refused before the build with a
+message naming the one to run by hand. Turning it on suppresses that refusal,
+since the build now runs the command the message asks for.
+
+It syncs before reading the tree's provenance, not after, so the recorded commit
+describes what was actually compiled. Note that a submodule sitting at any commit
+other than the recorded one makes the parent tree **dirty** - so with
+`submodules:` off, that state is visible in `updatefw status`, and with it on, it
+is silently corrected at the start of every build.
+
 Per-type keys:
 
 - **`chipset`** - required on every type, PlatformIO included. It is the sole
@@ -249,6 +290,11 @@ Per-type keys:
   has no way to add `src-y +=` lines from the command line, and a permanent edit
   would leak into every other type sharing that chipset and conflict on the next
   `git pull` of Klipper.
+- **`cmake_target`** - required on a type whose family is `builder: cmake`. The
+  cmake target to stage, spelled exactly as that tree's `add_executable()`
+  names it - not a short form, since expanding one would mean knowing a
+  naming convention that belongs to one vendor's `CMakeLists.txt`. A mixed
+  RGB/GRB fleet needs two `[type]` sections, since `cmake_target:` is per-type.
 - **`<fw>_extra_repos`** - one directory per line. Secondary source trees whose
   git SHA is tracked alongside the main tree, so a type is reported stale if
   *either* the main source or one of these has moved - e.g. `flylllplusbuffer`
@@ -535,6 +581,37 @@ A few things to know:
 - **A missing screen is otherwise invisible.** The klippy module runs as a no-op
   when a port won't open, so Klipper starts happily with a blank display and no
   error. `fw.device.list` is the only thing that says so.
+
+### RP2040 cmake trees
+
+One `CMakeLists.txt` commonly declares several executables at once -
+Roadrunner's declares six, three transports times two neopixel orderings - and
+one `make` builds all of them. `cmake_target:` is what selects which one gets
+staged for a given board:
+
+```ini
+# mcu-updater.cfg
+[firmware roadrunner]
+source: ~/roadrunner/rp2040     ; the cmake directory, not the repo root
+builder: cmake
+cmake_args: -DROADRUNNER_FIRMWARE_VERSION=${git_describe}
+submodules: yes                 ; the tree vendors its SDK as a submodule
+
+[type roadrunner]
+chipset: rp2040
+firmware: roadrunner
+cmake_target: roadrunner_v1_i2c_rgb    ; -> build/roadrunner_v1_i2c_rgb.uf2
+serials:
+    RR-ABCDEFGHIJKLMNOPQRSTUVWXYZ
+```
+
+A mixed RGB/GRB fleet - or any fleet where boards need different targets out
+of the same tree - takes two `[type]` sections, since `cmake_target:` is
+per-type, not per-board. There is no closed-loop flash for this chipset yet:
+staging produces `roadrunner.uf2` under
+`~/printer_data/mcu-updater/roadrunner/`, and getting it onto the board is
+still hold `BOOT`, press and release `RESET`, release `BOOT`, then copy the
+file to the mounted volume.
 
 ## Layout
 

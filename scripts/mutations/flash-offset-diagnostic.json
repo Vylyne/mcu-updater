@@ -1,11 +1,12 @@
 {
-  "_comment": "The flash-time offset checks. flashtool's -s/--status probe (connect_btl(), skip send/verify/finish) lets flash_katapult refuse a mismatched write before -f is ever called - see _verify_offset_before_write. _report_offset_mismatch is the second line of defence, checking again from what -f itself reported, for the board changing between the probe and the write; by the time that one runs the write has already happened, so it can only report, never refuse.",
+  "_comment": "The flash-time offset checks. flashtool's -s/--status probe (connect_btl(), skip send/verify/finish) lets flash_katapult refuse a mismatched write before -f is ever called - see _verify_offset_before_write. _report_offset_mismatch is the second line of defence, checking again from what -f itself reported, for the board changing between the probe and the write; by the time that one runs the write has already happened, so it can only report, never refuse. The probe is not free of side effects: it shares -f's connect_btl() handshake, which transitions a running application into the bootloader, and -s has no finish step to jump it back - so a probed board is left in katapult, under a different by-id path over USB. _verify_offset_before_write therefore returns the device to write to, and every refusal says where the board was left.",
   "file": "src/mcu_updater/flashers/flash.py",
   "command": [
     "python",
     "-m",
     "pytest",
     "tests/test_flash.py",
+    "tests/test_flash_can.py",
     "tests/test_build.py",
     "tests/test_cli.py",
     "-q"
@@ -13,7 +14,7 @@
   "mutations": [
     {
       "name": "the pre-write probe is wired into the write path",
-      "find": "        _verify_offset_before_write(\n            paths, settings, flashtool, dev, fw_bin, mcu_type, fw, serial, side, reporter, force\n        )",
+      "find": "        dev = _verify_offset_before_write(\n            paths, settings, flashtool, bench, dev, fw_bin, mcu_type, chipset,\n            fw, serial, side, reporter, force, timeout,\n        )",
       "replace": "        pass"
     },
     {
@@ -24,13 +25,55 @@
     },
     {
       "name": "a mismatch found before writing is refused, not waved through",
-      "find": "        else:\n            raise OffsetMismatchError(\n                message,\n                type=mcu_type,\n                serial=serial,\n                fw=fw,\n                app_address=f\"{app_address:#x}\",\n                board_address=f\"{board_address:#x}\",\n            )",
+      "find": "        else:\n            raise OffsetMismatchError(\n                message + aftermath,\n                type=mcu_type,\n                serial=serial,\n                fw=fw,\n                app_address=f\"{app_address:#x}\",\n                board_address=f\"{board_address:#x}\",\n            )",
       "replace": "        else:\n            pass"
     },
     {
       "name": "an unreadable probe is refused too, before writing",
-      "find": "            raise OffsetMismatchError(message, type=mcu_type, serial=serial, fw=fw)",
+      "find": "            raise OffsetMismatchError(\n                message + aftermath, type=mcu_type, serial=serial, fw=fw\n            )",
       "replace": "            pass"
+    },
+    {
+      "_comment": "The 2026-09-05 hardware failure. -s shares -f's handshake, which includes the app-to-bootloader transition, and has no finish step to jump back - so a board running Klipper is left in katapult under a different by-id path. Writing to the path the probe was handed is writing to a symlink that no longer exists.",
+      "name": "the write follows the board to wherever the probe left it",
+      "find": "    if not moved:\n        return dev",
+      "replace": "    return dev\n    if not moved:\n        return dev"
+    },
+    {
+      "_comment": "Decided from flashtool's own words, not from what is on the bus now: udev creates the bootloader's by-id symlink after the probe returns, and the dead Klipper one can still be present alongside it, so a bus reading here is a race.",
+      "name": "a probe that rebooted the board is recognised as having rebooted it",
+      "find": "    moved = bool(_BOOTLOADER_REQUEST_RE.search(\"\\n\".join(transcript)))",
+      "replace": "    moved = False"
+    },
+    {
+      "_comment": "The re-resolve insists on katapult state rather than taking the first sighting - the stale Klipper symlink can outlive the reboot by a moment, and accepting it reintroduces the original bug with extra steps.",
+      "name": "the re-resolved device must actually be in its bootloader",
+      "find": "        if dev is not None and state_for_firmware(dev.fw) == STATE_KATAPULT:",
+      "replace": "        if dev is not None:"
+    },
+    {
+      "_comment": "Falling back to the caller's path when the board never reappears IS the original bug. It must raise - and say the board is in its bootloader, or a timeout after a reboot nobody asked for reads as a brick.",
+      "name": "a board that never reappears refuses, and says where it is",
+      "find": "    if rebooted is None:",
+      "replace": "    if False:"
+    },
+    {
+      "_comment": "The reconnect is the flakiest step in the sequence and it happens after the reboot, so a non-zero probe exit is the failure most likely to be misread as a dead board. That is why `moved` is computed above the exit-code check rather than below it.",
+      "name": "a probe that failed after rebooting the board still says where it is",
+      "find": "            f\"attempting to write.\" + aftermath,",
+      "replace": "            f\"attempting to write.\","
+    },
+    {
+      "_comment": "The CAN path is immune to the stale-path half of the bug - -i <iface> -u <uuid> addresses the board either way - but not to the reboot half: refusing there leaves a native node in katapult exactly as it does over USB.",
+      "name": "a CAN refusal says the probe left the node in katapult too",
+      "find": "                        message + can_aftermath,\n                        type=mcu_type,\n                        uuid=uuid,",
+      "replace": "                        message,\n                        type=mcu_type,\n                        uuid=uuid,"
+    },
+    {
+      "_comment": "device_for defaults to the full SOURCES sweep, which includes Listen - a real serial-port pass per display family. Widening the re-resolve poll back to that runs it up to 30 times, at a bus that is mid-re-enumeration.",
+      "name": "the re-resolve poll asks only the by-id source",
+      "find": "        dev, _confidence, _reason = device_for(bench, chipset, serial, (Byid(),))",
+      "replace": "        dev, _confidence, _reason = device_for(bench, chipset, serial)"
     },
     {
       "name": "a disagreement is still reported if the board changed after the probe",

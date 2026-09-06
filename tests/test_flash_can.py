@@ -181,6 +181,31 @@ def test_native_node_probe_mismatch_refuses_before_writing(paths, ready, fake_ro
     assert "-s" in calls[0]
 
 
+def test_a_native_node_refusal_says_the_probe_left_it_in_katapult(
+    paths, ready, fake_root, monkeypatch
+):
+    """The path bug the USB side had is CAN-proof - `-i <iface> -u <uuid>`
+    addresses the board either way - but the *reboot* is not: `-s` shares
+    `-f`'s handshake and has no finish step, so refusing here leaves a native
+    node sitting in katapult. The message says so, same as the USB refusal."""
+    ready_paths = _with_interfaces(paths, fake_root, ["can0"])
+    _write_sidecar(paths, "board", "klipper", app_address=0x08004000)
+    _script_run_streamed(
+        monkeypatch,
+        {
+            ("can0", "probe"): (
+                0,
+                [f"Requesting CAN bootloader for {UUID}...", "Application Start: 0x8000"],
+            )
+        },
+    )
+
+    with pytest.raises(OffsetMismatchError) as exc:
+        flash_katapult_can(ready_paths, ready, "board", UUID)
+
+    assert "katapult now" in str(exc.value)
+
+
 def test_native_node_agreeing_addresses_proceed_to_write(paths, ready, fake_root, monkeypatch):
     ready_paths = _with_interfaces(paths, fake_root, ["can0"])
     _write_sidecar(paths, "board", "klipper", app_address=0x08004000)

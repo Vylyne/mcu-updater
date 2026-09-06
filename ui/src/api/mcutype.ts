@@ -13,6 +13,9 @@ export interface Family {
   source: string;
   artifact: string;
   builder: string;
+  /** `[firmware ...]`'s own `cmake_args:` - always present, empty for every
+   * family whose builder is not `cmake`. */
+  cmake_args: string;
   bootloader: boolean;
   present: boolean;
   configurable: boolean;

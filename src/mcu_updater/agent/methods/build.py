@@ -45,6 +45,13 @@ class BuildMixin(_Base):
         """
         if name in self.pio_types():
             return providers.PlatformIO.name
+        # Before the registry, not after. A cmake type is kept out of it by
+        # `config.py`'s foreign-builder rule, so the order does not matter
+        # today - but if that ever slipped, asking the registry first would
+        # answer `kconfig_make` for a Roadrunner and send it down a build path
+        # that has no .config to run, silently. Asking here first cannot.
+        if name in self._cmake_types():
+            return providers.Cmake.name
         if name in self.registry().names():
             return providers.KconfigMake.name
         raise RpcError(
@@ -55,11 +62,24 @@ class BuildMixin(_Base):
                 "data": {
                     "name": name,
                     "known": sorted(
-                        set(self.registry().names()) | set(self.pio_types())
+                        set(self.registry().names())
+                        | set(self.pio_types())
+                        | set(self._cmake_types())
                     ),
                 },
             },
         )
+
+    def _cmake_types(self) -> dict:
+        """Configured types whose declared family is cmake-built.
+
+        Mirrors `pio_types()`, and read the same way: from the config each
+        time, because a type added over `fw.type.add` has to be answerable
+        without restarting the agent.
+        """
+        from ...providers import cmake as cmake_mod
+
+        return cmake_mod.load(self.paths)
 
     def build(self, args: dict) -> dict[str, Any]:
         """Start a build. Returns a job id immediately - never blocks.
@@ -71,8 +91,12 @@ class BuildMixin(_Base):
         """
         runner = self._require_runner()
         name = args.get("name")
-        if name and self._provider_of(str(name)) == providers.PlatformIO.name:
-            return self._pio_build(args)
+        if name:
+            owner = self._provider_of(str(name))
+            if owner == providers.PlatformIO.name:
+                return self._pio_build(args)
+            if owner == providers.Cmake.name:
+                return self._cmake_build(args)
 
         fw = args.get("fw")
         known = self._fw_names()
@@ -166,6 +190,79 @@ class BuildMixin(_Base):
             return {"name": name, "env": display.env, "firmware": path}
 
         job = runner.submit("display_build", {"name": name}, run)
+        return {"job_id": job.id, "job": job.to_dict()}
+
+    def _cmake_build(self, args: dict) -> dict[str, Any]:
+        """Compile one cmake target and stage its image. Touches no hardware.
+
+        The module function rather than the provider adapter, exactly as
+        `_pio_build` does: the adapter returns nothing, and the staged path is
+        what a caller wants back from a build it asked for by name.
+        """
+        runner = self._require_runner()
+        name = self._require_str(args, "name")
+        types = self._cmake_types()
+        if name not in types:
+            raise RpcError(
+                f"no cmake type '{name}' is configured.",
+                data={
+                    "code": "unknown_type",
+                    "message": "no such type",
+                    "data": {"name": name, "known": sorted(types)},
+                },
+            )
+        entry = types[name]
+
+        # Refuse synchronously, as the CLI's cmake branch does, rather than
+        # submitting a job that will fail. `build()` refuses authoritatively on
+        # its own - it will not stage an image from a target this tree no
+        # longer declares - but that answer arrives inside a job, as a failed
+        # build somebody has to go and read. This is the readable one.
+        #
+        # `source_problem()` rather than `Cmake().blocked()`: they return the
+        # identical string here (`blocked()`'s only other branch is the missing
+        # entry, and `name` was just looked up in `types`), and reaching the
+        # adapter would mean building an `Install`, which parses the config a
+        # third time in this method and would make a malformed `[mcu ...]` or
+        # PlatformIO section refuse a cmake build that has nothing to do with
+        # either.
+        from ...providers import cmake as cmake_mod
+
+        problem = cmake_mod.source_problem(entry)
+        if problem:
+            raise RpcError(
+                problem,
+                data={
+                    "code": "build_blocked",
+                    "message": "this type cannot be built here",
+                    "data": {"name": name, "fw": entry.firmware, "reason": problem},
+                },
+            )
+
+        def run(ctx) -> dict[str, Any]:
+            ctx.step(f"Building {entry.cmake_target}", 0, 1)
+            path = cmake_mod.build(
+                self.paths, self.settings(), entry, reporter=ctx.reporter, cancel=ctx.cancel
+            )
+            ctx.step(f"Built {entry.cmake_target}", 1, 1)
+            return {
+                # Both keys, deliberately. `type` is what every other job of
+                # kind `build` carries, and reusing the kind without it would
+                # leave a client reading `result.type` with `undefined`;
+                # `name` is what `_pio_build` returns and what this method was
+                # called with.
+                "type": name,
+                "name": name,
+                "fw": entry.firmware,
+                "cmake_target": entry.cmake_target,
+                "uf2_path": path,
+            }
+
+        # Kind `build`, not a new one. It is a compile like any other - so it
+        # is immediately cancellable (jobs.py's IMMEDIATELY_CANCELLABLE) and a
+        # client already knows how to render it, where an unheard-of kind would
+        # be a wire surprise for nothing.
+        job = runner.submit("build", {"name": name, "fw": entry.firmware}, run)
         return {"job_id": job.id, "job": job.to_dict()}
 
     def _sessions(self) -> Any:

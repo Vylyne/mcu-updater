@@ -206,6 +206,49 @@ def test_a_serial_belonging_to_another_type_is_refused_outright(flashable):
     assert exc.value.data["code"] == "serial_tracked_elsewhere"
 
 
+def test_flashing_a_cmake_type_by_name_is_refused(flashable, paths, tmp_path):
+    """No flasher writes a Roadrunner yet, and this pins the shape of the
+    refusal so a later refactor cannot quietly turn it into a write.
+
+    `_provider_of` answers "cmake" for this name, so `flash()` falls past the
+    PlatformIO branch to the serial requirement - and a serial does not resolve
+    either, because `config.py` keeps a cmake type out of the `[mcu ...]`
+    registry, so it has no chipset, no artifact path and no device. Behaviour
+    unchanged; only now it is asserted."""
+    source = tmp_path / "rp2040"
+    source.mkdir()
+    (source / "CMakeLists.txt").write_text("project(roadrunner)\n", encoding="utf-8")
+    with open(paths.main_config, "a", encoding="utf-8") as fh:
+        fh.write(
+            f"\n[firmware roadrunner]\nsource: {source}\nbuilder: cmake\n\n"
+            f"[type roadrunner]\nchipset: rp2040\nfirmware: roadrunner\n"
+            f"cmake_target: roadrunner_v1_i2c_rgb\n"
+        )
+
+    # Named alone: there is no serial to fall through to, and this is not the
+    # PlatformIO branch that would have taken the name on its own.
+    with pytest.raises(RpcError) as exc:
+        flashable.dispatch("fw.flash", {"name": "roadrunner"})
+    assert exc.value.code == ERR_INVALID_PARAMS
+    assert flashable.runner.current() is None
+
+    # And with a serial supplied, the registry refuses to resolve the pairing:
+    # `unknown_type`, because the name it is asked to pair against is not in
+    # the registry at all. (A serial with no name is `unknown_serial` - the
+    # same refusal any untracked serial gets.)
+    with pytest.raises(RpcError) as exc:
+        flashable.dispatch(
+            "fw.flash", {"name": "roadrunner", "serial": "RR-ABCDEFGHIJKLMNOPQRST"}
+        )
+    assert exc.value.data["code"] == "unknown_type"
+    assert flashable.runner.current() is None
+
+    with pytest.raises(RpcError) as exc:
+        flashable.dispatch("fw.flash", {"serial": "RR-ABCDEFGHIJKLMNOPQRST"})
+    assert exc.value.data["code"] == "unknown_serial"
+    assert flashable.runner.current() is None
+
+
 def test_flashing_without_a_built_artifact_is_refused(flashable, paths):
     os.unlink(paths.bin_file(TRACKED_TYPE, "klipper"))
     with pytest.raises(RpcError) as exc:

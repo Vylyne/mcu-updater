@@ -61,8 +61,8 @@
     {
       "name": "a fleet build reaches every build system",
       "file": "src/mcu_updater/providers/registry.py",
-      "find": "PROVIDERS: tuple[Provider, ...] = (KconfigMake(), PlatformIO())",
-      "replace": "PROVIDERS: tuple[Provider, ...] = (KconfigMake(),)"
+      "find": "PROVIDERS: tuple[Provider, ...] = (KconfigMake(), PlatformIO(), Cmake())",
+      "replace": "PROVIDERS: tuple[Provider, ...] = (KconfigMake(), PlatformIO())"
     },
     {
       "name": "fw filters a fleet build rather than forcing a family",

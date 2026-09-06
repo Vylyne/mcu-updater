@@ -14,6 +14,8 @@ Files are split by *what they are*, following the `printer_data` conventions.
     bttebb36/klipper.build.json            #   build provenance, for staleness
     bttebb36/klipper.profile.json          #   what was seeded, for drift detection
     flylllplusbuffer/klipper.uf2
+    roadrunner/roadrunner.uf2              #   staged cmake_target, for a [type roadrunner]
+    roadrunner/roadrunner.build.json       #   build provenance - the source subtree's sha
     .updater.lock                          #   runtime state
     .updater.state
 ```
@@ -106,6 +108,12 @@ For Kconfig Make trees, `out/` is transient. The requested `.bin` and optional
 `make clean` removes the source-tree outputs. Cleanup runs after failed and
 cancelled builds too, so another tool cannot later flash whichever image a
 previous updater build happened to leave in `out/`.
+
+For a `builder: cmake` type, the staged artifact lands at
+`~/printer_data/mcu-updater/<type>/<fw>.uf2`, with its provenance sidecar at
+`<fw>.build.json` — the same shape as every other builder. The source tree's
+own `build/` directory, where cmake actually leaves `<cmake_target>.uf2`
+before it is copied, is not managed by this tool and stays in the source tree.
 
 The `[updater]` section holds `make_jobs`, `clean_before_build`,
 `reseed_on_build`, `service`, `service_backend`, `dry_run`, `enable_flashing`,

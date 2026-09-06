@@ -9,6 +9,7 @@ from mcu_updater import devices as devices_mod
 from mcu_updater import flashers
 from mcu_updater.errors import (
     AmbiguousDfuError,
+    BootloaderTimeoutError,
     BootselNotMountedError,
     DeviceNotFoundError,
     FlashError,
@@ -227,6 +228,243 @@ def test_agreeing_addresses_proceed_to_write(paths, ready, fake_root, monkeypatc
 
     assert not [line for stream, line in events if stream in ("error", "warn")]
     assert len(calls) == 2  # probe, then the write
+
+
+def _reboots_into_katapult(monkeypatch, bus_dir, chipset, serial, probe_lines, write_lines):
+    """The real hardware sequence the probe triggers, in a fake bus.
+
+    ``-s`` shares ``-f``'s handshake, which includes the app-to-bootloader
+    transition, and has no finish step to jump back - so the Klipper by-id
+    entry the probe was called with *disappears* and a katapult one takes its
+    place, under a different name. Records every argv so a test can assert
+    which path the write was actually addressed to.
+    """
+    klipper = make_device(bus_dir, "Klipper", chipset, serial)
+    calls: list[list[str]] = []
+
+    def fake(cmd, *, cwd=None, reporter=None, dry_run=False, fake_delay=0.0, cancel=None):
+        calls.append(list(cmd))
+        probing = "-s" in cmd
+        if probing:
+            klipper.unlink()
+            make_device(bus_dir, "katapult", chipset, serial)
+        rc, lines = (0, probe_lines) if probing else (0, write_lines)
+        if reporter is not None:
+            for line in lines:
+                reporter("stdout", line)
+        return rc
+
+    monkeypatch.setattr(flash_mod, "run_streamed", fake)
+    return calls
+
+
+_REQUEST = "Requesting USB bootloader for /dev/serial/by-id/usb-Klipper_chipA_S1..."
+
+
+def test_the_write_addresses_the_path_the_probe_left_the_board_on(
+    paths, ready, fake_root, monkeypatch
+):
+    """The 2026-09-05 hardware failure. The probe rebooted an OctopusMAXEZ
+    running Klipper into katapult, and the write was still addressed to the
+    Klipper by-id path the probe had been handed - which no longer existed:
+    "FlashError: No Serial Device found at ...usb-Klipper_...". Nothing was
+    wrong with the board; the flash just never happened.
+    """
+    ready.dry_run = False
+    _write_sidecar(paths, "board", "klipper", app_address=0x08004000)
+    calls = _reboots_into_katapult(
+        monkeypatch,
+        fake_root / "bus",
+        "chipA",
+        "S1",
+        probe_lines=[_REQUEST, "Application Start: 0x8004000"],
+        write_lines=["Application Start: 0x8004000"],
+    )
+
+    flash_katapult(paths, ready, "board", "chipA", "S1")
+
+    assert len(calls) == 2, "probe, then the write"
+    probe_path = calls[0][calls[0].index("-d") + 1]
+    write_path = calls[1][calls[1].index("-d") + 1]
+    assert "Klipper" in probe_path, "the probe is addressed to the board as found"
+    assert "katapult" in write_path, (
+        f"the write must follow the board into its bootloader, got {write_path}"
+    )
+
+
+def test_a_board_that_never_reappears_after_the_probe_refuses_to_write(
+    paths, ready, fake_root, monkeypatch
+):
+    """No fallback to the stale path - that fallback *is* the bug. Raised as
+    `bootloader_timeout` rather than `device_not_found`: the board was seen,
+    and was rebooted by us; "it never came back in its bootloader" is what
+    happened, and it is not the same event as "nothing is plugged in". And the
+    refusal has to say the board is in its bootloader, or an operator reads it
+    as a brick."""
+    ready.dry_run = False
+    _write_sidecar(paths, "board", "klipper", app_address=0x08004000)
+    klipper = make_device(fake_root / "bus", "Klipper", "chipA", "S1")
+    calls: list[list[str]] = []
+
+    def fake(cmd, *, cwd=None, reporter=None, dry_run=False, fake_delay=0.0, cancel=None):
+        calls.append(list(cmd))
+        klipper.unlink(missing_ok=True)  # rebooted, and nothing comes back
+        if reporter is not None:
+            for line in (_REQUEST, "Application Start: 0x8004000"):
+                reporter("stdout", line)
+        return 0
+
+    monkeypatch.setattr(flash_mod, "run_streamed", fake)
+    monkeypatch.setattr(flash_mod.time, "sleep", lambda _s: None)
+
+    with pytest.raises(BootloaderTimeoutError) as exc:
+        flash_katapult(paths, ready, "board", "chipA", "S1", timeout=0)
+
+    assert len(calls) == 1, "the write must not be attempted on a stale path"
+    assert "katapult" in str(exc.value) and "re-run" in str(exc.value)
+
+
+def test_a_probe_that_fails_after_rebooting_the_board_says_where_it_is(
+    paths, ready, fake_root, monkeypatch
+):
+    """The reconnect is the flakiest step in the sequence, and it happens
+    *after* the board has already been rebooted. A non-zero exit there is the
+    failure most likely to be read as "my board is gone" - so the exit-code
+    refusal has to account for the reboot too, not just the offset ones."""
+    ready.dry_run = False
+    make_device(fake_root / "bus", "Klipper", "chipA", "S1")
+    _write_sidecar(paths, "board", "klipper", app_address=0x08004000)
+    calls = _fake_run_streamed_by_call(monkeypatch, probe=(1, [_REQUEST]))
+
+    with pytest.raises(FlashError) as exc:
+        flash_katapult(paths, ready, "board", "chipA", "S1")
+
+    assert len(calls) == 1, "the write must not run after a failed probe"
+    assert "katapult now" in str(exc.value)
+
+
+def test_a_probe_that_did_not_move_the_board_keeps_its_path(
+    paths, ready, fake_root, monkeypatch
+):
+    """A board already in its bootloader is not rebooted by the probe, so
+    there is nothing to re-resolve - and no re-enumeration wait to sit
+    through."""
+    ready.dry_run = False
+    make_device(fake_root / "bus", "katapult", "chipA", "S1")
+    _write_sidecar(paths, "board", "klipper", app_address=0x08004000)
+    calls = _fake_run_streamed_by_call(
+        monkeypatch,
+        probe=(0, ["Application Start: 0x8004000"]),  # no bootloader request
+        write=(0, ["Application Start: 0x8004000"]),
+    )
+
+    flash_katapult(paths, ready, "board", "chipA", "S1")
+
+    assert calls[0][calls[0].index("-d") + 1] == calls[1][calls[1].index("-d") + 1]
+
+
+def test_a_lingering_klipper_symlink_is_not_mistaken_for_the_rebooted_board(
+    paths, ready, fake_root, monkeypatch
+):
+    """flashtool's "Waiting for USB Reconnect..done" covers USB enumeration,
+    not udev: the board's now-dead Klipper by-id entry can still be sitting
+    there when the probe returns, before udev catches up and swaps in the
+    katapult one. Taking that first sighting writes to the stale path - the
+    original bug, with an extra step. The re-resolve waits for katapult state.
+    """
+    ready.dry_run = False
+    _write_sidecar(paths, "board", "klipper", app_address=0x08004000)
+    bus = fake_root / "bus"
+    klipper = make_device(bus, "Klipper", "chipA", "S1")
+    calls: list[list[str]] = []
+
+    def udev_catches_up(_seconds):
+        klipper.unlink(missing_ok=True)
+        make_device(bus, "katapult", "chipA", "S1")
+
+    def fake(cmd, *, cwd=None, reporter=None, dry_run=False, fake_delay=0.0, cancel=None):
+        calls.append(list(cmd))
+        lines = [_REQUEST, "Application Start: 0x8004000"] if "-s" in cmd else []
+        if reporter is not None:
+            for line in lines:
+                reporter("stdout", line)
+        return 0
+
+    monkeypatch.setattr(flash_mod, "run_streamed", fake)
+    # The probe returns with the stale entry still present; only the poll's
+    # own sleep lets udev get there.
+    monkeypatch.setattr(flash_mod.time, "sleep", udev_catches_up)
+
+    flash_katapult(paths, ready, "board", "chipA", "S1")
+
+    write_path = calls[1][calls[1].index("-d") + 1]
+    assert "katapult" in write_path, (
+        f"the stale Klipper entry was taken as the rebooted board: {write_path}"
+    )
+
+
+def test_the_re_resolve_poll_does_not_re_run_the_listen_pass(
+    paths, ready, fake_root, monkeypatch
+):
+    """`device_for` defaults to the full `SOURCES` sweep, and `Listen.sight`
+    in that sweep opens serial ports - a real pass per display family. One of
+    those up front is the price of confirming identity at write time; running
+    it again on every poll tick means up to thirty of them, at a bus that is
+    mid-re-enumeration. The re-resolve asks `Byid` and nothing else."""
+    from mcu_updater.discovery.knomi_serial.listen import Listen
+
+    ready.dry_run = False
+    _write_sidecar(paths, "board", "klipper", app_address=0x08004000)
+    bus = fake_root / "bus"
+    klipper = make_device(bus, "Klipper", "chipA", "S1")
+    listens: list[int] = []
+    monkeypatch.setattr(Listen, "sight", lambda self, bench: listens.append(1) or [])
+
+    def udev_catches_up(_seconds):
+        klipper.unlink(missing_ok=True)
+        make_device(bus, "katapult", "chipA", "S1")
+
+    def fake(cmd, *, cwd=None, reporter=None, dry_run=False, fake_delay=0.0, cancel=None):
+        lines = [_REQUEST, "Application Start: 0x8004000"] if "-s" in cmd else []
+        if reporter is not None:
+            for line in lines:
+                reporter("stdout", line)
+        return 0
+
+    monkeypatch.setattr(flash_mod, "run_streamed", fake)
+    monkeypatch.setattr(flash_mod.time, "sleep", udev_catches_up)
+
+    flash_katapult(paths, ready, "board", "chipA", "S1")
+
+    assert len(listens) == 1, (
+        f"the listen pass ran {len(listens)} times - the re-resolve poll is "
+        f"sweeping every source, not just by-id"
+    )
+
+
+def test_a_refusal_after_a_reboot_says_where_the_board_is(
+    paths, ready, fake_root, monkeypatch
+):
+    """Refusing is right, but the probe already moved the board to ask. The
+    message has to account for that."""
+    ready.dry_run = False
+    _write_sidecar(paths, "board", "klipper", app_address=0x08004000)
+    _reboots_into_katapult(
+        monkeypatch,
+        fake_root / "bus",
+        "chipA",
+        "S1",
+        probe_lines=[_REQUEST, "Application Start: 0x8000"],
+        write_lines=[],
+    )
+
+    with pytest.raises(OffsetMismatchError) as exc:
+        flash_katapult(paths, ready, "board", "chipA", "S1")
+
+    assert "0x8004000" in str(exc.value) and "0x8000" in str(exc.value)
+    assert "katapult now" in str(exc.value), (
+        "the board was rebooted to ask and left there - say so"
+    )
 
 
 def test_a_real_flash_records_unique_bus_id_confidence(paths, ready, fake_root, monkeypatch):

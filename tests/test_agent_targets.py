@@ -721,6 +721,31 @@ def test_firmware_families_carries_builder_and_bootloader(api):
     assert families["katapult"]["bootloader"] is True
 
 
+def test_firmware_families_carries_cmake_args(paths):
+    """A cache variable is a fact about the family, not the type - it belongs
+    beside `builder` in this payload, same as `FirmwareFamily.to_json()`
+    already carries it (see test_firmware.py)."""
+    from mcu_updater.cfgdoc import CfgDocument
+
+    doc = CfgDocument("")
+    doc.set("firmware roadrunner", "source", "/nowhere")
+    doc.set("firmware roadrunner", "builder", "cmake")
+    doc.set(
+        "firmware roadrunner",
+        "cmake_args",
+        "-DROADRUNNER_FIRMWARE_VERSION=${git_describe}",
+    )
+    with open(paths.main_config, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(doc.render())
+
+    families = {
+        f["name"]: f for f in Api(paths).dispatch("fw.status")["firmware_families"]
+    }
+    assert families["roadrunner"]["cmake_args"] == (
+        "-DROADRUNNER_FIRMWARE_VERSION=${git_describe}"
+    )
+
+
 def test_firmware_families_keeps_the_builtins_first(api):
     """Same order the CLI has always listed and the artifacts payload carries."""
     names = [f["name"] for f in api.dispatch("fw.status")["firmware_families"]]

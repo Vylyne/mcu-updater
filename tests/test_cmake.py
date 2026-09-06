@@ -399,6 +399,79 @@ def test_a_missing_output_is_a_build_error_naming_the_target(paths, settings, re
     assert "roadrunner_v1_i2c_rgb" in str(exc.value)
 
 
+def _leaves(source, *names):
+    """A run_streamed stand-in that leaves the named images in build/."""
+
+    def fake_run(cmd, *, cwd, reporter, cancel=None, dry_run=False, **kw):
+        for name in names:
+            (source / "build" / f"{name}.uf2").write_bytes(name.encode())
+        return 0
+
+    return fake_run
+
+
+def test_a_stale_image_from_a_target_this_tree_no_longer_declares_is_refused(
+    paths, settings, repo, monkeypatch
+):
+    """`make` builds `all`, so it still succeeds after an upstream rename drops
+    the configured target - and cmake does not delete a removed target's
+    output. Without a post-make check on the declared list, the previous
+    build's `.uf2` is staged and `record_build()` stamps those older bytes with
+    today's subtree commit, which `artifact_status()` then calls current."""
+    source = repo / "rp2040"
+    (source / "build").mkdir()
+    (source / "build" / "roadrunner_v1_i2c_rgb.uf2").write_bytes(b"DAY-ONE-IMAGE")
+    monkeypatch.setattr(
+        cmake.build_mod, "run_streamed", _leaves(source, "roadrunner_v2_i2c_rgb")
+    )
+    monkeypatch.setattr(
+        cmake, "declared_targets", lambda source: {"all", "roadrunner_v2_i2c_rgb"}
+    )
+
+    target = _cmake_type(source)
+    with pytest.raises(BuildError) as exc:
+        cmake.build(paths, settings, target)
+
+    assert "roadrunner_v1_i2c_rgb" in str(exc.value)
+    assert "roadrunner_v2_i2c_rgb" in str(exc.value)
+    # Nothing staged and nothing vouched for: a sidecar written here is the
+    # whole failure, not a side effect of it.
+    assert not os.path.exists(paths.uf2_file("roadrunner", "roadrunner"))
+    assert cmake.read_sidecar(paths, target) is None
+
+
+def test_a_declared_target_is_still_staged(paths, settings, repo, monkeypatch):
+    """The other direction, so the refusal above is not passing merely because
+    the check refuses everything."""
+    source = repo / "rp2040"
+    (source / "build").mkdir()
+    monkeypatch.setattr(
+        cmake.build_mod, "run_streamed", _leaves(source, "roadrunner_v1_i2c_rgb")
+    )
+    monkeypatch.setattr(
+        cmake, "declared_targets", lambda source: {"all", "roadrunner_v1_i2c_rgb"}
+    )
+
+    staged = cmake.build(paths, settings, _cmake_type(source))
+    assert open(staged, "rb").read() == b"roadrunner_v1_i2c_rgb"
+
+
+def test_an_unaskable_target_list_does_not_block_the_build(
+    paths, settings, repo, monkeypatch
+):
+    """None means "could not be asked", not "declares nothing" - a tree cmake
+    cannot answer about must still build, exactly as it did before the check."""
+    source = repo / "rp2040"
+    (source / "build").mkdir()
+    monkeypatch.setattr(
+        cmake.build_mod, "run_streamed", _leaves(source, "roadrunner_v1_i2c_rgb")
+    )
+    monkeypatch.setattr(cmake, "declared_targets", lambda source: None)
+
+    staged = cmake.build(paths, settings, _cmake_type(source))
+    assert open(staged, "rb").read() == b"roadrunner_v1_i2c_rgb"
+
+
 def test_the_sidecar_records_the_subtree_commit_and_the_bytes(paths, settings, repo, monkeypatch):
     source = repo / "rp2040"
     (source / "build").mkdir()

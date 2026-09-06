@@ -474,6 +474,35 @@ def build(
         # next status poll would vouch for, having never been compiled.
         return staged
 
+    # Asked after `make`, not after the configure step above, because that
+    # step is conditional: a tree with no `cmake_args:` that is already
+    # configured never re-runs it, so a pre-make answer could be read off the
+    # build system some *earlier* configure generated. `make` re-runs cmake
+    # itself when CMakeLists.txt has moved (cmake_check_build_system), so by
+    # here the declared target list describes this tree as it is now.
+    #
+    # This is the only check that the bytes about to be staged are bytes this
+    # run could have produced. `make` builds `all` and succeeds when an
+    # upstream rename drops the configured target; the previous build's `.uf2`
+    # survives on disk - cmake does not remove outputs of removed targets - and
+    # staging it would stamp an older commit's image with today's sha, which
+    # `artifact_status()` would then call current. `blocked()` asks the same
+    # question earlier for a readable refusal, but it asks a possibly-stale
+    # build system and cannot be the thing that guarantees this.
+    #
+    # None means "could not be asked" - an unconfigured directory, no cmake on
+    # PATH - not "declares nothing"; there the `os.path.exists` check below is
+    # all there is, exactly as before.
+    known = declared_targets(source)
+    if known is not None and target.cmake_target not in known:
+        raise BuildError(
+            f"make succeeded, but this tree declares no target named "
+            f"'{target.cmake_target}' - refusing to stage an image it did not "
+            f"produce. Known: {', '.join(sorted(known))}.",
+            type=target.name,
+            fw=target.firmware,
+        )
+
     produced = staged_uf2(source, target.cmake_target)
     if not os.path.exists(produced):
         raise BuildError(

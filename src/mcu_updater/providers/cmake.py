@@ -375,6 +375,15 @@ def record_build(paths: Paths, target: CmakeType, state: SourceState) -> None:
         return
 
     record = {
+        # Which provider wrote this. The sidecar path is shared with
+        # `kconfig_make`, whose record is a different schema in the same place
+        # (`build.py`), and reading one as the other is a wrong answer about
+        # what is on a board. Today the two schemas happen to disagree on a key
+        # name - `sha` here, `fw_sha` there - and `bin_sha256` is already
+        # common to both, so the safety is one rename away from evaporating.
+        # `read_sidecar` requires this key, which makes it asserted rather
+        # than lucky.
+        "provider": BUILDER,
         "sha": state.sha,
         "version": state.version,
         "dirty": state.dirty,
@@ -395,15 +404,23 @@ def record_build(paths: Paths, target: CmakeType, state: SourceState) -> None:
 def read_sidecar(paths: Paths, target: CmakeType) -> dict | None:
     """This type's build record, or None when there is not a usable one.
 
-    Degrades to None on every failure - missing, unreadable and non-dict all
-    mean "no provenance", and telling them apart would not change any answer.
+    Degrades to None on every failure - missing, unreadable, non-dict and not
+    ours all mean "no provenance", and telling them apart would not change any
+    answer.
     """
     try:
         with open(paths.sidecar_file(target.name, target.firmware), encoding="utf-8") as fh:
             record = json.load(fh)
     except (OSError, ValueError):
         return None
-    return record if isinstance(record, dict) else None
+    if not isinstance(record, dict):
+        return None
+    # Another provider's record in the shared sidecar path is not ours to
+    # interpret, and neither is one written before this key existed: both are
+    # "no provenance", which costs one rebuild and never a wrong answer.
+    if record.get("provider") != BUILDER:
+        return None
+    return record
 
 
 def build(

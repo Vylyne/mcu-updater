@@ -8,6 +8,7 @@ provider owns - have their own tests saying why.
 from __future__ import annotations
 
 import dataclasses
+import json
 import os
 import pathlib
 import shutil
@@ -489,6 +490,9 @@ def test_the_sidecar_records_the_subtree_commit_and_the_bytes(paths, settings, r
     assert record["sha"] == cmake.source_state(str(source)).sha
     assert record["version"] == cmake.source_state(str(source)).version
     assert record["bin_sha256"] is not None
+    # Named on the write side too: the sidecar path is shared with
+    # kconfig_make and this key is what keeps the two schemas apart.
+    assert record["provider"] == "cmake"
     # `record["dirty"] is False` dropped here: it would pass just as well if
     # `dirty` were hardcoded False. Dirtiness is exercised where it can
     # actually be forced true or false - see
@@ -691,6 +695,47 @@ def test_an_image_with_no_sidecar_has_no_provenance(paths, tmp_path):
     _staged(paths)
     status = cmake.artifact_status(paths, _cmake_type(tmp_path), cmake.SourceState())
     assert status.reason == NO_PROVENANCE
+
+
+def _write_sidecar(paths, record):
+    path = paths.sidecar_file("roadrunner", "roadrunner")
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(record, fh)
+
+
+def test_a_sidecar_another_provider_wrote_is_not_read_as_ours(paths, repo):
+    """This path is shared with `kconfig_make`, whose record is a different
+    schema in the same file, and `bin_sha256` is already common to both. The
+    record below is the worst case: every field this provider looks at is
+    present and agrees, so only the `provider` key stands between a foreign
+    record and a confident answer about what is on a board."""
+    source = repo / "rp2040"
+    target = _cmake_type(source)
+    state = cmake.source_state(str(source))
+    path = _staged(paths)
+    stat = os.stat(path)
+    record = {
+        "sha": state.sha,
+        "dirty": False,
+        "bin_sha256": cmake.build_mod.sha256_file(path),
+        "bin_size": stat.st_size,
+        "bin_mtime": stat.st_mtime,
+    }
+
+    _write_sidecar(paths, dict(record, provider="kconfig_make"))
+    assert cmake.read_sidecar(paths, target) is None
+    assert cmake.artifact_status(paths, target, state).reason == NO_PROVENANCE
+
+    # No key at all - every sidecar written before this one existed.
+    _write_sidecar(paths, record)
+    assert cmake.read_sidecar(paths, target) is None
+    assert cmake.artifact_status(paths, target, state).reason == NO_PROVENANCE
+
+    # The same record with our own key is read and answered on: the refusals
+    # above are caused by that one key and by nothing else.
+    _write_sidecar(paths, dict(record, provider="cmake"))
+    assert cmake.artifact_status(paths, target, state).is_current
 
 
 def test_an_image_somebody_else_rebuilt_has_no_provenance(paths, repo):

@@ -105,6 +105,12 @@ class KconfigMake:
     def describe(self, target: BuildTarget) -> str:
         return f"{target.fw} for {target.name}"
 
+    def clean(self, install: Install, target: BuildTarget) -> str | None:
+        # `make clean` already runs inside build() under `clean_before_build`,
+        # and a kconfig tree has no generated directory whose staleness
+        # survives that. Nothing to offer here; see the protocol docstring.
+        return None
+
     @staticmethod
     def _family(target: BuildTarget) -> str:
         """The family, insisted upon rather than defaulted.

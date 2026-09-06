@@ -138,6 +138,7 @@ application error (see `data.code`), `-32603` internal.
 | `fw.canbus.add` | `name`, `uuid` (required) | `{name, uuid, added, chipset}` — track a CAN-addressed board under an existing type; parallel to `fw.serial.add`, not an overload of it |
 | `fw.canbus.remove` | `name`, `uuid` (required) | `{name, uuid, removed}` — untrack a CAN uuid from a type; non-destructive, same as `fw.serial.remove` |
 | `fw.build` | `name`, `fw`, `jobs?`, `clean?`, `reseed?` | `{job_id, job}` — returns immediately |
+| `fw.clean` | `name` (required) | `{name, provider, removed}` — deletes that target's generated build directory and returns its path, or `removed: null` for a build system that keeps none. Synchronous, not a job; takes the exclusive lock. Withheld from a read-only agent |
 | `fw.flash` | `serial\|port\|uuid`, `name?`, `force?` | `{job_id, job}` — **off by default**, see below |
 | `fw.build_all` | `fw?`, `scope?` | `{job_id, job, types, builds, skipped}` — builds only, touches no board |
 | `fw.flash_all` | `scope?`, `name?`, `force?` | `{job_id, job, boards, displays}` — **off by default** |
@@ -805,12 +806,23 @@ Each provider enumerates its own targets:
 | `platformio` | one `[type ...]` whose firmware's builder is `platformio` | `null` — the env *is* the type |
 | `cmake` | one `[type ...]` whose firmware's builder is `cmake` | the family — one tree, one image per `cmake_target:` |
 
-A known limit, stated so a client author is not surprised by it: `fw.status`'s
-`targets[]` and `fw.target.get` do **not** cover cmake types, even though
-`fw.build_all` builds them and reports them in `builds[]` / `skipped[]` with
-`"provider": "cmake"`. A cmake type can be built by name (`fw.build {name}`,
-no `fw` — the family names the tree and `cmake_target:` names the image, so
-there is no family axis to choose on) but it has no `targets[]` row yet.
+A cmake type carries a `targets[]` row like any other, and `fw.target.get
+{name, provider: "cmake"}` answers for it. Two things about that row are
+deliberately different, because saying them plainly beats a shape that looks
+complete and is not:
+
+- **`devices[]` is empty and `needs_flash` is `null`**, with
+  `extra.flashable: false`. Flashing a cmake type is not wired up —
+  `fw.flash` refuses a cmake name — so listing devices would advertise a
+  write that cannot happen. `null` rather than `false`: `false` would claim
+  we looked and found everything current.
+- **`descriptor` is the `cmake_target`**, the way a PlatformIO row's is its
+  env. A cmake type *does* name a family, so unlike a display its `fw` is
+  the family rather than `null`.
+
+It builds by name with `fw.build {name}` and no `fw` — the family names the
+tree and `cmake_target:` names the image, so there is no family axis to
+choose on.
 
 Three rules follow, and each of them was a bug first:
 

@@ -102,3 +102,8 @@ class PlatformIO:
 
     def describe(self, target: BuildTarget) -> str:
         return target.name
+
+    def clean(self, install: Install, target: BuildTarget) -> str | None:
+        # PlatformIO owns its own build directory under `.pio/` and manages
+        # its staleness itself. Same answer as kconfig, same reason.
+        return None

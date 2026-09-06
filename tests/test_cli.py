@@ -374,6 +374,39 @@ def test_the_build_parser_accepts_a_cmake_family_as_the_fw():
     assert args.func is cli.build_fw_cmd
 
 
+def test_cleaning_a_cmake_type_removes_its_build_dir(c, cmake_type, capsys):
+    """The recovery path. A build directory whose CMakeCache pins a toolchain
+    that has since moved keeps failing through any number of rebuilds, because
+    the cache correctly names the right source tree - so nothing reconfigures."""
+    build = cmake_type / "build"
+    build.mkdir()
+    (build / "CMakeCache.txt").write_text("stale\n", encoding="utf-8")
+
+    cli.clean_fw_cmd(argparse.Namespace(type="roadrunner"))
+
+    assert not build.exists()
+    assert cmake_type.exists(), "only build/ goes, never the source tree"
+    assert str(build) in capsys.readouterr().out
+
+
+def test_cleaning_a_kconfig_type_says_there_is_nothing_to_clean(c, capsys):
+    """Dispatched through the provider, so a build system with no build
+    directory of its own answers None and this reports the non-event. Not an
+    error: the user asked a reasonable question and got a real answer."""
+    cli.clean_fw_cmd(argparse.Namespace(type="board"))
+
+    out = capsys.readouterr().out
+    assert "Nothing to clean" in out
+
+
+def test_cleaning_an_unknown_type_refuses(c, capsys):
+    with pytest.raises(SystemExit) as exc:
+        cli.clean_fw_cmd(argparse.Namespace(type="nosuchtype"))
+
+    assert exc.value.code == 1
+    assert "does not exist" in capsys.readouterr().err
+
+
 def test_building_a_cmake_type_with_no_tree_refuses_before_the_lock(
     c, capsys, fake_root
 ):

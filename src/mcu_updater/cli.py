@@ -429,6 +429,61 @@ def build_fw_cmd(args: argparse.Namespace) -> None:
         )
 
 
+def _target_for(
+    install: providers.Install, name: str
+) -> providers.BuildTarget | None:
+    """The one target this type names, whichever provider owns it.
+
+    The three lookups `build_fw_cmd` does inline, in one place and in the same
+    order, so a caller that only needs "which provider is this" does not have
+    to repeat them. None means no provider claims the name.
+    """
+    display = install.displays.get(name)
+    if display is not None:
+        return providers.BuildTarget(providers.PlatformIO.name, name, display.firmware)
+    entry = install.cmake.get(name)
+    if entry is not None:
+        return providers.BuildTarget(providers.Cmake.name, name, entry.firmware)
+    # `Registry.get` raises rather than returning None, and this function's
+    # whole job is to answer "does anything claim this name" without one.
+    mcu = install.registry.types.get(name)
+    if mcu is not None:
+        fw = mcu.firmwares[0] if mcu.firmwares else ""
+        return providers.BuildTarget(providers.KconfigMake.name, name, fw)
+    return None
+
+
+def clean_fw_cmd(args: argparse.Namespace) -> None:
+    """Discard a target's generated build tree, for the ones that keep one.
+
+    Dispatched through the provider rather than branching on cmake here: a
+    provider that keeps no such tree answers None, and this prints that as the
+    non-event it is. Takes the same exclusive lock a build does - removing a
+    build directory out from under a running compile is the one way this could
+    do damage.
+    """
+    c = ctx()
+    install = providers.Install.load(c.paths, c.settings)
+
+    target = _target_for(install, args.type)
+    if target is None:
+        print(f"ERROR: MCU type '{args.type}' does not exist.", file=sys.stderr)
+        sys.exit(1)
+
+    provider = providers.by_name(target.provider)
+    with exclusive(c.paths, f"clean {args.type}"):
+        removed = provider.clean(install, target)
+
+    if removed is None:
+        print(
+            f"Nothing to clean for '{args.type}': {provider.label} keeps no "
+            f"build directory of its own."
+        )
+        return
+    print(f"Removed {removed}")
+    print("The next build reconfigures from scratch.")
+
+
 # --------------------------------------------------------------------------
 # flash commands
 #
@@ -944,6 +999,14 @@ def build_parser(fw_choices: Sequence[str] | None = None) -> argparse.ArgumentPa
         "from has been updated since",
     )
     p.set_defaults(func=build_fw_cmd)
+
+    p = subparsers.add_parser(
+        "clean",
+        help="Delete a target's generated build directory, for build systems "
+        "that keep one",
+    )
+    p.add_argument("-t", "--type", required=True, help="MCU Type Name")
+    p.set_defaults(func=clean_fw_cmd)
 
     p = subparsers.add_parser(
         "flash", help="Flash a single tracked device with its built klipper.bin"

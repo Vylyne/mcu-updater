@@ -18,6 +18,7 @@ import type { Action } from "../api/targets";
 import UiIcon from "./UiIcon.vue";
 import UiDialog from "./UiDialog.vue";
 import {
+  mdiBroom,
   mdiCloseCircleOutline,
   mdiCogOutline,
   mdiFlash,
@@ -136,6 +137,7 @@ const busyMessage = computed(() =>
 // than a gap.
 const ICONS: Record<string, string> = {
   build: mdiHammer,
+  clean: mdiBroom,
   flash: mdiFlash,
   update: mdiUpdate,
   untrack: mdiCloseCircleOutline,

@@ -9,6 +9,7 @@ from ... import firmware, profiles, providers
 from ...errors import (
     UpdaterError,
 )
+from ...lock import exclusive
 from ..rpc import ERR_INVALID_PARAMS, ERR_METHOD_NOT_FOUND, RpcError
 from ._api import _Base
 
@@ -191,6 +192,32 @@ class BuildMixin(_Base):
 
         job = runner.submit("display_build", {"name": name}, run)
         return {"job_id": job.id, "job": job.to_dict()}
+
+    def clean(self, args: dict) -> dict[str, Any]:
+        """Delete a type's generated build directory. Synchronous, no job.
+
+        Not a job: it is an `rmtree` of one directory, so the runner's
+        machinery would outweigh the work and a progress bar for it would be a
+        lie. It does take the exclusive lock, for the one way this could do
+        damage - removing a build directory out from under a compile using it -
+        which is why `fw.roadrunner.*` takes it for its own synchronous work.
+
+        Answers `removed: null` rather than failing for a build system that
+        keeps no such directory, so a panel can offer the action on any type
+        and get a true answer instead of having to know which providers have
+        one.
+        """
+        name = self._require_str(args, "name")
+        owner = self._provider_of(name)
+        if owner != providers.Cmake.name:
+            return {"name": name, "provider": owner, "removed": None}
+
+        from ...providers import cmake as cmake_mod
+
+        entry = self._cmake_types()[name]
+        with exclusive(self.paths, f"clean {name}"):
+            removed = cmake_mod.clean_build_dir(entry.source)
+        return {"name": name, "provider": owner, "removed": removed}
 
     def _cmake_build(self, args: dict) -> dict[str, Any]:
         """Compile one cmake target and stage its image. Touches no hardware.

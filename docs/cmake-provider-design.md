@@ -167,9 +167,18 @@ docstring is explicit that reporting them as failures beats pretending we knew.
    CPU);
 3. any `cmake_args:` from the `[firmware ...]` section appended to the
    configure step (see below);
-4. stage `build/<cmake_target>.uf2` → `paths.uf2_file(type, fw)`, which is what
+4. after `make`, check the tree still declares `cmake_target` and refuse to
+   stage anything if it does not. `make` builds `all`, so it succeeds when an
+   upstream rename drops the target - and the removed target's `.uf2` survives
+   on disk, so without this the previous build's bytes are staged and stamped
+   with today's commit. Asked after `make` rather than after configure because
+   configure is skipped for an already-configured tree with no `cmake_args:`,
+   and `make` re-runs cmake itself when `CMakeLists.txt` has moved. A tree
+   cmake cannot answer about (`declared_targets()` returning `None`) is built
+   as before;
+5. stage `build/<cmake_target>.uf2` → `paths.uf2_file(type, fw)`, which is what
    `build.py:755-762` already does for a katapult `.uf2`;
-5. record the sidecar (below).
+6. record the sidecar (below).
 
 Both subprocesses go through `build.run_streamed`, so cancellation, dry-run and
 log streaming behave as they do everywhere else. `build()` returns `None` per
@@ -275,6 +284,19 @@ using `paths.sidecar_file(type, fw)` and `build.sha256_file`:
 Both comparisons are subtree-scoped; the sidecar also carries the repo-wide
 `version` string, which is recorded rather than compared. See "Subtree
 scoping" above.
+
+The record is sampled at two moments, on purpose. `sha` and `dirty` are read
+*after* `make` returns, because they answer what was compiled: a tree that moved
+mid-compile produced an image no single commit describes, so `dirty` is recorded
+true whenever the subtree is unclean **or** its commit moved during the build.
+`version` stays the pre-build value - it was substituted into `cmake_args:` and
+compiled into the binary, so re-reading it would record a string the firmware
+does not report.
+
+The sidecar also carries `"provider": "cmake"`, and `read_sidecar` requires it.
+The path is shared with `kconfig_make`, whose record is a different schema in
+the same file; a record without this key, or with another provider's value, is
+`NO_PROVENANCE`.
 
 Not optional. Without it every answer is `NO_PROVENANCE` and every sweep
 rebuilds — and `providers.select()` treats anything not provably current as

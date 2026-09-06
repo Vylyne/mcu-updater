@@ -557,8 +557,8 @@ should say so rather than hand over a button that fails.
 
 ```json
 {"name": "cartographer", "source": "/home/biqu/MCU-Firmware---Based-on-Klipper",
- "artifact": "klipper", "builder": "kconfig_make", "bootloader": false,
- "present": true, "configurable": true, "builtin": false}
+ "artifact": "klipper", "builder": "kconfig_make", "cmake_args": "",
+ "bootloader": false, "present": true, "configurable": true, "builtin": false}
 ```
 
 Every firmware family this install knows about, for a picker to offer. `present`
@@ -570,10 +570,14 @@ removed by editing a config file.
 
 `builder` is `[firmware ...]`'s own `builder:` key (default `kconfig_make`) —
 how a tree compiles is a property of the tree, not of a type that happens to
-use it, so it lives here rather than on `TypeStatus` or `Target`. `bootloader`
-marks a family as `katapult`-shaped: not an application, so it is never the
-thing a build failure or a staleness check is really about, and a type omits
-it from `firmware:` entirely rather than carrying a `katapult_installed` flag.
+use it, so it lives here rather than on `TypeStatus` or `Target`. `cmake_args`
+joins it for the same reason: it is `[firmware ...]`'s own `cmake_args:` key,
+verbatim (the `${git_describe}` substitution is expanded at build time, not
+here), and empty string for every family that isn't `builder: cmake`.
+`bootloader` marks a family as `katapult`-shaped: not an application, so it is
+never the thing a build failure or a staleness check is really about, and a
+type omits it from `firmware:` entirely rather than carrying a
+`katapult_installed` flag.
 
 ## Jobs
 

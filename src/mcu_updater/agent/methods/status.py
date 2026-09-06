@@ -201,6 +201,7 @@ class StatusMixin(_Base):
                     "source": source,
                     "artifact": family.artifact_name(),
                     "builder": family.builder,
+                    "cmake_args": family.cmake_args,
                     "bootloader": family.bootloader,
                     "present": os.path.isdir(source),
                     "configurable": configurable.get(name, False),

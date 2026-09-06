@@ -9,6 +9,7 @@ from mcu_updater import devices as devices_mod
 from mcu_updater import flashers
 from mcu_updater.errors import (
     AmbiguousDfuError,
+    BootloaderTimeoutError,
     BootselNotMountedError,
     DeviceNotFoundError,
     FlashError,
@@ -294,9 +295,12 @@ def test_the_write_addresses_the_path_the_probe_left_the_board_on(
 def test_a_board_that_never_reappears_after_the_probe_refuses_to_write(
     paths, ready, fake_root, monkeypatch
 ):
-    """No fallback to the stale path - that fallback *is* the bug. And the
-    refusal has to say the board is in its bootloader, or an operator reads a
-    device-not-found after a reboot they did not ask for as a brick."""
+    """No fallback to the stale path - that fallback *is* the bug. Raised as
+    `bootloader_timeout` rather than `device_not_found`: the board was seen,
+    and was rebooted by us; "it never came back in its bootloader" is what
+    happened, and it is not the same event as "nothing is plugged in". And the
+    refusal has to say the board is in its bootloader, or an operator reads it
+    as a brick."""
     ready.dry_run = False
     _write_sidecar(paths, "board", "klipper", app_address=0x08004000)
     klipper = make_device(fake_root / "bus", "Klipper", "chipA", "S1")
@@ -313,11 +317,30 @@ def test_a_board_that_never_reappears_after_the_probe_refuses_to_write(
     monkeypatch.setattr(flash_mod, "run_streamed", fake)
     monkeypatch.setattr(flash_mod.time, "sleep", lambda _s: None)
 
-    with pytest.raises(DeviceNotFoundError) as exc:
+    with pytest.raises(BootloaderTimeoutError) as exc:
         flash_katapult(paths, ready, "board", "chipA", "S1", timeout=0)
 
     assert len(calls) == 1, "the write must not be attempted on a stale path"
     assert "katapult" in str(exc.value) and "re-run" in str(exc.value)
+
+
+def test_a_probe_that_fails_after_rebooting_the_board_says_where_it_is(
+    paths, ready, fake_root, monkeypatch
+):
+    """The reconnect is the flakiest step in the sequence, and it happens
+    *after* the board has already been rebooted. A non-zero exit there is the
+    failure most likely to be read as "my board is gone" - so the exit-code
+    refusal has to account for the reboot too, not just the offset ones."""
+    ready.dry_run = False
+    make_device(fake_root / "bus", "Klipper", "chipA", "S1")
+    _write_sidecar(paths, "board", "klipper", app_address=0x08004000)
+    calls = _fake_run_streamed_by_call(monkeypatch, probe=(1, [_REQUEST]))
+
+    with pytest.raises(FlashError) as exc:
+        flash_katapult(paths, ready, "board", "chipA", "S1")
+
+    assert len(calls) == 1, "the write must not run after a failed probe"
+    assert "katapult now" in str(exc.value)
 
 
 def test_a_probe_that_did_not_move_the_board_keeps_its_path(
@@ -377,6 +400,45 @@ def test_a_lingering_klipper_symlink_is_not_mistaken_for_the_rebooted_board(
     write_path = calls[1][calls[1].index("-d") + 1]
     assert "katapult" in write_path, (
         f"the stale Klipper entry was taken as the rebooted board: {write_path}"
+    )
+
+
+def test_the_re_resolve_poll_does_not_re_run_the_listen_pass(
+    paths, ready, fake_root, monkeypatch
+):
+    """`device_for` defaults to the full `SOURCES` sweep, and `Listen.sight`
+    in that sweep opens serial ports - a real pass per display family. One of
+    those up front is the price of confirming identity at write time; running
+    it again on every poll tick means up to thirty of them, at a bus that is
+    mid-re-enumeration. The re-resolve asks `Byid` and nothing else."""
+    from mcu_updater.discovery.knomi_serial.listen import Listen
+
+    ready.dry_run = False
+    _write_sidecar(paths, "board", "klipper", app_address=0x08004000)
+    bus = fake_root / "bus"
+    klipper = make_device(bus, "Klipper", "chipA", "S1")
+    listens: list[int] = []
+    monkeypatch.setattr(Listen, "sight", lambda self, bench: listens.append(1) or [])
+
+    def udev_catches_up(_seconds):
+        klipper.unlink(missing_ok=True)
+        make_device(bus, "katapult", "chipA", "S1")
+
+    def fake(cmd, *, cwd=None, reporter=None, dry_run=False, fake_delay=0.0, cancel=None):
+        lines = [_REQUEST, "Application Start: 0x8004000"] if "-s" in cmd else []
+        if reporter is not None:
+            for line in lines:
+                reporter("stdout", line)
+        return 0
+
+    monkeypatch.setattr(flash_mod, "run_streamed", fake)
+    monkeypatch.setattr(flash_mod.time, "sleep", udev_catches_up)
+
+    flash_katapult(paths, ready, "board", "chipA", "S1")
+
+    assert len(listens) == 1, (
+        f"the listen pass ran {len(listens)} times - the re-resolve poll is "
+        f"sweeping every source, not just by-id"
     )
 
 

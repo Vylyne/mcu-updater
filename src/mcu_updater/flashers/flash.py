@@ -38,6 +38,7 @@ import re
 import sys
 import threading
 import time
+from collections.abc import Sequence
 from typing import Any
 
 from .. import firmware
@@ -52,11 +53,13 @@ from ..devices import (
     expected_path,
     wait_for_new_device,
 )
+from ..discovery.byid import Byid
 from ..discovery.confirm import confirm
 from ..discovery.registry import SOURCES
-from ..discovery.spec import Confidence, state_for_firmware
+from ..discovery.spec import Confidence, Source, state_for_firmware
 from ..errors import (
     AmbiguousDfuError,
+    BootloaderTimeoutError,
     DeviceNotFoundError,
     FlashError,
     OffsetMismatchError,
@@ -79,7 +82,10 @@ def find_flashtool(paths: Paths, settings: Settings) -> str:
 
 
 def device_for(
-    bench: Bench, chipset: str, serial: str
+    bench: Bench,
+    chipset: str,
+    serial: str,
+    sources: Sequence[Source] = SOURCES,
 ) -> tuple[BusDevice | None, Confidence | None, str | None]:
     """Look up one board via `discovery.confirm`, in the shape `esptool.port_for`
     already uses for displays: `(device, confidence, refusal reason)`. `device`
@@ -88,8 +94,13 @@ def device_for(
 
     A `UNIQUE_BUS_ID` by-id sighting is the confirmed-at-write-time counterpart
     to a display's `ANSWERED` listen-pass sighting: die-derived, not remembered.
+
+    `sources` narrows which sources are asked. The default is every one of
+    them, for the single up-front lookup; a caller polling in a loop passes a
+    narrower tuple, since `Listen` opens serial ports on every pass and doing
+    that repeatedly at a board that is mid-re-enumeration is not free.
     """
-    sightings = confirm(bench, sources=SOURCES)
+    sightings = confirm(bench, sources=sources)
     found = sightings.get(serial)
     if found is None:
         return None, None, (
@@ -281,10 +292,15 @@ def _await_bootloader_device(
     The transcript's own "Katapult detected on /dev/ttyACM3" is deliberately
     not used: that is a raw tty, which is racy across a re-enumeration and, on
     a host with several boards, names a *different* board on the next boot.
+
+    Only `Byid` is asked, not the full `SOURCES` sweep the one-off lookup in
+    `flash_katapult` uses: a bootloader's by-id symlink is the only evidence
+    that could answer this question anyway, and `Listen` would open serial
+    ports on every one of these passes, at a bus that is mid-re-enumeration.
     """
     deadline = time.monotonic() + timeout
     while True:
-        dev, _confidence, _reason = device_for(bench, chipset, serial)
+        dev, _confidence, _reason = device_for(bench, chipset, serial, (Byid(),))
         if dev is not None and state_for_firmware(dev.fw) == STATE_KATAPULT:
             return dev
         if time.monotonic() >= deadline:
@@ -348,18 +364,12 @@ def _verify_offset_before_write(
         dry_run=settings.dry_run,
         fake_delay=0.0,
     )
-    if rc != 0:
-        raise FlashError(
-            f"flashtool.py's status check failed for {serial} (exit {rc}). Not "
-            f"attempting to write.",
-            type=mcu_type,
-            serial=serial,
-            returncode=rc,
-        )
-
     # Did the probe move the board? Decided from flashtool's own words rather
     # than from what is on the bus now, so the answer does not depend on
-    # winning a race with udev.
+    # winning a race with udev. Computed before the exit-code check below,
+    # because a probe that requested the bootloader and *then* failed - the
+    # reconnect timing out is the flakiest step in the sequence - has still
+    # moved the board, and that failure is the one most likely to be misread.
     moved = bool(_BOOTLOADER_REQUEST_RE.search("\n".join(transcript)))
     # Every refusal below leaves the board wherever the probe put it. Saying so
     # is the difference between "your board is in its bootloader, re-run" and
@@ -371,6 +381,15 @@ def _verify_offset_before_write(
         if moved
         else ""
     )
+
+    if rc != 0:
+        raise FlashError(
+            f"flashtool.py's status check failed for {serial} (exit {rc}). Not "
+            f"attempting to write." + aftermath,
+            type=mcu_type,
+            serial=serial,
+            returncode=rc,
+        )
 
     board_address = _parse_application_start(transcript)
     if board_address is None:
@@ -414,7 +433,7 @@ def _verify_offset_before_write(
         # Never fall back to the caller's path. It is the path of a Klipper
         # device that no longer exists, and handing it to -f is exactly the
         # "No Serial Device found" failure this whole re-resolve exists to stop.
-        raise DeviceNotFoundError(
+        raise BootloaderTimeoutError(
             f"the offset check rebooted {serial} into katapult, but no katapult "
             f"device answering as {serial} appeared within {timeout:g}s, so "
             f"there is no path to write to. Nothing was written and the board "
@@ -545,6 +564,22 @@ def flash_katapult_can(
                 # Wrong bus, or nothing answered this uuid here - try the next
                 # interface rather than treating this as a real failure.
                 continue
+            # Same reboot the USB path accounts for: -s shares -f's handshake,
+            # which transitions a running application into the bootloader, and
+            # has no finish step to jump it back. Only the *path* problem is
+            # USB-only - `-i <iface> -u <uuid>` still addresses the board - but
+            # a refusal here leaves a native node in katapult just the same.
+            can_moved = bool(
+                _BOOTLOADER_REQUEST_RE.search("\n".join(probe_transcript))
+            )
+            can_aftermath = (
+                f" Nothing was written, but asking cost a reboot: {uuid} is "
+                f"sitting in katapult now, not running {fw}. It will come back "
+                f"on the next flash, or on a power cycle."
+                if can_moved
+                else ""
+            )
+
             board_address = _parse_application_start(probe_transcript)
             if board_address is None:
                 message = (
@@ -556,7 +591,9 @@ def flash_katapult_can(
                 if force:
                     reporter("warn", f"{message} Proceeding anyway (forced).")
                 else:
-                    raise OffsetMismatchError(message, type=mcu_type, uuid=uuid, fw=fw)
+                    raise OffsetMismatchError(
+                        message + can_aftermath, type=mcu_type, uuid=uuid, fw=fw
+                    )
             elif app_address != board_address:
                 message = (
                     f"{uuid} ({mcu_type}) is about to be flashed with {fw} linked "
@@ -569,7 +606,7 @@ def flash_katapult_can(
                     reporter("warn", f"{message} Proceeding anyway (forced).")
                 else:
                     raise OffsetMismatchError(
-                        message,
+                        message + can_aftermath,
                         type=mcu_type,
                         uuid=uuid,
                         fw=fw,

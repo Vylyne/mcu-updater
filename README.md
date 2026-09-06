@@ -74,8 +74,8 @@ Interfaces:
 
 ## TODO
 
-[docs/decisions.md](docs/decisions.md) records the standing "this looks like a
-gap and is not" decisions. What is still open:
+[docs/decisions.md](docs/decisions.md) for the standing decisions that came out
+of it. What is still open:
 
 - [ ] Allow using non default klipper and katapult paths
 - [ ] **TEST ERROR** Reproduce and fix the flaky teardown `RuntimeError` in `test_an_unknown_inbound_method_gets_an_error_not_silence`.

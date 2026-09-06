@@ -37,6 +37,13 @@ from ..cfgdoc import CfgDocument
 from ..errors import BuildError, ConfigError
 from ..paths import Paths
 from ..settings import Settings
+from ..states import (
+    BUILT_DIRTY,
+    NEVER_BUILT,
+    NO_PROVENANCE,
+    SOURCE_CHANGED,
+    ArtifactStatus,
+)
 
 #: What this provider's `builder:` value is, in `[firmware ...]`.
 BUILDER = "cmake"
@@ -470,3 +477,54 @@ def build(
     # After the copy, so the record describes the bytes that now exist.
     record_build(paths, target, state)
     return staged
+
+
+def _is_our_image(record: dict, path: str, stat: os.stat_result) -> bool:
+    """Are the bytes on disk the bytes we recorded?
+
+    Two tiers, same as `pio._is_our_image` and for the same reason: this runs
+    on the `fw.status` poll path, so size and mtime answer almost every time
+    for the cost of a stat, and the content hash only runs when something
+    looks changed - which is exactly when the question is worth paying for.
+    """
+    if record.get("bin_size") == stat.st_size and record.get("bin_mtime") == stat.st_mtime:
+        return True
+    recorded = record.get("bin_sha256")
+    if not recorded:
+        return False
+    return build_mod.sha256_file(path) == recorded
+
+
+def artifact_status(
+    paths: Paths, target: CmakeType, state: SourceState
+) -> ArtifactStatus:
+    """Does the staged image match the source subtree?
+
+    Both comparisons are subtree-scoped. The repo-wide `version` is recorded
+    rather than compared: it moves on every commit anywhere in the repository,
+    and comparing it would rebuild the firmware for a README change.
+
+    Never a guess when provenance cannot be trusted. The cost of a wrong
+    `current` is flashing a board with firmware from before the fix you just
+    made.
+    """
+    path = paths.uf2_file(target.name, target.firmware)
+    try:
+        stat = os.stat(path)
+    except OSError:
+        return ArtifactStatus(NEVER_BUILT)
+
+    record = read_sidecar(paths, target)
+    if record is None:
+        return ArtifactStatus(NO_PROVENANCE)
+    if not _is_our_image(record, path, stat):
+        return ArtifactStatus(NO_PROVENANCE)
+    if record.get("dirty"):
+        # The tree it came from is not recoverable, so current is unprovable
+        # rather than merely unknown.
+        return ArtifactStatus(BUILT_DIRTY)
+
+    built, head = record.get("sha"), state.sha
+    if not built or not head:
+        return ArtifactStatus(NO_PROVENANCE)
+    return ArtifactStatus() if built == head else ArtifactStatus(SOURCE_CHANGED)

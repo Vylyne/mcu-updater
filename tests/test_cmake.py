@@ -15,6 +15,7 @@ import pytest
 
 from mcu_updater.errors import BuildError, ConfigError
 from mcu_updater.providers import cmake
+from mcu_updater.states import BUILT_DIRTY, NEVER_BUILT, NO_PROVENANCE, SOURCE_CHANGED
 
 
 def write_config(paths, text: str) -> None:
@@ -421,3 +422,80 @@ def test_configure_args_carry_the_expanded_version(paths, settings, repo, monkey
     assert [f"-DROADRUNNER_FIRMWARE_VERSION={version}"] == [
         a for a in seen[0] if a.startswith("-DROADRUNNER")
     ]
+
+
+def _staged(paths, data=b"IMAGE"):
+    path = paths.uf2_file("roadrunner", "roadrunner")
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    with open(path, "wb") as fh:
+        fh.write(data)
+    return path
+
+
+def test_no_image_is_never_built(paths, tmp_path):
+    status = cmake.artifact_status(paths, _cmake_type(tmp_path), cmake.SourceState())
+    assert status.reason == NEVER_BUILT
+    assert not status.is_current
+
+
+def test_an_image_with_no_sidecar_has_no_provenance(paths, tmp_path):
+    """Claiming current about a binary we know nothing about is the failure -
+    it flashes a board with firmware from before the fix you just made."""
+    _staged(paths)
+    status = cmake.artifact_status(paths, _cmake_type(tmp_path), cmake.SourceState())
+    assert status.reason == NO_PROVENANCE
+
+
+def test_an_image_somebody_else_rebuilt_has_no_provenance(paths, repo):
+    source = repo / "rp2040"
+    target = _cmake_type(source)
+    state = cmake.source_state(str(source))
+    _staged(paths)
+    cmake.record_build(paths, target, state)
+
+    _staged(paths, b"SOMETHING ELSE")
+    assert cmake.artifact_status(paths, target, state).reason == NO_PROVENANCE
+
+
+def test_a_build_from_a_dirty_subtree_is_built_dirty(paths, repo):
+    source = repo / "rp2040"
+    (source / "CMakeLists.txt").write_text("project(rr2)\n", encoding="utf-8")
+    target = _cmake_type(source)
+    state = cmake.source_state(str(source))
+    assert state.dirty is True
+
+    _staged(paths)
+    cmake.record_build(paths, target, state)
+    assert cmake.artifact_status(paths, target, state).reason == BUILT_DIRTY
+
+
+def test_a_commit_to_the_subtree_makes_the_image_stale(paths, repo):
+    source = repo / "rp2040"
+    target = _cmake_type(source)
+    built_from = cmake.source_state(str(source))
+    _staged(paths)
+    cmake.record_build(paths, target, built_from)
+
+    (source / "main.c").write_text("int main(void){return 0;}\n", encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", "change firmware")
+
+    now = cmake.source_state(str(source))
+    assert cmake.artifact_status(paths, target, now).reason == SOURCE_CHANGED
+
+
+def test_a_commit_outside_the_subtree_leaves_the_image_current(paths, repo):
+    """The regression pio's repo-wide source_state would fail."""
+    source = repo / "rp2040"
+    target = _cmake_type(source)
+    built_from = cmake.source_state(str(source))
+    _staged(paths)
+    cmake.record_build(paths, target, built_from)
+
+    (repo / "klippy" / "extra.py").write_text("x = 99\n", encoding="utf-8")
+    _git(repo, "add", "-A")
+    _git(repo, "commit", "-qm", "unrelated")
+
+    now = cmake.source_state(str(source))
+    status = cmake.artifact_status(paths, target, now)
+    assert status.is_current, status.reason

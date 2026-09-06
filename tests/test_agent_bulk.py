@@ -117,6 +117,30 @@ def _declare_cartographer(paths) -> None:
         fh.write("\n[type carto_v4]\nchipset: stm32g431xx\nfirmware: cartographer\n")
 
 
+def _declare_cmake(paths, fake_root, name="roadrunner") -> str:
+    """A cmake type with a source tree and nothing staged yet.
+
+    Opt-in rather than part of the `bulk` fixture: several tests here assert on
+    the *exact* pair list a sweep produces, and a type declared for everybody
+    would break them for a reason that has nothing to do with what they check.
+
+    The tree needs a CMakeLists.txt and deliberately no `build/`: `blocked()`
+    reads the first and would shell out to real `cmake` for the target list if
+    the second existed, which is not a thing a unit test should depend on.
+    """
+    tree = os.path.join(fake_root, "roadrunner", "rp2040")
+    os.makedirs(tree, exist_ok=True)
+    with open(os.path.join(tree, "CMakeLists.txt"), "w", encoding="utf-8") as fh:
+        fh.write("project(roadrunner)\n")
+    with open(paths.main_config, "a", encoding="utf-8") as fh:
+        fh.write(
+            f"\n[firmware roadrunner]\nsource: {tree}\nbuilder: cmake\n\n"
+            f"[type {name}]\nchipset: rp2040\nfirmware: roadrunner\n"
+            f"cmake_target: roadrunner_v1_i2c_rgb\n"
+        )
+    return tree
+
+
 def _declare_display(paths, name="knomi_toolchanger") -> str:
     """A PlatformIO display with a source tree and nothing built yet.
 
@@ -291,6 +315,25 @@ def test_a_fleet_build_reaches_the_screens_too(bulk, paths, tmp_path):
     # MCUs keep their place at the front: a batch that reordered itself would be
     # a behaviour change hiding inside a refactor.
     assert targets[0].name == EBB
+
+
+def test_a_fleet_build_reaches_a_cmake_type_too(bulk, paths, fake_root):
+    """The screens' bug, one build system later.
+
+    A cmake type is in neither the `[mcu ...]` registry nor the PlatformIO
+    display map, so anything walking those two lists cannot choose it even in
+    principle - and a sweep that silently left every Roadrunner on last week's
+    firmware while reporting success is the exact failure the provider seam was
+    written to stop. Asserting the provider as well as the pair is the point:
+    the pair alone would pass with a kconfig target carrying a blank family.
+    """
+    _save_config(paths, EBB)
+    _declare_cmake(paths, fake_root)
+
+    targets = bulk._build_targets(bulk._install(), "all").build
+
+    assert ("roadrunner", "roadrunner") in [(t.name, t.fw) for t in targets]
+    assert [t.provider for t in targets if t.name == "roadrunner"] == ["cmake"]
 
 
 def test_a_named_family_leaves_the_screens_alone(bulk, paths, tmp_path):

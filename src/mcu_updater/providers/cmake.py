@@ -515,8 +515,31 @@ def build(
     shutil.copyfile(produced, staged)
     reporter("info", f"Staged {staged}")
 
-    # After the copy, so the record describes the bytes that now exist.
-    record_build(paths, target, state)
+    # After the copy, so the record describes the bytes that now exist - and
+    # the two halves of that record are deliberately sampled at different
+    # times, so do not "fix" one to match the other:
+    #
+    # `version` stays the value read *before* the build. It is the string that
+    # was substituted into `cmake_args:` and compiled into this binary through
+    # `-D`, so it is what the board will report back; re-reading it here would
+    # record a string the firmware does not carry and would make every flash
+    # record disagree with the image.
+    #
+    # `sha` and `dirty` are re-read *after* `make`, because they answer "what
+    # was compiled", not "what did we intend to compile" - the same reason
+    # `pio.build()` reads its whole state after its build. A tree that moved
+    # mid-compile (an editor save, a `git pull`, a checkout - all things people
+    # do while a build they think is over is still running) produced an image
+    # that is part one revision and part another, and no commit describes it.
+    # `dirty` is therefore forced true when the subtree commit moved as well as
+    # when it is unclean: a post-build sha on its own would be a *clean* record
+    # of a commit that did not produce these bytes, which is exactly the state
+    # `artifact_status()` reports as current and never rebuilds.
+    after = source_state(source)
+    built = dataclasses.replace(
+        after, version=state.version, dirty=after.dirty or after.sha != state.sha
+    )
+    record_build(paths, target, built)
     return staged
 
 

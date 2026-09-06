@@ -495,6 +495,88 @@ def test_the_sidecar_records_the_subtree_commit_and_the_bytes(paths, settings, r
     # test_a_build_from_a_dirty_subtree_is_built_dirty below.
 
 
+def test_an_edit_landing_during_the_build_is_recorded_dirty(
+    paths, settings, repo, monkeypatch
+):
+    """Provenance is read after `make`, not before it. An uncommitted edit that
+    lands mid-compile is in the image, and a record sampled at t0 would call
+    those bytes a clean build of the pre-edit commit - permanently current,
+    never rebuilt."""
+    source = repo / "rp2040"
+    (source / "build").mkdir()
+
+    def fake_run(cmd, *, cwd, reporter, cancel=None, dry_run=False, **kw):
+        (source / "edited_mid_build.c").write_text("oops\n", encoding="utf-8")
+        (source / "build" / "roadrunner_v1_i2c_rgb.uf2").write_bytes(b"IMAGE")
+        return 0
+
+    monkeypatch.setattr(cmake.build_mod, "run_streamed", fake_run)
+    target = _cmake_type(source)
+    cmake.build(paths, settings, target)
+
+    record = cmake.read_sidecar(paths, target)
+    assert record["dirty"] is True
+    state = cmake.source_state(str(source))
+    assert cmake.artifact_status(paths, target, state).reason == BUILT_DIRTY
+
+
+def test_a_commit_landing_during_the_build_is_recorded_dirty_too(
+    paths, settings, repo, monkeypatch
+):
+    """The half of B2 that re-sampling alone does not close. A `git pull` or a
+    commit mid-compile leaves the subtree clean at a *new* sha, so a plain
+    post-build sample would record a clean build of a commit that did not
+    produce these bytes - and `artifact_status()` would call it current. The
+    image straddles two revisions; dirty is the only honest answer."""
+    source = repo / "rp2040"
+    (source / "build").mkdir()
+
+    def fake_run(cmd, *, cwd, reporter, cancel=None, dry_run=False, **kw):
+        (source / "landed_mid_build.c").write_text("late\n", encoding="utf-8")
+        _git(repo, "add", "-A")
+        _git(repo, "commit", "-qm", "landed mid build")
+        (source / "build" / "roadrunner_v1_i2c_rgb.uf2").write_bytes(b"IMAGE")
+        return 0
+
+    monkeypatch.setattr(cmake.build_mod, "run_streamed", fake_run)
+    target = _cmake_type(source)
+    before = cmake.source_state(str(source))
+    cmake.build(paths, settings, target)
+
+    after = cmake.source_state(str(source))
+    assert after.sha != before.sha and after.dirty is False
+    record = cmake.read_sidecar(paths, target)
+    assert record["dirty"] is True
+    assert cmake.artifact_status(paths, target, after).reason == BUILT_DIRTY
+
+
+def test_the_recorded_version_is_the_one_compiled_in(
+    paths, settings, repo, monkeypatch
+):
+    """The other half of the split: `version` is *not* re-sampled. It is the
+    string substituted into `cmake_args:` and compiled into the binary through
+    `-D`, so it must stay the pre-build value or the sidecar disagrees with
+    what the board reports."""
+    source = repo / "rp2040"
+    (source / "build").mkdir()
+
+    def fake_run(cmd, *, cwd, reporter, cancel=None, dry_run=False, **kw):
+        (source / "landed_mid_build.c").write_text("late\n", encoding="utf-8")
+        _git(repo, "add", "-A")
+        _git(repo, "commit", "-qm", "landed mid build")
+        (source / "build" / "roadrunner_v1_i2c_rgb.uf2").write_bytes(b"IMAGE")
+        return 0
+
+    monkeypatch.setattr(cmake.build_mod, "run_streamed", fake_run)
+    target = _cmake_type(source)
+    compiled_in = cmake.source_state(str(source)).version
+    cmake.build(paths, settings, target)
+
+    record = cmake.read_sidecar(paths, target)
+    assert record["version"] == compiled_in
+    assert record["version"] != cmake.source_state(str(source)).version
+
+
 def test_configure_args_carry_the_expanded_version(paths, settings, repo, monkeypatch):
     source = repo / "rp2040"
     seen: list[list[str]] = []

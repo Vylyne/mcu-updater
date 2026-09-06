@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import dataclasses
 
+from .cmake import Cmake
 from .kconfig_make import KconfigMake
 from .platformio import PlatformIO
 from .spec import BuildTarget, Install, Provider, Skipped
@@ -23,7 +24,7 @@ from .spec import BuildTarget, Install, Provider, Skipped
 #: Every build system, in the order a batch works through them. kconfig first
 #: because that is the order MCU builds have always happened in, and a batch
 #: that reordered itself would be a behaviour change hiding inside a refactor.
-PROVIDERS: tuple[Provider, ...] = (KconfigMake(), PlatformIO())
+PROVIDERS: tuple[Provider, ...] = (KconfigMake(), PlatformIO(), Cmake())
 
 _BY_NAME: dict[str, Provider] = {p.name: p for p in PROVIDERS}
 

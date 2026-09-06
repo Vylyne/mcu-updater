@@ -44,6 +44,7 @@ from ..states import (
     SOURCE_CHANGED,
     ArtifactStatus,
 )
+from .spec import BuildTarget, Install
 
 #: What this provider's `builder:` value is, in `[firmware ...]`.
 BUILDER = "cmake"
@@ -539,3 +540,45 @@ def artifact_status(
     if not built or not head:
         return ArtifactStatus(NO_PROVENANCE)
     return ArtifactStatus() if built == head else ArtifactStatus(SOURCE_CHANGED)
+
+
+class Cmake:
+    """Builds one cmake target: one type whose declared family is cmake-built."""
+
+    name = BUILDER
+    label = "CMake"
+
+    def targets(self, install: Install) -> list[BuildTarget]:
+        return [
+            BuildTarget(self.name, name, entry.firmware)
+            for name, entry in install.cmake.items()
+        ]
+
+    def blocked(self, install: Install, target: BuildTarget) -> str | None:
+        entry = install.cmake.get(target.name)
+        if entry is None:
+            return f"no cmake type '{target.name}' is configured."
+        return source_problem(entry)
+
+    def artifact_status(self, install: Install, target: BuildTarget) -> ArtifactStatus:
+        entry = install.cmake[target.name]
+        return artifact_status(install.paths, entry, source_state(entry.source))
+
+    def build(
+        self,
+        install: Install,
+        target: BuildTarget,
+        *,
+        reporter: Reporter,
+        cancel: threading.Event | None = None,
+    ) -> None:
+        build(
+            install.paths,
+            install.settings,
+            install.cmake[target.name],
+            reporter=reporter,
+            cancel=cancel,
+        )
+
+    def describe(self, target: BuildTarget) -> str:
+        return target.name

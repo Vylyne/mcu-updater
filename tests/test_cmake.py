@@ -13,8 +13,9 @@ import subprocess
 
 import pytest
 
+from mcu_updater import providers
 from mcu_updater.errors import BuildError, ConfigError
-from mcu_updater.providers import cmake
+from mcu_updater.providers import Cmake, Install, cmake
 from mcu_updater.states import BUILT_DIRTY, NEVER_BUILT, NO_PROVENANCE, SOURCE_CHANGED
 
 from .conftest import cmd_tokens
@@ -586,3 +587,44 @@ def test_a_commit_outside_the_subtree_leaves_the_image_current(paths, repo):
     now = cmake.source_state(str(source))
     status = cmake.artifact_status(paths, target, now)
     assert status.is_current, status.reason
+
+
+# --------------------------------------------------------------------------
+# the Cmake provider adapter
+# --------------------------------------------------------------------------
+
+
+def test_the_provider_enumerates_its_types(paths, settings, tmp_path):
+    write_config(paths, ROADRUNNER_CFG.format(source=tmp_path))
+    install = Install.load(paths, settings)
+    targets = Cmake().targets(install)
+    assert [(t.provider, t.name, t.fw) for t in targets] == [
+        ("cmake", "roadrunner", "roadrunner")
+    ]
+
+
+def test_the_provider_is_never_swept_on_demand(paths, settings, tmp_path):
+    """A cmake target is an application, not a bootloader - a sweep builds it.
+    Asserted because `on_demand` defaulting the other way would silently drop
+    it from every fleet build."""
+    write_config(paths, ROADRUNNER_CFG.format(source=tmp_path))
+    install = Install.load(paths, settings)
+    assert all(not t.on_demand for t in Cmake().targets(install))
+
+
+def test_a_blocked_type_is_skipped_by_selection_not_failed(paths, settings, tmp_path):
+    """tmp_path has no CMakeLists.txt, so the type is blocked. It must appear
+    in `skipped` with a reason, never silently vanish - the silent version of
+    exactly this is the bug the provider seam was written to fix."""
+    write_config(paths, ROADRUNNER_CFG.format(source=tmp_path))
+    install = Install.load(paths, settings)
+    selection = providers.select(install, stale_only=False)
+    skipped = {s.target.name: s.reason for s in selection.skipped}
+    assert "roadrunner" in skipped
+    assert "CMakeLists.txt" in skipped["roadrunner"]
+
+
+def test_describe_names_the_type(paths, settings, tmp_path):
+    write_config(paths, ROADRUNNER_CFG.format(source=tmp_path))
+    install = Install.load(paths, settings)
+    assert Cmake().describe(Cmake().targets(install)[0]) == "roadrunner"

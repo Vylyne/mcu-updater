@@ -34,7 +34,7 @@ from __future__ import annotations
 
 import dataclasses
 import threading
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 from ..build import Reporter
 from ..config import Registry
@@ -42,6 +42,9 @@ from ..paths import Paths
 from ..settings import Settings
 from ..states import ArtifactStatus
 from . import pio as pio_mod
+
+if TYPE_CHECKING:
+    from .cmake import CmakeType
 
 
 @dataclasses.dataclass(frozen=True)
@@ -66,14 +69,19 @@ class Install:
     registry: Registry
     #: Types this host builds with PlatformIO.
     displays: dict[str, pio_mod.PioType]
+    #: Types this host builds with cmake.
+    cmake: dict[str, CmakeType] = dataclasses.field(default_factory=dict)
 
     @classmethod
     def load(cls, paths: Paths, settings: Settings) -> Install:
+        from . import cmake as cmake_mod
+
         return cls(
             paths=paths,
             settings=settings,
             registry=Registry.load(paths),
             displays=pio_mod.load(paths),
+            cmake=cmake_mod.load(paths),
         )
 
 

@@ -52,7 +52,7 @@ def test_the_provider_set_is_static_and_ordered():
     built first, and a refactor that reordered them would be a behaviour change
     hiding inside a rename.
     """
-    assert [p.name for p in providers.PROVIDERS] == ["kconfig_make", "platformio"]
+    assert [p.name for p in providers.PROVIDERS] == ["kconfig_make", "platformio", "cmake"]
 
 
 def test_an_unknown_provider_raises_rather_than_defaulting():

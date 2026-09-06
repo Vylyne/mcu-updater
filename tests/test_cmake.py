@@ -457,6 +457,57 @@ def test_a_declared_target_is_still_staged(paths, settings, repo, monkeypatch):
     assert open(staged, "rb").read() == b"roadrunner_v1_i2c_rgb"
 
 
+def test_the_target_list_is_read_after_make_not_after_configure(
+    paths, settings, repo, monkeypatch
+):
+    """Where the check sits, pinned.
+
+    The configure step in `build()` is conditional: a tree with no
+    `cmake_args:` whose cache already names it is not reconfigured, so a check
+    asked before `make` would be answered by the build system an *earlier*
+    configure generated - here, the one that still lists the removed v1 target.
+    `make` re-runs cmake itself when CMakeLists.txt has moved, so only a
+    post-make answer describes this tree. The stale answer below is what a
+    post-configure check would have been given, and it would have staged day
+    one's bytes."""
+    source = repo / "rp2040"
+    (source / "build").mkdir()
+    (source / "build" / "roadrunner_v1_i2c_rgb.uf2").write_bytes(b"DAY-ONE-IMAGE")
+    (source / "build" / "CMakeCache.txt").write_text(
+        f"CMAKE_HOME_DIRECTORY:INTERNAL={source}\n", encoding="utf-8"
+    )
+    assert cmake.needs_configure(str(source)) is False
+
+    regenerated: list[bool] = []
+    seen: list[list[str]] = []
+
+    def fake_run(cmd, *, cwd, reporter, cancel=None, dry_run=False, **kw):
+        seen.append(list(cmd))
+        if cmd[0] == "make":
+            # What cmake_check_build_system does during `make`.
+            regenerated.append(True)
+            (source / "build" / "roadrunner_v2_i2c_rgb.uf2").write_bytes(b"DAY-TWO")
+        return 0
+
+    def fake_targets(source_dir):
+        if regenerated:
+            return {"all", "roadrunner_v2_i2c_rgb"}
+        return {"all", "roadrunner_v1_i2c_rgb"}
+
+    monkeypatch.setattr(cmake.build_mod, "run_streamed", fake_run)
+    monkeypatch.setattr(cmake, "declared_targets", fake_targets)
+
+    target = _cmake_type(source)
+    with pytest.raises(BuildError):
+        cmake.build(paths, settings, target)
+
+    # The premise: no configure ran this build, so the pre-make list really was
+    # the stale one. Without this the test could pass for the wrong reason.
+    assert [c for c in seen if c[0] == "cmake"] == []
+    assert not os.path.exists(paths.uf2_file("roadrunner", "roadrunner"))
+    assert cmake.read_sidecar(paths, target) is None
+
+
 def test_an_unaskable_target_list_does_not_block_the_build(
     paths, settings, repo, monkeypatch
 ):

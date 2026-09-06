@@ -314,8 +314,7 @@ def test_declared_families_are_ordered_independently_of_the_file(paths):
 def test_a_declared_family_gets_its_own_per_type_keys(paths):
     """`<fw>_extra_args` is derived from the family name, so a new family has
     to be known - and declared on the type - before the registry round-trips
-    its keys. A family a type does not declare is not read back on load; see
-    docs/rebuild-plan.md Step 18."""
+    its keys. A family a type does not declare is not read back on load."""
     _write_firmware(paths, "cartographer", artifact="klipper")
 
     reg = Registry.load(paths)
@@ -396,8 +395,8 @@ def test_a_type_runs_klipper_unless_it_says_otherwise(paths):
 
 def test_firmware_is_written_even_for_the_plain_klipper_default(paths):
     """Unlike katapult_installed / extra_args / makefile_patches, firmware: is
-    never omitted as a restated default - load() now requires it on every
-    type (see docs/rebuild-plan.md Step 11), so save() cannot leave it
+    never omitted as a restated default - load() requires it on every
+    type, so save() cannot leave it
     implicit even when there is nothing else to distinguish this type."""
     reg = Registry.load(paths)
     reg.add_type("bttebb36", "stm32g0b1xx", katapult_installed=False)
@@ -455,7 +454,7 @@ def test_a_type_lists_only_the_families_it_uses(paths):
     assert mcu.families() == ["cartographer", "katapult"]
     # fw_order() is narrowed to what this type actually declares too - a
     # klipper slot for a board that will never run klipper is exactly the
-    # phantom-entry noise docs/rebuild-plan.md Step 18 removes.
+    # phantom-entry noise the declared-families narrowing removes.
     assert "klipper" not in mcu.fw_order()
 
 

@@ -202,8 +202,9 @@ choices, not something the agent itself reads at runtime:
 
 ## Coming from the old layout
 
-**Historical.** Both migrations below predate the schema-first rebuild
-(`docs/rebuild-plan.md`) and describe moves off layouts nothing still ships.
+**Historical.** Both migrations below predate the schema-first rebuild that
+introduced firmware families, and describe moves off layouts nothing still
+ships.
 The pre-rebuild `[mcu ...]`/`[display ...]`/single-`firmware`-key config had a
 migration script as well; it was retired once the one install it existed for
 had run it, on the same reasoning as "Registry moves" below — a one-time job is

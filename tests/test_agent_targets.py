@@ -3,9 +3,9 @@
 `types[]` and `displays[]` said overlapping things in different words; the
 panel needed a component per wire shape. `targets[]` is those two projected
 onto one shape, so one component renders both - and renders whatever comes
-next without being taught to. The two originals retired at API_VERSION 2
-(docs/rebuild-plan.md Step 14); `type_status()`/`pio_status()`, the
-richer per-type computations `targets[]` is built from, did not - they still
+next without being taught to. The two originals retired at API_VERSION 2;
+`type_status()`/`pio_status()`, the richer per-type computations `targets[]` is
+built from, did not - they still
 back `fw.type.list` and feed the projection directly.
 
 **It is a projection, not a second source of truth.** The load-bearing test in
@@ -380,8 +380,8 @@ def test_untrack_is_offered_per_board_and_never_for_a_screen(paths, live_registr
 
 def test_the_artifact_shown_is_the_one_this_type_would_flash(paths, live_registry_text):
     """A cartographer-only type declares no klipper - `artifacts` is narrowed
-    to exactly the families it declares (docs/rebuild-plan.md Step 18), so
-    there is no phantom `klipper` entry to make the panel say a perfectly good
+    to exactly the families it declares, so there is no phantom `klipper`
+    entry to make the panel say a perfectly good
     probe was never built and disable its flash button for good."""
     with open(paths.registry_file, "w", encoding="utf-8") as fh:
         fh.write(live_registry_text)

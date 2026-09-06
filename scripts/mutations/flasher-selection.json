@@ -1,5 +1,5 @@
 {
-  "_comment": "select_for is a capability match, not a lookup - if either half of the match (chipset prefix, state membership) stops being checked, a flasher could be handed a device it never declared it can write. This used to pin a third anchor on the RP2040-BOOTSEL carve-out (a known-but-unbuilt route that refused even though the chipset was recognised); Step 13 registered a real Bootsel flasher, so that branch is gone and rp2040+bootsel is now just another entry the loop below has to get right, same as every other route.",
+  "_comment": "select_for is a capability match, not a lookup - if either half of the match (chipset prefix, state membership) stops being checked, a flasher could be handed a device it never declared it can write. This used to pin a third anchor on the RP2040-BOOTSEL carve-out (a known-but-unbuilt route that refused even though the chipset was recognised); registering a real Bootsel flasher removed it, so that branch is gone and rp2040+bootsel is now just another entry the loop below has to get right, same as every other route.",
   "file": "src/mcu_updater/flashers/registry.py",
   "command": [
     "python",

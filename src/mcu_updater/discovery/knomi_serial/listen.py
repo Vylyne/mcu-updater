@@ -67,7 +67,7 @@ def source_dir(display: PioType) -> str:
 
     Shared with `providers/pio.py`'s `build()`/`upload()`, which import it
     back from here - the same shape `flashers/flash.py` already uses for
-    `dfu_selector`/`dfu_devices` moved out to `discovery/dfu.py` in Step 24.
+    `dfu_selector`/`dfu_devices`, which moved out to `discovery/dfu.py`.
     """
     path = os.path.expanduser(display.source)
     if not path:
@@ -194,8 +194,8 @@ def _as_sighting(display: PioType, device: WatcherDevice) -> Sighting:
         id=device.device_id,
         address=device.port,
         # A display that answered is running its application, not sitting in
-        # a bootloader - STATE_KLIPPER directly, per Step 23's bootloader-
-        # predicate rule. `device.firmware_version` is a *version string*
+        # a bootloader - STATE_KLIPPER directly, per the bootloader-
+        # predicate rule (`discovery.spec.state_for_firmware`). `device.firmware_version` is a *version string*
         # ("1.2.3"), not a firmware family name, so it cannot be fed to
         # `state_for_firmware` - that only works by accident, falling through
         # to the same default this states explicitly.

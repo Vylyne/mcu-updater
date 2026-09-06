@@ -468,7 +468,7 @@ def test_a_refusal_after_a_reboot_says_where_the_board_is(
 
 
 def test_a_real_flash_records_unique_bus_id_confidence(paths, ready, fake_root, monkeypatch):
-    """The confirmed-at-write-time ledger Step 27 gives a board: a by-id
+    """The confirmed-at-write-time ledger a board gets: a by-id
     sighting is die-derived, not remembered, so the FlashLog record for a real
     write carries `unique_bus_id` - the board-side counterpart to a display's
     `answered` after a listen pass."""

@@ -61,7 +61,7 @@ def display(tree):
 # --------------------------------------------------------------------------
 # config: a type belongs to this provider when the firmware family it
 # declares is platformio-built - there is no provider: key and no [display]
-# prefix any more. See docs/rebuild-plan.md's target schema.
+# prefix any more.
 # --------------------------------------------------------------------------
 
 #: One [firmware ...] section, reused by every test below that just needs

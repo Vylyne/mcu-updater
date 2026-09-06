@@ -191,10 +191,11 @@ class McuType:
         """Read a firmware family's config without creating a slot.
 
         Distinct from `fw()`, which is `setdefault` and therefore *creates* a
-        slot as a side effect of merely being asked for one - the bug behind
-        docs/rebuild-plan.md Step 18, where a read-only loop over every
-        globally declared family left every type carrying phantom slots for
-        families it never declared. Use this wherever a family's config is
+        slot as a side effect of merely being asked for one. That was a real
+        bug: a read-only loop over every globally declared family left every
+        type carrying phantom slots for families it never declared, and the
+        panel then reported a perfectly good board's firmware as never built.
+        Use this wherever a family's config is
         only being read, never assigned into.
         """
         return self.fws.get(fw, FwConfig())
@@ -366,8 +367,7 @@ class Registry:
             if not declared_fws:
                 # Refused, not defaulted to klipper - silence used to mean
                 # klipper (kconfig_make), which is exactly the implicit
-                # behaviour this key exists to remove. See docs/rebuild-plan.md
-                # Step 11.
+                # behaviour this key exists to remove.
                 raise ConfigCorruptError(
                     f"{path}: '{name}' declares no firmware: key. Every type "
                     f"must name at least one firmware family it runs, e.g. "
@@ -426,7 +426,7 @@ class Registry:
             # globally-declared [firmware ...] section. mcu.fw() is
             # setdefault, so iterating fw_names here would seed a phantom
             # slot for every family in the file on every type, not just the
-            # ones it runs. See docs/rebuild-plan.md Step 18.
+            # ones it runs.
             for fw in mcu.firmwares:
                 cfg = mcu.fw(fw)
                 cfg.extra_args = (doc.get(section, f"{fw}_extra_args") or "").strip()

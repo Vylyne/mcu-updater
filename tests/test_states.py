@@ -9,8 +9,7 @@ built artifact) is ``ArtifactStatus``, Q2 (the device) is ``DeviceStatus``.
 different things spelled "unknown"; two of them are now distinguishable, and the
 MCU and display sides finally agree about what a missing sidecar means. The old
 wire words (``stale``/``stale_reason``, ``firmware_state``, ``artifact_state``)
-were retired once this vocabulary existed to say the same things - see
-docs/rebuild-plan.md's Step 14 log for that call.
+were retired once this vocabulary existed to say the same things.
 """
 
 from __future__ import annotations

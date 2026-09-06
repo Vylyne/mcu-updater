@@ -418,11 +418,10 @@ def test_families_built_by_different_tools_are_refused(paths):
 
 
 def test_a_type_with_no_firmware_key_is_refused(paths):
-    """Step 9 retired the provider: fallback, so an absent firmware: key had
-    nothing left to mean - silence used to read as klipper (plus katapult,
-    under the even older katapult_installed-defaults-true convention), which
-    is exactly the implicit behaviour this rebuild exists to remove. See
-    docs/rebuild-plan.md Step 11."""
+    """Retiring the `provider:` fallback left an absent firmware: key with
+    nothing to mean - silence used to read as klipper (plus katapult, under the
+    even older katapult_installed-defaults-true convention), which is exactly
+    the implicit behaviour the firmware-family schema exists to remove."""
     _write(paths, "[type a]\nchipset: x\nserials:\n")
     with pytest.raises(ConfigCorruptError) as exc:
         Registry.load(paths)

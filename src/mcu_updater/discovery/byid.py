@@ -147,7 +147,7 @@ class Byid:
     display that just answered a listen pass. Deferred import of
     `discovery.spec`: that module imports `.. devices`, which re-exports this
     module, so importing it at module scope here would be a cycle - the same
-    shape Step 24 already hit and resolved for `dfu_selector`.
+    shape `dfu_selector` already hit and resolved the same way.
     """
 
     name = "byid"

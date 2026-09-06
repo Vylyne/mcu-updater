@@ -171,8 +171,8 @@ def flash_katapult(
             path=fw_bin,
         )
 
-    # Confirmed at write time, not just remembered - the same ledger Step 26
-    # gave a display. `device_for` reduces chipset+serial to at most one
+    # Confirmed at write time, not just remembered - the same ledger a
+    # display gets. `device_for` reduces chipset+serial to at most one
     # sighting; state (bootloader or running) replaces the old two-call
     # katapult-then-unconstrained lookup, via the bootloader-predicate rule
     # (`discovery.spec.state_for_firmware`) rather than a fixed firmware name -

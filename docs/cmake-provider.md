@@ -5,8 +5,6 @@ replaces the implementation plan and the review reports that produced it — the
 plan is in git history (`git log -- docs/cmake-provider-plan.md`), and the
 design doc it argued from is [cmake-provider-design.md](cmake-provider-design.md).
 
-Merged to `develop` 2026-09-06.
-
 ## What it does
 
 A third build system beside `kconfig_make` and `platformio`, for trees that
@@ -65,6 +63,26 @@ arbitrary execution in a process that holds the exclusive lock and has NOPASSWD
 `systemctl` — the case [decisions.md](decisions.md) already refuses for plugin
 auto-discovery. `submodules:` is the narrow capability instead.
 
+**The key is `cmake_target:`, spelled out, in CMake's own vocabulary.** Not a
+short form like `i2c_rgb` — expanding one into `roadrunner_v1_i2c_rgb` means
+knowing a naming convention that belongs to one vendor's `CMakeLists.txt`. Not
+`variant:`, which is wrong twice over: it is not CMake's word, and CMake Tools
+already uses "variant" for the build type, so a user would reasonably put
+`Release` in it. Namespaced rather than a bare `target:`, because *target* is
+already three different things here — `BuildTarget`, `FlashTarget`, and the
+`targets[]` wire shape.
+
+**Correlation has a ceiling, and `cmake_args:` is what buys the middle tier.**
+Three levels: the bytes we sent (`bin_sha256` in the sidecar, ours and exact);
+the source the board reports (`${git_describe}` compiled in via `-D`, returned
+by the Roadrunner's `INFO` as `identity.firmware_version`, which
+`FlashLog.entry_for()` already compares and discards our record on mismatch —
+"something else flashed this board since"); and the ceiling, which is that a
+board cannot report its own binary hash. The maintenance protocol has no opcode
+for it. Byte-level identity stays our own record. That is why `cmake_args:` is
+not a convenience — the version string is the only channel through which a
+Roadrunner can tell us anything about what it is running.
+
 **`clean()` is on the Provider protocol, not a cmake special case.** kconfig and
 platformio answer `None`, so a caller can offer the action on any type without
 knowing which build systems keep a directory.
@@ -106,6 +124,14 @@ None is load-bearing; all were reviewed and deliberately deferred.
   next reads `cmake.py`'s record block will be looking straight at it.
 
 ## Not wired up
+
+**A trap waiting for whoever wires up flashing:** `Flashtool.chipsets` is
+`("stm32", "rp2040")` and its states include `STATE_KLIPPER`, and `Flashtool()`
+is *first* in a first-match `FLASHERS` tuple — so `select_for("rp2040",
+STATE_KLIPPER)` resolves to the Katapult flashtool today, and a Roadrunner
+flasher registered after it would never be reached. The agreed fix is a third
+axis on `select_for`: whether the type carries a bootloader family (a
+Roadrunner declares none; an SKR Pico declares katapult).
 
 Flashing a cmake type. `fw.flash` refuses a cmake name, and the `targets[]` row
 carries `devices: []` with `extra.flashable: false` rather than advertising a

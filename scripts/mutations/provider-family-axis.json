@@ -1,5 +1,5 @@
 {
-  "_comment": "BuildTarget.fw is a real family for every provider now, not Optional[str] standing in for 'no family axis'. Getting this wrong either lets a malformed target reach a build silently defaulted to klipper, or breaks the fw filter ('rebuild knomi_serial everywhere') for exactly the types Step 7 gave a real family to.",
+  "_comment": "BuildTarget.fw is a real family for every provider now, not Optional[str] standing in for 'no family axis'. Getting this wrong either lets a malformed target reach a build silently defaulted to klipper, or breaks the fw filter ('rebuild knomi_serial everywhere') for exactly the PlatformIO types that gained a real family.",
   "file": "src/mcu_updater/providers/kconfig_make.py",
   "command": [
     "python",

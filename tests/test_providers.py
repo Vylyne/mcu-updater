@@ -183,11 +183,10 @@ def test_pio_source_is_not_yet_applied_to_a_family_with_no_source(paths, setting
     `source:` of its own falls back to `~/<family name>`, the same as any
     other firmware family, not to `pio_source`.
 
-    This is a deliberate, temporary gap: retiring the old `[display ...]`
-    fallback now (rather than at Step 14, where the plan originally placed
-    it) is what left `pio_source` disconnected early. Reconnecting it - or
-    retiring the setting - belongs to Step 14 alongside the rest of
-    `default_source`'s removal.
+    This is a deliberate, temporary gap: the old `[display ...]` fallback was
+    retired earlier than planned, which left `pio_source` disconnected ahead of
+    the rest of the legacy purge. Reconnecting it - or retiring the setting -
+    belongs with `default_source`'s own removal, still outstanding.
     """
     tree = tmp_path / "shared"
     tree.mkdir()

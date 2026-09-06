@@ -296,8 +296,8 @@ bootloader (`McuType.application()`), not the full `firmware:` list. `katapult`
 is folded into it as `katapult_installed` plus the `installed` flag on the
 `katapult` block, rather than a `firmwares` array - `mcu.firmwares` is a
 config-model attribute that is never serialised under that name.
-`artifacts` is keyed by exactly the families this type declares (see
-docs/rebuild-plan.md Step 18) - a type with no bootloader carries no `katapult`
+`artifacts` is keyed by exactly the families this type declares - a type with
+no bootloader carries no `katapult`
 key at all, here or in `artifacts`. `needs_flash` at this level is `true` if any
 serial's is, `false` only if every serial provably is not, `null` otherwise -
 the same tri-state rule `Target.needs_flash` uses, described below.
@@ -356,8 +356,8 @@ see "Which screen is on which port is not tracked" below.
 ```
 
 `reason` ∈ `null` | `"never_built"` | `"config_changed"` | `"source_changed"` |
-`"built_dirty"` | `"foreign_build"` | `"no_provenance"`. Retired in Step 14 of
-docs/rebuild-plan.md: this used to be two fields, a three-value `stale`/
+`"built_dirty"` | `"foreign_build"` | `"no_provenance"`. Retired at
+API_VERSION 2: this used to be two fields, a three-value `stale`/
 `stale_reason` collapse and a six-value `reason` carrying the full detail
 beside it - now there is only `reason`, and it carries the full set directly.
 The two extra values are why a single granular field was worth keeping instead
@@ -1384,7 +1384,7 @@ with a mismatched config.
 Reached through `fw.flash` — `name` resolving to a PlatformIO type is what
 routes there instead of the board path above, so the call is `{name, port?,
 force?}` rather than `{serial, name?, force?}`. (`fw.display.flash` was a
-separate method for this until Step 14 of docs/rebuild-plan.md retired it;
+separate method for this until API_VERSION 2 retired it;
 nothing called it once `fw.flash` grew the same routing.)
 
 Two properties carry the risk, and both are enforced rather than documented.

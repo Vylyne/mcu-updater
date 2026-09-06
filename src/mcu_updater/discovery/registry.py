@@ -6,9 +6,8 @@ whatever `.py` landed in a directory is privilege escalation, not a plugin
 system. The tuple is the seam.
 
 The two knomi sources (`knomi_serial/listen.py`, `knomi_serial/watcher.py`)
-implement `discovery.spec.Source` as of Step 26. `byid.py` does too, as of
-Step 27, alongside `esptool.port_for`'s board-side counterpart in
-`flash_katapult`. `dfu.py`/`bootsel.py` still do not - nothing needs them yet;
+implement `discovery.spec.Source`, and so does `byid.py`, alongside
+`esptool.port_for`'s board-side counterpart in `flash_katapult`. `dfu.py`/`bootsel.py` still do not - nothing needs them yet;
 they back `flash_initial_bootloader`'s first-time-flash path, which computes
 its own state rather than consulting `confirm()`.
 """

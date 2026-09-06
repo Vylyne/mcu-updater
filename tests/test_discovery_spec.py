@@ -150,8 +150,8 @@ def test_a_confidence_is_frozen():
 
 
 def test_the_bus_and_knomi_sources_are_registered():
-    """Step 26 wired listen/watcher behind this seam; Step 27 adds byid, the
-    board-side counterpart. Step 28 adds roadrunner. dfu/bootsel still are not -
+    """listen/watcher came behind this seam first, then byid - the board-side
+    counterpart - then roadrunner. dfu/bootsel still are not registered:
     nothing needs them yet, see discovery/registry.py's own docstring."""
     assert [s.name for s in SOURCES] == ["listen", "watcher", "roadrunner", "byid"]
 

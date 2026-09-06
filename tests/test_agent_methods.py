@@ -109,12 +109,12 @@ def test_status_type_shape(api):
     }
     # bttebb36 declares only klipper/katapult - artifacts is keyed by exactly
     # the families a type declares, not every [firmware ...] section in the
-    # file. See docs/rebuild-plan.md Step 18.
+    # file.
     assert set(ebb["artifacts"]) == {"klipper", "katapult"}
-    # The live sample declares `firmware: klipper, katapult` explicitly (step
-    # 11's migration added it) - under the list-based schema "installed" is
-    # just "is katapult in the declared list", nothing implicit any more.
-    # See docs/rebuild-plan.md Steps 6 and 11.
+    # The live sample declares `firmware: klipper, katapult` explicitly -
+    # under the list-based schema "installed" is just "is katapult in the
+    # declared list", nothing implicit any more. It replaced a single
+    # `firmware:` key plus a katapult_installed flag that defaulted true.
     assert ebb["katapult"]["installed"] is True
 
 
@@ -244,7 +244,6 @@ def test_artifacts_returns_both_firmwares(api):
     # bttebb36 declares only klipper/katapult - cartographer and knomi_serial
     # are real [firmware] sections elsewhere in live_registry_text, but this
     # type never declared them, so they must not appear here.
-    # See docs/rebuild-plan.md Step 18.
     assert set(res) == {"klipper", "katapult"}
 
 

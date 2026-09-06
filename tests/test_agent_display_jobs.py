@@ -903,8 +903,8 @@ def test_a_fleet_flash_writes_boards_and_screens_under_one_stop(
 # it could pick one - which is the branching the Provider and Flasher seams
 # removed everywhere else. `fw.build` and `fw.flash` route on the type's own
 # provider instead. Both display-specific methods are retired now that
-# nothing calls them (Step 14 for `fw.display.flash`, Step 16 for
-# `fw.display.list`/`fw.display.build`).
+# nothing calls them: `fw.display.flash` went at API_VERSION 2, and
+# `fw.display.list`/`fw.display.build` with the wire fold that followed.
 # --------------------------------------------------------------------------
 
 

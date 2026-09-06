@@ -552,13 +552,20 @@ def build(
     # mid-compile (an editor save, a `git pull`, a checkout - all things people
     # do while a build they think is over is still running) produced an image
     # that is part one revision and part another, and no commit describes it.
-    # `dirty` is therefore forced true when the subtree commit moved as well as
-    # when it is unclean: a post-build sha on its own would be a *clean* record
-    # of a commit that did not produce these bytes, which is exactly the state
-    # `artifact_status()` reports as current and never rebuilds.
+    # `dirty` is therefore forced true when the subtree was unclean at *either*
+    # end as well as when the commit moved between them. All three legs are
+    # needed: a post-build sha on its own would be a *clean* record of a commit
+    # that did not produce these bytes, and dropping the pre-build leg would do
+    # the same for an edit that was compiled in and then discarded (a stash, a
+    # checkout, an editor undo) - the tree ends clean at the sha it started on,
+    # and nothing left behind says the image is not that commit. Both are
+    # exactly the state `artifact_status()` reports as current and never
+    # rebuilds.
     after = source_state(source)
     built = dataclasses.replace(
-        after, version=state.version, dirty=after.dirty or after.sha != state.sha
+        after,
+        version=state.version,
+        dirty=state.dirty or after.dirty or after.sha != state.sha,
     )
     record_build(paths, target, built)
     return staged

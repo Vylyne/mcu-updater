@@ -605,6 +605,39 @@ def test_a_commit_landing_during_the_build_is_recorded_dirty_too(
     assert cmake.artifact_status(paths, target, after).reason == BUILT_DIRTY
 
 
+def test_an_edit_discarded_during_the_build_is_still_recorded_dirty(
+    paths, settings, repo, monkeypatch
+):
+    """The third leg. An edit present when `make` started is compiled into the
+    image; discarding it mid-compile (a stash, a checkout, an editor undo)
+    leaves the subtree clean at the *same* sha it began on, so neither the
+    post-build `dirty` nor the moved-sha check fires. Without the pre-build
+    leg the sidecar calls those bytes a clean build of a commit that does not
+    contain them - and says so while carrying a `-dirty` version string."""
+    source = repo / "rp2040"
+    (source / "build").mkdir()
+    edit = source / "edited_before_build.c"
+    edit.write_text("compiled in\n", encoding="utf-8")
+
+    def fake_run(cmd, *, cwd, reporter, cancel=None, dry_run=False, **kw):
+        # missing_ok: run_streamed is called for configure and again for make.
+        edit.unlink(missing_ok=True)
+        (source / "build" / "roadrunner_v1_i2c_rgb.uf2").write_bytes(b"IMAGE")
+        return 0
+
+    monkeypatch.setattr(cmake.build_mod, "run_streamed", fake_run)
+    target = _cmake_type(source)
+    before = cmake.source_state(str(source))
+    assert before.dirty is True
+    cmake.build(paths, settings, target)
+
+    after = cmake.source_state(str(source))
+    assert after.sha == before.sha and after.dirty is False
+    record = cmake.read_sidecar(paths, target)
+    assert record["dirty"] is True
+    assert cmake.artifact_status(paths, target, after).reason == BUILT_DIRTY
+
+
 def test_the_recorded_version_is_the_one_compiled_in(
     paths, settings, repo, monkeypatch
 ):

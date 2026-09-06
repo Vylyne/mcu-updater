@@ -324,8 +324,11 @@ def test_a_fleet_build_reaches_a_cmake_type_too(bulk, paths, fake_root):
     display map, so anything walking those two lists cannot choose it even in
     principle - and a sweep that silently left every Roadrunner on last week's
     firmware while reporting success is the exact failure the provider seam was
-    written to stop. Asserting the provider as well as the pair is the point:
-    the pair alone would pass with a kconfig target carrying a blank family.
+    written to stop. The provider assertion is asserted alongside the pair
+    because the pair says only that *something* selected this name: it is the
+    provider that says the selection routes to the cmake build, and a target
+    that reached the sweep under any other provider would build the wrong way
+    while this list still looked right.
     """
     _save_config(paths, EBB)
     _declare_cmake(paths, fake_root)

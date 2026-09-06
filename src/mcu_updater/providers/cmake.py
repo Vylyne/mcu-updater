@@ -64,7 +64,11 @@ class CmakeType:
     #: The declared `firmware:` family. Required to load at all, so never
     #: empty on an instance `load()` returns.
     firmware: str = ""
-    #: Configure-step arguments from the family's `cmake_args:`, verbatim.
+    #: Configure-step arguments from the family's `cmake_args:`, as written.
+    #: Not verbatim: `expand_args` splits them shell-style - quoting groups
+    #: words and is consumed - and substitutes `${git_describe}`. Held here
+    #: unexpanded, because the value that reaches cmake depends on what the
+    #: tree describes as at the moment of the build.
     cmake_args: str = ""
 
     def to_json(self) -> dict:

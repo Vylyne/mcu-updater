@@ -9,6 +9,8 @@ from __future__ import annotations
 
 import dataclasses
 import os
+import pathlib
+import shutil
 import subprocess
 
 import pytest
@@ -19,6 +21,8 @@ from mcu_updater.providers import Cmake, Install, cmake
 from mcu_updater.states import BUILT_DIRTY, NEVER_BUILT, NO_PROVENANCE, SOURCE_CHANGED
 
 from .conftest import cmd_tokens
+
+REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
 
 
 def write_config(paths, text: str) -> None:
@@ -628,3 +632,46 @@ def test_describe_names_the_type(paths, settings, tmp_path):
     write_config(paths, ROADRUNNER_CFG.format(source=tmp_path))
     install = Install.load(paths, settings)
     assert Cmake().describe(Cmake().targets(install)[0]) == "roadrunner"
+
+
+def test_the_provider_build_delegates_to_the_module_function(
+    paths, settings, tmp_path, capture_reporter
+):
+    """`Cmake.build` shares a name with the module-level `build` it calls -
+    close the hole directly rather than trusting that mypy would have caught a
+    bad bind. Asserting on the reported commands (rather than only "nothing
+    staged", which a no-op body would also satisfy) is what makes this
+    load-bearing."""
+    write_config(paths, ROADRUNNER_CFG.format(source=tmp_path))
+    (tmp_path / "CMakeLists.txt").write_text("project(rr)\n", encoding="utf-8")
+    install = Install.load(paths, settings)
+    dry = dataclasses.replace(settings, dry_run=True)
+    install = dataclasses.replace(install, settings=dry)
+    target = Cmake().targets(install)[0]
+
+    Cmake().build(install, target, reporter=capture_reporter.reporter)
+
+    cmds = [line for stream, line in capture_reporter.lines if stream == "cmd"]
+    assert any("cmake" in c and "-S" in c for c in cmds)
+    assert any(cmd_tokens(c)[0] == "make" for c in cmds)
+    assert not os.path.exists(paths.uf2_file("roadrunner", "roadrunner"))
+
+
+def test_the_provider_artifact_status_delegates_to_the_module_function(
+    paths, settings, tmp_path
+):
+    """Same shadowing hole as `build`, for `artifact_status`."""
+    write_config(paths, ROADRUNNER_CFG.format(source=tmp_path))
+    install = Install.load(paths, settings)
+    target = Cmake().targets(install)[0]
+
+    assert Cmake().artifact_status(install, target).reason == NEVER_BUILT
+
+
+def test_the_shipped_example_config_declares_a_loadable_cmake_type(paths):
+    """The example in mcu-updater.cfg is documentation people copy. A typo in
+    it is a support ticket."""
+    shutil.copyfile(REPO_ROOT / "mcu-updater.cfg", paths.main_config)
+    types = cmake.load(paths)
+    assert "roadrunner" in types
+    assert types["roadrunner"].cmake_target == "roadrunner_v1_i2c_rgb"

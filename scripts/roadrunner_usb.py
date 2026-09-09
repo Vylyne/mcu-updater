@@ -15,6 +15,7 @@ from typing import Any
 SYNC = b"RR"
 VERSION = 1
 INFO = 0x01
+REBOOT_BOOTSEL = 0x02
 PROVISION = 0x03
 CLEAR = 0x04
 MAX_REQUEST = 64
@@ -114,6 +115,13 @@ def run(args: argparse.Namespace) -> dict[str, object]:
         if args.operation == "info":
             status, payload = request(port, INFO)
             return parse_info(status, payload)
+        if args.operation == "bootsel":
+            status, payload = request(port, REBOOT_BOOTSEL)
+            if status:
+                raise ProtocolError(f"REBOOT_BOOTSEL refused with status {status}")
+            if payload:
+                raise ProtocolError("REBOOT_BOOTSEL response has unexpected payload")
+            return {"bootsel": True}
         if args.operation == "provision":
             uuid = bytes.fromhex(args.uuid)
             status, payload = request(port, PROVISION, uuid)
@@ -135,7 +143,7 @@ def run(args: argparse.Namespace) -> dict[str, object]:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("operation", choices=("info", "provision", "clear"))
+    parser.add_argument("operation", choices=("info", "bootsel", "provision", "clear"))
     parser.add_argument("port", help="resolved USB CDC tty path")
     parser.add_argument("uuid", nargs="?", help="32 lowercase/uppercase hexadecimal UUID")
     args = parser.parse_args(argv)

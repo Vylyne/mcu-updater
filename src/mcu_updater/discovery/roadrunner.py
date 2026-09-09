@@ -207,6 +207,24 @@ def _await_same_topology(
     )
 
 
+def _await_disappearance(paths: Paths, device: RoadrunnerDevice) -> usb.UsbDevice:
+    """Wait until no Roadrunner CDC candidate occupies the old USB topology."""
+    deadline = time.monotonic() + REENUMERATE_TIMEOUT
+    while True:
+        if not any(
+            topology.name == device.topology.name
+            for _serial, _port, topology in _entry_candidates(paths)
+        ):
+            return device.topology
+        if time.monotonic() >= deadline:
+            raise _error(
+                "roadrunner_timeout",
+                "Roadrunner CDC device did not disappear after the BOOTSEL request",
+                serial=device.serial,
+            )
+        time.sleep(0.25)
+
+
 def provision_roadrunner(paths: Paths, device: RoadrunnerDevice, uuid: bytes) -> RoadrunnerDevice:
     if len(uuid) != 16:
         raise ValueError("Roadrunner UUID must be 16 bytes")
@@ -243,6 +261,13 @@ class Roadrunner:
     #: the same as the knomi listen pass - so it belongs in that category, not
     #: `Byid`'s or `Watcher`'s, which only read state nobody else is holding.
     needs_ports_free: bool = True
+
+    def request_bootsel(
+        self, paths: Paths, device: RoadrunnerDevice
+    ) -> usb.UsbDevice:
+        """Request BOOTSEL and return topology only after the old CDC is gone."""
+        _helper(paths, "bootsel", device.port)
+        return _await_disappearance(paths, device)
 
     def sight(self, bench: Bench) -> list[Sighting]:
         return [

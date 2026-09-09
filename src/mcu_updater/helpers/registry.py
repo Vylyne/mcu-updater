@@ -7,11 +7,12 @@ write firmware, so each implementation must be reviewed and named here.
 from __future__ import annotations
 
 from ..errors import ConfigCorruptError
+from .roadrunner import RoadrunnerHelper
 from .spec import BootselRequester
 
 #: Every firmware-specific helper. Add an implementation and one explicit entry
 #: here; configuration never controls which Python module gets imported.
-HELPERS: tuple[BootselRequester, ...] = ()
+HELPERS: tuple[BootselRequester, ...] = (RoadrunnerHelper(),)
 
 _BY_NAME: dict[str, BootselRequester] = {helper.name: helper for helper in HELPERS}
 

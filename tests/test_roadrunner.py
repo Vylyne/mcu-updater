@@ -11,6 +11,8 @@ import pytest
 from mcu_updater.agent.methods import Api
 from mcu_updater.agent.rpc import ERR_METHOD_NOT_FOUND, RpcError
 from mcu_updater.discovery import roadrunner
+from mcu_updater.flashers.spec import Bench
+from mcu_updater.helpers import BootselHandoff, for_name
 from mcu_updater.jobs import JobRunner
 from mcu_updater.settings import load_settings
 
@@ -302,6 +304,110 @@ def test_clear_reenumeration_reports_mismatch_when_still_provisioned(paths, monk
     assert exc.value.code == "roadrunner_mismatch"
     assert exc.value.data["observed_serial"] == PROVISIONED
     assert exc.value.data["observed_state"] == "provisioned"
+
+
+def test_request_bootsel_waits_for_the_old_cdc_topology_to_disappear(paths, monkeypatch):
+    device = roadrunner.RoadrunnerDevice(PROVISIONED, "/dev/ttyACM0", _topology())
+    polls = [[(PROVISIONED, device.port, device.topology)], []]
+    commands: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        roadrunner,
+        "_helper",
+        lambda _paths, operation, port: commands.append((operation, port)) or {"bootsel": True},
+    )
+    monkeypatch.setattr(roadrunner, "_entry_candidates", lambda _paths: polls.pop(0))
+    _fake_clock(monkeypatch)
+
+    result = roadrunner.Roadrunner().request_bootsel(paths, device)
+
+    assert result == device.topology
+    assert commands == [("bootsel", device.port)]
+    assert polls == []
+
+
+def test_request_bootsel_times_out_while_the_old_cdc_topology_remains(paths, monkeypatch):
+    device = roadrunner.RoadrunnerDevice(PROVISIONED, "/dev/ttyACM0", _topology())
+    commands: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        roadrunner,
+        "_helper",
+        lambda _paths, operation, port: commands.append((operation, port)) or {"bootsel": True},
+    )
+    monkeypatch.setattr(
+        roadrunner,
+        "_entry_candidates",
+        lambda _paths: [(PROVISIONED, device.port, device.topology)],
+    )
+    _fake_clock(monkeypatch)
+
+    with pytest.raises(roadrunner.RoadrunnerError) as exc:
+        roadrunner.Roadrunner().request_bootsel(paths, device)
+
+    assert exc.value.code == "roadrunner_timeout"
+    assert "did not disappear" in str(exc.value)
+    assert commands == [("bootsel", device.port)]
+
+
+def test_firmware_helper_confirms_the_provisioned_serial_before_request(
+    paths, settings, monkeypatch
+):
+    device = roadrunner.RoadrunnerDevice(PROVISIONED, "/dev/ttyACM0", _topology())
+    events: list[tuple[str, object]] = []
+    monkeypatch.setattr(
+        roadrunner,
+        "find_provisioned",
+        lambda requested_paths, serial: events.append(("confirm", serial)) or device,
+    )
+    monkeypatch.setattr(
+        roadrunner.Roadrunner,
+        "request_bootsel",
+        lambda _self, requested_paths, requested_device: events.append(
+            ("request", requested_device)
+        )
+        or requested_device.topology,
+    )
+    bench = Bench(paths=paths, settings=settings, controller=lambda _name=None: None)
+
+    helper = for_name("roadrunner", family="roadrunner")
+    assert helper is not None
+    result = helper.request_bootsel(
+        bench, serial=PROVISIONED, chipset="rp2040", ctx=object()
+    )
+
+    assert result == BootselHandoff(topology="1-3")
+    assert events == [("confirm", PROVISIONED), ("request", device)]
+
+
+def test_firmware_helper_refuses_before_bootsel_when_confirmation_fails(
+    paths, settings, monkeypatch
+):
+    requested: list[object] = []
+    monkeypatch.setattr(
+        roadrunner,
+        "find_provisioned",
+        lambda _paths, serial: (_ for _ in ()).throw(
+            roadrunner._error(
+                "roadrunner_no_candidate",
+                "No confirmed provisioned Roadrunner matched that serial",
+                serial=serial,
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        roadrunner.Roadrunner,
+        "request_bootsel",
+        lambda *_args: requested.append(True),
+    )
+    bench = Bench(paths=paths, settings=settings, controller=lambda _name=None: None)
+
+    helper = for_name("roadrunner", family="roadrunner")
+    assert helper is not None
+    with pytest.raises(roadrunner.RoadrunnerError, match="No confirmed provisioned"):
+        helper.request_bootsel(
+            bench, serial="RR-BAD", chipset="rp2040", ctx=object()
+        )
+
+    assert requested == []
 
 
 def _ready_api(paths) -> Api:

@@ -309,34 +309,42 @@ def test_clear_reenumeration_reports_mismatch_when_still_provisioned(paths, monk
 def test_request_bootsel_waits_for_the_old_cdc_topology_to_disappear(paths, monkeypatch):
     device = roadrunner.RoadrunnerDevice(PROVISIONED, "/dev/ttyACM0", _topology())
     polls = [[(PROVISIONED, device.port, device.topology)], []]
-    commands: list[tuple[str, str]] = []
+    commands: list[tuple[str, str, str | None]] = []
     monkeypatch.setattr(
         roadrunner,
         "_helper",
-        lambda _paths, operation, port: commands.append((operation, port)) or {"bootsel": True},
+        lambda _paths, operation, port, argument=None: commands.append(
+            (operation, port, argument)
+        )
+        or {"bootsel": True},
     )
-    monkeypatch.setattr(roadrunner, "_entry_candidates", lambda _paths: polls.pop(0))
+    monkeypatch.setattr(
+        roadrunner, "_entry_candidates", lambda _paths, **_kwargs: polls.pop(0)
+    )
     _fake_clock(monkeypatch)
 
     result = roadrunner.Roadrunner().request_bootsel(paths, device)
 
     assert result == device.topology
-    assert commands == [("bootsel", device.port)]
+    assert commands == [("bootsel", device.port, PROVISIONED)]
     assert polls == []
 
 
 def test_request_bootsel_times_out_while_the_old_cdc_topology_remains(paths, monkeypatch):
     device = roadrunner.RoadrunnerDevice(PROVISIONED, "/dev/ttyACM0", _topology())
-    commands: list[tuple[str, str]] = []
+    commands: list[tuple[str, str, str | None]] = []
     monkeypatch.setattr(
         roadrunner,
         "_helper",
-        lambda _paths, operation, port: commands.append((operation, port)) or {"bootsel": True},
+        lambda _paths, operation, port, argument=None: commands.append(
+            (operation, port, argument)
+        )
+        or {"bootsel": True},
     )
     monkeypatch.setattr(
         roadrunner,
         "_entry_candidates",
-        lambda _paths: [(PROVISIONED, device.port, device.topology)],
+        lambda _paths, **_kwargs: [(PROVISIONED, device.port, device.topology)],
     )
     _fake_clock(monkeypatch)
 
@@ -345,7 +353,49 @@ def test_request_bootsel_times_out_while_the_old_cdc_topology_remains(paths, mon
 
     assert exc.value.code == "roadrunner_timeout"
     assert "did not disappear" in str(exc.value)
-    assert commands == [("bootsel", device.port)]
+    assert commands == [("bootsel", device.port, PROVISIONED)]
+
+
+def test_request_bootsel_retries_unknown_inventory_before_confirmed_absence(
+    paths, monkeypatch
+):
+    device = roadrunner.RoadrunnerDevice(PROVISIONED, "/dev/ttyACM0", _topology())
+    polls: list[OSError | list[tuple[str, str, roadrunner.usb.UsbDevice]]] = [
+        OSError("USB sysfs unavailable"),
+        [],
+    ]
+    monkeypatch.setattr(roadrunner, "_helper", lambda *_args: {"bootsel": True})
+
+    def candidates(_paths, *, strict=False):
+        assert strict
+        result = polls.pop(0)
+        if isinstance(result, OSError):
+            raise result
+        return result
+
+    monkeypatch.setattr(roadrunner, "_entry_candidates", candidates)
+    _fake_clock(monkeypatch)
+
+    assert roadrunner.Roadrunner().request_bootsel(paths, device) == device.topology
+    assert polls == []
+
+
+def test_request_bootsel_times_out_when_inventory_remains_unknown(paths, monkeypatch):
+    device = roadrunner.RoadrunnerDevice(PROVISIONED, "/dev/ttyACM0", _topology())
+    monkeypatch.setattr(roadrunner, "_helper", lambda *_args: {"bootsel": True})
+
+    def unreadable(_paths, *, strict=False):
+        assert strict
+        raise OSError("USB sysfs unavailable")
+
+    monkeypatch.setattr(roadrunner, "_entry_candidates", unreadable)
+    _fake_clock(monkeypatch)
+
+    with pytest.raises(roadrunner.RoadrunnerError) as exc:
+        roadrunner.Roadrunner().request_bootsel(paths, device)
+
+    assert exc.value.code == "roadrunner_timeout"
+    assert "could not confirm" in str(exc.value).lower()
 
 
 def test_firmware_helper_confirms_the_provisioned_serial_before_request(

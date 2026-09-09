@@ -47,10 +47,10 @@ def _error(code: str, message: str, **data: object) -> RoadrunnerError:
     return error
 
 
-def _helper(paths: Paths, operation: str, port: str, uuid_hex: str | None = None) -> dict[str, object]:
+def _helper(paths: Paths, operation: str, port: str, argument: str | None = None) -> dict[str, object]:
     argv = [sys.executable, _HELPER, operation, port]
-    if uuid_hex is not None:
-        argv.append(uuid_hex)
+    if argument is not None:
+        argv.append(argument)
     try:
         result = subprocess.run(argv, text=True, capture_output=True, check=False, timeout=8)
     except (OSError, subprocess.SubprocessError) as exc:
@@ -65,12 +65,16 @@ def _helper(paths: Paths, operation: str, port: str, uuid_hex: str | None = None
     return data
 
 
-def _entry_candidates(paths: Paths) -> list[tuple[str, str, usb.UsbDevice]]:
+def _entry_candidates(
+    paths: Paths, *, strict: bool = False
+) -> list[tuple[str, str, usb.UsbDevice]]:
     try:
         names = sorted(os.listdir(paths.serial_by_id))
     except OSError:
+        if strict:
+            raise
         return []
-    inventory = usb.collect(paths)
+    inventory = usb.collect(paths, strict=True) if strict else usb.collect(paths)
     candidates: list[tuple[str, str, usb.UsbDevice]] = []
     for name in names:
         match = _ENTRY_RE.fullmatch(name)
@@ -80,6 +84,10 @@ def _entry_candidates(paths: Paths) -> list[tuple[str, str, usb.UsbDevice]]:
         port = os.path.realpath(path)
         topology = usb.device_for_tty(inventory, paths, os.path.basename(port))
         if topology is None or topology.manufacturer != "Vylyne" or topology.product != "Roadrunner":
+            if strict:
+                raise OSError(
+                    f"could not confirm USB topology for Roadrunner candidate {name}"
+                )
             continue
         candidates.append((match.group(1), port, topology))
     return candidates
@@ -211,15 +219,26 @@ def _await_disappearance(paths: Paths, device: RoadrunnerDevice) -> usb.UsbDevic
     """Wait until no Roadrunner CDC candidate occupies the old USB topology."""
     deadline = time.monotonic() + REENUMERATE_TIMEOUT
     while True:
-        if not any(
+        unknown = False
+        try:
+            candidates = _entry_candidates(paths, strict=True)
+        except OSError:
+            unknown = True
+            candidates = []
+        if not unknown and not any(
             topology.name == device.topology.name
-            for _serial, _port, topology in _entry_candidates(paths)
+            for _serial, _port, topology in candidates
         ):
             return device.topology
         if time.monotonic() >= deadline:
+            message = (
+                "Could not confirm that the Roadrunner CDC device disappeared"
+                if unknown
+                else "Roadrunner CDC device did not disappear after the BOOTSEL request"
+            )
             raise _error(
                 "roadrunner_timeout",
-                "Roadrunner CDC device did not disappear after the BOOTSEL request",
+                message,
                 serial=device.serial,
             )
         time.sleep(0.25)
@@ -266,7 +285,7 @@ class Roadrunner:
         self, paths: Paths, device: RoadrunnerDevice
     ) -> usb.UsbDevice:
         """Request BOOTSEL and return topology only after the old CDC is gone."""
-        _helper(paths, "bootsel", device.port)
+        _helper(paths, "bootsel", device.port, device.serial)
         return _await_disappearance(paths, device)
 
     def sight(self, bench: Bench) -> list[Sighting]:

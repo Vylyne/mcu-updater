@@ -12,6 +12,20 @@ from typing import Any
 
 import pytest
 
+PROVISIONED = "RR-0123456789ABCDEFGHJKMNPQRS"
+REPLACEMENT = "RR-ZZZZZZZZZZZZZZZZZZZZZZZZZZ"
+
+
+def _info_payload(serial: str = PROVISIONED) -> bytes:
+    return (
+        b"\x01\x01\x01"
+        + b"\x0droadrunner-v1"
+        + b"\x03dev"
+        + bytes((len(serial),))
+        + serial.encode("ascii")
+        + bytes.fromhex("50543165187A4D1C")
+    )
+
 
 def _load_bridge() -> Any:
     spec = importlib.util.spec_from_file_location(
@@ -49,55 +63,101 @@ class _Port:
         return data
 
 
-def _install_serial(monkeypatch: pytest.MonkeyPatch, port: _Port) -> None:
+def _install_serial(monkeypatch: pytest.MonkeyPatch, port: _Port) -> list[_Port]:
+    opened: list[_Port] = []
     monkeypatch.setitem(
         sys.modules,
         "serial",
-        types.SimpleNamespace(Serial=lambda *_args, **_kwargs: port),
+        types.SimpleNamespace(
+            Serial=lambda *_args, **_kwargs: opened.append(port) or port
+        ),
     )
+    return opened
 
 
-def test_bridge_sends_reboot_bootsel_and_accepts_only_empty_success(monkeypatch):
+def test_bridge_confirms_info_and_reboots_on_the_same_open_endpoint(monkeypatch):
     bridge = _load_bridge()
-    # RR, protocol 1, response opcode 0x82, one-byte status 0, CRC-8/ATM.
-    port = _Port(b"RR\x01\x82\x01\x00\x5a")
-    _install_serial(monkeypatch, port)
+    port = _Port(b"")
+    opened = _install_serial(monkeypatch, port)
+    requests: list[tuple[_Port, int, bytes]] = []
+
+    def request(request_port, opcode, payload=b""):
+        requests.append((request_port, opcode, payload))
+        if opcode == 0x01:
+            return 0, _info_payload()
+        return 0, b""
+
+    monkeypatch.setattr(bridge, "request", request)
 
     result = bridge.run(
-        argparse.Namespace(operation="bootsel", port="/dev/ttyACM0", uuid=None)
+        argparse.Namespace(operation="bootsel", port="/dev/ttyACM0", uuid=PROVISIONED)
     )
 
     assert result == {"bootsel": True}
-    # RR, protocol 1, request opcode 0x02, empty payload, CRC-8/ATM.
-    assert port.written == b"RR\x01\x02\x00\xaf"
+    assert opened == [port]
+    assert requests == [(port, 0x01, b""), (port, 0x02, b"")]
+
+
+def test_bridge_does_not_reboot_a_replacement_endpoint(monkeypatch):
+    bridge = _load_bridge()
+    port = _Port(b"")
+    _install_serial(monkeypatch, port)
+    opcodes: list[int] = []
+
+    def request(_port, opcode, _payload=b""):
+        opcodes.append(opcode)
+        if opcode != 0x01:
+            pytest.fail("replacement endpoint received REBOOT_BOOTSEL")
+        return 0, _info_payload(REPLACEMENT)
+
+    monkeypatch.setattr(bridge, "request", request)
+
+    with pytest.raises(bridge.ProtocolError, match="did not confirm"):
+        bridge.run(
+            argparse.Namespace(
+                operation="bootsel", port="/dev/ttyACM0", uuid=PROVISIONED
+            )
+        )
+
+    assert opcodes == [0x01]
 
 
 def test_bridge_cli_accepts_bootsel(monkeypatch, capsys):
     bridge = _load_bridge()
-    port = _Port(b"RR\x01\x82\x01\x00\x5a")
+    port = _Port(b"")
     _install_serial(monkeypatch, port)
+    responses = iter(((0, _info_payload()), (0, b"")))
+    monkeypatch.setattr(bridge, "request", lambda *_args, **_kwargs: next(responses))
 
-    assert bridge.main(["bootsel", "/dev/ttyACM0"]) == 0
+    assert bridge.main(["bootsel", "/dev/ttyACM0", PROVISIONED]) == 0
     assert json.loads(capsys.readouterr().out) == {"bootsel": True}
 
 
 def test_bridge_refuses_nonzero_bootsel_status(monkeypatch):
     bridge = _load_bridge()
-    port = _Port(b"RR\x01\x82\x01\x07\x4f")
+    port = _Port(b"")
     _install_serial(monkeypatch, port)
+    responses = iter(((0, _info_payload()), (7, b"")))
+    monkeypatch.setattr(bridge, "request", lambda *_args, **_kwargs: next(responses))
 
     with pytest.raises(bridge.ProtocolError, match="status 7"):
         bridge.run(
-            argparse.Namespace(operation="bootsel", port="/dev/ttyACM0", uuid=None)
+            argparse.Namespace(
+                operation="bootsel", port="/dev/ttyACM0", uuid=PROVISIONED
+            )
         )
 
 
 def test_bridge_refuses_bootsel_success_with_payload(monkeypatch):
     bridge = _load_bridge()
-    port = _Port(b"RR\x01\x82\x02\x00\x99\xfa")
+    port = _Port(b"")
     _install_serial(monkeypatch, port)
+    responses = iter(((0, _info_payload()), (0, b"unexpected")))
+    monkeypatch.setattr(bridge, "request", lambda *_args, **_kwargs: next(responses))
 
     with pytest.raises(bridge.ProtocolError, match="unexpected payload"):
         bridge.run(
-            argparse.Namespace(operation="bootsel", port="/dev/ttyACM0", uuid=None)
+            argparse.Namespace(
+                operation="bootsel", port="/dev/ttyACM0", uuid=PROVISIONED
+            )
         )

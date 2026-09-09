@@ -116,6 +116,19 @@ def run(args: argparse.Namespace) -> dict[str, object]:
             status, payload = request(port, INFO)
             return parse_info(status, payload)
         if args.operation == "bootsel":
+            expected_serial = args.uuid
+            if not isinstance(expected_serial, str):
+                raise ProtocolError("bootsel requires the expected provisioned serial")
+            info_status, info_payload = request(port, INFO)
+            info = parse_info(info_status, info_payload)
+            if (
+                info.get("model") != "roadrunner-v1"
+                or info.get("serial") != expected_serial
+                or info.get("provisioned") is not True
+            ):
+                raise ProtocolError(
+                    "INFO did not confirm the expected provisioned Roadrunner"
+                )
             status, payload = request(port, REBOOT_BOOTSEL)
             if status:
                 raise ProtocolError(f"REBOOT_BOOTSEL refused with status {status}")
@@ -145,10 +158,16 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("operation", choices=("info", "bootsel", "provision", "clear"))
     parser.add_argument("port", help="resolved USB CDC tty path")
-    parser.add_argument("uuid", nargs="?", help="32 lowercase/uppercase hexadecimal UUID")
+    parser.add_argument(
+        "uuid",
+        nargs="?",
+        help="provision UUID or expected provisioned serial for bootsel",
+    )
     args = parser.parse_args(argv)
     if args.operation == "provision" and (args.uuid is None or len(args.uuid) != 32):
         parser.error("provision requires one 32-hex-character UUID")
+    if args.operation == "bootsel" and args.uuid is None:
+        parser.error("bootsel requires the expected provisioned serial")
     try:
         result = run(args)
     except (OSError, RuntimeError, ValueError, ProtocolError) as exc:

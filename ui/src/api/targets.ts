@@ -80,9 +80,24 @@ export interface TargetDevice {
   actions: Action[];
 }
 
-/** One `targets[]` row - `TypeStatus` and `DisplayStatus` in one shape.
- * `extra` is present only on a display; an MCU row carries none of its
- * fields at all, deliberately (docs/agent-api.md's "targets" section). */
+/** One `targets[]` row - MCU, display, and CMake target status in one shape.
+ * `extra` carries only display- or CMake-specific fields; an MCU row carries
+ * none of its fields at all (docs/agent-api.md's "targets" section). */
+export interface DisplayExtra {
+  module_version: string | null;
+  source_version: string | null;
+  source_dirty: boolean | null;
+  klipper_section: string;
+  reachable: boolean;
+}
+
+export interface CmakeExtra {
+  source: string;
+  source_version: string | null;
+  source_dirty: boolean | null;
+  flashable: boolean;
+}
+
 export interface Target {
   provider: Provider;
   name: string;
@@ -93,13 +108,7 @@ export interface Target {
   needs_flash: boolean | null;
   devices: TargetDevice[];
   actions: Action[];
-  extra?: {
-    module_version: string | null;
-    source_version: string | null;
-    source_dirty: boolean | null;
-    klipper_section: string;
-    reachable: boolean;
-  };
+  extra?: DisplayExtra | CmakeExtra;
 }
 
 /** The compound key a target needs: nothing stops an MCU type and a display

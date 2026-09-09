@@ -86,6 +86,8 @@ class FirmwareFamily:
     #: than hardcoded in a general-purpose provider. `${git_describe}` is the
     #: one substitution; see `providers/cmake.py`.
     cmake_args: str = ""
+    #: Firmware-specific helper capability. Empty means this family has none.
+    helper: str = ""
     #: Sync this tree's git submodules before building it. Opt-in, and off
     #: everywhere it is not written, because it is not free: `git submodule
     #: update --init --recursive` resets an *already* initialized submodule
@@ -157,6 +159,7 @@ def load_from_doc(doc: CfgDocument) -> dict[str, FirmwareFamily]:
             artifact=(doc.get(section, "artifact") or "").strip(),
             builder=(doc.get(section, "builder") or "").strip() or DEFAULT_BUILDER,
             cmake_args=(doc.get(section, "cmake_args") or "").strip(),
+            helper=(doc.get(section, "helper") or "").strip(),
             submodules=bool(parse_bool(doc.get(section, "submodules"), False)),
             # Absent means "whatever this name defaults to" - True only for
             # katapult - not a blanket False, so overriding one key on an

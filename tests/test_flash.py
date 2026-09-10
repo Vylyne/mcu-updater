@@ -1136,6 +1136,58 @@ def test_helper_bootsel_waits_for_helper_before_service_restart(
     assert result["failures"] == []
 
 
+def test_a_whole_batch_still_succeeds_when_post_copy_readiness_fails(
+    paths, settings, tmp_path
+):
+    """The end-to-end shape of the ruling: real HelperBootsel, real write_all,
+    a helper whose readiness wait raises. A completed copy is reported as
+    flashed, nothing lands in failures, and the operator gets a warning."""
+    root = tmp_path / "bootsel_root"
+    by_path = root / "BOOTSEL" / "by-path"
+    matching = by_path / "platform-x_usb-usb-0_1_3_1_0-scsi-0_0_0_0"
+    matching.mkdir(parents=True)
+    (matching / "INFO_UF2.TXT").write_text("", encoding="utf-8")
+    rp_paths = dataclasses.replace(paths, bootsel_root=str(root))
+    uf2 = tmp_path / "roadrunner.uf2"
+    uf2.write_bytes(b"road-runner")
+
+    class Helper:
+        name = "test"
+
+        def request_bootsel(self, bench, *, serial, chipset, ctx):
+            return BootselHandoff(topology="platform-x.usb-usb-0:1.3:1.0")
+
+        def wait_ready(self, bench, *, serial, chipset, ctx):
+            raise RoadrunnerError(
+                "More than one Roadrunner matched that serial",
+                serial=serial,
+            )
+
+    events: list[tuple[str, str]] = []
+    bench = flashers.Bench(
+        paths=rp_paths, settings=settings, controller=lambda _name=None: NullService()
+    )
+    target = flashers.helper_bootsel.target_for(
+        str(uf2),
+        type_name="roadrunner",
+        serial="RR-0123456789ABCDEFGHJKMNPQRS",
+        chipset="rp2040",
+        helper=Helper(),
+        stop_services=("klipper",),
+    )
+
+    result = flashers.write_all(
+        bench, [target], flashers.PlainContext(lambda kind, text: events.append((kind, text)))
+    )
+
+    assert len(result["flashed"]) == 1
+    assert result["failures"] == []
+    assert (matching / "roadrunner.uf2").read_bytes() == b"road-runner"
+    # The bare message, not batch.py's "<id>: <message>" fallback: this pins
+    # that `settled` itself absorbed it, not just that the job survived.
+    assert ("warn", "More than one Roadrunner matched that serial") in events
+
+
 def test_helper_bootsel_settled_warns_when_helper_readiness_times_out(
     paths, settings
 ):

@@ -110,8 +110,8 @@ export interface Target {
   extra?: DisplayExtra | CmakeExtra;
 }
 
-/** The compound key a target needs: nothing stops an MCU type and a display
- * sharing a `name` across their separate config files. */
+/** Keep provider in the render key so target identity matches the wire shape,
+ * even though configured `[type ...]` names share one namespace today. */
 export function targetKey(target: Pick<Target, "provider" | "name">): string {
   return `${target.provider}:${target.name}`;
 }

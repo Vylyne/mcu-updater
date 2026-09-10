@@ -854,6 +854,72 @@ def test_bootsel_copies_the_uf2_to_the_mounted_volume(paths, settings, tmp_path)
     assert result["mount"] == str(vol)
 
 
+def test_a_copy_that_dies_mid_write_is_a_structured_flash_failure(
+    paths, settings, tmp_path, monkeypatch
+):
+    """The volume can go away underneath the copy.
+
+    Unplugged mid-write, a full FAT volume, an I/O error on a board that reset
+    early - all `OSError`. Raw, it escapes `write_all` entirely, past the
+    Klipper readiness gate `on_ready` runs; the operator gets a traceback-shaped
+    failure instead of a `flash_failed` one, and for `HelperBootsel` that
+    happens with Klipper's services still down.
+    """
+    root, vol = mounted_bootsel_volume(tmp_path)
+    rp_paths = dataclasses.replace(paths, bootsel_root=str(root))
+    uf2 = tmp_path / "katapult.uf2"
+    uf2.write_bytes(b"image")
+
+    def die(_src, _dst):
+        raise OSError(5, "Input/output error")
+
+    monkeypatch.setattr(flashers.bootsel.shutil, "copy2", die)
+    bench = flashers.Bench(
+        paths=rp_paths, settings=settings, controller=lambda name=None: None
+    )
+    target = flashers.bootsel.target_for(str(uf2), chipset="rp2040")
+
+    with pytest.raises(FlashError) as exc:
+        flashers.Bootsel().write(
+            bench, None, target, flashers.PlainContext(lambda *a: None)
+        )
+
+    assert exc.value.code == "flash_failed"
+    assert "Input/output error" in str(exc.value)
+    assert exc.value.data["mount"] == str(vol)
+
+
+def test_a_copy_failure_still_reaches_the_klipper_readiness_gate(
+    paths, settings, tmp_path, monkeypatch
+):
+    root, vol = mounted_bootsel_volume(tmp_path)
+    rp_paths = dataclasses.replace(paths, bootsel_root=str(root))
+    uf2 = tmp_path / "katapult.uf2"
+    uf2.write_bytes(b"image")
+
+    def die(_src, _dst):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(flashers.bootsel.shutil, "copy2", die)
+    bench = flashers.Bench(
+        paths=rp_paths, settings=settings, controller=lambda name=None: None
+    )
+    target = flashers.bootsel.target_for(str(uf2), chipset="rp2040")
+    ready: list[object] = []
+
+    result = flashers.write_all(
+        bench,
+        [target],
+        flashers.PlainContext(lambda *a: None),
+        on_ready=lambda _reporter: ready.append(True),
+    )
+
+    assert result["flashed"] == []
+    assert len(result["failures"]) == 1
+    assert "No space left" in result["failures"][0]["error"]
+    assert ready == [True]
+
+
 def test_bootsel_dry_run_copies_nothing(paths, settings, tmp_path):
     root, vol = mounted_bootsel_volume(tmp_path)
     rp_paths = dataclasses.replace(paths, bootsel_root=str(root))

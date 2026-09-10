@@ -38,7 +38,19 @@ def copy_uf2(uf2: str, mount: str, ctx: Any) -> None:
     ensure_uf2(uf2)
     dest = os.path.join(mount, os.path.basename(uf2))
     ctx.reporter("info", f"Copying {uf2} to {dest}...")
-    shutil.copy2(uf2, dest)
+    try:
+        shutil.copy2(uf2, dest)
+    except OSError as exc:
+        # A board unplugged mid-write, a full or erroring FAT volume, a mount
+        # that vanished because the board reset early. Raw, an OSError leaves
+        # `write_all` altogether - past the Klipper readiness gate it runs after
+        # the batch, which for `HelperBootsel` is exactly when Klipper's units
+        # have just been restarted underneath a board in an unknown state.
+        raise FlashError(
+            f"could not write {os.path.basename(uf2)} to {mount}: {exc}",
+            path=uf2,
+            mount=mount,
+        ) from exc
     ctx.reporter(
         "info",
         "Copied. The board flashes itself from the .uf2 and reboots once the "

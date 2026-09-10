@@ -558,14 +558,76 @@ def test_firmware_helper_wait_ready_has_a_bounded_reenumeration_timeout(
     assert len(attempts) == 5
 
 
-@pytest.mark.parametrize(
-    "code",
-    ["roadrunner_ambiguous", "roadrunner_invalid_probe", "roadrunner_helper"],
-)
-def test_firmware_helper_wait_ready_propagates_non_absence_errors(
+@pytest.mark.parametrize("code", ["roadrunner_invalid_probe", "roadrunner_helper"])
+def test_firmware_helper_wait_ready_retries_a_transient_probe_failure(
     paths, settings, monkeypatch, code
 ):
+    """A board that is only halfway back looks exactly like a failed probe.
+
+    During re-enumeration the `/dev/serial/by-id` symlink appears before the
+    tty can reliably be opened, so an INFO probe that errors is not evidence of
+    a bad identity - it is evidence of a board that is not ready yet. Retried
+    to the deadline, like plain absence.
+    """
     error = roadrunner._error(code, "Roadrunner readiness failed")
+    attempts: list[str] = []
+
+    def fail(_paths, serial):
+        attempts.append(serial)
+        raise error
+
+    monkeypatch.setattr(roadrunner, "find_provisioned", fail)
+    _fake_clock(monkeypatch)
+    bench = Bench(paths=paths, settings=settings, controller=lambda _name=None: None)
+
+    helper = for_name("roadrunner", family="roadrunner")
+    assert helper is not None
+    with pytest.raises(BootloaderTimeoutError) as exc:
+        helper.wait_ready(
+            bench, serial=PROVISIONED, chipset="rp2040", ctx=object()
+        )
+
+    assert exc.value.code == "bootloader_timeout"
+    assert exc.value.data["serial"] == PROVISIONED
+    # The cause rides along: retrying an invalid probe would otherwise report a
+    # genuinely wrong identity as a bare timeout.
+    assert exc.value.data["last_error"] == "Roadrunner readiness failed"
+    assert len(attempts) == 5
+
+
+@pytest.mark.parametrize("code", ["roadrunner_invalid_probe", "roadrunner_helper"])
+def test_firmware_helper_wait_ready_accepts_a_board_that_settles_late(
+    paths, settings, monkeypatch, code
+):
+    device = roadrunner.RoadrunnerDevice(PROVISIONED, "/dev/ttyACM1", _topology())
+    attempts: list[str] = []
+
+    def find(_paths, serial):
+        attempts.append(serial)
+        if len(attempts) < 3:
+            raise roadrunner._error(code, "Roadrunner readiness failed")
+        return device
+
+    monkeypatch.setattr(roadrunner, "find_provisioned", find)
+    _fake_clock(monkeypatch)
+    bench = Bench(paths=paths, settings=settings, controller=lambda _name=None: None)
+
+    helper = for_name("roadrunner", family="roadrunner")
+    assert helper is not None
+    helper.wait_ready(
+        bench, serial=PROVISIONED, chipset="rp2040", ctx=object()
+    )
+
+    assert attempts == [PROVISIONED, PROVISIONED, PROVISIONED]
+
+
+def test_firmware_helper_wait_ready_stops_waiting_on_ambiguity(
+    paths, settings, monkeypatch
+):
+    """Two devices answering to one serial is not a slow return, so the wait
+    ends at once. Post-copy it is still only a warning - see
+    `test_helper_bootsel_settled_warns_on_non_timeout_roadrunner_errors`."""
+    error = roadrunner._error("roadrunner_ambiguous", "Roadrunner readiness failed")
     attempts: list[str] = []
 
     def fail(_paths, serial):

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import dataclasses
 import os
 
@@ -15,10 +16,12 @@ from mcu_updater.errors import (
     DeviceNotFoundError,
     FlashError,
     OffsetMismatchError,
+    OperationCancelled,
     ToolMissingError,
     UnsupportedChipsetError,
 )
 from mcu_updater.flashers import flash as flash_mod
+from mcu_updater.flashers import registry as flasher_registry
 from mcu_updater.flashers.flash import (
     flash_dfu_stm32,
     flash_initial_bootloader,
@@ -1100,10 +1103,24 @@ def test_helper_bootsel_settled_warns_when_helper_readiness_times_out(
     assert events == [("warn", "Roadrunner did not become ready")]
 
 
-def test_helper_bootsel_settled_propagates_non_timeout_roadrunner_errors(
-    paths, settings
+@pytest.mark.parametrize(
+    "error",
+    [
+        RoadrunnerError("Roadrunner INFO response was invalid"),
+        RoadrunnerError("More than one Roadrunner matched that serial"),
+        FlashError("could not read serial by-path topology"),
+    ],
+)
+def test_helper_bootsel_settled_warns_on_non_timeout_roadrunner_errors(
+    paths, settings, error
 ):
-    error = RoadrunnerError("Roadrunner INFO response was invalid")
+    """The UF2 is already on the board by the time `settled` runs.
+
+    The spec's error list is entirely pre-copy or at-copy; there is no
+    post-write boundary, and the post-copy wait is non-fatal *in every
+    outcome*. A readiness probe that fails - for whatever reason - is reported
+    as a warning, never as a write that did not happen.
+    """
 
     class Helper:
         name = "test"
@@ -1121,16 +1138,91 @@ def test_helper_bootsel_settled_propagates_non_timeout_roadrunner_errors(
         chipset="rp2040",
         helper=Helper(),
     )
+    events: list[tuple[str, str]] = []
     bench = flashers.Bench(
         paths=paths, settings=settings, controller=lambda _name=None: None
     )
 
-    with pytest.raises(RoadrunnerError) as exc:
+    flashers.HelperBootsel().settled(
+        bench, target, flashers.PlainContext(lambda *event: events.append(event))
+    )
+
+    assert events == [("warn", str(error))]
+
+
+def test_helper_bootsel_settled_still_honours_cancellation(paths, settings):
+    """Non-fatal covers readiness, not a cancelled job."""
+
+    class Helper:
+        name = "test"
+
+        def request_bootsel(self, *_args, **_kwargs):
+            raise AssertionError("settled must not request BOOTSEL again")
+
+        def wait_ready(self, *_args, **_kwargs):
+            raise OperationCancelled("job cancelled")
+
+    target = flashers.helper_bootsel.target_for(
+        "roadrunner.uf2",
+        type_name="roadrunner",
+        serial="RR-0123456789ABCDEFGHJKMNPQRS",
+        chipset="rp2040",
+        helper=Helper(),
+    )
+    bench = flashers.Bench(
+        paths=paths, settings=settings, controller=lambda _name=None: None
+    )
+
+    with pytest.raises(OperationCancelled):
         flashers.HelperBootsel().settled(
             bench, target, flashers.PlainContext(lambda *a: None)
         )
 
-    assert exc.value is error
+
+def test_a_failed_settle_is_never_counted_as_both_flashed_and_failed(
+    paths, settings, tmp_path, monkeypatch
+):
+    """M1: a target appended to `flashed` must not also appear in `failures`.
+
+    A consumer that sums both - as the panel's counts do - would report two
+    outcomes for one board.
+    """
+    uf2 = tmp_path / "board.uf2"
+    uf2.write_bytes(b"image")
+
+    class Late:
+        name = "late"
+        label = "late"
+        chipsets: tuple[str, ...] = ("rp2040",)
+        states: tuple[str, ...] = ()
+        needs_services_stopped = False
+
+        @contextlib.contextmanager
+        def prepared(self, bench, targets, ctx):
+            yield None
+
+        def write(self, bench, session, target, ctx):
+            return {"mount": "/media/x"}
+
+        def settled(self, bench, target, ctx):
+            raise FlashError("the board came back slowly")
+
+    target = flashers.FlashTarget(
+        flasher="late", type="rp2040", id="board-1", detail={"uf2_file": str(uf2)}
+    )
+    bench = flashers.Bench(
+        paths=paths, settings=settings, controller=lambda _name=None: None
+    )
+    events: list[tuple[str, str]] = []
+
+    monkeypatch.setitem(flasher_registry._BY_NAME, "late", Late())
+    result = flashers.write_all(
+        bench, [target], flashers.PlainContext(lambda *event: events.append(event))
+    )
+
+    assert len(result["flashed"]) == 1
+    assert result["failures"] == []
+    assert ("warn", "board-1: the board came back slowly") in events
 
 
 def test_helper_bootsel_settled_skips_helper_readiness_in_dry_run(paths, settings):

@@ -148,6 +148,19 @@ def find_provisioned(paths: Paths, serial: str) -> RoadrunnerDevice:
     return RoadrunnerDevice(candidate_serial, port, topology)
 
 
+#: Indistinguishable from "not back yet" while a board re-enumerates, so all
+#: three are retried rather than believed. The `/dev/serial/by-id` symlink
+#: appears before the tty can reliably be opened - udev is still settling and
+#: ModemManager may still be probing - so an INFO probe in that window fails
+#: (`roadrunner_helper`) or answers incompletely (`roadrunner_invalid_probe`)
+#: for a board that is about to be perfectly fine. Ambiguity is deliberately
+#: not here: two devices answering to one serial is a real condition that
+#: waiting cannot resolve.
+_TRANSIENT_READINESS_CODES = frozenset(
+    {"roadrunner_no_candidate", "roadrunner_helper", "roadrunner_invalid_probe"}
+)
+
+
 def wait_for_provisioned(paths: Paths, serial: str) -> RoadrunnerDevice:
     """Wait for one exact provisioned identity and a confirming INFO reply."""
     if not PROVISIONED_RE.fullmatch(serial):
@@ -156,16 +169,22 @@ def wait_for_provisioned(paths: Paths, serial: str) -> RoadrunnerDevice:
         return find_provisioned(paths, serial)
 
     deadline = time.monotonic() + REENUMERATE_TIMEOUT
+    last_error: RoadrunnerError | None = None
     while True:
         try:
             return find_provisioned(paths, serial)
         except RoadrunnerError as exc:
-            if exc.code != "roadrunner_no_candidate":
+            if exc.code not in _TRANSIENT_READINESS_CODES:
                 raise
+            last_error = exc
         if time.monotonic() >= deadline:
+            # Carry the last cause: having retried a failed or unconvincing
+            # probe, a board that really did come back wrong would otherwise be
+            # reported as a bare "never came back".
             raise BootloaderTimeoutError(
                 "Roadrunner did not re-enumerate with its confirmed provisioned identity",
                 serial=serial,
+                last_error=str(last_error) if last_error is not None else None,
             )
         time.sleep(0.25)
 

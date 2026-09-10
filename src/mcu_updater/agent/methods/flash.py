@@ -266,12 +266,13 @@ class FlashMixin(_Base):
             result = flashers.write_all(
                 self._bench(settings_now), [target], ctx, on_ready=on_ready
             )
-            if result["failures"]:
-                raise FlashError(
-                    result["failures"][0]["error"], type=mcu_type, serial=serial
-                )
 
-            if not settings_now.dry_run:
+            # Before the refusal below, not after: the UF2 is on the board the
+            # moment the copy returns, and the post-copy readiness wait is
+            # non-fatal by spec. A job that still ends up failing must not also
+            # lose the ledger entry - "it failed" plus no recorded write is what
+            # makes an operator flash an already-correct board a second time.
+            if result["flashed"] and not settings_now.dry_run:
                 from ...build import FlashLog
 
                 side = cmake_mod.read_sidecar(self.paths, target_type) or {}
@@ -282,6 +283,11 @@ class FlashMixin(_Base):
                     bin_sha256=side.get("bin_sha256"),
                     fw_sha=side.get("sha"),
                     version=side.get("version"),
+                )
+
+            if result["failures"]:
+                raise FlashError(
+                    result["failures"][0]["error"], type=mcu_type, serial=serial
                 )
 
             return {

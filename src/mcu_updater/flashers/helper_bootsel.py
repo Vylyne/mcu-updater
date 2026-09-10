@@ -7,7 +7,7 @@ from collections.abc import Iterator
 from typing import Any
 
 from ..discovery.bootsel import mount_for_topology
-from ..errors import BootloaderTimeoutError
+from ..errors import OperationCancelled, UpdaterError
 from ..helpers.spec import BootselRequester
 from .bootsel import copy_uf2, ensure_uf2
 from .spec import Bench, FlashTarget
@@ -64,9 +64,16 @@ class HelperBootsel:
                 chipset=target.detail["chipset"],
                 ctx=ctx,
             )
-        except BootloaderTimeoutError as exc:
-            # The UF2 copy already completed. Match the other flashers: a slow
-            # return is worth a warning, not rewriting success as write failure.
+        except OperationCancelled:
+            raise
+        except UpdaterError as exc:
+            # The UF2 copy already completed. Every boundary the spec enumerates
+            # is pre-copy or at-copy; there is no post-write one, and step 4 of
+            # the flow waits for the device "non-fatally" without qualification.
+            # So *any* readiness outcome - a slow return, a probe that would not
+            # answer, an identity that came back wrong, two devices answering to
+            # one serial - is a warning here. Rewriting a completed write as a
+            # failure would invite a re-flash of a board that is already correct.
             ctx.reporter("warn", str(exc))
 
 

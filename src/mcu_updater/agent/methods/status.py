@@ -403,13 +403,15 @@ class StatusMixin(_Base):
         return out
 
     def bus(self, reg: Registry) -> list[dict[str, Any]]:
-        owner: dict[str, str] = {}
-        for name, mcu in reg.items():
-            for serial in mcu.serials:
-                owner[serial] = name
+        bus_devices = scan(self.paths)
+        owner = {
+            device.serial: owners[0]
+            for device in bus_devices
+            if (owners := reg.find_declared_types_for_serial(device.serial))
+        }
         ignored = set(self.settings().ignored_serials)
         return [
-            serialize_device(d, owner.get(d.serial), ignored) for d in scan(self.paths)
+            serialize_device(d, owner.get(d.serial), ignored) for d in bus_devices
         ]
 
     # -- methods -----------------------------------------------------------
@@ -1426,7 +1428,7 @@ class StatusMixin(_Base):
         return RpcError(exc.message, data=exc.to_dict())
 
     def _roadrunner_untracked(self, serial: str) -> None:
-        owners = self.registry().find_types_for_serial(serial)
+        owners = self.registry().find_declared_types_for_serial(serial)
         if owners:
             raise RpcError(
                 f"Roadrunner '{serial}' is already tracked under '{owners[0]}'.",
@@ -1518,7 +1520,7 @@ class StatusMixin(_Base):
         ignored = set(settings.ignored_canbus_uuids)
         devices = []
         for sighting in result.sightings:
-            elsewhere = reg.find_types_for_uuid(sighting.uuid)
+            elsewhere = reg.find_declared_types_for_uuid(sighting.uuid)
             devices.append(
                 {
                     "uuid": sighting.uuid,

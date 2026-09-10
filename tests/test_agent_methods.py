@@ -425,6 +425,22 @@ def test_adoptable_excludes_already_tracked_boards(api, fake_root, live_registry
     assert tracked["serial"] not in [d["serial"] for d in res["adoptable"]]
 
 
+def test_adoptable_excludes_a_serial_tracked_by_a_cmake_type(paths, fake_root, live_registry_text):
+    with open(paths.registry_file, "w", encoding="utf-8") as fh:
+        fh.write(
+            live_registry_text
+            + "\n[firmware roadrunner]\nsource: ~/roadrunner/rp2040\nbuilder: cmake\n"
+            + "\n[type roadrunner]\nchipset: rp2040\nfirmware: roadrunner\n"
+            + "serials:\n    RR-TRACKED\n"
+        )
+    make_device(fake_root / "bus", "Roadrunner", "rp2040", "RR-TRACKED")
+
+    result = Api(paths).dispatch("fw.bus.scan")
+    device = next(d for d in result["devices"] if d["serial"] == "RR-TRACKED")
+    assert device["tracked_by"] == "roadrunner"
+    assert "RR-TRACKED" not in [d["serial"] for d in result["adoptable"]]
+
+
 def test_adoptable_respects_the_chipset_filter(api, fake_root):
     make_device(fake_root / "bus", "katapult", "stm32f072xb", "AAAA")
     make_device(fake_root / "bus", "katapult", "rp2040", "BBBB")

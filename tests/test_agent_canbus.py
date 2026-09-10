@@ -92,6 +92,24 @@ def test_an_unclaimed_board_is_reported_untracked(api, fake_root, monkeypatch):
     assert device["ignored"] is False
 
 
+def test_canbus_scan_marks_a_foreign_provider_identity(paths, fake_root, monkeypatch, live_registry_text):
+    with open(paths.registry_file, "w", encoding="utf-8") as fh:
+        fh.write(
+            live_registry_text
+            + "\n[firmware roadrunner]\nsource: ~/roadrunner/rp2040\nbuilder: cmake\n"
+            + "\n[type roadrunner]\nchipset: rp2040\nfirmware: roadrunner\n"
+            + "canbus_uuids:\n    abcdef012345\n"
+        )
+    api = Api(paths)
+    net_root = _make_can_interface(fake_root, "can0")
+    api.paths = dataclasses.replace(api.paths, can_sysfs_net=net_root)
+    _make_flashtool(api.paths)
+    monkeypatch.setattr(canbus_mod, "run_streamed", _fake_query_answering("abcdef012345"))
+
+    device = api.dispatch("fw.canbus.scan")["devices"][0]
+    assert device["tracked_by"] == "roadrunner"
+
+
 def test_canbus_ignore_marks_every_sighting_but_keeps_it_listed(
     api, fake_root, monkeypatch
 ):

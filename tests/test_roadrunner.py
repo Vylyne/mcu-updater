@@ -584,6 +584,19 @@ def test_agent_clear_returns_to_unprovisioned_without_tracking(paths, monkeypatc
     assert api.registry().find_types_for_serial(UNPROVISIONED) == []
 
 
+def test_agent_refuses_maintenance_for_a_cmake_tracked_roadrunner(paths):
+    with open(paths.registry_file, "w", encoding="utf-8") as fh:
+        fh.write(
+            "[firmware roadrunner]\nsource: ~/roadrunner/rp2040\nbuilder: cmake\n"
+            "\n[type roadrunner]\nchipset: rp2040\nfirmware: roadrunner\n"
+            f"serials:\n    {PROVISIONED}\n"
+        )
+    with pytest.raises(RpcError) as exc:
+        _ready_api(paths).dispatch("fw.roadrunner.clear", {"serial": PROVISIONED})
+    assert exc.value.data["code"] == "roadrunner_tracked"
+    assert exc.value.data["data"]["tracked_under"] == ["roadrunner"]
+
+
 def _topology():
     return roadrunner.usb.UsbDevice(
         name="1-3", path="/sys/bus/usb/devices/1-3", vendor_id="2e8a", product_id="000a",

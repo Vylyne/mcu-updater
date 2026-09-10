@@ -31,6 +31,11 @@ BOOTSEL_BY_PATH_SUBDIR: tuple[str, str] = ("BOOTSEL", "by-path")
 #: unrelated drive that happens to share the label is never mistaken for one.
 _BOOTSEL_MARKER = "INFO_UF2.TXT"
 
+#: What the current udev rule mounts under when `ID_PATH_TAG` is unset (see
+#: `scripts/udev.d-mcu-updater-bootsel.rules`). A leaf no topology can ever
+#: match, so a board that lands here is found only to be named in the refusal.
+BOOTSEL_UNKNOWN_PATH_LEAF = "unknown"
+
 #: The application has already disappeared by the time mount correlation
 #: begins, but udev/systemd still need a bounded window to expose its volume.
 BOOTSEL_MOUNT_TIMEOUT = 15.0
@@ -134,6 +139,61 @@ def _mount_matches_topology(mount: str, topology: str) -> bool:
     )
 
 
+def _unmatchable(mounts: list[str]) -> tuple[list[str], list[str]]:
+    """The scanned mounts that no topology could ever have matched.
+
+    Two of them exist. ``<root>/RPI-RP2`` is the pre-version-5 udev rule's fixed
+    path, still accepted by `bootsel_scan` so an un-upgraded install keeps its
+    manual bare-board flow. ``.../by-path/unknown`` is the current rule's
+    fallback for a device `ID_PATH_TAG` could not name. Either one means the
+    board rebooted, mounted, and cannot be correlated - a very different fact
+    from "nothing appeared", and the operator needs to be told which.
+    """
+    legacy = [
+        mount for mount in mounts if os.path.basename(mount) == BOOTSEL_VOLUME_NAME
+    ]
+    unknown = [
+        mount
+        for mount in mounts
+        if os.path.basename(mount) == BOOTSEL_UNKNOWN_PATH_LEAF
+    ]
+    return legacy, unknown
+
+
+def _no_match_error(topology: str, mounts: list[str]) -> FlashError:
+    """The timeout, refined by whatever unmatchable volume was scanned.
+
+    A refinement of the deadline and never a shortcut to it: an unmatchable
+    volume is just as likely to be a bystander board as the target, so the full
+    wait still runs, and neither kind is ever selected. Selecting one would be
+    the arbitrary-mount write this whole path exists to prevent.
+    """
+    legacy, unknown = _unmatchable(mounts)
+    message = f"no mounted BOOTSEL volume appeared for topology {topology}"
+    if legacy:
+        # First: it has a concrete remedy, and an install old enough to mount
+        # here explains the `unknown` leaf away as well.
+        message += (
+            f" - but a BOOTSEL volume is mounted at the legacy path "
+            f"{', '.join(legacy)}. Re-run install.sh to update the udev rule; "
+            f"until it mounts by USB topology, no board can be matched to a "
+            f"port and this write cannot be aimed."
+        )
+    elif unknown:
+        message += (
+            f" - but a BOOTSEL volume is mounted at {', '.join(unknown)}, where "
+            f"udev could not name the USB path (ID_PATH_TAG was unset). It "
+            f"cannot be matched to the board this write is for, and is not "
+            f"written to on the chance that it is."
+        )
+    return FlashError(
+        message,
+        topology=topology,
+        legacy_mounts=legacy,
+        unknown_mounts=unknown,
+    )
+
+
 def mount_for_topology(
     paths: Paths,
     topology: str,
@@ -144,10 +204,9 @@ def mount_for_topology(
     """Wait for exactly one marker-bearing BOOTSEL mount on ``topology``."""
     deadline = time.monotonic() + timeout
     while True:
+        mounts = bootsel_scan(paths)
         matches = [
-            mount
-            for mount in bootsel_scan(paths)
-            if _mount_matches_topology(mount, topology)
+            mount for mount in mounts if _mount_matches_topology(mount, topology)
         ]
         if len(matches) == 1:
             return matches[0]
@@ -159,10 +218,7 @@ def mount_for_topology(
                 mounts=matches,
             )
         if time.monotonic() >= deadline:
-            raise FlashError(
-                f"no mounted BOOTSEL volume appeared for topology {topology}",
-                topology=topology,
-            )
+            raise _no_match_error(topology, mounts)
         time.sleep(poll)
 
 

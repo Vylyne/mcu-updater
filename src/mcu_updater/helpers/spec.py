@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import dataclasses
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
-from ..flashers.spec import Bench
+if TYPE_CHECKING:
+    from ..flashers.spec import Bench
 
 
 @dataclasses.dataclass(frozen=True)

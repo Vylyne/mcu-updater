@@ -12,7 +12,7 @@ import time
 from collections.abc import Callable
 from typing import TYPE_CHECKING
 
-from ..errors import UpdaterError
+from ..errors import BootloaderTimeoutError, UpdaterError
 from . import usb
 from .spec import STATE_KLIPPER, Sighting
 
@@ -156,19 +156,17 @@ def wait_for_provisioned(paths: Paths, serial: str) -> RoadrunnerDevice:
         return find_provisioned(paths, serial)
 
     deadline = time.monotonic() + REENUMERATE_TIMEOUT
-    last_error: RoadrunnerError | None = None
     while True:
         try:
             return find_provisioned(paths, serial)
         except RoadrunnerError as exc:
-            last_error = exc
+            if exc.code != "roadrunner_no_candidate":
+                raise
         if time.monotonic() >= deadline:
-            raise _error(
-                "roadrunner_timeout",
+            raise BootloaderTimeoutError(
                 "Roadrunner did not re-enumerate with its confirmed provisioned identity",
                 serial=serial,
-                last_error=last_error.code,
-            ) from last_error
+            )
         time.sleep(0.25)
 
 

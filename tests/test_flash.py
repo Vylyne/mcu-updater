@@ -7,6 +7,7 @@ import pytest
 
 from mcu_updater import devices as devices_mod
 from mcu_updater import flashers
+from mcu_updater.discovery.roadrunner import RoadrunnerError
 from mcu_updater.errors import (
     AmbiguousDfuError,
     BootloaderTimeoutError,
@@ -1099,7 +1100,11 @@ def test_helper_bootsel_settled_warns_when_helper_readiness_times_out(
     assert events == [("warn", "Roadrunner did not become ready")]
 
 
-def test_helper_bootsel_settled_does_not_hide_programming_errors(paths, settings):
+def test_helper_bootsel_settled_propagates_non_timeout_roadrunner_errors(
+    paths, settings
+):
+    error = RoadrunnerError("Roadrunner INFO response was invalid")
+
     class Helper:
         name = "test"
 
@@ -1107,7 +1112,7 @@ def test_helper_bootsel_settled_does_not_hide_programming_errors(paths, settings
             raise AssertionError("settled must not request BOOTSEL again")
 
         def wait_ready(self, *_args, **_kwargs):
-            raise RuntimeError("broken helper implementation")
+            raise error
 
     target = flashers.helper_bootsel.target_for(
         "roadrunner.uf2",
@@ -1120,10 +1125,12 @@ def test_helper_bootsel_settled_does_not_hide_programming_errors(paths, settings
         paths=paths, settings=settings, controller=lambda _name=None: None
     )
 
-    with pytest.raises(RuntimeError, match="broken helper implementation"):
+    with pytest.raises(RoadrunnerError) as exc:
         flashers.HelperBootsel().settled(
             bench, target, flashers.PlainContext(lambda *a: None)
         )
+
+    assert exc.value is error
 
 
 def test_helper_bootsel_settled_skips_helper_readiness_in_dry_run(paths, settings):

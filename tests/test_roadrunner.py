@@ -12,7 +12,7 @@ from mcu_updater.agent.methods import Api
 from mcu_updater.agent.rpc import ERR_METHOD_NOT_FOUND, RpcError
 from mcu_updater.discovery import bootsel as bootsel_discovery
 from mcu_updater.discovery import roadrunner
-from mcu_updater.errors import FlashError
+from mcu_updater.errors import BootloaderTimeoutError, FlashError
 from mcu_updater.flashers.spec import Bench
 from mcu_updater.helpers import BootselHandoff, for_name
 from mcu_updater.jobs import JobRunner
@@ -548,14 +548,43 @@ def test_firmware_helper_wait_ready_has_a_bounded_reenumeration_timeout(
 
     helper = for_name("roadrunner", family="roadrunner")
     assert helper is not None
+    with pytest.raises(BootloaderTimeoutError) as exc:
+        helper.wait_ready(
+            bench, serial=PROVISIONED, chipset="rp2040", ctx=object()
+        )
+
+    assert exc.value.code == "bootloader_timeout"
+    assert exc.value.data["serial"] == PROVISIONED
+    assert len(attempts) == 5
+
+
+@pytest.mark.parametrize(
+    "code",
+    ["roadrunner_ambiguous", "roadrunner_invalid_probe", "roadrunner_helper"],
+)
+def test_firmware_helper_wait_ready_propagates_non_absence_errors(
+    paths, settings, monkeypatch, code
+):
+    error = roadrunner._error(code, "Roadrunner readiness failed")
+    attempts: list[str] = []
+
+    def fail(_paths, serial):
+        attempts.append(serial)
+        raise error
+
+    monkeypatch.setattr(roadrunner, "find_provisioned", fail)
+    _fake_clock(monkeypatch)
+    bench = Bench(paths=paths, settings=settings, controller=lambda _name=None: None)
+
+    helper = for_name("roadrunner", family="roadrunner")
+    assert helper is not None
     with pytest.raises(roadrunner.RoadrunnerError) as exc:
         helper.wait_ready(
             bench, serial=PROVISIONED, chipset="rp2040", ctx=object()
         )
 
-    assert exc.value.code == "roadrunner_timeout"
-    assert exc.value.data["serial"] == PROVISIONED
-    assert len(attempts) == 5
+    assert exc.value is error
+    assert attempts == [PROVISIONED]
 
 
 def _ready_api(paths) -> Api:

@@ -7,7 +7,7 @@ from collections.abc import Iterator
 from typing import Any
 
 from ..discovery.bootsel import mount_for_topology
-from ..errors import UpdaterError
+from ..errors import BootloaderTimeoutError
 from ..helpers.spec import BootselRequester
 from .bootsel import copy_uf2, ensure_uf2
 from .spec import Bench, FlashTarget
@@ -64,7 +64,7 @@ class HelperBootsel:
                 chipset=target.detail["chipset"],
                 ctx=ctx,
             )
-        except UpdaterError as exc:
+        except BootloaderTimeoutError as exc:
             # The UF2 copy already completed. Match the other flashers: a slow
             # return is worth a warning, not rewriting success as write failure.
             ctx.reporter("warn", str(exc))

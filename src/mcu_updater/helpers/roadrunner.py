@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from ..discovery import roadrunner
+from ..discovery import bootsel, roadrunner
 from ..flashers.spec import Bench
 from .spec import BootselHandoff
 
@@ -18,8 +18,9 @@ class RoadrunnerHelper:
         self, bench: Bench, *, serial: str, chipset: str, ctx: Any
     ) -> BootselHandoff:
         device = roadrunner.find_provisioned(bench.paths, serial)
-        topology = roadrunner.Roadrunner().request_bootsel(bench.paths, device)
-        return BootselHandoff(topology=topology.name)
+        topology = bootsel.serial_topology_for(bench.paths, device.port)
+        roadrunner.Roadrunner().request_bootsel(bench.paths, device)
+        return BootselHandoff(topology=topology)
 
 
 __all__ = ["RoadrunnerHelper"]

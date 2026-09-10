@@ -9,7 +9,9 @@ from __future__ import annotations
 import glob
 import os
 import re
+import time
 
+from ..errors import FlashError
 from ..paths import Paths
 
 #: udisks2's two automount conventions. The username segment is glob-matched
@@ -28,6 +30,140 @@ BOOTSEL_BY_PATH_SUBDIR: tuple[str, str] = ("BOOTSEL", "by-path")
 #: Every UF2 bootloader publishes this file at the volume root. Required so an
 #: unrelated drive that happens to share the label is never mistaken for one.
 _BOOTSEL_MARKER = "INFO_UF2.TXT"
+
+#: The application has already disappeared by the time mount correlation
+#: begins, but udev/systemd still need a bounded window to expose its volume.
+BOOTSEL_MOUNT_TIMEOUT = 15.0
+BOOTSEL_MOUNT_POLL = 0.25
+
+_USB_ALIAS = re.compile(r"-usbv2-")
+_SERIAL_INTERFACE = re.compile(r":[0-9]+\.[0-9]+(?:-port[0-9]+)?$")
+_ID_PATH_TAG_UNSAFE = re.compile(r"[^A-Za-z0-9_-]")
+
+
+def _serial_by_path_root(paths: Paths) -> str:
+    """The by-path directory beside this installation's by-id directory."""
+    return os.path.join(os.path.dirname(paths.serial_by_id), "by-path")
+
+
+def _normalize_serial_topology(name: str) -> str:
+    """Canonical controller-qualified USB parent from a serial by-path name."""
+    topology = _USB_ALIAS.sub("-usb-", os.path.basename(name))
+    interface = _SERIAL_INTERFACE.search(topology)
+    if interface is None:
+        raise ValueError(f"unrecognized USB serial by-path topology {name!r}")
+    return topology[: interface.start()]
+
+
+def serial_topology_for(paths: Paths, port: str) -> str:
+    """Resolve one confirmed tty to one controller-qualified USB topology.
+
+    A physical tty commonly has both ``usb`` and ``usbv2`` aliases. They are
+    normalized and deduplicated before the uniqueness check. Distinct
+    controller-qualified paths are refused: compact sysfs names such as
+    ``1-3`` omit the controller and are not strong enough to authorize a write.
+    """
+    directory = _serial_by_path_root(paths)
+    try:
+        names = sorted(os.listdir(directory))
+    except OSError as exc:
+        raise FlashError(
+            f"could not read serial by-path topology for {port}: {exc}",
+            port=port,
+            by_path=directory,
+        ) from exc
+
+    matched: list[str] = []
+    for name in names:
+        entry = os.path.join(directory, name)
+        try:
+            same = os.path.samefile(entry, port)
+        except OSError:
+            continue
+        if not same:
+            continue
+        try:
+            matched.append(_normalize_serial_topology(name))
+        except ValueError as exc:
+            raise FlashError(
+                f"could not normalize serial by-path topology for {port}: {name}",
+                port=port,
+                by_path=entry,
+            ) from exc
+
+    topologies = sorted(set(matched))
+    if not topologies:
+        raise FlashError(
+            f"no serial by-path topology matched the confirmed device {port}",
+            port=port,
+            by_path=directory,
+        )
+    if len(topologies) > 1:
+        raise FlashError(
+            f"serial by-path topology for {port} is ambiguous: "
+            f"{', '.join(topologies)}",
+            port=port,
+            topologies=topologies,
+        )
+    return topologies[0]
+
+
+def _topology_tag_prefix(topology: str) -> str:
+    """Normalize serial evidence into the lossy ``ID_PATH_TAG`` namespace."""
+    parent = _USB_ALIAS.sub("-usb-", os.path.basename(topology))
+    # A requester returns the interface-free USB parent, whose final ``:1.3``
+    # is a physical port path, not an interface. Tests and callers that pass a
+    # complete serial by-path still get normalized here, but do not strip a
+    # port from the canonical handoff evidence.
+    if parent.endswith(":1.0") or re.search(r":1\.0-port[0-9]+$", parent):
+        parent = _normalize_serial_topology(parent)
+    return _ID_PATH_TAG_UNSAFE.sub("_", parent)
+
+
+def _mount_matches_topology(mount: str, topology: str) -> bool:
+    tag = _USB_ALIAS.sub("-usb-", os.path.basename(mount))
+    prefix = _topology_tag_prefix(topology)
+    # The serial parent is followed by exactly one USB interface component
+    # before the mass-storage SCSI suffix. Requiring that shape avoids treating
+    # a deeper hub path that merely shares the same textual prefix as a match.
+    return (
+        re.fullmatch(
+            re.escape(prefix) + r"_[0-9]+_[0-9]+-scsi(?:[-_].*)?", tag
+        )
+        is not None
+    )
+
+
+def mount_for_topology(
+    paths: Paths,
+    topology: str,
+    *,
+    timeout: float = BOOTSEL_MOUNT_TIMEOUT,
+    poll: float = BOOTSEL_MOUNT_POLL,
+) -> str:
+    """Wait for exactly one marker-bearing BOOTSEL mount on ``topology``."""
+    deadline = time.monotonic() + timeout
+    while True:
+        matches = [
+            mount
+            for mount in bootsel_scan(paths)
+            if _mount_matches_topology(mount, topology)
+        ]
+        if len(matches) == 1:
+            return matches[0]
+        if len(matches) > 1:
+            raise FlashError(
+                f"BOOTSEL topology {topology} is ambiguous: "
+                f"{len(matches)} matching volumes are mounted",
+                topology=topology,
+                mounts=matches,
+            )
+        if time.monotonic() >= deadline:
+            raise FlashError(
+                f"no mounted BOOTSEL volume appeared for topology {topology}",
+                topology=topology,
+            )
+        time.sleep(poll)
 
 
 def bootsel_scan(paths: Paths) -> list[str]:

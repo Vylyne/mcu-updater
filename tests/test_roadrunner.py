@@ -10,7 +10,9 @@ import pytest
 
 from mcu_updater.agent.methods import Api
 from mcu_updater.agent.rpc import ERR_METHOD_NOT_FOUND, RpcError
+from mcu_updater.discovery import bootsel as bootsel_discovery
 from mcu_updater.discovery import roadrunner
+from mcu_updater.errors import FlashError
 from mcu_updater.flashers.spec import Bench
 from mcu_updater.helpers import BootselHandoff, for_name
 from mcu_updater.jobs import JobRunner
@@ -416,6 +418,12 @@ def test_firmware_helper_confirms_the_provisioned_serial_before_request(
         )
         or requested_device.topology,
     )
+    monkeypatch.setattr(
+        bootsel_discovery,
+        "serial_topology_for",
+        lambda requested_paths, port: events.append(("topology", port))
+        or "platform-fd880000.usb-usb-0:1.3",
+    )
     bench = Bench(paths=paths, settings=settings, controller=lambda _name=None: None)
 
     helper = for_name("roadrunner", family="roadrunner")
@@ -424,8 +432,14 @@ def test_firmware_helper_confirms_the_provisioned_serial_before_request(
         bench, serial=PROVISIONED, chipset="rp2040", ctx=object()
     )
 
-    assert result == BootselHandoff(topology="1-3")
-    assert events == [("confirm", PROVISIONED), ("request", device)]
+    assert result == BootselHandoff(
+        topology="platform-fd880000.usb-usb-0:1.3"
+    )
+    assert events == [
+        ("confirm", PROVISIONED),
+        ("topology", device.port),
+        ("request", device),
+    ]
 
 
 def test_firmware_helper_refuses_before_bootsel_when_confirmation_fails(
@@ -455,6 +469,36 @@ def test_firmware_helper_refuses_before_bootsel_when_confirmation_fails(
     with pytest.raises(roadrunner.RoadrunnerError, match="No confirmed provisioned"):
         helper.request_bootsel(
             bench, serial="RR-BAD", chipset="rp2040", ctx=object()
+        )
+
+    assert requested == []
+
+
+def test_firmware_helper_refuses_before_bootsel_without_serial_by_path_evidence(
+    paths, settings, monkeypatch
+):
+    device = roadrunner.RoadrunnerDevice(PROVISIONED, "/dev/ttyACM0", _topology())
+    requested: list[object] = []
+    monkeypatch.setattr(roadrunner, "find_provisioned", lambda *_args: device)
+    monkeypatch.setattr(
+        bootsel_discovery,
+        "serial_topology_for",
+        lambda *_args: (_ for _ in ()).throw(
+            FlashError("no serial by-path topology matched the Roadrunner")
+        ),
+    )
+    monkeypatch.setattr(
+        roadrunner.Roadrunner,
+        "request_bootsel",
+        lambda *_args: requested.append(True),
+    )
+    bench = Bench(paths=paths, settings=settings, controller=lambda _name=None: None)
+
+    helper = for_name("roadrunner", family="roadrunner")
+    assert helper is not None
+    with pytest.raises(FlashError, match="no serial by-path"):
+        helper.request_bootsel(
+            bench, serial=PROVISIONED, chipset="rp2040", ctx=object()
         )
 
     assert requested == []

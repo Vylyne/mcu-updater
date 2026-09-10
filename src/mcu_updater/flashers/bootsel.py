@@ -27,6 +27,25 @@ from ..errors import BootselNotMountedError, DeviceNotFoundError, FlashError
 from .spec import Bench, FlashTarget
 
 
+def ensure_uf2(uf2: str) -> None:
+    """Refuse a missing image before a BOOTSEL transition is requested."""
+    if not os.path.exists(uf2):
+        raise FlashError(f"firmware image not found at {uf2}.", path=uf2)
+
+
+def copy_uf2(uf2: str, mount: str, ctx: Any) -> None:
+    """Copy one validated UF2 to a selected BOOTSEL volume."""
+    ensure_uf2(uf2)
+    dest = os.path.join(mount, os.path.basename(uf2))
+    ctx.reporter("info", f"Copying {uf2} to {dest}...")
+    shutil.copy2(uf2, dest)
+    ctx.reporter(
+        "info",
+        "Copied. The board flashes itself from the .uf2 and reboots once the "
+        "write lands - no further action needed here.",
+    )
+
+
 class Bootsel:
     """Writes an RP2040 sitting in its BOOTSEL mass-storage bootloader."""
 
@@ -52,8 +71,7 @@ class Bootsel:
         self, bench: Bench, session: Any, target: FlashTarget, ctx: Any
     ) -> dict[str, Any]:
         uf2 = target.detail["uf2_file"]
-        if not os.path.exists(uf2):
-            raise FlashError(f"firmware image not found at {uf2}.", path=uf2)
+        ensure_uf2(uf2)
 
         if bench.settings.dry_run:
             ctx.reporter(
@@ -62,14 +80,7 @@ class Bootsel:
             return {"mount": None}
 
         mount = _find_mount(bench.paths)
-        dest = os.path.join(mount, os.path.basename(uf2))
-        ctx.reporter("info", f"Copying {uf2} to {dest}...")
-        shutil.copy2(uf2, dest)
-        ctx.reporter(
-            "info",
-            "Copied. The board flashes itself from the .uf2 and reboots once the "
-            "write lands - no further action needed here.",
-        )
+        copy_uf2(uf2, mount, ctx)
         return {"mount": mount}
 
     def settled(self, bench: Bench, target: FlashTarget, ctx: Any) -> None:

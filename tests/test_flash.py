@@ -23,6 +23,7 @@ from mcu_updater.flashers.flash import (
     flash_initial_bootloader,
     flash_katapult,
 )
+from mcu_updater.helpers import BootselHandoff
 
 from .conftest import bootsel_device_node, cmd_tokens, make_device, mounted_bootsel_volume
 
@@ -960,6 +961,121 @@ def test_bootsel_refuses_more_than_one_mounted_volume(paths, settings, tmp_path,
     with pytest.raises(FlashError) as exc:
         flashers.Bootsel().write(bench, None, target, flashers.PlainContext(lambda *a: None))
     assert len(exc.value.data["mounts"]) == 2
+
+
+def test_helper_bootsel_requests_handoff_then_copies_only_to_matching_mount(
+    paths, settings, tmp_path
+):
+    root = tmp_path / "bootsel_root"
+    by_path = root / "BOOTSEL" / "by-path"
+    matching = by_path / "platform-x_usb-usb-0_1_3_1_0-scsi-0_0_0_0"
+    bystander = by_path / "platform-y_usb-usb-0_1_3_1_0-scsi-0_0_0_0"
+    for mount in (matching, bystander):
+        mount.mkdir(parents=True)
+        (mount / "INFO_UF2.TXT").write_text("", encoding="utf-8")
+    rp_paths = dataclasses.replace(paths, bootsel_root=str(root))
+    uf2 = tmp_path / "roadrunner.uf2"
+    uf2.write_bytes(b"road-runner")
+    calls: list[tuple[str, str]] = []
+
+    class Helper:
+        name = "test"
+
+        def request_bootsel(self, bench, *, serial, chipset, ctx):
+            calls.append((serial, chipset))
+            return BootselHandoff(topology="platform-x.usb-usb-0:1.3:1.0")
+
+    bench = flashers.Bench(
+        paths=rp_paths, settings=settings, controller=lambda name=None: None
+    )
+    target = flashers.helper_bootsel.target_for(
+        str(uf2),
+        type_name="roadrunner",
+        serial="RR-0123456789ABCDEFGHJKMNPQRS",
+        chipset="rp2040",
+        helper=Helper(),
+        stop_services=("klipper",),
+    )
+
+    result = flashers.HelperBootsel().write(
+        bench, None, target, flashers.PlainContext(lambda *a: None)
+    )
+
+    assert calls == [("RR-0123456789ABCDEFGHJKMNPQRS", "rp2040")]
+    assert (matching / "roadrunner.uf2").read_bytes() == b"road-runner"
+    assert not (bystander / "roadrunner.uf2").exists()
+    assert result == {"mount": str(matching)}
+
+
+def test_helper_bootsel_requires_services_stopped():
+    assert flashers.HelperBootsel.needs_services_stopped is True
+
+
+def test_helper_bootsel_dry_run_does_not_request_or_copy(
+    paths, settings, tmp_path
+):
+    settings.dry_run = True
+    uf2 = tmp_path / "roadrunner.uf2"
+    uf2.write_bytes(b"road-runner")
+    requested: list[object] = []
+
+    class Helper:
+        name = "test"
+
+        def request_bootsel(self, *_args, **_kwargs):
+            requested.append(True)
+            raise AssertionError("dry run must not reboot hardware")
+
+    target = flashers.helper_bootsel.target_for(
+        str(uf2),
+        type_name="roadrunner",
+        serial="RR-0123456789ABCDEFGHJKMNPQRS",
+        chipset="rp2040",
+        helper=Helper(),
+    )
+    events: list[tuple[str, str]] = []
+    bench = flashers.Bench(
+        paths=paths, settings=settings, controller=lambda name=None: None
+    )
+
+    result = flashers.HelperBootsel().write(
+        bench, None, target, flashers.PlainContext(lambda *event: events.append(event))
+    )
+
+    assert requested == []
+    assert result == {"mount": None}
+    assert any("dry-run" in line for _level, line in events)
+
+
+def test_helper_bootsel_refuses_a_missing_uf2_before_requesting_bootsel(
+    paths, settings, tmp_path
+):
+    requested: list[object] = []
+
+    class Helper:
+        name = "test"
+
+        def request_bootsel(self, *_args, **_kwargs):
+            requested.append(True)
+            raise AssertionError("a missing artifact must fail before BOOTSEL")
+
+    target = flashers.helper_bootsel.target_for(
+        str(tmp_path / "missing.uf2"),
+        type_name="roadrunner",
+        serial="RR-0123456789ABCDEFGHJKMNPQRS",
+        chipset="rp2040",
+        helper=Helper(),
+    )
+    bench = flashers.Bench(
+        paths=paths, settings=settings, controller=lambda name=None: None
+    )
+
+    with pytest.raises(FlashError, match="firmware image not found"):
+        flashers.HelperBootsel().write(
+            bench, None, target, flashers.PlainContext(lambda *a: None)
+        )
+
+    assert requested == []
 
 
 # --------------------------------------------------------------------------

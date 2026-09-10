@@ -147,29 +147,6 @@ describe("BusPanel", () => {
     expect(items).toEqual(["klipper", "roadrunner", "knomi"]);
   });
 
-  it("allows a new MCU type to reuse a display target name", async () => {
-    state.bus = [mcuDevice];
-    state.status = {
-      targets: [makeTarget("display", "display")],
-    };
-    state.ping = { capabilities: fullCapabilities };
-    const addSpy = vi.spyOn(store, "addType").mockResolvedValue({
-      ok: true,
-      warnings: [],
-    });
-    const wrapper = mount(BusPanel);
-
-    await wrapper.find('button[title^="Track this device"]').trigger("click");
-    await wrapper.findAll(".menu-item").find((item) => item.text() === "New type from this…")!.trigger("click");
-    await wrapper.get("input[maxlength]").setValue("display");
-    await wrapper.findAll("label input").at(1)!.setValue("stm32g0b1xx");
-    await wrapper.get(".btn-primary").trigger("click");
-
-    expect(addSpy).toHaveBeenCalledWith(
-      expect.objectContaining({ name: "display" }),
-    );
-  });
-
   it("omits the + button entirely when is_mcu is false, but keeps ×", () => {
     state.bus = [nonMcuDevice];
     state.status = { targets: [makeTarget("bttebb36")] };

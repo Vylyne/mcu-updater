@@ -25,10 +25,9 @@
 # newer there. The guard below asks the channel's own question rather than
 # using one baseline for both.
 #
-# Moonraker's Update Manager additionally hides anything that does not
-# satisfy `semver.gt(remote, local)` client-side - so the guard uses the same
-# semver package and the same comparison, and can't drift from what it
-# protects.
+# Update Manager clients additionally hide anything that does not satisfy
+# `semver.gt(remote, local)` - so the guard uses the same semver package and
+# comparison, and cannot drift from what it protects.
 
 name: ui-release
 

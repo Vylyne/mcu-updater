@@ -671,7 +671,7 @@ in order. The dev box cannot test what matters here.
 2. `updatefw build <type>`. Then confirm the offsets agree *before* any write:
    the application's `FLASH_APPLICATION_ADDRESS` against the
    `Application Start:` the handshake reports.
-3. `updatefw flash <serial>`, then `fw.flash` from the Mainsail panel - both
+3. `updatefw flash <serial>`, then `fw.flash` from the standalone UI - both
    paths, because they select a flasher differently.
 4. `updatefw update-all --dry-run`, then for real.
 5. **Klipper is running and ready after every one of these.**

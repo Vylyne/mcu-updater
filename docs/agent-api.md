@@ -1,6 +1,6 @@
 # Agent API
 
-The contract between `mcu-updater` (Python) and the Mainsail panel
+The contract between `mcu-updater` (Python) and the standalone UI
 (TypeScript). Both sides are hand-written, so **this file is the single source of
 truth** — and `tests/test_agent_methods.py` is what stops them drifting.
 

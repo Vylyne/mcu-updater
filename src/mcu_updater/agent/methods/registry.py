@@ -272,10 +272,10 @@ class RegistryMixin(_Base):
             )
 
         with Registry.mutate(self.paths, f"add serial {serial}") as reg:
-            mcu = reg.get(name)  # UnknownTypeError if the type doesn't exist
+            chipset = reg.get_declared_chipset(name)  # UnknownTypeError if absent
             # One board tracked under two types would get flashed twice with
             # different firmware, so this is refused rather than merged.
-            elsewhere = [t for t in reg.find_types_for_serial(serial) if t != name]
+            elsewhere = [t for t in reg.find_declared_types_for_serial(serial) if t != name]
             if elsewhere:
                 raise SerialTrackedElsewhereError(
                     f"serial '{serial}' is already tracked under '{elsewhere[0]}'. "
@@ -284,8 +284,7 @@ class RegistryMixin(_Base):
                     requested=name,
                     tracked_under=elsewhere,
                 )
-            added = reg.add_serial(name, serial)
-            chipset = mcu.chipset
+            added = reg.add_declared_serial(name, serial)
 
         self._changed()
         return {"name": name, "serial": serial, "added": added, "chipset": chipset}
@@ -499,8 +498,8 @@ class RegistryMixin(_Base):
         serial = self._require_str(args, "serial")
 
         with Registry.mutate(self.paths, f"remove serial {serial}") as reg:
-            reg.get(name)  # UnknownTypeError if the type doesn't exist
-            removed = reg.remove_serial(name, serial)
+            reg.get_declared_chipset(name)  # UnknownTypeError if the type doesn't exist
+            removed = reg.remove_declared_serial(name, serial)
 
         self._changed()
         return {"name": name, "serial": serial, "removed": removed}
@@ -520,11 +519,11 @@ class RegistryMixin(_Base):
         uuid = self._require_str(args, "uuid")
 
         with Registry.mutate(self.paths, f"add canbus uuid {uuid}") as reg:
-            mcu = reg.get(name)  # UnknownTypeError if the type doesn't exist
+            chipset = reg.get_declared_chipset(name)  # UnknownTypeError if absent
             # One board tracked under two types would get flashed twice with
             # different firmware, so this is refused rather than merged - same
             # rule `serial_add` enforces for by-id serials.
-            elsewhere = [t for t in reg.find_types_for_uuid(uuid) if t != name]
+            elsewhere = [t for t in reg.find_declared_types_for_uuid(uuid) if t != name]
             if elsewhere:
                 raise UuidTrackedElsewhereError(
                     f"CAN uuid '{uuid}' is already tracked under '{elsewhere[0]}'. "
@@ -533,8 +532,7 @@ class RegistryMixin(_Base):
                     requested=name,
                     tracked_under=elsewhere,
                 )
-            added = reg.add_canbus_uuid(name, uuid)
-            chipset = mcu.chipset
+            added = reg.add_declared_canbus_uuid(name, uuid)
 
         self._changed()
         return {"name": name, "uuid": uuid, "added": added, "chipset": chipset}
@@ -550,8 +548,8 @@ class RegistryMixin(_Base):
         uuid = self._require_str(args, "uuid")
 
         with Registry.mutate(self.paths, f"remove canbus uuid {uuid}") as reg:
-            reg.get(name)  # UnknownTypeError if the type doesn't exist
-            removed = reg.remove_canbus_uuid(name, uuid)
+            reg.get_declared_chipset(name)  # UnknownTypeError if the type doesn't exist
+            removed = reg.remove_declared_canbus_uuid(name, uuid)
 
         self._changed()
         return {"name": name, "uuid": uuid, "removed": removed}

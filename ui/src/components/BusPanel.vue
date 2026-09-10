@@ -81,6 +81,16 @@ const targetNames = computed(() => {
   return [...new Set(targets.map((t) => t.name))];
 });
 
+// Creation validates MCU type names only. Display/provider names may
+// legitimately overlap with an MCU type, while adoption menus accept every
+// configured target name above.
+const mcuTypeNames = computed(() => {
+  const targets = (state.status?.targets as Target[] | undefined) ?? [];
+  return [...new Set(
+    targets.filter((t) => t.provider === "kconfig_make").map((t) => t.name),
+  )];
+});
+
 const canAdopt = computed(() => hasCapability("fw.serial.add"));
 const canAdoptCan = computed(() => hasCapability("fw.canbus.add"));
 const canIgnoreCan = computed(() => hasCapability("fw.canbus.ignore"));
@@ -594,7 +604,7 @@ async function confirmClear(): Promise<void> {
 
     <TypeDialog
       v-if="newTypeFor"
-      :existing-names="targetNames"
+      :existing-names="mcuTypeNames"
       :families="families"
       :suggested-chipset="
         isCanbusDevice(newTypeFor) ? null : newTypeFor.chipset

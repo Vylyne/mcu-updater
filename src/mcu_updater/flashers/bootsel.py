@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import contextlib
 import os
-import shutil
 from collections.abc import Iterator
 from typing import Any
 
@@ -33,24 +32,98 @@ def ensure_uf2(uf2: str) -> None:
         raise FlashError(f"firmware image not found at {uf2}.", path=uf2)
 
 
+_COPY_CHUNK = 1 << 20
+
+
+class _VolumeVanished(Exception):
+    """Every byte of the image landed; the failure came after that.
+
+    Internal to this module - it never leaves :func:`copy_uf2`.
+    """
+
+    def __init__(self, error: OSError) -> None:
+        super().__init__(str(error))
+        self.error = error
+
+
+def _open_dest(dest: str) -> Any:
+    """The destination handle, unbuffered on purpose.
+
+    With `buffering=0` a `write` that returns means those bytes reached the
+    volume rather than a Python buffer, which is what lets :func:`_copy_bytes`
+    say truthfully where a failure fell relative to the last byte. A buffered
+    writer would still be holding the tail of the image when the loop ends.
+    """
+    return open(dest, "wb", buffering=0)
+
+
+def _copy_bytes(uf2: str, dest: str) -> None:
+    """Write the image, distinguishing an incomplete write from a late one.
+
+    Raises `OSError` while bytes are still outstanding, and `_VolumeVanished`
+    once every byte has been written and only the close remains. No `copystat`
+    half: timestamps and permissions on a FAT volume that is about to
+    disappear are meaningless, and reaching for them is what turned a normal
+    ending into a reported failure.
+    """
+    complete = False
+    try:
+        with open(uf2, "rb") as src, _open_dest(dest) as out:
+            while True:
+                chunk = src.read(_COPY_CHUNK)
+                if not chunk:
+                    break
+                view = memoryview(chunk)
+                while view:
+                    view = view[out.write(view) :]
+            complete = True
+    except OSError as exc:
+        if complete:
+            raise _VolumeVanished(exc) from exc
+        raise
+
+
 def copy_uf2(uf2: str, mount: str, ctx: Any) -> None:
-    """Copy one validated UF2 to a selected BOOTSEL volume."""
+    """Copy one validated UF2 to a selected BOOTSEL volume.
+
+    The boundary this draws is the whole point. The RP2040 boot ROM resets the
+    board the instant the final UF2 block lands, so on real hardware the mount
+    disappearing at the end of a *good* write is the normal path, not an edge
+    case: anything after the data - a close, a metadata step - fails on a
+    volume that is already gone. Reporting that as a failed copy would hide the
+    `FlashLog` record behind `result["flashed"]`, tell the operator a correct
+    board still needs flashing, and invite a re-flash.
+
+    Bytes still outstanding when the error arrives are the other case, and stay
+    a `FlashError`: a board unplugged mid-write, a full or erroring FAT volume.
+    Raw, that `OSError` would leave `write_all` altogether - past the Klipper
+    readiness gate it runs after the batch, which for `HelperBootsel` is
+    exactly when Klipper's units have just been restarted underneath a board in
+    an unknown state.
+
+    Cancellation is deliberately not checked in here; it stays between writes.
+    """
     ensure_uf2(uf2)
     dest = os.path.join(mount, os.path.basename(uf2))
     ctx.reporter("info", f"Copying {uf2} to {dest}...")
+    vanished: OSError | None = None
     try:
-        shutil.copy2(uf2, dest)
+        _copy_bytes(uf2, dest)
+    except _VolumeVanished as gone:
+        vanished = gone.error
     except OSError as exc:
-        # A board unplugged mid-write, a full or erroring FAT volume, a mount
-        # that vanished because the board reset early. Raw, an OSError leaves
-        # `write_all` altogether - past the Klipper readiness gate it runs after
-        # the batch, which for `HelperBootsel` is exactly when Klipper's units
-        # have just been restarted underneath a board in an unknown state.
         raise FlashError(
             f"could not write {os.path.basename(uf2)} to {mount}: {exc}",
             path=uf2,
             mount=mount,
         ) from exc
+    if vanished is not None:
+        ctx.reporter(
+            "info",
+            f"The volume went away once the last block landed ({vanished}) - "
+            "that is the board resetting into the firmware it just took, not a "
+            "failed write.",
+        )
     ctx.reporter(
         "info",
         "Copied. The board flashes itself from the .uf2 and reboots once the "

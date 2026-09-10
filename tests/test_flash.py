@@ -854,6 +854,136 @@ def test_bootsel_copies_the_uf2_to_the_mounted_volume(paths, settings, tmp_path)
     assert result["mount"] == str(vol)
 
 
+def _volume_that_dies(monkeypatch, *, error, after_bytes):
+    """Make the BOOTSEL volume go away underneath a copy.
+
+    `after_bytes` is an int for a genuine mid-write death - that many bytes
+    land and the next write fails - or None for the RP2040's normal ending,
+    where every byte lands and the failure arrives afterwards, at close, as
+    the boot ROM resets the board out from under the mount.
+    """
+    real_open = flashers.bootsel._open_dest
+
+    class Handle:
+        def __init__(self, fh):
+            self._fh = fh
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_exc):
+            self.close()
+            return False
+
+        def write(self, data):
+            if after_bytes is None:
+                return self._fh.write(data)
+            payload = bytes(data)[:after_bytes]
+            if payload:
+                self._fh.write(payload)
+            raise error
+
+        def close(self):
+            with contextlib.suppress(OSError):
+                self._fh.close()
+            if after_bytes is None:
+                raise error
+
+    monkeypatch.setattr(
+        flashers.bootsel, "_open_dest", lambda dest: Handle(real_open(dest))
+    )
+
+
+def test_a_volume_that_vanishes_after_the_last_byte_is_a_successful_write(
+    paths, settings, tmp_path, monkeypatch
+):
+    """On an RP2040 this is the *normal* ending, not an edge case.
+
+    The boot ROM resets the board the instant the final UF2 block lands, so
+    the volume is gone before anything after the data can run. Treating that
+    as a failed copy would report every good flash as broken, skip the
+    `FlashLog` record the operator needs, and invite a re-flash of a board
+    that is already correct - the I2 hazard through a third door.
+    """
+    root, vol = mounted_bootsel_volume(tmp_path)
+    rp_paths = dataclasses.replace(paths, bootsel_root=str(root))
+    uf2 = tmp_path / "katapult.uf2"
+    uf2.write_bytes(b"every-byte-of-this-image")
+    _volume_that_dies(
+        monkeypatch, error=OSError(5, "Input/output error"), after_bytes=None
+    )
+    events: list[tuple[str, str]] = []
+    bench = flashers.Bench(
+        paths=rp_paths, settings=settings, controller=lambda name=None: None
+    )
+    target = flashers.bootsel.target_for(str(uf2), chipset="rp2040")
+
+    result = flashers.Bootsel().write(
+        bench, None, target, flashers.PlainContext(lambda *a: events.append(a))
+    )
+
+    assert result == {"mount": str(vol)}
+    assert (vol / "katapult.uf2").read_bytes() == b"every-byte-of-this-image"
+    assert any(
+        level == "info" and "Input/output error" in text for level, text in events
+    )
+
+
+def test_a_vanished_volume_reaches_flashed_so_provenance_can_record(
+    paths, settings, tmp_path, monkeypatch
+):
+    """`_cmake_flash` records the `FlashLog` off `result["flashed"]`, so the
+    batch has to count this write as one - a failure row would silence the
+    ledger for the most common successful ending there is."""
+    root, vol = mounted_bootsel_volume(tmp_path)
+    rp_paths = dataclasses.replace(paths, bootsel_root=str(root))
+    uf2 = tmp_path / "katapult.uf2"
+    uf2.write_bytes(b"image")
+    _volume_that_dies(
+        monkeypatch, error=OSError(5, "Input/output error"), after_bytes=None
+    )
+    bench = flashers.Bench(
+        paths=rp_paths, settings=settings, controller=lambda name=None: None
+    )
+    target = flashers.bootsel.target_for(str(uf2), chipset="rp2040")
+
+    result = flashers.write_all(
+        bench, [target], flashers.PlainContext(lambda *a: None)
+    )
+
+    assert len(result["flashed"]) == 1
+    assert result["failures"] == []
+    assert result["flashed"][0]["mount"] == str(vol)
+
+
+def test_a_copy_that_dies_partway_through_the_data_is_still_a_failure(
+    paths, settings, tmp_path, monkeypatch
+):
+    """The other side of the same boundary: bytes that never landed are a
+    genuine failure however few are missing, and must not be excused by the
+    reset-at-the-end rule."""
+    root, vol = mounted_bootsel_volume(tmp_path)
+    rp_paths = dataclasses.replace(paths, bootsel_root=str(root))
+    uf2 = tmp_path / "katapult.uf2"
+    uf2.write_bytes(b"half-written-image")
+    _volume_that_dies(
+        monkeypatch, error=OSError(28, "No space left on device"), after_bytes=4
+    )
+    bench = flashers.Bench(
+        paths=rp_paths, settings=settings, controller=lambda name=None: None
+    )
+    target = flashers.bootsel.target_for(str(uf2), chipset="rp2040")
+
+    with pytest.raises(FlashError) as exc:
+        flashers.Bootsel().write(
+            bench, None, target, flashers.PlainContext(lambda *a: None)
+        )
+
+    assert exc.value.code == "flash_failed"
+    assert "No space left" in str(exc.value)
+    assert (vol / "katapult.uf2").read_bytes() == b"half"
+
+
 def test_a_copy_that_dies_mid_write_is_a_structured_flash_failure(
     paths, settings, tmp_path, monkeypatch
 ):
@@ -870,10 +1000,9 @@ def test_a_copy_that_dies_mid_write_is_a_structured_flash_failure(
     uf2 = tmp_path / "katapult.uf2"
     uf2.write_bytes(b"image")
 
-    def die(_src, _dst):
-        raise OSError(5, "Input/output error")
-
-    monkeypatch.setattr(flashers.bootsel.shutil, "copy2", die)
+    _volume_that_dies(
+        monkeypatch, error=OSError(5, "Input/output error"), after_bytes=0
+    )
     bench = flashers.Bench(
         paths=rp_paths, settings=settings, controller=lambda name=None: None
     )
@@ -897,10 +1026,9 @@ def test_a_copy_failure_still_reaches_the_klipper_readiness_gate(
     uf2 = tmp_path / "katapult.uf2"
     uf2.write_bytes(b"image")
 
-    def die(_src, _dst):
-        raise OSError(28, "No space left on device")
-
-    monkeypatch.setattr(flashers.bootsel.shutil, "copy2", die)
+    _volume_that_dies(
+        monkeypatch, error=OSError(28, "No space left on device"), after_bytes=0
+    )
     bench = flashers.Bench(
         paths=rp_paths, settings=settings, controller=lambda name=None: None
     )

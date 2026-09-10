@@ -75,6 +75,12 @@ class CmakeType:
     #: `Install`, and looking a family back up from inside it would be a
     #: second config parse to answer something load() already knew.
     submodules: bool = False
+    #: Device identity remains owned by the shared ``[type ...]`` document,
+    #: even though CMake owns this type's build semantics.
+    chipset: str = ""
+    serials: list[str] = dataclasses.field(default_factory=list)
+    #: Optional type-level service override; ``None`` inherits the family.
+    stop_services: list[str] | None = None
 
     def to_json(self) -> dict:
         return {
@@ -84,6 +90,9 @@ class CmakeType:
             "firmware": self.firmware,
             "cmake_args": self.cmake_args,
             "submodules": self.submodules,
+            "chipset": self.chipset,
+            "serials": list(self.serials),
+            "stop_services": self.stop_services,
         }
 
 
@@ -129,6 +138,9 @@ def load(paths: Paths) -> dict[str, CmakeType]:
             firmware=first_fw,
             cmake_args=family.cmake_args,
             submodules=family.submodules,
+            chipset=(doc.get(section, "chipset") or "").strip(),
+            serials=doc.get_list(section, "serials"),
+            stop_services=doc.get_csv(section, "stop_services"),
         )
     return out
 

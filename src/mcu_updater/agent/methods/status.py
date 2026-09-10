@@ -11,7 +11,7 @@ import time
 from collections.abc import Callable
 from typing import Any
 
-from ... import API_VERSION, __version__, firmware, profiles, providers
+from ... import API_VERSION, __version__, firmware, helpers, profiles, providers
 from ...build import read_sidecar
 from ...config import Registry
 from ...devices import (
@@ -678,7 +678,8 @@ class StatusMixin(_Base):
         ] + [
             self._pio_target(payload, allowed) for payload in displays
         ] + [
-            self._cmake_target(payload, allowed) for payload in self.cmake_status()
+            self._cmake_target(payload, allowed, families)
+            for payload in self.cmake_status()
         ]
 
     def _mcu_target(
@@ -975,12 +976,17 @@ class StatusMixin(_Base):
                     "build_blocked": cmake_mod.source_problem(
                         entry, probe_targets=False
                     ),
+                    "chipset": entry.chipset,
+                    "serials": list(entry.serials),
                 }
             )
         return out
 
     def _cmake_target(
-        self, payload: dict[str, Any], allowed: set[str]
+        self,
+        payload: dict[str, Any],
+        allowed: set[str],
+        families: dict[str, firmware.FirmwareFamily],
     ) -> dict[str, Any]:
         """A cmake type in the shared `targets[]` shape.
 
@@ -991,6 +997,55 @@ class StatusMixin(_Base):
         name = payload["name"]
         status = ArtifactStatus(payload["artifact_reason"])
         problem = payload.get("build_blocked")
+        family = firmware.resolve(self.paths, payload["firmware"], families)
+        helper = helpers.for_name(family.helper, family=family.name)
+        helper_configured = helper is not None
+
+        sightings = scan(self.paths)
+        devices: list[dict[str, Any]] = []
+        for serial in payload["serials"]:
+            matches = [device for device in sightings if device.serial == serial]
+            present = len(matches) == 1
+            match = matches[0] if present else None
+            device_status = DeviceStatus(UNKNOWN_VERSION if present else OFFLINE)
+            device_actions = (
+                self._device_actions(
+                    allowed,
+                    flash=("fw.flash", {"name": name, "serial": serial}),
+                    present=present,
+                    has_artifact=bool(payload["has_firmware"]),
+                    what=f"{payload['firmware']} firmware",
+                    label=serial,
+                    extra=(
+                        [
+                            {
+                                "id": "untrack",
+                                "label": "Stop tracking",
+                                "method": "fw.serial.remove",
+                                "params": {"name": name, "serial": serial},
+                                "blocked": None,
+                            }
+                        ]
+                        if "fw.serial.remove" in allowed
+                        else []
+                    ),
+                )
+                if helper_configured
+                else []
+            )
+            devices.append(
+                {
+                    "id": serial,
+                    "name": None,
+                    "present": present,
+                    "state": match.state if match is not None else STATE_OFFLINE,
+                    "path": match.path if match is not None else None,
+                    "version": None,
+                    "confidence": None,
+                    **self._device_json(device_status),
+                    "actions": device_actions,
+                }
+            )
 
         actions: list[dict[str, Any]] = []
         if "fw.build" in allowed:
@@ -1032,18 +1087,14 @@ class StatusMixin(_Base):
             # No menuconfig, so nothing for a profile to seed. Present and null
             # for the same reason PlatformIO's is: one shape a reader can trust.
             "profile": None,
-            # No devices, so nothing to aggregate. Not False - that would claim
-            # we looked and found everything current.
-            "needs_flash": None,
-            "devices": [],
+            "needs_flash": self._aggregate(devices),
+            "devices": devices,
             "actions": actions,
             "extra": {
                 "source": payload["source"],
                 "source_version": payload["source_version"],
                 "source_dirty": payload["source_dirty"],
-                # Flashing a cmake type is not wired up yet, so a panel can say
-                # why the row has no device half instead of looking broken.
-                "flashable": False,
+                "flashable": helper_configured,
             },
         }
 

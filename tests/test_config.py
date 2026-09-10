@@ -813,3 +813,32 @@ def test_declared_identity_lookups_include_owned_and_foreign_types(paths):
     assert registry.find_declared_types_for_serial("912345678901234567890") == ["bttebb36"]
     assert registry.find_declared_types_for_serial("RR-ABCDEFGHIJKLMNOPQRSTUVWXYZ") == ["roadrunner"]
     assert registry.declared_type_names() == ["bttebb36", "roadrunner"]
+
+
+def test_resolve_declared_serial_includes_foreign_provider_types(paths):
+    """Flash pairing must see CMake identities without making them Kconfig types."""
+    _write(paths, _cfg_with_a_cmake_type())
+    registry = Registry.load(paths)
+
+    assert (
+        registry.resolve_declared_serial("RR-ABCDEFGHIJKLMNOPQRSTUVWXYZ")
+        == "roadrunner"
+    )
+    assert (
+        registry.resolve_declared_serial(
+            "RR-ABCDEFGHIJKLMNOPQRSTUVWXYZ", "roadrunner"
+        )
+        == "roadrunner"
+    )
+    assert "roadrunner" not in registry.types
+
+
+def test_resolve_declared_serial_refuses_a_cross_type_pairing(paths):
+    _write(paths, _cfg_with_a_cmake_type())
+
+    with pytest.raises(SerialTrackedElsewhereError) as exc:
+        Registry.load(paths).resolve_declared_serial(
+            "912345678901234567890", "roadrunner"
+        )
+
+    assert exc.value.data["tracked_under"] == ["bttebb36"]

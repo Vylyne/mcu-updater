@@ -56,6 +56,24 @@ def test_a_cmake_type_loads_with_its_target_and_args(paths, tmp_path):
     assert rr.source == str(tmp_path)
     assert rr.cmake_args == "-DROADRUNNER_FIRMWARE_VERSION=${git_describe}"
     assert rr.submodules is False
+    assert rr.chipset == "rp2040"
+    assert rr.serials == ["RR-ABCDEFGHIJKLMNOPQRSTUVWXYZ"]
+    assert rr.stop_services is None
+
+
+def test_a_cmake_type_loads_its_own_stop_services_override(paths, tmp_path):
+    write_config(
+        paths,
+        ROADRUNNER_CFG.format(source=tmp_path).replace(
+            "cmake_target: roadrunner_v1_i2c_rgb",
+            "cmake_target: roadrunner_v1_i2c_rgb\nstop_services: klipper, roadrunner-watch",
+        ),
+    )
+
+    assert cmake.load(paths)["roadrunner"].stop_services == [
+        "klipper",
+        "roadrunner-watch",
+    ]
 
 
 def test_the_families_submodules_key_reaches_the_type(paths, tmp_path):

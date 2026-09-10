@@ -885,7 +885,7 @@ def test_changing_nothing_warns_about_nothing(paths, live_registry_text):
     assert res["warnings"] == []
 
 
-def _cmake_config(paths, tmp_path):
+def _cmake_config(paths, tmp_path, *, helper=False, serial=None):
     """A configured cmake type with a real-enough tree behind it."""
     from mcu_updater.cfgdoc import CfgDocument
 
@@ -896,9 +896,13 @@ def _cmake_config(paths, tmp_path):
     doc = CfgDocument("")
     doc.set("firmware roadrunner", "source", str(source))
     doc.set("firmware roadrunner", "builder", "cmake")
+    if helper:
+        doc.set("firmware roadrunner", "helper", "roadrunner")
     doc.set("type roadrunner", "chipset", "rp2040")
     doc.set("type roadrunner", "firmware", "roadrunner")
     doc.set("type roadrunner", "cmake_target", "roadrunner_v1_i2c_rgb")
+    if serial:
+        doc.set("type roadrunner", "serials", [serial])
     with open(paths.main_config, "w", encoding="utf-8", newline="\n") as fh:
         fh.write(doc.render())
     return source
@@ -921,6 +925,70 @@ def test_a_cmake_type_gets_a_row_in_targets(paths, tmp_path):
     assert row["devices"] == []
     assert row["needs_flash"] is None
     assert row["extra"]["flashable"] is False
+
+
+def test_a_helper_backed_cmake_type_projects_real_serial_devices(
+    paths, tmp_path, fake_root
+):
+    serial = "RR-5K3DNTFCR1B3C9D0RZMYA3Y720"
+    _cmake_config(paths, tmp_path, helper=True, serial=serial)
+    write_settings(paths, enable_flashing="true")
+    os.makedirs(paths.artifact_dir("roadrunner"), exist_ok=True)
+    with open(paths.uf2_file("roadrunner", "roadrunner"), "wb") as fh:
+        fh.write(b"UF2")
+    # Roadrunner's descriptor chipset is not the configured RP2040 family.
+    # Presence must therefore match the exact serial without a chipset filter.
+    make_device(fake_root / "bus", "Vylyne", "Roadrunner", serial)
+
+    row = _targets(Api(paths, runner=_runner()), "cmake")["roadrunner"]
+
+    assert row["extra"]["flashable"] is True
+    assert row["needs_flash"] is None
+    assert len(row["devices"]) == 1
+    device = row["devices"][0]
+    assert device["id"] == serial
+    assert device["present"] is True
+    assert device["version"] is None
+    assert device["needs_flash"] is None
+    assert _action(device, "flash") == {
+        "id": "flash",
+        "label": "Flash",
+        "method": "fw.flash",
+        "params": {"name": "roadrunner", "serial": serial},
+        "blocked": None,
+    }
+    assert _action(device, "untrack")["method"] == "fw.serial.remove"
+
+
+def test_an_offline_helper_backed_cmake_device_carries_the_normal_block(
+    paths, tmp_path
+):
+    serial = "RR-5K3DNTFCR1B3C9D0RZMYA3Y720"
+    _cmake_config(paths, tmp_path, helper=True, serial=serial)
+    write_settings(paths, enable_flashing="true")
+    os.makedirs(paths.artifact_dir("roadrunner"), exist_ok=True)
+    with open(paths.uf2_file("roadrunner", "roadrunner"), "wb") as fh:
+        fh.write(b"UF2")
+
+    device = _targets(Api(paths, runner=_runner()), "cmake")["roadrunner"][
+        "devices"
+    ][0]
+
+    assert device["present"] is False
+    assert _action(device, "flash")["blocked"]["code"] == Api.BLOCKED_NO_DEVICE
+
+
+def test_a_cmake_type_without_a_helper_does_not_advertise_device_actions(
+    paths, tmp_path
+):
+    serial = "RR-5K3DNTFCR1B3C9D0RZMYA3Y720"
+    _cmake_config(paths, tmp_path, serial=serial)
+    write_settings(paths, enable_flashing="true")
+
+    row = _targets(Api(paths, runner=_runner()), "cmake")["roadrunner"]
+
+    assert row["extra"]["flashable"] is False
+    assert row["devices"][0]["actions"] == []
 
 
 def test_a_cmake_row_offers_build_and_clean(paths, tmp_path):

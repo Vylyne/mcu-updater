@@ -676,6 +676,48 @@ class Registry:
             )
         return matches[0]
 
+    def resolve_declared_serial(
+        self, serial: str, mcu_type: str | None = None
+    ) -> str:
+        """Resolve a serial across every declared type, regardless of builder.
+
+        This is the identity counterpart to :meth:`resolve_serial`: provider
+        registries own build semantics, while the shared document owns the
+        configured serial-to-type pairing.
+        """
+        if mcu_type is not None:
+            section = self._declared_section(mcu_type)
+            if serial in self._doc.get_list(section, "serials"):
+                return mcu_type
+            elsewhere = self.find_declared_types_for_serial(serial)
+            if elsewhere:
+                raise SerialTrackedElsewhereError(
+                    f"serial '{serial}' is already tracked under '{elsewhere[0]}', "
+                    f"not '{mcu_type}'. Did you mean -t {elsewhere[0]}?",
+                    serial=serial,
+                    requested=mcu_type,
+                    tracked_under=elsewhere,
+                )
+            raise UnknownSerialError(
+                f"serial '{serial}' isn't tracked under '{mcu_type}' yet.",
+                serial=serial,
+                requested=mcu_type,
+            )
+
+        matches = self.find_declared_types_for_serial(serial)
+        if not matches:
+            raise UnknownSerialError(
+                f"serial '{serial}' isn't tracked under any MCU type.", serial=serial
+            )
+        if len(matches) > 1:
+            raise AmbiguousSerialError(
+                f"serial '{serial}' is tracked under multiple types "
+                f"({', '.join(sorted(matches))}) - pass -t to disambiguate.",
+                serial=serial,
+                tracked_under=sorted(matches),
+            )
+        return matches[0]
+
     def resolve_uuid(self, uuid: str, mcu_type: str | None = None) -> str:
         """Work out which type a CAN uuid belongs to.
 

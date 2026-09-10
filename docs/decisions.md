@@ -248,37 +248,8 @@ this.
 
 ## Conclusions that close an avenue
 
-### `vue-tsc` cannot type-check the Mainsail fork, at any version
+### Historical Mainsail-fork decisions
 
-Investigated 2026-08-21. The `.vue` `<script>` blocks in `Vylyne/mainsail` are
-unchecked by `npx vite build` — `vite.config.ts`'s `checker({ typescript })`
-covers bare `.ts` only — and that gap hid a real bug through every gate. Adding
-`vueTsc: true`, or a `vue-tsc` CI job, does not close it:
-
-- **Newest `vue-tsc` (3.3.10**, the only major compatible with this tree's
-  `typescript@6.0.3`) emits **6307** `error TS2339`, every one shaped
-  `Property '<x>' does not exist on type 'Vue3Instance<...>'`.
-  `@vue/language-core` infers a component's public type from a
-  `defineComponent(...)`-shaped export, which a `@Component class X extends Vue`
-  decorator export never produces. A real regression would be error #6308 among
-  6307 identical false positives.
-- **`vueCompilerOptions.target` is not the knob.** Tested explicitly at both
-  `2.7` and `3`, identical error count both times, with the override confirmed
-  read via `@vue/language-core`'s `CompilerOptionsResolver`. That setting
-  changes template-directive nuances, not whether class-component properties are
-  visible on `this`.
-- **Old `vue-tsc` (1.8.27**, contemporaneous with `vue-class-component`'s peak
-  usage) crashes against `typescript@6.0.3`:
-  `Search string not found: "/supportedTSExtensions = .*(?=;)/"`. It patches
-  TypeScript's internals by regex against compiled `tsc` source, and the pattern
-  is gone.
-
-The two failure modes bracket the whole option space: new `vue-tsc` runs but is
-structurally blind to this tree's component pattern; old `vue-tsc` understood
-that pattern but cannot load against this TypeScript version.
-
-**So the gap stays open, and it is a real one** — treat `npx vite build` as
-proving nothing about `.vue` script blocks, and review those by hand. The
-upstream half (raising the class-component pattern with
-`mainsail-crew/mainsail`) is in `docs/backlog.md`. Do not spend the fork's
-edited-file rebase budget on a fallback without asking.
+The former fork and its release channel are retired. This historical decision
+is superseded; the supported client is the standalone UI documented in
+`docs/mainsail-fork.md`.

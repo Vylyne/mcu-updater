@@ -8,55 +8,6 @@
 
 ---
 
-## Upstream — Mainsail (`mainsail-crew/mainsail`)
-
-Fork lives at `Vylyne/mainsail`, branch `mu/stable`. Upstream's default branch
-is `develop`; there is no `main` on upstream. Any PR branches off `develop`.
-
-### `.vue` script blocks are not type-checked
-
-`vite.config.ts` configures `vite-plugin-checker` with `typescript: { root,
-buildMode: false }` and **no `vueTsc: true`**, so `npm run build`'s TypeScript
-pass covers bare `.ts` files only. Every `.vue` `<script>` block is unchecked.
-
-Found the hard way: a fork component read `mcuType.firmware`, a field its own
-declared interface never had, and the build reported nothing. That shipped a
-bug that silently rewrote a config value.
-
-This is an upstream gap, not a fork one — it affects anyone writing Mainsail
-components.
-
-**Two ways to raise it:**
-
-1. **Issue** — cheapest. Report that the checker's TS pass silently skips
-   `.vue`, so a type error in a component cannot fail the build. Let upstream
-   decide the fix.
-2. **PR off `develop`** — add `vueTsc: true` plus a `vue-tsc` devDependency.
-   Almost certainly **not** a one-line change: upstream has never type-checked
-   `.vue`, so turning it on will surface a backlog of pre-existing errors across
-   their own components. A credible PR either fixes those or lands the check in
-   a non-blocking mode first.
-
-**Verify before promising anything:** this tree is **Vue 2.7.10** with
-`vue-class-component` / `vue-property-decorator` and Vuetify 2. `vue-tsc`'s Vue 2
-support is version-dependent, and a bare `npx vue-tsc` fetches the latest, which
-may not handle 2.7 at all. Expect to pin a version and possibly set
-`vueCompilerOptions.target: 2.7` in `tsconfig.json`. Confirm the tool runs
-usefully here *before* treating either option as viable.
-
-### No panel plugin API
-
-The reason this project maintains a Mainsail fork at all: there is no extension
-point for a third-party panel, so a fork with a documented 4-edited-file budget
-is the cheapest way in (`docs/mainsail-fork.md`).
-
-A genuine upstream feature request — some registration hook for an
-externally-supplied panel component — would let the fork be retired entirely.
-Large ask, low odds, but it is the only thing that removes the rebase burden
-permanently rather than managing it.
-
----
-
 ## Upstream — Katapult (`Arksine/katapult`)
 
 ### `flashtool.py` has no machine-readable output

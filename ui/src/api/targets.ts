@@ -1,5 +1,5 @@
 // Wire types for `targets[]` (fw.status) and fw.target.get's `target`, hand-
-// mirrored from docs/agent-api.md the same way the Mainsail panel's types.ts
+// mirrored from docs/agent-api.md for the panel's types
 // is - see tests/test_agent_methods.py for the Python half of that contract.
 
 export type Provider = "kconfig_make" | "platformio" | "cmake";
@@ -48,8 +48,7 @@ export interface ProfileChange {
   line: string;
 }
 
-/** Mirrors the fork's `FwProfileVerdict`
- * (mainsail/src/store/server/fwUpdater/types.ts) - the third verdict a row
+/** The third verdict a row
  * can carry: do the inputs still say what the profile said. `managed: false`
  * (every type predating profiles) means no chip at all, not a chip saying
  * "unmanaged" on every row. */

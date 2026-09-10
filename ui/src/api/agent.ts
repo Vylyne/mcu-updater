@@ -1,5 +1,5 @@
 // The single funnel every `fw.*` call goes through, mirroring
-// mainsail/src/store/server/fwUpdater/actions.ts's `request` action - one
+// The client request action - one
 // place to hold the timeout and the error-shape translation, so no component
 // writes the server.extensions.request envelope by hand.
 //

@@ -104,7 +104,7 @@ describe("TargetRow", () => {
     const target: Target = { ...mcuTarget, actions: [flashAction] };
     const wrapper = mount(TargetRow, { props: { target } });
     // Icon actions carry their reason as a title (a tooltip on hover, same
-    // as FirmwareUpdaterPanelTarget.vue's actionHint), not as visible text.
+    // as the target row's action hint), not as visible text.
     const flashButton = wrapper
       .findAll("button")
       .find((b) => b.attributes("title") === "build is already running");

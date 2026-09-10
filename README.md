@@ -1,6 +1,6 @@
 # mcu-updater
 
-![The MCU Firmware panel in Mainsail](docs/img/panel_1.png)
+![The standalone MCU Firmware panel](docs/img/panel_1.png)
 
 Firmware management for a Klipper printer with more than one MCU. It keeps a
 registry of your board types and the USB serials of the physical boards of each
@@ -178,8 +178,9 @@ confirmation names and the `/dev/serial/by-id` path shown for every row are
 diagnostics only, not values this panel or the agent ever persists.
 
 `install.sh` sets up the agent and prints the one-line `moonraker.conf` change
-that points Mainsail's Update Manager at the fork instead of upstream. See
-[docs/agent-api.md](docs/agent-api.md) for the JSON-RPC contract between the two.
+for Moonraker's Update Manager. The standalone UI can be embedded in Mainsail
+with an iframe. See [docs/agent-api.md](docs/agent-api.md) for the JSON-RPC
+contract between the two.
 
 Flashing from the panel is **off by default** - installing or updating the
 agent never silently grants a browser the ability to write to a board. Turn it

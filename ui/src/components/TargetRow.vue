@@ -6,7 +6,7 @@
 // blocked, choices?} renderer, this file just supplies preview devices and
 // the transient busy gate a payload never carries.
 //
-// Layout mirrors FirmwareUpdaterPanelTarget.vue in the Mainsail fork: a
+// Layout for a firmware target row: a
 // header line (name, descriptor, module version, device count, spacer,
 // artifact chip, profile chip, actions, overflow menu), then one sub-row per
 // device (state icon, identity, spacer, version, verdict, device actions,
@@ -122,7 +122,7 @@ function offersOverride(action: Target["actions"][number]): boolean {
 
 /** The ones that belong in the header itself; everything else goes in the
  * overflow menu - same split, and same reasoning, as
- * FirmwareUpdaterPanelTarget.HEADER_ACTIONS: a board with no profile yet
+ * Header actions: a board with no profile yet
  * shows a blocked Build right beside the thing that unblocks it, rather than
  * burying it a click away. */
 const HEADER_ACTION_ORDER = ["build", "profile", "flash"];
@@ -162,7 +162,7 @@ const reseedDefault = computed(
 /** The profile chip, or nothing - nothing for a display (no answers to
  * seed) and nothing for an unmanaged type (every type predating profiles).
  * A moved seed names the profile rather than saying "profile updated",
- * mirroring FirmwareUpdaterPanelTarget.vue's profileChip getter. */
+ * mirroring the target row's profile chip getter. */
 const profileChip = computed(() => {
   const profile = props.target.profile;
   if (!profile || !profile.managed) return null;

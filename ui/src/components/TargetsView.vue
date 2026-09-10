@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // targets[] said in one shape, rendered through one row component - this is
 // Phase 4's whole point. See docs/decisions.md. Phase 10 adds the fleet-wide
-// toolbar (build/flash/update all, refresh, new type) FirmwareUpdaterPanel.vue
+// toolbar (build/flash/update all, refresh, new type) in the panel
 // carries and this UI didn't yet.
 import { computed, nextTick, ref, watch } from "vue";
 import { flipMenuIfOffscreen, useClickOutsideToClose } from "../clickOutside";
@@ -190,7 +190,7 @@ async function onRefresh(): Promise<void> {
 
     <p v-if="targets.length === 0" class="muted">No targets configured yet.</p>
     <!-- No separator element here - TargetRow ends with its own trailing
-         divider, same as FirmwareUpdaterPanelTarget.vue's <v-divider>. -->
+         divider, matching the target row's <v-divider>. -->
     <TargetRow
       v-for="target in targets"
       :key="targetKey(target)"

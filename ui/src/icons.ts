@@ -1,10 +1,10 @@
 // Icon path data, copied verbatim from Material Design Icons
 // (https://github.com/Templarian/MaterialDesign, Apache License 2.0) via the
-// Mainsail fork's own @mdi/js checkout, so the two clients render the same
+// @mdi/js glyph choices follow Mainsail conventions, so embedded clients render the same
 // glyphs. Copied rather than depended on: ui/package.json has exactly one
 // runtime dependency (vue) - see docs/standalone-ui.md's "dependency-frugal
 // default" note - and @mdi/js ships several thousand icons this UI does not
-// use. Only the ones FirmwareUpdaterPanel*.vue actually references are here;
+// use. Only the ones used by this panel are here;
 // add more the same way (grep the path string out of @mdi/js's mdi.js) if a
 // future row needs one.
 //

@@ -1,9 +1,7 @@
 <script setup lang="ts">
-// The standalone-ui equivalent of the Mainsail fork's <Panel> - see
-// mainsail/src/components/ui/Panel.vue. A titled card with a toolbar, an
+// A titled card with a toolbar, an
 // optional icon, a #buttons slot for header actions, and an optional
-// collapse toggle whose state persists the same way the fork's does (there
-// it's a Vuex-backed per-panel key; here it's localStorage, read/written the
+// collapse toggle whose state persists in localStorage, read/written the
 // same defensive way App.vue's readStoredApiKey() already is - private
 // browsing or disabled storage must not crash the panel, just fail to
 // remember).

@@ -35,7 +35,7 @@ const families = computed(
   () => (state.status?.firmware_families as Family[] | undefined) ?? [],
 );
 const existingTypeNames = computed(() =>
-  targets.value.filter((t) => t.provider === "kconfig_make").map((t) => t.name),
+  [...new Set(targets.value.map((t) => t.name))],
 );
 
 const needsFlashCount = computed(() =>

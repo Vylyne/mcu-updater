@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { mount } from "@vue/test-utils";
 import TargetsView from "./TargetsView.vue";
+import TypeDialog from "./TypeDialog.vue";
 import type { Target } from "../api/targets";
 import { state } from "../store/agent";
 
@@ -92,5 +93,30 @@ describe("TargetsView", () => {
 
     expect(wrapper.find(".dialog-backdrop").exists()).toBe(true);
     expect(wrapper.find(".menu-list").exists()).toBe(false);
+  });
+
+  it("protects the unified type namespace across providers", async () => {
+    state.ping = {
+      capabilities: ["fw.type.add", "fw.type.update", "fw.type.remove"],
+    };
+    const targets = [
+      makeTarget("kconfig_make", "bttebb36"),
+      makeTarget("cmake", "roadrunner"),
+      makeTarget("platformio", "knomi"),
+    ];
+    const wrapper = mount(TargetsView, { props: { targets } });
+
+    await wrapper.get('[aria-label="More actions"]').trigger("click");
+    const newType = wrapper
+      .get(".menu-list")
+      .findAll("button")
+      .find((button) => button.text().includes("New type"));
+    await newType!.trigger("click");
+
+    expect(wrapper.getComponent(TypeDialog).props("existingNames")).toEqual([
+      "bttebb36",
+      "roadrunner",
+      "knomi",
+    ]);
   });
 });

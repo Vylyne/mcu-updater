@@ -46,13 +46,49 @@ class _VolumeVanished(Exception):
         self.error = error
 
 
+def _same_file(uf2: str, dest: str) -> bool:
+    """True when writing `dest` would truncate the image being read.
+
+    `shutil.copy2` refused this outright and the explicit copy has to keep
+    doing so: opening one inode for reading and for writing empties it, the
+    read then returns nothing, and a zero-byte file gets reported as a
+    completed flash. Only reachable if a firmware directory overlaps
+    `bootsel_root`, which nothing currently forbids.
+
+    Identity first (`samefile` compares the inode, so hard links and symlinks
+    are caught), resolved paths second for a filesystem whose inode numbers
+    cannot be trusted. Neither may raise: this runs against a mount that is
+    allowed to disappear, and a stat failure there means "not the same file",
+    not "refuse the flash".
+    """
+    with contextlib.suppress(OSError, ValueError):
+        if os.path.exists(dest) and os.path.samefile(uf2, dest):
+            return True
+    with contextlib.suppress(OSError, ValueError):
+        return os.path.normcase(os.path.realpath(uf2)) == os.path.normcase(
+            os.path.realpath(dest)
+        )
+    return False
+
+
 def _open_dest(dest: str) -> Any:
     """The destination handle, unbuffered on purpose.
 
-    With `buffering=0` a `write` that returns means those bytes reached the
-    volume rather than a Python buffer, which is what lets :func:`_copy_bytes`
-    say truthfully where a failure fell relative to the last byte. A buffered
-    writer would still be holding the tail of the image when the loop ends.
+    `buffering=0` removes Python's own buffer, and that is precisely what it
+    buys: nothing is holding the tail of the image when the read loop ends, so
+    a failure at flush time cannot arrive *after* :func:`_copy_bytes` has
+    already concluded every byte was handed over. A buffered writer would still
+    be sitting on the tail there, and its flush failure - a genuinely
+    incomplete write - would be indistinguishable from the board resetting once
+    the last block landed.
+
+    It does not remove the kernel page cache, and there is deliberately no
+    `fsync`: forcing FAT metadata writeback could refuse a write that actually
+    landed, which is the exact failure this boundary exists to remove. The
+    residue is honest and unmeasured - a kernel that defers a mid-image
+    writeback error to `close()` would present a truncated image as the benign
+    late case. Bench item for the first real flash: capture the errno and the
+    step it arrives at.
     """
     return open(dest, "wb", buffering=0)
 
@@ -105,6 +141,13 @@ def copy_uf2(uf2: str, mount: str, ctx: Any) -> None:
     """
     ensure_uf2(uf2)
     dest = os.path.join(mount, os.path.basename(uf2))
+    if _same_file(uf2, dest):
+        raise FlashError(
+            f"refusing to copy {os.path.basename(uf2)} onto itself at {dest}: "
+            "the staged image and the BOOTSEL volume are the same file.",
+            path=uf2,
+            mount=mount,
+        )
     ctx.reporter("info", f"Copying {uf2} to {dest}...")
     vanished: OSError | None = None
     try:

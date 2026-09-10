@@ -865,8 +865,10 @@ def _volume_that_dies(monkeypatch, *, error, after_bytes):
     real_open = flashers.bootsel._open_dest
 
     class Handle:
-        def __init__(self, fh):
+        def __init__(self, fh, path):
             self._fh = fh
+            self._path = path
+            self._landed = 0
 
         def __enter__(self):
             return self
@@ -875,12 +877,27 @@ def _volume_that_dies(monkeypatch, *, error, after_bytes):
             self.close()
             return False
 
+        def _check_unbuffered(self):
+            # Pins the guarantee the classification rests on. If `_open_dest`
+            # ever buffers again, bytes a `write` reported as taken are still
+            # in Python's buffer when the loop ends, and a flush failure - an
+            # incomplete image - becomes indistinguishable from the board
+            # resetting after the last block. Every test using this fake fails
+            # the moment that stops being true, which is the point.
+            assert os.path.getsize(self._path) == self._landed, (
+                "the destination handle must stay unbuffered"
+            )
+
         def write(self, data):
             if after_bytes is None:
-                return self._fh.write(data)
+                written = self._fh.write(data)
+                self._landed += written
+                self._check_unbuffered()
+                return written
             payload = bytes(data)[:after_bytes]
             if payload:
-                self._fh.write(payload)
+                self._landed += self._fh.write(payload)
+                self._check_unbuffered()
             raise error
 
         def close(self):
@@ -890,7 +907,7 @@ def _volume_that_dies(monkeypatch, *, error, after_bytes):
                 raise error
 
     monkeypatch.setattr(
-        flashers.bootsel, "_open_dest", lambda dest: Handle(real_open(dest))
+        flashers.bootsel, "_open_dest", lambda dest: Handle(real_open(dest), dest)
     )
 
 
@@ -982,6 +999,133 @@ def test_a_copy_that_dies_partway_through_the_data_is_still_a_failure(
     assert exc.value.code == "flash_failed"
     assert "No space left" in str(exc.value)
     assert (vol / "katapult.uf2").read_bytes() == b"half"
+
+
+def test_the_destination_handle_never_holds_bytes_back(tmp_path):
+    """The unbuffered guarantee, on its own.
+
+    `_copy_bytes` concludes "every byte was handed over" from the write loop
+    ending. That is only true while nothing downstream is holding the tail: a
+    buffered handle would flush it at close, and a failure there - a truncated
+    image - would read as the benign board-reset ending.
+    """
+    dest = tmp_path / "probe.bin"
+
+    with flashers.bootsel._open_dest(str(dest)) as out:
+        out.write(b"ten-bytes!")
+        assert dest.stat().st_size == 10
+
+
+def test_a_multi_chunk_image_is_copied_whole(paths, settings, tmp_path, monkeypatch):
+    """Real UF2 images run past `_COPY_CHUNK`, so the loop's second pass is a
+    live path rather than a defensive one."""
+    root, vol = mounted_bootsel_volume(tmp_path)
+    rp_paths = dataclasses.replace(paths, bootsel_root=str(root))
+    image = (b"UF2\n" * 4096) + os.urandom(flashers.bootsel._COPY_CHUNK)
+    uf2 = tmp_path / "katapult.uf2"
+    uf2.write_bytes(image)
+    real_open = flashers.bootsel._open_dest
+    sizes: list[int] = []
+
+    class Counting:
+        def __init__(self, fh):
+            self._fh = fh
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_exc):
+            self._fh.close()
+            return False
+
+        def write(self, data):
+            sizes.append(len(data))
+            return self._fh.write(data)
+
+    monkeypatch.setattr(
+        flashers.bootsel, "_open_dest", lambda dest: Counting(real_open(dest))
+    )
+    bench = flashers.Bench(
+        paths=rp_paths, settings=settings, controller=lambda name=None: None
+    )
+    target = flashers.bootsel.target_for(str(uf2), chipset="rp2040")
+
+    flashers.Bootsel().write(
+        bench, None, target, flashers.PlainContext(lambda *a: None)
+    )
+
+    assert (vol / "katapult.uf2").read_bytes() == image
+    assert len(sizes) > 1
+
+
+def test_a_short_write_resumes_where_it_stopped(paths, settings, tmp_path, monkeypatch):
+    """A `write` that takes only part of what it was offered is a normal
+    outcome, not a failure - the loop has to resume from the byte it stopped
+    at rather than dropping or repeating the remainder."""
+    root, vol = mounted_bootsel_volume(tmp_path)
+    rp_paths = dataclasses.replace(paths, bootsel_root=str(root))
+    image = bytes(range(256)) * 8
+    uf2 = tmp_path / "katapult.uf2"
+    uf2.write_bytes(image)
+    real_open = flashers.bootsel._open_dest
+
+    class ShortWriter:
+        def __init__(self, fh):
+            self._fh = fh
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_exc):
+            self._fh.close()
+            return False
+
+        def write(self, data):
+            return self._fh.write(bytes(data)[:7])
+
+    monkeypatch.setattr(
+        flashers.bootsel, "_open_dest", lambda dest: ShortWriter(real_open(dest))
+    )
+    bench = flashers.Bench(
+        paths=rp_paths, settings=settings, controller=lambda name=None: None
+    )
+    target = flashers.bootsel.target_for(str(uf2), chipset="rp2040")
+
+    flashers.Bootsel().write(
+        bench, None, target, flashers.PlainContext(lambda *a: None)
+    )
+
+    assert (vol / "katapult.uf2").read_bytes() == image
+
+
+def test_a_copy_onto_the_image_itself_is_refused_before_it_is_destroyed(
+    paths, settings, tmp_path
+):
+    """`shutil.copy2` refused this; the explicit copy has to as well.
+
+    Opening one inode for reading and for writing truncates it, the read then
+    returns nothing, and the loop would finish "successfully" having reported
+    a zero-byte file as a flashed image. Only reachable when a firmware
+    directory overlaps `bootsel_root` - which nothing forbids - and the file
+    it would destroy is the image the operator would re-flash with.
+    """
+    root, vol = mounted_bootsel_volume(tmp_path)
+    rp_paths = dataclasses.replace(paths, bootsel_root=str(root))
+    uf2 = vol / "katapult.uf2"
+    uf2.write_bytes(b"the-only-copy-of-this-image")
+    bench = flashers.Bench(
+        paths=rp_paths, settings=settings, controller=lambda name=None: None
+    )
+    target = flashers.bootsel.target_for(str(uf2), chipset="rp2040")
+
+    with pytest.raises(FlashError) as exc:
+        flashers.Bootsel().write(
+            bench, None, target, flashers.PlainContext(lambda *a: None)
+        )
+
+    assert exc.value.code == "flash_failed"
+    assert "onto itself" in str(exc.value)
+    assert uf2.read_bytes() == b"the-only-copy-of-this-image"
 
 
 def test_a_copy_that_dies_mid_write_is_a_structured_flash_failure(

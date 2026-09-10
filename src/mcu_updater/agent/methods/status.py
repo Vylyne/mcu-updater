@@ -24,6 +24,7 @@ from ...devices import (
     scan,
 )
 from ...errors import (
+    ConfigCorruptError,
     UpdaterError,
 )
 from ...flashers.pairings import PAIRING_TTL as _PAIRING_TTL
@@ -610,6 +611,11 @@ class StatusMixin(_Base):
     #: answer file that a build would read: this is the tree itself missing, and
     #: the fix is a `source:` key or a `git clone` rather than a menuconfig run.
     BLOCKED_NO_SOURCE = "no_source"
+    #: A `helper:` no registered helper answers to. Distinct from `no_config`,
+    #: which is a menuconfig run away: this one is a typo in printer's config,
+    #: and it blocks one row rather than the whole poll. The value is the
+    #: error's own `code`, so a panel switching on it needs no new vocabulary.
+    BLOCKED_CONFIG_CORRUPT = "config_corrupt"
 
     @staticmethod
     def _blocked(code: str, message: str, **data: Any) -> dict[str, Any]:
@@ -998,7 +1004,16 @@ class StatusMixin(_Base):
         status = ArtifactStatus(payload["artifact_reason"])
         problem = payload.get("build_blocked")
         family = firmware.resolve(self.paths, payload["firmware"], families)
-        helper = helpers.for_name(family.helper, family=family.name)
+        # Caught rather than raised: `dispatch` turns any UpdaterError into an
+        # RpcError for the whole `fw.status` call, so one mistyped helper name
+        # blanked the panel for every MCU of every provider. It is a fact about
+        # this type, so it is reported on this type's row.
+        helper_problem: str | None = None
+        try:
+            helper = helpers.for_name(family.helper, family=family.name)
+        except ConfigCorruptError as exc:
+            helper = None
+            helper_problem = str(exc)
         helper_configured = helper is not None
 
         sightings = scan(self.paths)
@@ -1016,6 +1031,13 @@ class StatusMixin(_Base):
                     has_artifact=bool(payload["has_firmware"]),
                     what=f"{payload['firmware']} firmware",
                     label=serial,
+                    blocked=(
+                        None
+                        if helper_problem is None
+                        else self._blocked(
+                            self.BLOCKED_CONFIG_CORRUPT, helper_problem, name=name
+                        )
+                    ),
                     extra=(
                         [
                             {
@@ -1030,7 +1052,7 @@ class StatusMixin(_Base):
                         else []
                     ),
                 )
-                if helper_configured
+                if helper_configured or helper_problem is not None
                 else []
             )
             devices.append(
@@ -1276,6 +1298,7 @@ class StatusMixin(_Base):
         has_artifact: bool,
         what: str,
         label: str,
+        blocked: dict[str, Any] | None = None,
         extra: list[dict[str, Any]] | None = None,
     ) -> list[dict[str, Any]]:
         """What can be done to one device.
@@ -1290,7 +1313,12 @@ class StatusMixin(_Base):
         method, params = flash
         out: list[dict[str, Any]] = []
         if method in allowed:
-            if not has_artifact:
+            if blocked is not None:
+                # A caller-supplied reason outranks the generic ones: it is
+                # about the configuration rather than about this device, and it
+                # is what the operator has to fix first.
+                pass
+            elif not has_artifact:
                 blocked = self._blocked(
                     self.BLOCKED_NO_ARTIFACT,
                     f"no {what} has been built yet.",

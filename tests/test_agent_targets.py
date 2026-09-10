@@ -897,7 +897,11 @@ def _cmake_config(paths, tmp_path, *, helper=False, serial=None):
     doc.set("firmware roadrunner", "source", str(source))
     doc.set("firmware roadrunner", "builder", "cmake")
     if helper:
-        doc.set("firmware roadrunner", "helper", "roadrunner")
+        doc.set(
+            "firmware roadrunner",
+            "helper",
+            "roadrunner" if helper is True else helper,
+        )
     doc.set("type roadrunner", "chipset", "rp2040")
     doc.set("type roadrunner", "firmware", "roadrunner")
     doc.set("type roadrunner", "cmake_target", "roadrunner_v1_i2c_rgb")
@@ -989,6 +993,36 @@ def test_a_cmake_type_without_a_helper_does_not_advertise_device_actions(
 
     assert row["extra"]["flashable"] is False
     assert row["devices"][0]["actions"] == []
+
+
+def test_a_misspelled_helper_blocks_its_own_row_not_the_whole_panel(
+    paths, tmp_path, fake_root
+):
+    """One typo used to blank every MCU in the panel.
+
+    `helpers.for_name` raises `ConfigCorruptError` for a name no registered
+    helper answers to, and dispatch turns any `UpdaterError` into an `RpcError`
+    for the entire `fw.status` call - so `helper: roadruner` cost the operator
+    every row, with nothing saying which type was at fault.
+    """
+    serial = "RR-5K3DNTFCR1B3C9D0RZMYA3Y720"
+    _cmake_config(paths, tmp_path, helper="roadruner", serial=serial)
+    write_settings(paths, enable_flashing="true")
+    os.makedirs(paths.artifact_dir("roadrunner"), exist_ok=True)
+    with open(paths.uf2_file("roadrunner", "roadrunner"), "wb") as fh:
+        fh.write(b"UF2")
+    make_device(fake_root / "bus", "Vylyne", "Roadrunner", serial)
+
+    row = _targets(Api(paths, runner=_runner()), "cmake")["roadrunner"]
+
+    # Not flashable: an unresolvable helper is not a helper.
+    assert row["extra"]["flashable"] is False
+    device = row["devices"][0]
+    blocked = _action(device, "flash")["blocked"]
+    assert blocked["code"] == Api.BLOCKED_CONFIG_CORRUPT
+    assert "roadruner" in blocked["message"]
+    # And the row is still a row, with its build actions intact.
+    assert {a["id"] for a in row["actions"]} >= {"build", "clean"}
 
 
 def test_a_cmake_row_offers_build_and_clean(paths, tmp_path):

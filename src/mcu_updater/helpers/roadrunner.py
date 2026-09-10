@@ -22,5 +22,10 @@ class RoadrunnerHelper:
         roadrunner.Roadrunner().request_bootsel(bench.paths, device)
         return BootselHandoff(topology=topology)
 
+    def wait_ready(
+        self, bench: Bench, *, serial: str, chipset: str, ctx: Any
+    ) -> None:
+        roadrunner.wait_for_provisioned(bench.paths, serial)
+
 
 __all__ = ["RoadrunnerHelper"]

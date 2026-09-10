@@ -24,6 +24,7 @@ from mcu_updater.flashers.flash import (
     flash_katapult,
 )
 from mcu_updater.helpers import BootselHandoff
+from mcu_updater.service import NullService
 
 from .conftest import bootsel_device_node, cmd_tokens, make_device, mounted_bootsel_volume
 
@@ -1009,6 +1010,151 @@ def test_helper_bootsel_requests_handoff_then_copies_only_to_matching_mount(
 
 def test_helper_bootsel_requires_services_stopped():
     assert flashers.HelperBootsel.needs_services_stopped is True
+
+
+def test_helper_bootsel_waits_for_helper_before_service_restart(
+    paths, settings, tmp_path
+):
+    root = tmp_path / "bootsel_root"
+    by_path = root / "BOOTSEL" / "by-path"
+    matching = by_path / "platform-x_usb-usb-0_1_3_1_0-scsi-0_0_0_0"
+    matching.mkdir(parents=True)
+    (matching / "INFO_UF2.TXT").write_text("", encoding="utf-8")
+    rp_paths = dataclasses.replace(paths, bootsel_root=str(root))
+    uf2 = tmp_path / "roadrunner.uf2"
+    uf2.write_bytes(b"road-runner")
+    order: list[str] = []
+
+    class Service(NullService):
+        def stop(self, reporter):
+            order.append("stop")
+            super().stop(reporter)
+
+        def start(self, reporter):
+            order.append("start")
+            super().start(reporter)
+
+    class Helper:
+        name = "test"
+
+        def request_bootsel(self, bench, *, serial, chipset, ctx):
+            order.append("request")
+            return BootselHandoff(topology="platform-x.usb-usb-0:1.3:1.0")
+
+        def wait_ready(self, bench, *, serial, chipset, ctx):
+            order.append("ready")
+
+    service = Service()
+    bench = flashers.Bench(
+        paths=rp_paths, settings=settings, controller=lambda _name=None: service
+    )
+    target = flashers.helper_bootsel.target_for(
+        str(uf2),
+        type_name="roadrunner",
+        serial="RR-0123456789ABCDEFGHJKMNPQRS",
+        chipset="rp2040",
+        helper=Helper(),
+        stop_services=("klipper",),
+    )
+
+    result = flashers.write_all(
+        bench, [target], flashers.PlainContext(lambda *a: None)
+    )
+
+    assert order == ["stop", "request", "ready", "start"]
+    assert len(result["flashed"]) == 1
+    assert result["failures"] == []
+
+
+def test_helper_bootsel_settled_warns_when_helper_readiness_times_out(
+    paths, settings
+):
+    class Helper:
+        name = "test"
+
+        def request_bootsel(self, *_args, **_kwargs):
+            raise AssertionError("settled must not request BOOTSEL again")
+
+        def wait_ready(self, *_args, **_kwargs):
+            raise BootloaderTimeoutError("Roadrunner did not become ready")
+
+    target = flashers.helper_bootsel.target_for(
+        "roadrunner.uf2",
+        type_name="roadrunner",
+        serial="RR-0123456789ABCDEFGHJKMNPQRS",
+        chipset="rp2040",
+        helper=Helper(),
+    )
+    events: list[tuple[str, str]] = []
+    bench = flashers.Bench(
+        paths=paths, settings=settings, controller=lambda _name=None: None
+    )
+
+    flashers.HelperBootsel().settled(
+        bench,
+        target,
+        flashers.PlainContext(lambda *event: events.append(event)),
+    )
+
+    assert events == [("warn", "Roadrunner did not become ready")]
+
+
+def test_helper_bootsel_settled_does_not_hide_programming_errors(paths, settings):
+    class Helper:
+        name = "test"
+
+        def request_bootsel(self, *_args, **_kwargs):
+            raise AssertionError("settled must not request BOOTSEL again")
+
+        def wait_ready(self, *_args, **_kwargs):
+            raise RuntimeError("broken helper implementation")
+
+    target = flashers.helper_bootsel.target_for(
+        "roadrunner.uf2",
+        type_name="roadrunner",
+        serial="RR-0123456789ABCDEFGHJKMNPQRS",
+        chipset="rp2040",
+        helper=Helper(),
+    )
+    bench = flashers.Bench(
+        paths=paths, settings=settings, controller=lambda _name=None: None
+    )
+
+    with pytest.raises(RuntimeError, match="broken helper implementation"):
+        flashers.HelperBootsel().settled(
+            bench, target, flashers.PlainContext(lambda *a: None)
+        )
+
+
+def test_helper_bootsel_settled_skips_helper_readiness_in_dry_run(paths, settings):
+    settings.dry_run = True
+    waits: list[object] = []
+
+    class Helper:
+        name = "test"
+
+        def request_bootsel(self, *_args, **_kwargs):
+            raise AssertionError("settled must not request BOOTSEL again")
+
+        def wait_ready(self, *_args, **_kwargs):
+            waits.append(True)
+
+    target = flashers.helper_bootsel.target_for(
+        "roadrunner.uf2",
+        type_name="roadrunner",
+        serial="RR-0123456789ABCDEFGHJKMNPQRS",
+        chipset="rp2040",
+        helper=Helper(),
+    )
+    bench = flashers.Bench(
+        paths=paths, settings=settings, controller=lambda _name=None: None
+    )
+
+    flashers.HelperBootsel().settled(
+        bench, target, flashers.PlainContext(lambda *a: None)
+    )
+
+    assert waits == []
 
 
 def test_helper_bootsel_dry_run_does_not_request_or_copy(

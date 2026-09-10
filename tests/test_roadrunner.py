@@ -504,6 +504,60 @@ def test_firmware_helper_refuses_before_bootsel_without_serial_by_path_evidence(
     assert requested == []
 
 
+def test_firmware_helper_wait_ready_retries_until_serial_and_info_are_confirmed(
+    paths, settings, monkeypatch
+):
+    device = roadrunner.RoadrunnerDevice(PROVISIONED, "/dev/ttyACM1", _topology())
+    attempts: list[str] = []
+
+    def find(_paths, serial):
+        attempts.append(serial)
+        if len(attempts) < 3:
+            raise roadrunner._error(
+                "roadrunner_no_candidate", "Roadrunner has not re-enumerated"
+            )
+        return device
+
+    monkeypatch.setattr(roadrunner, "find_provisioned", find)
+    _fake_clock(monkeypatch)
+    bench = Bench(paths=paths, settings=settings, controller=lambda _name=None: None)
+
+    helper = for_name("roadrunner", family="roadrunner")
+    assert helper is not None
+    helper.wait_ready(
+        bench, serial=PROVISIONED, chipset="rp2040", ctx=object()
+    )
+
+    assert attempts == [PROVISIONED, PROVISIONED, PROVISIONED]
+
+
+def test_firmware_helper_wait_ready_has_a_bounded_reenumeration_timeout(
+    paths, settings, monkeypatch
+):
+    attempts: list[str] = []
+
+    def missing(_paths, serial):
+        attempts.append(serial)
+        raise roadrunner._error(
+            "roadrunner_no_candidate", "Roadrunner has not re-enumerated"
+        )
+
+    monkeypatch.setattr(roadrunner, "find_provisioned", missing)
+    _fake_clock(monkeypatch)
+    bench = Bench(paths=paths, settings=settings, controller=lambda _name=None: None)
+
+    helper = for_name("roadrunner", family="roadrunner")
+    assert helper is not None
+    with pytest.raises(roadrunner.RoadrunnerError) as exc:
+        helper.wait_ready(
+            bench, serial=PROVISIONED, chipset="rp2040", ctx=object()
+        )
+
+    assert exc.value.code == "roadrunner_timeout"
+    assert exc.value.data["serial"] == PROVISIONED
+    assert len(attempts) == 5
+
+
 def _ready_api(paths) -> Api:
     """A non-read-only, flashing-enabled agent - what every dispatch test here
     needs, now that `fw.roadrunner.provision`/`fw.roadrunner.clear` are gated

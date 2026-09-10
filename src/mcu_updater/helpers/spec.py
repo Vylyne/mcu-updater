@@ -16,10 +16,16 @@ class BootselHandoff:
 
 
 class BootselRequester(Protocol):
-    """A firmware-specific way to request its board's BOOTSEL mode."""
+    """Firmware-specific BOOTSEL entry and post-write readiness."""
 
     name: str
 
     def request_bootsel(
         self, bench: Bench, *, serial: str, chipset: str, ctx: Any
     ) -> BootselHandoff: ...
+
+    def wait_ready(
+        self, bench: Bench, *, serial: str, chipset: str, ctx: Any
+    ) -> None:
+        """Wait until the flashed firmware confirms its durable identity."""
+        ...

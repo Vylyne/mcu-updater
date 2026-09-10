@@ -148,6 +148,30 @@ def find_provisioned(paths: Paths, serial: str) -> RoadrunnerDevice:
     return RoadrunnerDevice(candidate_serial, port, topology)
 
 
+def wait_for_provisioned(paths: Paths, serial: str) -> RoadrunnerDevice:
+    """Wait for one exact provisioned identity and a confirming INFO reply."""
+    if not PROVISIONED_RE.fullmatch(serial):
+        # Keep malformed requested identities as immediate caller errors rather
+        # than turning them into a misleading re-enumeration timeout.
+        return find_provisioned(paths, serial)
+
+    deadline = time.monotonic() + REENUMERATE_TIMEOUT
+    last_error: RoadrunnerError | None = None
+    while True:
+        try:
+            return find_provisioned(paths, serial)
+        except RoadrunnerError as exc:
+            last_error = exc
+        if time.monotonic() >= deadline:
+            raise _error(
+                "roadrunner_timeout",
+                "Roadrunner did not re-enumerate with its confirmed provisioned identity",
+                serial=serial,
+                last_error=last_error.code,
+            ) from last_error
+        time.sleep(0.25)
+
+
 def _await_reenumeration(
     paths: Paths,
     topology: usb.UsbDevice,
@@ -310,4 +334,5 @@ __all__ = [
     "find_provisioned",
     "find_untracked",
     "provision_roadrunner",
+    "wait_for_provisioned",
 ]

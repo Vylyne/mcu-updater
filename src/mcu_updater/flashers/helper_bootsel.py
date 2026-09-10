@@ -7,6 +7,7 @@ from collections.abc import Iterator
 from typing import Any
 
 from ..discovery.bootsel import mount_for_topology
+from ..errors import UpdaterError
 from ..helpers.spec import BootselRequester
 from .bootsel import copy_uf2, ensure_uf2
 from .spec import Bench, FlashTarget
@@ -51,7 +52,22 @@ class HelperBootsel:
         return {"mount": mount}
 
     def settled(self, bench: Bench, target: FlashTarget, ctx: Any) -> None:
-        """The post-flash readiness check remains the caller's responsibility."""
+        """Wait for helper-confirmed identity before stopped services restart."""
+        if bench.settings.dry_run:
+            return
+
+        helper: BootselRequester = target.detail["helper"]
+        try:
+            helper.wait_ready(
+                bench,
+                serial=target.id,
+                chipset=target.detail["chipset"],
+                ctx=ctx,
+            )
+        except UpdaterError as exc:
+            # The UF2 copy already completed. Match the other flashers: a slow
+            # return is worth a warning, not rewriting success as write failure.
+            ctx.reporter("warn", str(exc))
 
 
 def target_for(

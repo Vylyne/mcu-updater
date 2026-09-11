@@ -256,3 +256,28 @@ def test_no_digest_algorithm_with_a_digest_is_refused():
 
     with pytest.raises(bridge.ProtocolError):
         bridge.parse_info(0, _info_payload() + _digest_fields(algorithm=0))
+
+
+def test_a_flash_uid_cut_short_is_refused():
+    """Eight bytes, not "whatever is left".
+
+    Slicing past the end is silent in Python, so a truncated reply would have
+    produced a short flash UID and been reported as a real one.
+    """
+    bridge = _load_bridge()
+
+    with pytest.raises(bridge.ProtocolError):
+        bridge.parse_info(0, _info_payload()[:-3])
+
+
+def test_a_digest_image_range_cut_short_is_refused():
+    """A complete digest does not imply a complete range.
+
+    The digest is length-prefixed and validates itself; the two 32-bit range
+    fields that follow are fixed-width and have nothing to check them but this.
+    """
+    bridge = _load_bridge()
+    truncated = _digest_fields()[:-3]
+
+    with pytest.raises(bridge.ProtocolError):
+        bridge.parse_info(0, _info_payload() + truncated)

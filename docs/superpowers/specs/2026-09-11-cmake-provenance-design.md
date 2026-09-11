@@ -345,6 +345,73 @@ provenance gap. It is required to show the seam is a seam and not a Roadrunner
 special case with a protocol wrapped round it - the same mistake in the same
 place, one layer up.
 
+## What the digest decides
+
+Settled: the staged payload's digest is stored beside what `record_build`
+already keeps, and a mismatch means the board needs flashing. The three things
+a mismatch can mean - the wrong firmware, an incomplete write, a corrupted
+image - are all repaired by writing the firmware again, so they do not need
+telling apart to decide the action.
+
+### A mismatch outranks a version match
+
+This is the part that is easy to get backwards. A digest is not a second
+opinion alongside the version comparison; where both have an answer, **the
+digest wins**, including when it contradicts a version that matches.
+
+A version string is a label the image carries. A digest is the image. A board
+whose `fw_version` is exactly what we flashed, but whose digest differs, is
+running something other than what we wrote - a truncated BOOTSEL copy that
+boots and behaves is the case their document names, and the version string
+survives that write perfectly well because it sits early in the image. Version
+alone reports "up to date" there. That is the reading this ordering exists to
+prevent.
+
+So: digest decides when both sides have one; the version comparison decides
+when they do not.
+
+### Absence is not mismatch
+
+The decisive rule above applies to a digest that disagrees, never to a digest
+that is missing, and there are three ways for it to be missing:
+
+* a board built before the fields existed, whose payload ends at the flash UID;
+* a current board reporting algorithm `0`, which could not compute one;
+* our own ledger having no stored digest, because the board was flashed before
+  we recorded them.
+
+None of these is evidence of anything, and all three must fall through to the
+version comparison. Treating absence as mismatch would mark every pre-revision
+board as needing flash permanently - and reflashing would not clear it, because
+old firmware still reports no digest. That is a flash loop that never
+converges, offered to the operator as a standing red flag. The distinction the
+protocol draws between "no fields" and "algorithm 0" exists precisely so a host
+can tell these apart, and it costs nothing to honour.
+
+### It retires the dirty-build limitation, for boards that report one
+
+This spec says elsewhere that a `-dirty` build can never be *shown* to match,
+because a build from a dirty tree is not reproducible. That is true of
+inference from a version string, and it is not true of a digest.
+
+We are not reproducing the build. We are comparing the board against the exact
+artifact we flashed and recorded. A digest match proves the board is running
+those bytes whether or not the tree was clean when they were produced. So a
+dirty build with a matching digest is up to date, and saying otherwise would be
+as much a lie as the one the original rule was written to avoid.
+
+The same applies to the `dev` and bare-tag cases. All three "cannot tell"
+verdicts become real ones on a board that reports a digest, which was the whole
+argument for taking the offer.
+
+### Say which, even though the action is the same
+
+The action does not depend on why the digest differs; what an operator should
+feel about it does. "Out of date" and "this board is running something we did
+not put there" both resolve to flash, but only one of them is a reason to look
+at the rest of the fleet. The device row should distinguish them even though
+`needs_flash` does not.
+
 ## What changes, in dependency order
 
 1. The running version becomes reachable: the
@@ -358,30 +425,34 @@ place, one layer up.
 3. The `VersionReader` capability lands in `helpers/spec.py` and
    `helpers/registry.py`, with the roadrunner reader implementing it - the
    `-dirty` and unknown-version cases included.
-4. `_cmake_target` returns a real `DeviceStatus` from the comparison, and
-   reports a version on its device rows.
-5. `_boards_to_flash` enumerates CMake boards; `_require_flashable_type` stops
+4. The UF2 image digest lands host-side - a port of
+   `uf2_image_digest.py`, tested against the golden vector - and
+   `cmake.record_build` stores the staged payload's digest beside the hash it
+   already keeps. Independent of steps 1-3: it touches only the build and the
+   ledger, and until step 5 reads it, storing it changes nothing.
+5. The comparison applies the precedence: digest decides where both sides have
+   one, absence falls through to version, a mismatch is `needs_flash` with its
+   own reason. `_cmake_target` returns a real `DeviceStatus` and reports a
+   version on its device rows.
+6. `_boards_to_flash` enumerates CMake boards; `_require_flashable_type` stops
    refusing; `_flash_actions` goes on the CMake type row; the CLI's
    `-t`-only refusal is replaced by the same path.
-
-6. The knomi_serial and cartographer readers land, and `_screen_confidence`
+7. The knomi_serial and cartographer readers land, and `_screen_confidence`
    asks the seam rather than `pio_mod.running_sha` directly.
 
-Steps 1-4 are what make step 5 honest. Step 5 is mechanical once they land.
-Step 6 changes no behaviour and is what keeps step 3 from being a private
+Steps 1-5 are what make step 6 honest. Step 6 is mechanical once they land.
+
+Step 4 is worth starting early despite its position: it is the only step
+needing a new algorithm rather than a new wire-up, it has a golden vector to
+test against before any board exists, and a board flashed before it lands has
+no stored digest to compare - so every day it is not recording is a device that
+falls through to the version comparison until its next flash.
+
+Step 7 changes no behaviour and is what keeps step 3 from being a private
 arrangement between one helper and one caller; it is sequenced last only
 because it must not block the gap being closed.
 
 ## What this spec does not settle
-
-**How the digest enters the ledger.** The wire format, the algorithm, the byte
-range and the UF2 reconstruction are all settled upstream now, and the reader
-parses them. What is not settled is our side of the join: whether
-`cmake.record_build` computes and stores the image digest of the staged payload
-beside the hash it already keeps, and whether `FlashLog.entry_for` treats a
-digest mismatch as its own verdict or as a modifier on the version comparison.
-That is a plan question, not a protocol one, and the two "cannot tell" version
-cases stay until it is answered.
 
 **BOOTSEL sequencing.** A CMake write reboots the board into its ROM
 bootloader and stops services to do it. A sweep over several CMake boards has
@@ -391,8 +462,8 @@ needs specifying - it does not need CMake carved back out, and it must not be
 allowed to become that argument a second time.
 
 **The `type_not_bulk_flashable` code.** It is documented as stable in
-`docs/agent-api.md` for exactly as long as step 5 takes. Its retirement is
-part of step 5, not a separate deprecation.
+`docs/agent-api.md` for exactly as long as step 6 takes. Its retirement is
+part of step 6, not a separate deprecation.
 
 **Whether `VersionReader` is reached through `for_name`.** `for_name` returns a
 `BootselRequester` today and its callers type it as one. Whether the second

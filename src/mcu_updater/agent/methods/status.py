@@ -951,11 +951,11 @@ class StatusMixin(_Base):
     def cmake_status(self) -> list[dict[str, Any]]:
         """One payload per cmake type: what it builds, and whether it is current.
 
-        The cmake counterpart of `pio_status()`. Thinner than either of the
-        others on purpose - there is no device half yet. A cmake type's boards
-        are flashed over BOOTSEL, which is its own piece of work, and
-        `fw.flash` refuses a cmake name today. Listing devices here would
-        advertise a write that cannot happen.
+        The cmake counterpart of `pio_status()`. Each row carries the chipset
+        and serials a board declares, since `fw.flash` now resolves a cmake
+        name through its type's registered helper and flashes it over
+        BOOTSEL. Listing devices here reflects a write that can actually
+        happen.
         """
         from ...providers import cmake as cmake_mod
 

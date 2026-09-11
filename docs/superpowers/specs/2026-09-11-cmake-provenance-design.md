@@ -90,44 +90,72 @@ reader has to accept both, and the spec's `running_sha` contract is unchanged
 either way - it is a string parser, and it does not care which side of the
 machine handed it the string.
 
-## A firmware CRC would close the two cases a version string cannot
+## A firmware digest closes the two cases a version string cannot
 
-Offered by the operator, and worth taking: the RP2040 has no crypto helpers for
-SHA but computes CRC cheaply, so the INFO reply could carry a CRC of the
-running firmware.
+Offered by the operator, with both options costed from the firmware side:
+
+* **CRC32 via the RP2040's DMA sniffer** - hardware, essentially free, no
+  blocking.
+* **SHA-256 in software** - the RP2040 has no SHA block (the RP2350 does), so
+  roughly 100 cycles/byte on the M0+, call it 150-200 ms for a typical image.
+  Viable because it need not run in the sensor loop: compute once before the
+  transport comes up and serve the cached digest from a register.
+
+**Take CRC32.** Our own stated purpose picks it. This is anti-corruption
+evidence - a truncated write, a bad sector, a half-erased block - and CRC32 is
+built for exactly that class, catching every burst error up to 32 bits.
+Collision resistance is the only thing SHA-256 adds here, and it is the one
+property this check explicitly does not need.
+
+The boot-time framing above does dispose of the cost objection - computing
+before the transport comes up is clean, and the sensor loop is the place that
+would have been a problem. So this is not "SHA is too expensive". It is that
+free-and-sufficient beats cheap-and-more-than-required, and the sniffer makes
+CRC32 free.
 
 **Not a security check, and the spec must say so where the code can see it.** A
-CRC32 is trivially forgeable and not collision-resistant. This is
-anti-corruption evidence - a truncated write, a bad flash, a half-erased
-sector - and the docstring has to say that plainly, or someone downstream will
-eventually treat a CRC match as attestation.
+CRC32 is trivially forgeable and not collision-resistant. The docstring has to
+say that plainly, or someone downstream will eventually treat a match as
+attestation. It is evidence about accident, never about intent.
 
-What it buys is real, because it lands exactly where `running_sha` gives up. A
-version string answers *"is this the firmware I built"* and returns None -
-"cannot tell" - in two cases this spec already commits to:
+### Carry a labeled digest, not a bare number
+
+The one thing worth designing now because it is cheap now and expensive later:
+the INFO field should carry **algorithm and value**, not a bare `crc:`. The
+RP2350 has the SHA block, and a future board - or a use that genuinely needs
+content identity rather than integrity - then becomes a firmware change on one
+side instead of a protocol break on both. A bare number forecloses that for no
+saving at all.
+
+### What it buys
+
+It lands exactly where `running_sha` gives up. A version string answers *"is
+this the firmware I built"* and returns None - "cannot tell" - in two cases
+this spec already commits to:
 
 - a build stamped `dev` or a bare tag, where there is no commit in the string;
 - a `-dirty` build, which can never be *shown* to match, because a build from a
   dirty tree is not reproducible.
 
-A CRC answers a different question - *"are the bytes on the board the bytes I
-wrote"* - and it can answer it in both. That converts two permanent "cannot
-tell" verdicts into real ones. It joins the existing model cleanly: `FlashLog`
-already records what was written, so recording the CRC of the staged payload
+A digest answers a different question - *"are the bytes on the board the bytes
+I wrote"* - and can answer it in both, turning two permanent "cannot tell"
+verdicts into real ones. It joins the existing model cleanly: `FlashLog`
+already records what was written, so recording the digest of the staged payload
 beside it gives `entry_for` something to compare.
 
-**The one design question to settle before firmware work starts: a CRC of
-what, exactly.** Both sides must agree on the byte range or the comparison is
-worse than useless - it will mismatch forever and train everyone to ignore it.
-The specific trap here is that a `.uf2` is a container, not an image: 512-byte
-blocks each carrying 256 bytes of payload plus headers. A CRC of the `.uf2`
-file is not a CRC of what ends up in flash. The host side has to extract the
-payload and CRC that, over the same start address and length the board uses,
-and both numbers belong in the spec rather than in two implementations that
-happen to agree.
+### The byte range is the deliverable, not the digest
 
-So: yes, please - but the byte range is the deliverable that has to come with
-it, not the CRC itself.
+This applies to whichever algorithm is chosen, and it is the part that decides
+whether the check works at all. Both sides must agree on the byte range or the
+comparison is worse than useless - it will mismatch forever and train everyone
+to ignore it.
+
+The specific trap: a `.uf2` is a container, not an image - 512-byte blocks each
+carrying 256 bytes of payload plus headers. A digest of the `.uf2` file is not
+a digest of what ends up in flash. The host side has to extract the payload and
+hash that, over the same start address and length the board uses, and both
+numbers belong in this spec rather than in two implementations that happen to
+agree today.
 
 ## The precedent to follow is the screen, not the MCU
 
@@ -274,10 +302,11 @@ because it must not block the gap being closed.
 
 ## What this spec does not settle
 
-**The CRC comparison.** Taking the offer above settles that a CRC is wanted
-and why; it does not settle the byte range, and that has to be pinned down with
-the firmware rather than inferred from a `.uf2`. Until it is, the version
-comparison is the whole of the verdict and the two "cannot tell" cases stay.
+**The digest comparison.** The section above settles the algorithm (CRC32),
+why, and that the field is labeled rather than bare. It does not settle the
+byte range, and that has to be pinned down with the firmware rather than
+inferred from a `.uf2`. Until it is, the version comparison is the whole of the
+verdict and the two "cannot tell" cases stay.
 
 **BOOTSEL sequencing.** A CMake write reboots the board into its ROM
 bootloader and stops services to do it. A sweep over several CMake boards has

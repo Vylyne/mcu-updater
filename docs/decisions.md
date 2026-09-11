@@ -5,7 +5,7 @@ each one has been proposed again at least once — so the reasoning lives here
 rather than in a commit message nobody re-reads.
 
 This file is for *standing* decisions. Rules that a change can violate silently
-live in [CLAUDE.md](../CLAUDE.md)'s ground-rules table instead; the split is
+live in [AGENTS.md](../AGENTS.md)'s ground rules instead; the split is
 that a ground rule is checked before every commit, and a decision here is
 consulted before starting work that would undo it.
 
@@ -139,6 +139,38 @@ to defer topology or CAN support.
 The standalone UI runs `fw.status` and the explicit `fw.canbus.scan` together
 on refresh. Their results are stored independently, and a generation guard
 prevents an older overlapping CAN scan from replacing a newer result.
+
+### New firmware-specific code goes behind the helper seam
+
+`helpers/` exists because of Cartographer. Its one oddity - a hand-maintained
+`CONFIG_VERSION` literal with no commit in it - was squeezed into the build and
+status paths as special cases, and it is still there, spread across files that
+have no other reason to know that vendor's name. The seam was added so the next
+such oddity would have somewhere to go that is not "inside whichever generic
+path noticed it first".
+
+So, going forward:
+
+- **Providers are generic.** A provider answers questions about a *build
+  system* - PlatformIO, CMake, kconfig+make. Nothing in `providers/` should
+  name a vendor or a board.
+- **Flashers are generic.** A flasher answers questions about a *transport* -
+  flashtool over USB/CAN, esptool, DFU, BOOTSEL mass-storage. `dfu` and
+  `bootsel` are the shape to copy: they describe a mechanism, not a product.
+- **Discovery may be firmware-specific, and legitimately is.** How a board
+  announces itself is a property of its firmware, so `discovery/roadrunner.py`
+  and `discovery/knomi_serial/` are in the right place. `byid` is generic.
+  `canbus`, as built, is Klipper/Katapult-specific - that is a known
+  inaccuracy of the current shape, not a licence to add more.
+- **Everything else vendor-shaped goes in `helpers/`.** A one-off protocol, a
+  provisioning step, a version string only one firmware stamps: a helper, named
+  in config on the `[firmware ...]` family, reached through `helpers/spec.py`.
+
+This is a rule about *new* code. Migrating what already exists - Cartographer's
+version handling in particular - needs its own design and plan; see the
+`## TODO` entry in [README.md](../README.md). The seam answers a narrower
+question today than discovery and version reporting need, so it likely has to
+widen before anything moves.
 
 ### Do not give `Confidence` a fourth degree of certainty
 

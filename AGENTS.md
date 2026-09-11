@@ -130,13 +130,22 @@ global "never commit unless explicitly asked" default does not apply here.
 Follow [Commit voice](#commit-voice) below. Still surface what was committed
 in the reply; this authorizes the commit, not silence about it.
 
-## Extending providers, flashers or discovery sources
+## Extending providers, flashers, discovery sources or helpers
 
 No plugin auto-discovery (`pkgutil`, entry points) — this process holds the
 exclusive lock, writes firmware, and has NOPASSWD `systemctl` for Klipper, so
 importing whatever `.py` landed in a directory is privilege escalation. The
 extension point is deliberately manual: **one module + one line in the
 registry tuple.** See [docs/decisions.md](docs/decisions.md).
+
+**Which seam takes new code.** Providers are per-*build system* and flashers
+are per-*transport*; neither may name a vendor or a board. Discovery may be
+firmware-specific, because how a board announces itself is a property of its
+firmware. Anything else vendor-shaped — a one-off protocol, a provisioning
+step, a version string only one firmware stamps — is a **helper**
+(`src/mcu_updater/helpers/`), named in config on its `[firmware ...]` family.
+Squeezing it into a generic path instead is the Cartographer mistake, and that
+one is still being paid for.
 
 ## Commit voice
 

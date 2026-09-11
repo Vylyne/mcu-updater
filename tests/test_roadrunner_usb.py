@@ -161,3 +161,98 @@ def test_bridge_refuses_bootsel_success_with_payload(monkeypatch):
                 operation="bootsel", port="/dev/ttyACM0", uuid=PROVISIONED
             )
         )
+
+
+def _digest_fields(
+    algorithm: int = 1,
+    digest: int | None = 0xBBE38AA9,
+    start: int = 0x10000000,
+    length: int = 600,
+) -> bytes:
+    """The INFO fields a board built after the digest revision appends."""
+    value = b"" if digest is None else digest.to_bytes(4, "little")
+    return (
+        bytes((algorithm, len(value)))
+        + value
+        + start.to_bytes(4, "little")
+        + length.to_bytes(4, "little")
+    )
+
+
+def test_info_from_a_board_predating_the_digest_fields_still_parses():
+    """The absence of the fields is how a pre-revision board is detected.
+
+    Its payload ends at the flash UID. Reporting `digest_algorithm: 0` would
+    mean something different - a current board that could not compute one.
+    """
+    bridge = _load_bridge()
+
+    info = bridge.parse_info(0, _info_payload())
+
+    assert info["serial"] == PROVISIONED
+    assert info["flash_uid"] == "50543165187A4D1C"
+    assert "digest_algorithm" not in info
+    assert "image_start" not in info
+
+
+def test_info_carrying_the_digest_fields_is_not_refused():
+    """The regression this reader had: rejecting the whole reply, not one field.
+
+    `parse_info` asserted the payload ended exactly at the flash UID, so every
+    board built after the digest revision raised `ProtocolError` and was
+    dropped from discovery entirely - strictly worse than the truncation the
+    protocol document warns hosts about.
+
+    The values are the document's golden vector, so a misread of endianness or
+    field order shows up as a wrong number rather than as a pass.
+    """
+    bridge = _load_bridge()
+
+    info = bridge.parse_info(0, _info_payload() + _digest_fields())
+
+    assert info["digest_algorithm"] == bridge.DIGEST_CRC32_ISO_HDLC
+    assert info["digest"] == 0xBBE38AA9
+    assert info["image_start"] == 0x10000000
+    assert info["image_length"] == 600
+    assert info["flash_uid"] == "50543165187A4D1C"
+
+
+def test_a_board_that_could_not_compute_a_digest_still_reports_its_range():
+    bridge = _load_bridge()
+
+    info = bridge.parse_info(
+        0, _info_payload() + _digest_fields(algorithm=0, digest=None)
+    )
+
+    assert info["digest_algorithm"] == bridge.DIGEST_NONE
+    assert info["digest"] is None
+    assert info["image_length"] == 600
+
+
+def test_unknown_trailing_fields_are_ignored_rather_than_refused():
+    """Forward compatibility, learned the hard way one revision ago.
+
+    The frame's CRC-8 already covers corruption, so refusing a longer payload
+    catches nothing a bad wire would produce and breaks every board built
+    against the next revision.
+    """
+    bridge = _load_bridge()
+
+    info = bridge.parse_info(0, _info_payload() + _digest_fields() + b"\xff\xff")
+
+    assert info["digest"] == 0xBBE38AA9
+
+
+def test_a_digest_that_is_cut_short_is_still_refused():
+    """Tolerating unknown fields is not tolerating a malformed known one."""
+    bridge = _load_bridge()
+
+    with pytest.raises(bridge.ProtocolError):
+        bridge.parse_info(0, _info_payload() + bytes((1, 4)) + b"\x01\x02")
+
+
+def test_no_digest_algorithm_with_a_digest_is_refused():
+    bridge = _load_bridge()
+
+    with pytest.raises(bridge.ProtocolError):
+        bridge.parse_info(0, _info_payload() + _digest_fields(algorithm=0))

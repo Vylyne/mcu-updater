@@ -575,7 +575,12 @@ def _cmake_targets(c: Context, mcu_type: str, serial: str) -> list:
     from . import helpers
     from .providers import cmake as cmake_mod
 
-    target_type = cmake_mod.load(c.paths)[mcu_type]
+    # `.get`, not `[...]`: `provider_of` proved membership a moment ago, but it
+    # re-read the config to do it, and a bare KeyError here would be exactly the
+    # traceback this whole change exists to remove.
+    target_type = cmake_mod.load(c.paths).get(mcu_type)
+    if target_type is None:
+        raise UpdaterError(f"CMake type '{mcu_type}' is no longer configured.")
     families = firmware.load(c.paths)
     family = firmware.resolve(c.paths, target_type.firmware, families)
     helper = helpers.for_name(family.helper, family=family.name)
@@ -827,6 +832,12 @@ def flash_fw_cmd(args: argparse.Namespace) -> None:
         print(f"Resolved serial {args.serial} -> type '{mcu_type}'")
 
     if owner == providers.Cmake.name:
+        if args.force:
+            # Accepted and ignored rather than refused: `--force` overrides
+            # flash_katapult's bootloader offset check, and a helper-BOOTSEL
+            # write has no such check to override. Silence would look like it
+            # had taken effect.
+            print("Note: --force does not apply to helper-BOOTSEL writes.")
         with exclusive(c.paths, f"flash {mcu_type}/{args.serial}"):
             code = _run_batch(
                 c, _cmake_targets(c, mcu_type, args.serial), f"flash {args.serial}"

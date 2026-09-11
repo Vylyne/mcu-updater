@@ -18,6 +18,7 @@ import pytest
 from mcu_updater import providers
 from mcu_updater.errors import UnknownTypeError
 from mcu_updater.paths import Paths
+from mcu_updater.providers import selection
 
 
 def _seed_registry(paths: Paths, text: str) -> None:
@@ -104,29 +105,33 @@ def test_unknown_name_raises_rather_than_defaulting(paths, live_registry_text):
     assert "bttebb36" in excinfo.value.data["known"]
 
 
-def test_cmake_is_asked_before_the_registry(paths, fake_root, live_registry_text):
-    """Order, not membership.
+def test_cmake_is_asked_before_the_registry(paths, live_registry_text, monkeypatch):
+    """Order, not membership - and it has to be forced to mean anything.
 
-    `config.py`'s foreign-builder rule keeps a cmake type out of the kconfig
-    registry, so today this cannot collide. If that rule ever slips, asking the
-    registry first answers `kconfig_make` for a Roadrunner and sends it down a
-    build path with no `.config` to run - silently. This pins the order so the
-    slip is a test failure rather than a wrong build.
+    `config.py`'s foreign-builder rule keeps the three name-sets disjoint, so a
+    fixture built through real config can never make them collide, and a test
+    written that way passes whatever order the resolver asks in. The collision
+    is therefore forged here: `bttebb36` is a real kconfig type, and cmake is
+    made to claim it too.
+
+    The scenario is exactly the one the resolver's comment describes. If that
+    rule ever slips and the registry is asked first, a Roadrunner resolves to
+    `kconfig_make` and is sent down a build path with no `.config` to run,
+    silently. This fails instead.
     """
     _seed_registry(paths, live_registry_text)
-    _declare_cmake(paths, fake_root)
+    monkeypatch.setattr(selection.cmake_mod, "load", lambda _p: {"bttebb36": object()})
 
-    assert providers.provider_of(paths, "roadrunner") != providers.KconfigMake.name
+    assert providers.provider_of(paths, "bttebb36") == providers.Cmake.name
 
 
-def test_platformio_is_asked_first(paths, fake_root, live_registry_text):
+def test_platformio_is_asked_before_both(paths, live_registry_text, monkeypatch):
+    """The same forced collision, one rung higher."""
     _seed_registry(paths, live_registry_text)
-    _declare_display(paths)
-    _declare_cmake(paths, fake_root)
+    monkeypatch.setattr(selection.pio_mod, "load", lambda _p: {"bttebb36": object()})
+    monkeypatch.setattr(selection.cmake_mod, "load", lambda _p: {"bttebb36": object()})
 
-    assert (
-        providers.provider_of(paths, "knomi_toolchanger") == providers.PlatformIO.name
-    )
+    assert providers.provider_of(paths, "bttebb36") == providers.PlatformIO.name
 
 
 def test_known_names_span_every_provider(paths, fake_root, live_registry_text):

@@ -48,7 +48,12 @@ class BuildMixin(_Base):
                 exc.message,
                 data={
                     "code": "unknown_type",
-                    "message": "no such type",
+                    # The sentence, not "no such type". `normalizeAgentError`
+                    # prefers this nested message over the outer one, so a bare
+                    # category label is what the operator actually reads - and
+                    # `fw.flash_all` used to reach them through `reg.get`, which
+                    # said the sentence. Unifying upward rather than downward.
+                    "message": f"MCU type '{name}' does not exist.",
                     "data": {
                         "name": name,
                         "known": exc.data["known"],

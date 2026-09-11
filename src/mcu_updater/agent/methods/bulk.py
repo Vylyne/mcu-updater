@@ -467,7 +467,7 @@ class BulkMixin(_Base):
             "skipped": [s.to_json() for s in selection.skipped],
         }
 
-    def _require_flashable_type(self, reg: Registry, only: str) -> str:
+    def _require_flashable_type(self, only: str) -> str:
         """A name that must be something this host can flash, board or screen.
 
         Fails fast on a typo, before a job exists. Asks the provider seam rather
@@ -489,7 +489,13 @@ class BulkMixin(_Base):
                 f"'{only}'. Flash its boards individually with fw.flash.",
                 data={
                     "code": "type_not_bulk_flashable",
-                    "message": "no bulk flash for this builder",
+                    # The panel reads this nested message in preference to the
+                    # outer one, so it carries the sentence that names the type
+                    # and the way out - not a category label.
+                    "message": (
+                        f"type-level flash is not available for CMake-built "
+                        f"type '{only}'. Flash its boards individually."
+                    ),
                     "data": {"name": only, "provider": owner},
                 },
             )
@@ -522,7 +528,7 @@ class BulkMixin(_Base):
         only = args.get("name")
         reg = self.registry()
         if only is not None:
-            only = self._require_flashable_type(reg, str(only))
+            only = self._require_flashable_type(str(only))
 
         # By-id and CAN both, and neither excludes the other - a type may
         # legitimately track both `serials:` and `canbus_uuids:`.
@@ -611,7 +617,7 @@ class BulkMixin(_Base):
         only = args.get("name")
         install = self._install()
         if only is not None:
-            only = self._require_flashable_type(install.registry, str(only))
+            only = self._require_flashable_type(str(only))
         # Every family each type uses, not klipper for all of them. A fleet
         # update that rebuilds klipper and leaves the probe on last month's
         # cartographer is the failure this exists to prevent, and it was silent.

@@ -904,16 +904,22 @@ def test_without_a_name_it_is_still_the_whole_fleet(bulk, paths, fake_root):
 
 
 def test_an_unknown_type_still_reports_unknown_type(bulk):
-    """The typo path, pinned.
+    """The typo path, pinned - including the part that deliberately moved.
 
-    `_require_flashable_type` now asks the provider seam instead of testing
-    registry membership, and the seam raises its own error type. The payload an
-    operator's panel reads must not have moved.
+    `_require_flashable_type` used to fall through to `reg.get`, so a typo here
+    reported a kconfig-only `known` list and a differently-keyed payload than
+    the identical mistake made through `fw.build`. Both now come from the one
+    resolver: key `name`, `known` spanning every provider, and the sentence
+    (not a bare category label) as the nested message the panel reads.
+
+    Ruled deliberately: preserving two divergent payloads for one error is the
+    class of thing this branch exists to delete.
     """
     with pytest.raises(RpcError) as exc:
         bulk.dispatch("fw.flash_all", {"name": "nosuchtype"})
     assert exc.value.data["code"] == "unknown_type"
     assert exc.value.data["data"]["name"] == "nosuchtype"
+    assert exc.value.data["message"] == "MCU type 'nosuchtype' does not exist."
     assert bulk.runner.current() is None
 
 

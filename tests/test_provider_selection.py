@@ -120,7 +120,9 @@ def test_cmake_is_asked_before_the_registry(paths, live_registry_text, monkeypat
     silently. This fails instead.
     """
     _seed_registry(paths, live_registry_text)
-    monkeypatch.setattr(selection.cmake_mod, "load", lambda _p: {"bttebb36": object()})
+    monkeypatch.setattr(
+        selection, "_declared_builders", lambda _p: {"bttebb36": "cmake"}
+    )
 
     assert providers.provider_of(paths, "bttebb36") == providers.Cmake.name
 
@@ -128,8 +130,9 @@ def test_cmake_is_asked_before_the_registry(paths, live_registry_text, monkeypat
 def test_platformio_is_asked_before_both(paths, live_registry_text, monkeypatch):
     """The same forced collision, one rung higher."""
     _seed_registry(paths, live_registry_text)
-    monkeypatch.setattr(selection.pio_mod, "load", lambda _p: {"bttebb36": object()})
-    monkeypatch.setattr(selection.cmake_mod, "load", lambda _p: {"bttebb36": object()})
+    monkeypatch.setattr(
+        selection, "_declared_builders", lambda _p: {"bttebb36": "platformio"}
+    )
 
     assert providers.provider_of(paths, "bttebb36") == providers.PlatformIO.name
 
@@ -159,3 +162,28 @@ def test_resolution_reflects_a_type_added_after_first_call(
     _declare_cmake(paths, fake_root)
 
     assert providers.provider_of(paths, "roadrunner") == providers.Cmake.name
+def test_a_malformed_foreign_section_does_not_break_resolution(
+    paths, fake_root, live_registry_text
+):
+    """Selection answers "whose is this name", not "is this config good".
+
+    `cmake.load()` raises for a cmake type that names no `cmake_target:`, and
+    `pio.load()` raises for a PlatformIO type that names no `env:`. Resolving
+    one name through those loads made every other section's validity
+    load-bearing: a half-written screen section broke `flash -t <kconfig
+    type>`, which has nothing to do with it. The build path still validates.
+    """
+    _seed_registry(paths, live_registry_text)
+    tree = os.path.join(fake_root, "roadrunner", "rp2040")
+    os.makedirs(tree, exist_ok=True)
+    _append(
+        paths,
+        "\n[firmware roadrunner]\n"
+        f"source: {tree}\n"
+        "builder: cmake\n\n"
+        "[type halfwritten]\nchipset: rp2040\nfirmware: roadrunner\n",
+    )
+
+    assert providers.provider_of(paths, "bttebb36") == providers.KconfigMake.name
+    assert providers.provider_of(paths, "halfwritten") == providers.Cmake.name
+    assert "halfwritten" in providers.known_type_names(paths)

@@ -54,6 +54,80 @@ states the intent outright: *"`sha` is subtree-scoped and decides rebuilds,
 `version` is repo-wide and is what the board reports back."* The board does
 report it back. Nobody listens.
 
+## Two sources for the running version, and the order is forced
+
+The INFO reply is not the only place a Roadrunner's version can be read, and it
+is not the one to read first.
+
+The Roadrunner's Klipper extra populates a `high_resolution_sensor` printer
+object with its version information. That is a third path, and this spec had
+missed it: `grep -rn high_resolution src/ docs/` returns nothing, so nothing in
+this repo knows the object exists.
+
+**Klipper first, admin protocol second.** Not a preference - a lock. When
+Klipper is connected to the Roadrunner over usbserial it holds that connection,
+and the admin protocol cannot open a port Klippy owns. A provenance read that
+goes to the wire first is therefore a read that fails, noisily, on exactly the
+machines where the answer was already sitting in the object graph. The fallback
+is for the cases where Klippy is not up, is not configured for that board, or
+reached it over some other transport.
+
+This costs no new transport and, done right, no new round trip.
+`status.py::_probe("printer.objects.query", ...)` is already the mechanism at
+four sites, and `discovery/spec.py` already names `printer.objects.query` as
+one of its three inputs. Better: `_all_object_names()` is cached with a TTL and
+`_object_names_for(prefix)` already exists to pick objects by prefix - the
+comment on the cache says outright that *"one list serves every prefix, so
+adding displays costs no extra round trip on top of the MCU lookup that was
+already happening."* A `high_resolution_sensor` prefix is the same deal.
+
+**What still has to be confirmed before this can be planned:** the object's
+exact name and the exact field carrying the version, read off the extra rather
+than assumed, and whether that string is the same `${git_describe}` value the
+INFO reply carries. If the two sources can disagree in format, the helper's
+reader has to accept both, and the spec's `running_sha` contract is unchanged
+either way - it is a string parser, and it does not care which side of the
+machine handed it the string.
+
+## A firmware CRC would close the two cases a version string cannot
+
+Offered by the operator, and worth taking: the RP2040 has no crypto helpers for
+SHA but computes CRC cheaply, so the INFO reply could carry a CRC of the
+running firmware.
+
+**Not a security check, and the spec must say so where the code can see it.** A
+CRC32 is trivially forgeable and not collision-resistant. This is
+anti-corruption evidence - a truncated write, a bad flash, a half-erased
+sector - and the docstring has to say that plainly, or someone downstream will
+eventually treat a CRC match as attestation.
+
+What it buys is real, because it lands exactly where `running_sha` gives up. A
+version string answers *"is this the firmware I built"* and returns None -
+"cannot tell" - in two cases this spec already commits to:
+
+- a build stamped `dev` or a bare tag, where there is no commit in the string;
+- a `-dirty` build, which can never be *shown* to match, because a build from a
+  dirty tree is not reproducible.
+
+A CRC answers a different question - *"are the bytes on the board the bytes I
+wrote"* - and it can answer it in both. That converts two permanent "cannot
+tell" verdicts into real ones. It joins the existing model cleanly: `FlashLog`
+already records what was written, so recording the CRC of the staged payload
+beside it gives `entry_for` something to compare.
+
+**The one design question to settle before firmware work starts: a CRC of
+what, exactly.** Both sides must agree on the byte range or the comparison is
+worse than useless - it will mismatch forever and train everyone to ignore it.
+The specific trap here is that a `.uf2` is a container, not an image: 512-byte
+blocks each carrying 256 bytes of payload plus headers. A CRC of the `.uf2`
+file is not a CRC of what ends up in flash. The host side has to extract the
+payload and CRC that, over the same start address and length the board uses,
+and both numbers belong in the spec rather than in two implementations that
+happen to agree.
+
+So: yes, please - but the byte range is the deliverable that has to come with
+it, not the CRC itself.
+
 ## The precedent to follow is the screen, not the MCU
 
 A Roadrunner is not a Klipper MCU. It enumerates as
@@ -172,8 +246,10 @@ place, one layer up.
 
 ## What changes, in dependency order
 
-1. `fw_version` stops being discarded - `RoadrunnerDevice` carries it, and the
-   CMake device path in `status.py` can reach it.
+1. The running version becomes reachable: the `high_resolution_sensor`
+   object is read through the existing cached-prefix lookup, and `fw_version`
+   stops being discarded - `RoadrunnerDevice` carries it as the fallback for
+   when Klippy cannot answer.
 2. `flashers/helper_bootsel.py` writes `FlashLog`, on the same rule
    `agent/methods/flash.py::_cmake_flash` states: whenever a copy completed,
    before any failure is raised.
@@ -195,6 +271,11 @@ arrangement between one helper and one caller; it is sequenced last only
 because it must not block the gap being closed.
 
 ## What this spec does not settle
+
+**The CRC comparison.** Taking the offer above settles that a CRC is wanted
+and why; it does not settle the byte range, and that has to be pinned down with
+the firmware rather than inferred from a `.uf2`. Until it is, the version
+comparison is the whole of the verdict and the two "cannot tell" cases stay.
 
 **BOOTSEL sequencing.** A CMake write reboots the board into its ROM
 bootloader and stops services to do it. A sweep over several CMake boards has

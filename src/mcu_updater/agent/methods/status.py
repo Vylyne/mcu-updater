@@ -952,10 +952,10 @@ class StatusMixin(_Base):
         """One payload per cmake type: what it builds, and whether it is current.
 
         The cmake counterpart of `pio_status()`. Each row carries the chipset
-        and serials a board declares, since `fw.flash` now resolves a cmake
-        name through its type's registered helper and flashes it over
-        BOOTSEL. Listing devices here reflects a write that can actually
-        happen.
+        and serials a board declares. Rows are listed regardless of whether a
+        helper is configured; a type without one still gets chipset and serials
+        but cannot be flashed. `fw.flash` resolves a cmake name through its
+        type's registered helper and flashes it over BOOTSEL when one is set.
         """
         from ...providers import cmake as cmake_mod
 

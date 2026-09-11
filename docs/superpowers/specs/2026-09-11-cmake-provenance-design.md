@@ -143,19 +143,91 @@ verdicts into real ones. It joins the existing model cleanly: `FlashLog`
 already records what was written, so recording the digest of the staged payload
 beside it gives `entry_for` something to compare.
 
-### The byte range is the deliverable, not the digest
+### The byte range: settled upstream, and not ours to choose
 
-This applies to whichever algorithm is chosen, and it is the part that decides
-whether the check works at all. Both sides must agree on the byte range or the
-comparison is worse than useless - it will mismatch forever and train everyone
-to ignore it.
+This was left as the open deliverable. It is now answered, in
+`roadrunner/docs/roadrunner-usb-admin-protocol.md`, and the answer is better
+than the one this spec was reaching for.
 
-The specific trap: a `.uf2` is a container, not an image - 512-byte blocks each
-carrying 256 bytes of payload plus headers. A digest of the `.uf2` file is not
-a digest of what ends up in flash. The host side has to extract the payload and
-hash that, over the same start address and length the board uses, and both
-numbers belong in this spec rather than in two implementations that happen to
-agree today.
+**The board reports the range.** INFO carries `image start` and `image length`
+as little-endian 32-bit fields - on current firmware `__flash_binary_start`
+through `__flash_binary_end` - and the document is explicit that *"a host must
+use the reported start and length and must not substitute its own."* The linked
+image does not end on a 256-byte boundary, so only the reported length says
+where it stops. That removes the failure this spec was most worried about: the
+two sides cannot silently disagree about the range, because only one side
+decides it.
+
+It also settles a question this spec never thought to ask. The reserved
+identity sector at `0x1FF000` is outside the digested range, because the
+application region is capped exactly where the sector begins. So provisioning,
+clearing and re-provisioning never move the number, and two boards flashed from
+the same UF2 report the same digest whatever their identity. A digest that
+changed when a board was provisioned would have been useless to us.
+
+**Algorithm `1` is CRC-32/ISO-HDLC** - reflected polynomial `0xEDB88320`, init
+and final XOR `0xFFFFFFFF`, reflected in and out, which is what `zlib.crc32`
+computes. Carried on the wire rather than assumed, which is the labeled-field
+design this spec asked for, arrived at independently. Their document makes the
+reason sharper than ours did: *"CRC32 on its own names at least half a dozen
+mutually incompatible functions and is not a specification."* Algorithm `0`
+means a current board that could not compute one - distinct from a board built
+before the fields existed, which simply ends its payload at the flash UID.
+
+Their document also states the non-attestation limit in its own terms, and more
+precisely than this spec did: the firmware computing the digest is the firmware
+in question, so anything able to replace the image can replace the hasher.
+Evidence against accident, never against substitution.
+
+### Reconstructing the range from a UF2 - and a correction
+
+An earlier revision of this section said a `.uf2` carries "512-byte blocks each
+carrying 256 bytes of payload plus headers". **That is wrong**, and it is the
+exact error their document warns hosts against: a block carries a 32-byte
+header and *up to 476* bytes of payload, and `payloadSize` must be read from
+each block's header. 256 is a convention of the tooling, not a rule of the
+format - and our own fixture would have passed while real firmware failed.
+
+The host-side rules, which we implement rather than invent:
+
+1. Verify the three magic values; reject the container otherwise.
+2. Skip a block whose flag bit `0` (`NOT_MAIN_FLASH`) is set.
+3. Read `payloadSize` from the header rather than assuming it.
+4. Place payload byte `i` at `targetAddr + i`, discarding bytes outside
+   `[start, start + length)`.
+
+Then require every byte of the range to have been supplied, and digest exactly
+`length` bytes. **A gap is an error, not a hole to fill with `0xFF`** - filling
+produces a plausible wrong number instead of a visible failure, which is the
+worse of the two outcomes by a wide margin.
+
+`roadrunner/scripts/uf2_image_digest.py` is the reference implementation and is
+small enough to reimplement. Both sides test against a golden vector rather
+than against each other: a 600-byte image at `0x10000000` where byte `i` is
+`(i * 7 + 3) & 0xff`, CRC-32/ISO-HDLC `0xBBE38AA9`, packed as three blocks
+whose last carries 88 image bytes and 168 bytes of padding. A host that digests
+the container, or that rounds the length up to 768, gets a different number.
+Our port must use that vector, for the reason their document gives: testing two
+implementations against each other proves only that they are wrong together.
+
+### The INFO reader was already broken by this, and is fixed
+
+Their document calls out a host obligation: parse `payload_length` rather than
+sizing a fixed buffer, because the response limit went from 96 to 128 bytes
+when the digest fields landed.
+
+Our framing was already correct - `read_response` reads `header[4]` bytes and
+hard-codes no size - so the truncation they warn about could not happen here.
+`parse_info` failed differently and worse. It asserted the payload ended
+exactly at the flash UID, so a revised board raised `ProtocolError` for the
+*entire* reply; `_valid_info` never ran, and the board disappeared from
+discovery rather than merely losing one field.
+
+Fixed on this branch, with the digest fields parsed and unknown trailing fields
+ignored. The frame's CRC-8 already covers corruption, so an exact-length
+assertion catches nothing a bad wire produces while breaking every board built
+against the next revision - which is exactly what it just did. Nothing consumes
+the digest yet; that is this spec's plan to sequence.
 
 ## The precedent to follow is the screen, not the MCU
 
@@ -302,11 +374,14 @@ because it must not block the gap being closed.
 
 ## What this spec does not settle
 
-**The digest comparison.** The section above settles the algorithm (CRC32),
-why, and that the field is labeled rather than bare. It does not settle the
-byte range, and that has to be pinned down with the firmware rather than
-inferred from a `.uf2`. Until it is, the version comparison is the whole of the
-verdict and the two "cannot tell" cases stay.
+**How the digest enters the ledger.** The wire format, the algorithm, the byte
+range and the UF2 reconstruction are all settled upstream now, and the reader
+parses them. What is not settled is our side of the join: whether
+`cmake.record_build` computes and stores the image digest of the staged payload
+beside the hash it already keeps, and whether `FlashLog.entry_for` treats a
+digest mismatch as its own verdict or as a modifier on the version comparison.
+That is a plan question, not a protocol one, and the two "cannot tell" version
+cases stay until it is answered.
 
 **BOOTSEL sequencing.** A CMake write reboots the board into its ROM
 bootloader and stops services to do it. A sweep over several CMake boards has

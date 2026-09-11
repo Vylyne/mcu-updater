@@ -70,7 +70,7 @@ all three inputs: the canonical `RR-` serial as the key, `fw_version` as the
 running version, and `protocol == 1` / `model == "roadrunner-v1"` - which
 `_valid_info` already evaluates - as the mismatch signal.
 
-## The one real design decision
+## The one real design decision: where version-reading lives
 
 `pio.running_sha` will not do. Its `_FW_SHA_RE` is `\+(?:\d+\.)?g([0-9a-f]{6,40})`
 - PlatformIO's `+`-delimited form. `git describe --tags --always` produces
@@ -78,18 +78,83 @@ running version, and `protocol == 1` / `model == "roadrunner-v1"` - which
 literal `dev` (`cmake.UNKNOWN_VERSION_STRING`) when the describe fails and the
 CMakeLists' own default wins.
 
-CMake gets its own `running_sha`, in `providers/cmake.py`, beside the
-`SourceState` that produces the string it parses. It recognises the
-git-describe forms and returns None for `dev` and for a bare tag - None being
-"cannot tell", which `entry_for` already treats as a reason to withhold a
-verdict rather than to claim a match. Copying `pio`'s regex and loosening the
-delimiter would make one expression answer for two independently-versioned
-build systems, which is the drift `pio.py`'s own comment at `_FW_SHA_RE` warns
-against.
+The first draft of this spec put the replacement in `providers/cmake.py`,
+beside the `SourceState` that produces the string. That is the wrong seam, and
+`docs/decisions.md` now says why: **providers are per build system, not per
+vendor.** Two firmwares built by the same provider can stamp their versions
+differently, and one firmware can change how it stamps without changing how it
+builds. Cartographer is the standing proof - it is built by `kconfig_make`
+exactly as stock klipper is, and it reports a version string klipper's own
+parser cannot read, because its fork patches `buildcommands.py`. Putting the
+parser in the provider would say the build system decides the version format.
+It does not. The firmware does.
 
-`-dirty` needs the same treatment `pio._FW_DIRTY_RE` gives it: a build from a
-dirty tree is never reproducible, so it can never be *shown* to match, and
-saying "up to date" about one is a lie.
+So version-reading is a **helper** question, answered per firmware family.
+
+### This widens the helper seam, deliberately
+
+`helpers/spec.py` today is one protocol, `BootselRequester`, and its own
+docstring scopes it: *"The narrowly scoped contract for firmware-specific
+BOOTSEL requests."* Both its methods take a `Bench`, a serial and a chipset -
+they are device-shaped, about acting on hardware. Version-reading is not that
+shape. It is a pure `str | None -> str | None` function of a reported version
+string, needing no bench, no port and no device at all.
+
+Adding it is therefore a second capability alongside the first, not a method
+bolted onto `BootselRequester`. A firmware can need one without the other: a
+knomi screen is never put into BOOTSEL and still reports a version; a future
+board could take a helper-driven BOOTSEL write and report nothing back.
+Bundling them would force every helper to implement a method it has no answer
+for, which is how a narrow seam turns into a god object.
+
+The shape:
+
+```python
+class VersionReader(Protocol):
+    name: str
+    def running_sha(self, running: str | None) -> str | None: ...
+```
+
+`registry.HELPERS` keeps its rule unchanged - each implementation reviewed and
+named explicitly, never resolved by scanning or by config-driven import - and
+`for_name` grows a capability-aware form, or a second lookup, so that asking
+for a reader a family does not have is a `None`, not a crash.
+
+### The three helpers this needs, and what each returns
+
+**roadrunner** - new behaviour. Recognises the `git describe --tags --always`
+forms `cmake.expand_args` feeds into the firmware. Returns None for `dev` and
+for a bare tag with no commit - None being "cannot tell", which
+`FlashLog.entry_for` already treats as a reason to withhold a verdict rather
+than to claim a match. `-dirty` gets the treatment `pio._FW_DIRTY_RE` gives it:
+a build from a dirty tree is not reproducible, so it can never be *shown* to
+match, and saying "up to date" about one is a lie.
+
+Copying `pio`'s regex and loosening the delimiter would make one expression
+answer for two independently-versioned build systems, which is exactly the
+drift `pio.py`'s own comment at `_FW_SHA_RE` warns against.
+
+**knomi_serial** - existing behaviour, relocated. `_screen_confidence` calls
+`pio_mod.running_sha(...)` directly today. The helper wraps that call rather
+than reimplementing it: PlatformIO's form is what knomi actually stamps, so the
+regex stays where it is and the helper names *whose* format it is. This is the
+smallest possible migration and it is the point of doing it - it proves the
+seam carries an existing firmware without changing what that firmware reports.
+
+**cartographer** - existing behaviour, made explicit. Returns None, always, and
+that is the terminal answer rather than a gap. `docs/decisions.md`, "Do not
+synthesize a sha into Cartographer's `CONFIG_VERSION`", settles this: the fork
+discards the git describe, so there is no commit in the string, and
+synthesizing one would permanently report `customised` profiles and
+`CONFIG_CHANGED` artifacts. A cartographer is judged instead by comparing
+`CONFIG_VERSION` against `profiles.stamped_version`, backed by the flash record
+- `states.VERSION_ONLY`. The helper must carry that reasoning in its docstring
+so nobody reads the `return None` as unfinished work.
+
+Adding the two existing-behaviour helpers is not required to close the CMake
+provenance gap. It is required to show the seam is a seam and not a Roadrunner
+special case with a protocol wrapped round it - the same mistake in the same
+place, one layer up.
 
 ## What changes, in dependency order
 
@@ -98,14 +163,22 @@ saying "up to date" about one is a lie.
 2. `flashers/helper_bootsel.py` writes `FlashLog`, on the same rule
    `agent/methods/flash.py::_cmake_flash` states: whenever a copy completed,
    before any failure is raised.
-3. `cmake.running_sha` lands, with the `-dirty` and unknown-version cases.
+3. The `VersionReader` capability lands in `helpers/spec.py` and
+   `helpers/registry.py`, with the roadrunner reader implementing it - the
+   `-dirty` and unknown-version cases included.
 4. `_cmake_target` returns a real `DeviceStatus` from the comparison, and
    reports a version on its device rows.
 5. `_boards_to_flash` enumerates CMake boards; `_require_flashable_type` stops
    refusing; `_flash_actions` goes on the CMake type row; the CLI's
    `-t`-only refusal is replaced by the same path.
 
+6. The knomi_serial and cartographer readers land, and `_screen_confidence`
+   asks the seam rather than `pio_mod.running_sha` directly.
+
 Steps 1-4 are what make step 5 honest. Step 5 is mechanical once they land.
+Step 6 changes no behaviour and is what keeps step 3 from being a private
+arrangement between one helper and one caller; it is sequenced last only
+because it must not block the gap being closed.
 
 ## What this spec does not settle
 
@@ -119,3 +192,20 @@ allowed to become that argument a second time.
 **The `type_not_bulk_flashable` code.** It is documented as stable in
 `docs/agent-api.md` for exactly as long as step 5 takes. Its retirement is
 part of step 5, not a separate deprecation.
+
+**Whether `VersionReader` is reached through `for_name`.** `for_name` returns a
+`BootselRequester` today and its callers type it as one. Whether the second
+capability arrives as a widened return, a parallel `reader_for_name`, or a
+`for_name(..., capability=...)` is an implementation choice for the plan. What
+this spec fixes is that asking a family for a capability it does not declare
+must return None rather than raise - a firmware with no reader is an ordinary
+firmware, not a misconfiguration.
+
+**Config strictness and the "undefined equals klipper" default.** Declaring a
+helper on a family is how a family gets a reader, and `firmware.py` currently
+holds that *"every key is optional and the section itself is optional"*, with
+`resolve()` inventing a conventional family for any undeclared name. That
+legacy is being reconsidered separately - see the README TODO - and nothing in
+this spec depends on which way it goes: an undeclared family resolves to a
+family with no `helper:`, which yields no reader, which yields None, which is
+the same "cannot tell" every other unanswerable case produces.

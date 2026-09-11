@@ -404,13 +404,46 @@ The same applies to the `dev` and bare-tag cases. All three "cannot tell"
 verdicts become real ones on a board that reports a digest, which was the whole
 argument for taking the offer.
 
-### Say which, even though the action is the same
+### It needs one new reason, and otherwise resolves existing ones
 
-The action does not depend on why the digest differs; what an operator should
-feel about it does. "Out of date" and "this board is running something we did
-not put there" both resolve to flash, but only one of them is a reason to look
-at the rest of the fleet. The device row should distinguish them even though
-`needs_flash` does not.
+`states.py` already has the vocabulary, and the digest fits inside it rather
+than beside it. `DeviceStatus` carries a reason, derives `needs_flash` and
+`tone` from it, and its module docstring states the rule this has to respect:
+*"the reason is the fact; everything else is a view of it"* - so an
+inconsistent pair cannot be constructed at all.
+
+**One reason is missing.** A digest mismatch is not `ARTIFACT_CHANGED`, which
+is the closest existing code and the tempting one to reuse. `ARTIFACT_CHANGED`
+means "same commit, different binary" and labels as *"Newer build available"* -
+it says we have something better on disk. A digest mismatch says something
+else: the board is not running what we wrote. Wrong firmware, truncated write,
+corrupted image. Reusing `ARTIFACT_CHANGED` would tell an operator a newer
+build is available when what happened is that their board came back from a
+flash carrying bytes nobody recognises, and that is exactly the mis-wording
+this module exists to prevent.
+
+So: a new device reason, `needs_flash: True`, tone `TONE_ATTENTION` by
+derivation, labelled as an unexpected image rather than an available update.
+It sits next to `PROTOCOL_MISMATCH`, which has the same shape - positive
+evidence about the device rather than about our build.
+
+**Nothing new is needed for absence.** A missing digest changes no code path:
+the comparison falls through to the version reasons that already exist, and
+`UNKNOWN_VERSION`, `VERSION_ONLY` and `OFFLINE` keep meaning what they mean.
+This is why absence-is-not-mismatch is cheap to honour - it is the behaviour
+already there.
+
+**And a match resolves two ambers to green**, which is where most of the value
+lands. `VERSION_ONLY`'s own docstring describes the mechanism: it *"resolves to
+None (up to date) on the first flash through this tool, once our own record
+backs the match."* A digest match is that corroboration, arriving from the
+device rather than from an inference. `DEVICE_DIRTY` is the same story - its
+docstring says a dirty build *"cannot be shown current"*, which is true of a
+version string and false of a digest, because we are comparing against the
+exact artifact we recorded rather than reproducing a build.
+
+Both stay amber when no digest is available. The reasons do not change meaning;
+they acquire a way to be discharged.
 
 ## What changes, in dependency order
 

@@ -470,14 +470,29 @@ class BulkMixin(_Base):
     def _require_flashable_type(self, reg: Registry, only: str) -> str:
         """A name that must be something this host can flash, board or screen.
 
-        Fails fast on a typo, before a job exists. Both registries are consulted
-        because "flash this type" means the same thing whichever kind it names,
-        and refusing a display here would be the kind filter creeping back in
-        through the front door.
+        Fails fast on a typo, before a job exists. Asks the provider seam rather
+        than testing registry membership: "not in the kconfig registry" meant
+        "PlatformIO" for exactly as long as there were two providers, and a
+        CMake name reaching `_boards_to_flash` under that assumption selects
+        nothing while reporting success.
+
+        A CMake name is refused here, deliberately and by name. `_boards_to_flash`
+        walks the kconfig registry and has no CMake branch, so type-level flash
+        genuinely cannot serve one yet; saying so is honest, where the old
+        `unknown_type` claimed a configured type did not exist. Per-device
+        `fw.flash` does work and the message points at it.
         """
-        if only in reg.names() or only in self.pio_types():
-            return only
-        reg.get(only)  # raises with the registry's own unknown_type payload
+        owner = self._provider_of(only)  # RpcError unknown_type for a typo
+        if owner == providers.Cmake.name:
+            raise RpcError(
+                f"type-level flash is not available for CMake-built type "
+                f"'{only}'. Flash its boards individually with fw.flash.",
+                data={
+                    "code": "type_not_bulk_flashable",
+                    "message": "no bulk flash for this builder",
+                    "data": {"name": only, "provider": owner},
+                },
+            )
         return only
 
     def flash_all(self, args: dict) -> dict[str, Any]:

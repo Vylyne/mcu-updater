@@ -59,8 +59,8 @@ report it back. Nobody listens.
 The INFO reply is not the only place a Roadrunner's version can be read, and it
 is not the one to read first.
 
-The Roadrunner's Klipper extra populates a `high_resolution_sensor` printer
-object with its version information. That is a third path, and this spec had
+The Roadrunner's Klipper extra populates a `high_resolution_filament_sensor`
+printer object with its version information. That is a third path, and this spec had
 missed it: `grep -rn high_resolution src/ docs/` returns nothing, so nothing in
 this repo knows the object exists.
 
@@ -79,7 +79,7 @@ one of its three inputs. Better: `_all_object_names()` is cached with a TTL and
 `_object_names_for(prefix)` already exists to pick objects by prefix - the
 comment on the cache says outright that *"one list serves every prefix, so
 adding displays costs no extra round trip on top of the MCU lookup that was
-already happening."* A `high_resolution_sensor` prefix is the same deal.
+already happening."* A `high_resolution_filament_sensor` prefix is the same deal.
 
 **What still has to be confirmed before this can be planned:** the object's
 exact name and the exact field carrying the version, read off the extra rather
@@ -246,8 +246,8 @@ place, one layer up.
 
 ## What changes, in dependency order
 
-1. The running version becomes reachable: the `high_resolution_sensor`
-   object is read through the existing cached-prefix lookup, and `fw_version`
+1. The running version becomes reachable: the
+   `high_resolution_filament_sensor` object is read through the existing cached-prefix lookup, and `fw_version`
    stops being discarded - `RoadrunnerDevice` carries it as the fallback for
    when Klippy cannot answer.
 2. `flashers/helper_bootsel.py` writes `FlashLog`, on the same rule

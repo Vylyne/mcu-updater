@@ -103,6 +103,11 @@ A source tree that doesn't follow the `~/<name>` / `out/<name>.bin` convention
 its own, with `source:` and `artifact:` keys. See the main
 [README](../README.md#firmware-families).
 
+A `[firmware ...]` section may also declare `helper: roadrunner`. `helper` is a
+capability name in the package's explicit static registry, never a Python module
+path. It lets a firmware family supply narrowly scoped operations such as a
+confirmed BOOTSEL request without adding vendor branches to `fw.flash`.
+
 For Kconfig Make trees, `out/` is transient. The requested `.bin` and optional
 `.uf2` are copied into `~/printer_data/mcu-updater/` with their provenance, then
 `make clean` removes the source-tree outputs. Cleanup runs after failed and
@@ -127,6 +132,11 @@ key here at all - not even a "last known identity" - by design: discovery
 stays read-only, provisioning is a direct-USB write to the board itself, and
 a provisioned board remains as untracked as before until it is separately
 adopted through `serials:` above.
+
+USB topology captured during a helper-backed flash is equally transient. It is
+used only to correlate the running serial device with the BOOTSEL mass-storage
+mount during that operation and is never written to this config or treated as
+durable identity.
 
 **Edit the existing `[updater]` section rather than appending a second one.** A
 duplicate section is refused outright: first-wins would mean

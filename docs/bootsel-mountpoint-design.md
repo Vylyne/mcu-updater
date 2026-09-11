@@ -7,8 +7,10 @@ serial/disk `by-path` pair captured (see "Correlating a board" below). One
 finding: mountpoint directories are not cleaned up on unplug; a udev remove rule
 that ran `rmdir` directly (version 3) lost an unwinnable race, so version 5
 schedules it through `systemd-run` with a tmpfiles.d sweep behind it. The
-multi-volume refusal, topology correlation,
-`needs_services_stopped` and a real `settled()` remain deliberately deferred.
+generic manual BOOTSEL scan still refuses multiple volumes. The separate
+helper-backed closed loop now implements topology correlation, stopped-service
+handling, and post-write readiness; it has host-test coverage but has not yet
+been verified end to end on hardware.
 
 Verified against mcu-updater `0c446f2`. Every file and line reference below was
 read at that commit; re-check them before implementing if the tree has moved.
@@ -144,21 +146,27 @@ Two wrinkles the measurement exposed, neither of them guessable from the code:
    ones — and the sanitization is lossy, since `.` and `:` map to the same
    character.
 
-`/dev/serial/by-path` ↔ `/dev/disk/by-path` is the pairing. Note that nothing in
-mcu-updater reads `by-path` today — this is new code. `discovery/usb.py`'s
+`/dev/serial/by-path` ↔ `/dev/disk/by-path` is the pairing. The implemented
+closed loop reads this full controller-qualified path before requesting
+BOOTSEL. `discovery/usb.py`'s
 `UsbDevice` already carries a sysfs topology name (`1-1.2` style), which is a
 *third* namespace and does not directly equal either `by-path` form; if the
 implementation wants to use it, the mapping needs writing and testing rather
 than assuming.
 
-### Two flags flip once correlation exists
+### Closed-loop flasher consequences
 
-- **`Bootsel.needs_services_stopped`** becomes `True`. Its own comment
-  (`flashers/bootsel.py:37-42`) predicts this: *"The moment this tool routes a
-  board into BOOTSEL itself, over a port Klipper may be holding, this flips."*
-- **`Bootsel.settled()`** becomes a real wait instead of a documented no-op. It
-  is currently empty because "it cannot name the device it is waiting for"
-  (`flashers/bootsel.py:75`). With a port to watch, it can.
+- The manual `Bootsel` flasher remains the initial-install path and retains its
+  one-mounted-volume ambiguity guard.
+- The separate `HelperBootsel` flasher requires services stopped, requests
+  BOOTSEL through the configured firmware helper, and selects exactly one
+  topology-matched marker-bearing mount. Bystander mounts do not count.
+- `HelperBootsel.settled()` asks the helper to confirm the expected serial and
+  firmware protocol before services restart. Every outcome of that wait is a
+  warning, never a refusal: the UF2 is already on the board by then, and the
+  spec's error list is entirely pre-copy or at-copy. A timeout, a probe that
+  would not answer, a wrong identity and an ambiguous one are all reported the
+  same way - a completed copy is a successful flash with a readiness warning.
 
 ## Migration — the part most likely to be missed
 
@@ -208,7 +216,9 @@ bench board; results recorded here so nobody has to re-derive them.
   `platform-fd880000_usb-usb-0_1_3_1_0-scsi-0_0_0_0`), and `bootsel_scan()`
   returned both. Note what this now produces downstream: two mounts is an
   `ambiguous` refusal, so the spec's failure #2 (a bystander board blocking a
-  flash) is *not* fixed by this change — it needs the deferred port parameter.
+  manual flash) is not changed by the mount layout. The helper-backed closed
+  loop does fix it for a known running board by supplying captured topology;
+  unrelated mounts are ignored.
 - **Stale directory accumulation** — ⚠️ confirmed, and the obvious fix does not
   work. `--collect` reaps the transient mount *unit* and leaves the directory,
   so an empty directory per port accumulates across replugs. Never a
@@ -268,10 +278,17 @@ bench board; results recorded here so nobody has to re-derive them.
   BOOTSEL reboot" above for the measured pair and the two wrinkles it exposed
   (the `usbv2` alias, and `ID_PATH_TAG`'s lossy `.`/`:` → `_` sanitization).
 
-## Not in scope
+## Closed-loop implementation status
 
-The BOOTSEL closed loop itself — `REBOOT_BOOTSEL`, the wait for
-re-enumeration, and `settled()`'s new body. This document only removes the
-obstacle that made correlation impossible. The firmware side already exists:
-`REBOOT_BOOTSEL` is opcode `02` and, as of the roadrunner identity-gate work, is
-deliberately ungated so a board with no valid identity can still be recovered.
+The Roadrunner firmware family's `helper: roadrunner` implementation confirms
+the exact provisioned serial, captures serial `by-path` topology, sends
+`REBOOT_BOOTSEL` (opcode `02`), waits for the old CDC device to leave, and hands
+that transient topology to `HelperBootsel`. The flasher requires exactly one
+matching `INFO_UF2.TXT` volume, copies the UF2, then waits for the same serial
+and Roadrunner INFO response before stopped services restart. Topology is never
+persisted as identity.
+
+This new loop is host-test-only so far. The mount layout and normalization facts
+above retain their separately recorded hardware verification. A bare first-time
+board cannot use the helper because it has no running firmware or durable serial;
+the manual BOOTSEL scan therefore still requires exactly one mounted board.

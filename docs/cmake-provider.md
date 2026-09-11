@@ -16,11 +16,13 @@ from one tree.
 | `builder: cmake` | `[firmware ...]` | Routes the family to this provider. Provider ownership is derived from the family's builder; there is no `provider:` key. |
 | `cmake_args:` | `[firmware ...]` | Configure-step arguments, `shlex.split` — quoting groups words and is consumed. `${git_describe}` is the one substitution. |
 | `submodules:` | `[firmware ...]` | Sync submodules before each build. Off by default. |
+| `helper:` | `[firmware ...]` | Optional reviewed helper capability from the static registry. `roadrunner` provides the Roadrunner BOOTSEL request; this is a name, not a module path. |
 | `cmake_target:` | `[type ...]` | Which of the tree's executables this board runs. Required — one tree builds several, and guessing is not this tool's business. |
 
 Reachable as `mcu-updater build -t NAME -f FAMILY`, `mcu-updater clean -t NAME`,
 the agent's `fw.build` / `fw.clean`, a `targets[]` row in the panel, and a fleet
-build.
+build. A helper-backed CMake type also exposes its declared serial devices and
+routes `fw.flash` through the helper-backed BOOTSEL flasher.
 
 ## Decisions worth keeping
 
@@ -121,17 +123,32 @@ None is load-bearing; all were reviewed and deliberately deferred.
   post-build sample. Pre-existing, and out of scope for that branch, but whoever
   next reads `cmake.py`'s record block will be looking straight at it.
 
-## Not wired up
+## Helper-backed flashing
 
-**A trap waiting for whoever wires up flashing:** `Flashtool.chipsets` is
-`("stm32", "rp2040")` and its states include `STATE_KLIPPER`, and `Flashtool()`
-is *first* in a first-match `FLASHERS` tuple — so `select_for("rp2040",
-STATE_KLIPPER)` resolves to the Katapult flashtool today, and a Roadrunner
-flasher registered after it would never be reached. The agreed fix is a third
-axis on `select_for`: whether the type carries a bootloader family (a
-Roadrunner declares none; an SKR Pico declares katapult).
+The legacy chipset/state flasher selection is unchanged. CMake flashing does
+not use it: for an exactly declared serial, `fw.flash` resolves the family,
+requires its configured static helper, and constructs a `helper_bootsel` target
+for the staged UF2. This preserves the existing RP2040 flashtool route for
+boards that really do use Katapult.
 
-Flashing a cmake type. `fw.flash` refuses a cmake name, and the `targets[]` row
-carries `devices: []` with `extra.flashable: false` rather than advertising a
-write that cannot happen. That is the BOOTSEL work —
-[bootsel-mountpoint-design.md](bootsel-mountpoint-design.md).
+The Roadrunner helper confirms the provisioned serial over the admin protocol,
+captures the full serial `by-path` topology before `REBOOT_BOOTSEL`, and accepts
+only one `INFO_UF2.TXT`-bearing mount under the matching normalized topology.
+Unrelated BOOTSEL mounts are ignored; zero or multiple matching mounts fail
+closed. After copying, it waits for the expected Roadrunner serial and INFO
+response before service restart. Everything that wait can find is a warning
+after a completed write, matching the other flashers' settle behavior - a
+timeout, an ambiguous identity, a probe that failed. A probe that fails or
+answers unconvincingly is retried to the deadline rather than believed: while
+the board re-enumerates, its `by-id` symlink appears before its tty can
+reliably be opened.
+
+The target status includes every configured serial. Presence is determined by
+exact serial discovery; `version` and `needs_flash` remain unknown because the
+status poll deliberately does not open the Roadrunner admin port. Device flash
+actions and `extra.flashable: true` are offered only when a helper is configured.
+
+This path is covered by host tests but has not yet been exercised as an
+end-to-end hardware flash. Manual first-install BOOTSEL behavior remains the
+ordinary ambiguous one-board workflow because a bare board has no running
+firmware helper or provisioned serial.

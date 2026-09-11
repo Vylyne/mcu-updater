@@ -253,6 +253,7 @@ source: ~/roadrunner/rp2040
 builder: cmake
 cmake_args: -DROADRUNNER_FIRMWARE_VERSION=${git_describe}
 submodules: yes
+helper: roadrunner
 ```
 
 `submodules:` runs `git submodule update --init --recursive` in the source tree
@@ -295,6 +296,11 @@ Per-type keys:
   names it - not a short form, since expanding one would mean knowing a
   naming convention that belongs to one vendor's `CMakeLists.txt`. A mixed
   RGB/GRB fleet needs two `[type]` sections, since `cmake_target:` is per-type.
+- **`helper`** - optional on `[firmware ...]`. Names a reviewed, statically
+  registered firmware helper; it is not a module path and configuration cannot
+  import arbitrary Python. A helper-backed CMake family can use its running
+  firmware to enter BOOTSEL and complete a normal `fw.flash`. Roadrunner uses
+  `helper: roadrunner`.
 - **`<fw>_extra_repos`** - one directory per line. Secondary source trees whose
   git SHA is tracked alongside the main tree, so a type is reported stale if
   *either* the main source or one of these has moved - e.g. `flylllplusbuffer`
@@ -596,6 +602,7 @@ source: ~/roadrunner/rp2040     ; the cmake directory, not the repo root
 builder: cmake
 cmake_args: -DROADRUNNER_FIRMWARE_VERSION=${git_describe}
 submodules: yes                 ; the tree vendors its SDK as a submodule
+helper: roadrunner              ; reviewed firmware-specific BOOTSEL requester
 
 [type roadrunner]
 chipset: rp2040
@@ -607,11 +614,19 @@ serials:
 
 A mixed RGB/GRB fleet - or any fleet where boards need different targets out
 of the same tree - takes two `[type]` sections, since `cmake_target:` is
-per-type, not per-board. There is no closed-loop flash for this chipset yet:
-staging produces `roadrunner.uf2` under
-`~/printer_data/mcu-updater/roadrunner/`, and getting it onto the board is
-still hold `BOOT`, press and release `RESET`, release `BOOT`, then copy the
-file to the mounted volume.
+per-type, not per-board. With `helper: roadrunner`, `fw.flash` selects one
+exactly declared `serials:` identity, confirms that Roadrunner over its admin
+protocol, captures its full controller-qualified USB topology before asking it
+to enter BOOTSEL, and copies the staged UF2 only to the one marker-bearing
+`INFO_UF2.TXT` mount that matches that topology. Other BOOTSEL boards may remain
+attached; zero or multiple matching mounts are refused. After the copy it waits
+for the same serial and protocol identity before stopped services restart.
+
+This closed loop has host-test coverage but has not yet been verified end to
+end on hardware. The manual first-install path is unchanged: a bare board that
+is already in BOOTSEL has no provisioned serial or running helper to address,
+so hold `BOOT`, press and release `RESET`, release `BOOT`, and use the ordinary
+one-board-at-a-time BOOTSEL workflow.
 
 ## Layout
 

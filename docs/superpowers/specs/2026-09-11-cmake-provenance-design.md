@@ -61,8 +61,8 @@ is not the one to read first.
 
 The Roadrunner's Klipper extra populates a `high_resolution_filament_sensor`
 printer object with its version information. That is a third path, and this
-spec had missed it: `grep -rn high_resolution src/ docs/` returns nothing, so nothing in
-this repo knows the object exists.
+spec had missed it: `grep -rn high_resolution src/ docs/` returns nothing, so
+nothing in this repo knows the object exists.
 
 **Klipper first, admin protocol second.** Not a preference - a lock. When
 Klipper is connected to the Roadrunner over usbserial it holds that connection,
@@ -249,8 +249,9 @@ place, one layer up.
 
 1. The running version becomes reachable: the
    `high_resolution_filament_sensor` object is read through the existing
-   cached-prefix lookup, and `fw_version` stops being discarded - `RoadrunnerDevice` carries it as the fallback for
-   when Klippy cannot answer.
+   cached-prefix lookup, and `fw_version` stops being discarded -
+   `RoadrunnerDevice` carries it as the fallback for when Klippy cannot
+   answer.
 2. `flashers/helper_bootsel.py` writes `FlashLog`, on the same rule
    `agent/methods/flash.py::_cmake_flash` states: whenever a copy completed,
    before any failure is raised.

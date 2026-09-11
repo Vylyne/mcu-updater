@@ -91,21 +91,35 @@ It does not. The firmware does.
 
 So version-reading is a **helper** question, answered per firmware family.
 
-### This widens the helper seam, deliberately
+### What the helper seam actually is today
 
-`helpers/spec.py` today is one protocol, `BootselRequester`, and its own
-docstring scopes it: *"The narrowly scoped contract for firmware-specific
-BOOTSEL requests."* Both its methods take a `Bench`, a serial and a chipset -
-they are device-shaped, about acting on hardware. Version-reading is not that
-shape. It is a pure `str | None -> str | None` function of a reported version
-string, needing no bench, no port and no device at all.
+`helpers/spec.py` names itself *"the narrowly scoped contract for
+firmware-specific BOOTSEL requests"*, but that undersells what it is. Read the
+two methods: `request_bootsel` and `wait_ready` both take a `Bench`, a serial
+and a chipset, and what they do is **talk to a device in that firmware's own
+protocol** - one sends a command, the other polls for a reply. BOOTSEL is the
+message, not the subject. `scripts/roadrunner_usb.py` is the vocabulary.
 
-Adding it is therefore a second capability alongside the first, not a method
-bolted onto `BootselRequester`. A firmware can need one without the other: a
-knomi screen is never put into BOOTSEL and still reports a version; a future
-board could take a helper-driven BOOTSEL write and report nothing back.
-Bundling them would force every helper to implement a method it has no answer
-for, which is how a narrow seam turns into a god object.
+That is the honest reading, and it explains what already lives on the wrong
+side of the line: `discovery/roadrunner.py::_valid_info` parses an INFO reply
+from the same protocol, in a different package, with no helper involved. The
+migration TODO in the README lists it for that reason. This spec does not move
+it - but the seam it widens is a communication seam, and naming it correctly
+now is what keeps the next thing from being squeezed into the wrong shape.
+
+### Version-reading is not that shape, so it is a separate capability
+
+A `running_sha` takes a string and returns a string. No bench, no serial, no
+port, no device - the board is long gone by the time it is called, and what it
+reads came out of the ledger or out of Klippy, not off the wire. Hanging it on
+`BootselRequester` would put a pure function inside a protocol contract and
+force every helper to implement a method it has no answer for, which is how a
+narrow seam becomes a god object.
+
+It arrives alongside, not on top. A firmware can need either without the other,
+and both cases are real: a knomi screen is never put into BOOTSEL and still
+reports a version; a future board could take a helper-driven BOOTSEL write and
+report nothing back.
 
 The shape:
 

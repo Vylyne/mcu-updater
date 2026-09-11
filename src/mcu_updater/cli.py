@@ -555,6 +555,54 @@ def _canbus_targets(c: Context, mcu_type: str, uuids: list[str]) -> list:
     ]
 
 
+def _cmake_targets(c: Context, mcu_type: str, serial: str) -> list:
+    """One CMake-built board, as a thing the batch can write.
+
+    The same selection the agent's `_cmake_flash` makes: the type's declared
+    firmware family names the helper that puts the board into BOOTSEL, and the
+    UF2 the build staged is what gets copied onto it. Both refusals here are
+    setup the operator has to fix before any write is possible, so they are said
+    plainly rather than discovered as a missing-file error two layers down.
+
+    `stop_services.for_cmake` is the only resolver that applies: `for_display`
+    indexes the PlatformIO map - which is the `KeyError: 'roadrunner'` this
+    whole change exists to remove - and `for_mcu` wants a kconfig `McuType`.
+
+    No `FlashLog` record and no attachment check, matching the CLI's other flash
+    paths: provenance is recorded inside the flashers, and the helper performs
+    its own protocol confirmation once the services have released the port.
+    """
+    from . import helpers
+    from .providers import cmake as cmake_mod
+
+    target_type = cmake_mod.load(c.paths)[mcu_type]
+    families = firmware.load(c.paths)
+    family = firmware.resolve(c.paths, target_type.firmware, families)
+    helper = helpers.for_name(family.helper, family=family.name)
+    if helper is None:
+        raise UpdaterError(
+            f"CMake type '{mcu_type}' has no firmware helper configured, so "
+            f"nothing here can put the board into BOOTSEL mode."
+        )
+
+    fw_bin = c.paths.uf2_file(mcu_type, target_type.firmware)
+    if not os.path.exists(fw_bin):
+        raise UpdaterError(f"no built firmware for {mcu_type} at {fw_bin}. Build it first.")
+
+    return [
+        flashers.helper_bootsel.target_for(
+            fw_bin,
+            type_name=mcu_type,
+            serial=serial,
+            chipset=target_type.chipset,
+            helper=helper,
+            stop_services=stop_services.for_cmake(
+                c.paths, target_type, c.settings, families
+            ),
+        )
+    ]
+
+
 def _pio_targets(
     c: Context,
     name: str,
@@ -694,6 +742,23 @@ def flash_fw_cmd(args: argparse.Namespace) -> None:
         print("ERROR: provide -s <serial>, -t <type>, or both.", file=sys.stderr)
         sys.exit(1)
 
+    # Which build system owns the name, asked once and asked first. Testing
+    # registry membership meant "PlatformIO" for exactly as long as there were
+    # two providers; a CMake name under that assumption reached `_ports_free`
+    # and indexed the PlatformIO map with a name that is not in it.
+    owner = providers.provider_of(c.paths, args.type) if args.type else None
+
+    # Before the confirmation, not after: this is deferred work with its own
+    # spec, and there is nothing to warn about a flash that will not happen.
+    # The same refusal `fw.bulk_flash` makes, worded for this caller.
+    if owner == providers.Cmake.name and not args.serial:
+        print(
+            f"ERROR: type-level flash is not available for CMake-built type "
+            f"'{args.type}'. Flash its boards individually with -s <serial>.",
+            file=sys.stderr,
+        )
+        sys.exit(1)
+
     if not args.yes and not _confirm(
         "Flashing requires stopping the affected service(s) "
         "(aborts any active print!). Continue?"
@@ -704,7 +769,7 @@ def flash_fw_cmd(args: argparse.Namespace) -> None:
     # A PlatformIO type: its devices are ports, not tracked serials, and the
     # batch knows how to write them. Nothing below this applies - there is no
     # serial to resolve and no registry entry to add one to.
-    if args.type and args.type not in reg.names():
+    if owner == providers.PlatformIO.name:
         with exclusive(c.paths, f"flash type {args.type}"):
             with _ports_free(c, [args.type], f"flash {args.type}"):
                 targets = _pio_targets(
@@ -733,10 +798,13 @@ def flash_fw_cmd(args: argparse.Namespace) -> None:
             code = _run_batch(c, targets, f"flash {args.type}")
         sys.exit(code)
 
-    # Single device.
+    # Single device. Identity, not build semantics: `resolve_serial` reads the
+    # kconfig registry alone, which is why a serial configured under a CMake
+    # type was reported as tracked under no type at all. The declared document
+    # owns the serial-to-type pairing for every provider.
     if args.type:
         try:
-            mcu_type = reg.resolve_serial(args.serial, args.type)
+            mcu_type = reg.resolve_declared_serial(args.serial, args.type)
         except UnknownSerialError:
             # Untracked under this type, and not tracked elsewhere (that case
             # raises SerialTrackedElsewhereError and is refused outright).
@@ -745,13 +813,25 @@ def flash_fw_cmd(args: argparse.Namespace) -> None:
             ):
                 print("Aborted.")
                 sys.exit(1)
-            reg.add_serial(args.type, args.serial)
+            # The declared-section writer, which delegates to `add_serial` for a
+            # kconfig type and edits the type's own section for any other - so a
+            # CMake type gains an identity without the kconfig registry claiming
+            # its build.
+            reg.add_declared_serial(args.type, args.serial)
             reg.save(c.paths)
             print(f"Added serial {args.serial} to {args.type}")
             mcu_type = args.type
     else:
-        mcu_type = reg.resolve_serial(args.serial)
+        mcu_type = reg.resolve_declared_serial(args.serial)
+        owner = providers.provider_of(c.paths, mcu_type)
         print(f"Resolved serial {args.serial} -> type '{mcu_type}'")
+
+    if owner == providers.Cmake.name:
+        with exclusive(c.paths, f"flash {mcu_type}/{args.serial}"):
+            code = _run_batch(
+                c, _cmake_targets(c, mcu_type, args.serial), f"flash {args.serial}"
+            )
+        sys.exit(code)
 
     with exclusive(c.paths, f"flash {mcu_type}/{args.serial}"):
         code = _run_batch(

@@ -494,9 +494,17 @@ partially-swept fleet is a state the batch has to be able to describe. This
 needs specifying - it does not need CMake carved back out, and it must not be
 allowed to become that argument a second time.
 
-**The `type_not_bulk_flashable` code.** It is documented as stable in
-`docs/agent-api.md` for exactly as long as step 6 takes. Its retirement is
-part of step 6, not a separate deprecation.
+**The `type_not_bulk_flashable` code.** An earlier draft of this section said
+it "is documented as stable in `docs/agent-api.md`". It is not documented
+there at all - `bulk.py:491` emits it, two tests assert it, and the API
+document has never mentioned it. That was the provider-selection plan's Task 4,
+which has not run.
+
+Documenting it now would be documenting something this spec retires in step 6.
+Either is defensible; what is not defensible is a client receiving a code that
+appears in no contract. If step 6 is close, skip it and retire the code; if it
+is not, document it with its retirement stated in the same breath. Its
+retirement is part of step 6 either way, not a separate deprecation.
 
 **Whether `VersionReader` is reached through `for_name`.** `for_name` returns a
 `BootselRequester` today and its callers type it as one. Whether the second

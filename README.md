@@ -79,6 +79,7 @@ of it. What is still open:
 
 - [ ] Allow using non default klipper and katapult paths
 - [ ] **TEST ERROR** Reproduce and fix the flaky teardown `RuntimeError` in `test_an_unknown_inbound_method_gets_an_error_not_silence`.
+- [ ] **NEEDS DESIGN + PLAN** Move firmware-specific code behind the helper seam (`src/mcu_updater/helpers/`). Vendor knowledge is currently spread across `discovery/knomi_serial/`, `discovery/roadrunner.py`, `helpers/roadrunner.py`, `scripts/roadrunner_usb.py`, and Cartographer's version special-cases in the build and status paths. Now that a helper seam exists, that is where it belongs: the framework should assemble a board from config-declared building blocks and know nothing about which vendor made it. Evaluate scope first - `helpers/spec.py` today answers a narrower question than discovery and version-reporting need, so the seam likely has to widen before anything moves.
 
 ## Requirements
 

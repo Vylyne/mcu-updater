@@ -19,10 +19,31 @@ family has no `helper:`, which yields no reader, which yields None — the same
 
 ## Global Constraints
 
-- **Klipper first, admin protocol second.** Klipper holds the usbserial
-  connection when connected, so the admin protocol cannot open a port Klippy
-  owns. A read that goes to the wire first fails on exactly the machines where
-  the answer was already sitting in the object graph.
+- **Klipper first, admin protocol second — but the lock is conditional on
+  transport, not universal.** Klipper holds the usbserial connection only when
+  the sensor is attached over USB; over UART or I2C the CDC port is free and
+  the admin protocol can be used concurrently without disturbing Klipper.
+  Klipper-first still holds as the default order, because the USB case is the
+  one that breaks and because the wire read is expensive either way. What it
+  is not is a claim that the wire is unreachable.
+
+  The transports differ in what Klipper can even report, which decides where
+  the useful answer lives (`TRANSPORT_NAMES = {1: i2c, 2: uart, 3: usb}`):
+
+  | Transport | Klipper reports | USB CDC port |
+  |---|---|---|
+  | `usb` | everything | held by Klipper |
+  | `i2c` | everything | free |
+  | `uart` | state, variant, digest — nothing else | free |
+
+  **UART is the sharp case.** `RegisterReaderUART` caps a register at four
+  bytes, because Klipper's MCU-side tmcuart buffer is ten (`uint8_t data[10]`
+  in `klipper/src/tmcuart.c`) and asking for more is a `shutdown()`, not a
+  failed read. `SERIAL` is 34 bytes and `FIRMWARE_VERSION` is 32, so both come
+  back None; only `IMAGE_DIGEST` fits. A UART board therefore reports no join
+  key at all through Klipper, which sends it to the admin protocol by the
+  ordinary "Klipper had no object for this serial" path — and there the admin
+  protocol is safe, because Klipper is not on the USB port.
 - **Absence is never mismatch.** A missing digest — pre-revision board,
   algorithm `0`, or no stored record — falls through to the version
   comparison. Treating absence as mismatch flags every old board permanently,

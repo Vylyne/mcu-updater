@@ -153,6 +153,17 @@ Algorithm `1` is CRC-32/ISO-HDLC, which is what `zlib.crc32` computes.
 `cmake.record_build` stores the digest of the staged payload beside the hash it
 already keeps.
 
+**Ruling, taken during implementation:** store the labeled *triple* -
+`digest_algorithm`, `digest`, `image_start`, `image_length` - not a bare
+number. At `record_build` time there is no board, so there is no authoritative
+range; a bare number computed over a host-chosen span could never match a board
+that reports a different one, which is the permanent mismatch this plan forbids
+under absence. Recording the extent the artifact itself covers is the artifact
+describing itself, not a host substituting for the board, and it lets Task 5
+compare range-first: ranges that disagree are a mismatch with a reason, rather
+than two digests over different spans. The keys are spelled as INFO spells
+them, so the two sides compare field to field.
+
 **Test against the golden vector, not against their implementation:** 600 bytes
 at `0x10000000` where byte `i` is `(i * 7 + 3) & 0xff`, CRC `0xBBE38AA9`,
 packed as three 256-byte-payload blocks whose last carries 88 image bytes and

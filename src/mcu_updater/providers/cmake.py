@@ -31,7 +31,7 @@ import threading
 import time
 
 from .. import build as build_mod
-from .. import firmware, sections
+from .. import firmware, sections, uf2
 from ..build import Reporter, null_reporter
 from ..cfgdoc import CfgDocument
 from ..errors import BuildError, ConfigError
@@ -464,6 +464,11 @@ def record_build(paths: Paths, target: CmakeType, state: SourceState) -> None:
         "bin_sha256": build_mod.sha256_file(path),
         "bin_size": stat.st_size,
         "bin_mtime": stat.st_mtime,
+        # What a board running this image should report back over INFO.
+        # Absent for anything that would not parse as a UF2, and absent is
+        # never mismatch - the comparison falls through to the version string,
+        # the same as it does for a board too old to report a digest.
+        **uf2.digest_fields(path),
     }
     sidecar = paths.sidecar_file(target.name, target.firmware)
     os.makedirs(os.path.dirname(sidecar), exist_ok=True)

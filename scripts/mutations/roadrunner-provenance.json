@@ -1,0 +1,39 @@
+{
+  "_comment": "The image fields an INFO reply carries alongside the identity. These arrive as a subprocess's JSON, so a wrong type reaching the digest comparison reads as a mismatch against every artifact - and absence is never mismatch, so dropping a malformed field is the whole point. Each guard has to be shown load-bearing.",
+  "file": "src/mcu_updater/discovery/roadrunner.py",
+  "command": [
+    "python",
+    "-m",
+    "pytest",
+    "tests/test_provenance.py",
+    "tests/test_roadrunner.py",
+    "-q"
+  ],
+  "mutations": [
+    {
+      "name": "a bool is not an int here",
+      "find": "        if isinstance(value, int) and not isinstance(value, bool):",
+      "replace": "        if isinstance(value, int):"
+    },
+    {
+      "name": "an image field of the wrong type is dropped, not carried",
+      "find": "        value = info.get(field)",
+      "replace": "        value = info.get(field)\n        out[field] = value"
+    },
+    {
+      "name": "an empty version string is absence, not a version",
+      "find": "    if isinstance(version, str) and version:",
+      "replace": "    if isinstance(version, str):"
+    },
+    {
+      "name": "the wire source answers absence rather than raising at its caller",
+      "find": "        except (UpdaterError, OSError):",
+      "replace": "        except OSError:"
+    },
+    {
+      "name": "a discovered device carries what INFO reported",
+      "find": "            out.append(RoadrunnerDevice(serial, port, topology, **provenance(info)))",
+      "replace": "            out.append(RoadrunnerDevice(serial, port, topology))"
+    }
+  ]
+}

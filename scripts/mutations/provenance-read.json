@@ -1,0 +1,63 @@
+{
+  "_comment": "Reading what a board is running, Klipper first. Every guard here is a wrong-answer shape rather than a crash: a digest read as 1 instead of absent, a join key that never matches, a name left unconverted. Each one produces a board that is running exactly what we flashed and is reported as needing a flash forever, because no reflash can clear a formatting difference. So each has to be shown load-bearing.",
+  "file": "src/mcu_updater/agent/methods/status.py",
+  "command": [
+    "python",
+    "-m",
+    "pytest",
+    "tests/test_provenance.py",
+    "-q"
+  ],
+  "mutations": [
+    {
+      "name": "the hex string Klipper sends is parsed as hex",
+      "find": "            return int(value, 16)",
+      "replace": "            return int(value)"
+    },
+    {
+      "name": "an unparseable digest is absence, not an exception out of a status read",
+      "find": "        except ValueError:",
+      "replace": "        except TypeError:"
+    },
+    {
+      "name": "a boolean digest is absence, not the number 1",
+      "find": "    if isinstance(value, bool):",
+      "replace": "    if False:"
+    },
+    {
+      "name": "a boolean image bound is absence, not the number 1",
+      "find": "    if isinstance(value, bool) or not isinstance(value, int):",
+      "replace": "    if not isinstance(value, int):"
+    },
+    {
+      "name": "the two sources' spellings of one serial are normalised before joining",
+      "find": "    return canonical_serial(serial.strip()).upper()",
+      "replace": "    return serial"
+    },
+    {
+      "name": "the algorithm name becomes an id at the reader's boundary",
+      "find": "                \"digest_algorithm\": uf2_mod.algorithm_id(image.get(\"algorithm\")),",
+      "replace": "                \"digest_algorithm\": image.get(\"algorithm\"),"
+    },
+    {
+      "name": "a sensor object with no serial yields no entry",
+      "find": "            if not isinstance(serial, str) or not serial.strip():",
+      "replace": "            if False:"
+    },
+    {
+      "name": "only the two fields needed are asked for, inside a sub-second budget",
+      "find": "        query: dict[str, Any] = {name: [\"identity\", \"firmware_image\"] for name in names}",
+      "replace": "        query: dict[str, Any] = {name: None for name in names}"
+    },
+    {
+      "name": "Klipper's answer is preferred over the wire",
+      "find": "            answer = klipper.get(_provenance_key(serial))",
+      "replace": "            answer = None"
+    },
+    {
+      "name": "the wire is consulted when Klipper had no object",
+      "find": "            if info_source is None:",
+      "replace": "            if info_source is not None:"
+    }
+  ]
+}

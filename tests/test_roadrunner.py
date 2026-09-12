@@ -86,6 +86,49 @@ def test_discovery_accepts_only_confirmed_unprovisioned_roadrunner(paths, fake_r
     assert not hasattr(found[0], "flash_uid")
 
 
+def test_a_confirmed_device_carries_what_info_said_it_is_running(paths, fake_root, monkeypatch):
+    """The identity confirms *which* board; these say what is on it.
+
+    Carried on the device rather than re-probed later, because the probe that
+    confirmed the identity already read them - and re-opening the port to ask
+    again is the thing the Klipper-first ordering exists to avoid.
+    """
+    _candidate(paths, fake_root, monkeypatch)
+    data = _info()
+    data.update(
+        {
+            "fw_version": "v1.2.0-3-gdeadbee",
+            "digest_algorithm": 1,
+            "digest": 0xBBE38AA9,
+            "image_start": 0x10000000,
+            "image_length": 600,
+        }
+    )
+    monkeypatch.setattr(roadrunner, "_helper", lambda *_args: data)
+
+    found = roadrunner.discover(paths)[0]
+
+    assert found.fw_version == "v1.2.0-3-gdeadbee"
+    assert found.digest == 0xBBE38AA9
+    assert (found.image_start, found.image_length) == (0x10000000, 600)
+
+
+def test_a_board_too_old_to_report_a_digest_still_discovers(paths, fake_root, monkeypatch):
+    """A pre-revision board ends its INFO payload at the flash UID.
+
+    None here is absence, and absence falls through to the version comparison -
+    never a mismatch that no flash could clear.
+    """
+    _candidate(paths, fake_root, monkeypatch)
+    monkeypatch.setattr(roadrunner, "_helper", lambda *_args: _info())
+
+    found = roadrunner.discover(paths)[0]
+
+    assert found.fw_version == "dev"
+    assert found.digest_algorithm is None
+    assert found.digest is None
+
+
 @pytest.mark.parametrize(
     "bad",
     [
@@ -211,7 +254,9 @@ def test_await_reenumeration_waits_then_resolves_on_the_same_topology(paths, mon
 
     result = roadrunner._await_same_topology(paths, topology, expected, provisioned=True)
 
-    assert result == roadrunner.RoadrunnerDevice(expected, port, topology)
+    # Identity only: the image fields the device now also carries come from
+    # the confirming INFO reply, and this test is about the wait, not them.
+    assert (result.serial, result.port, result.topology) == (expected, port, topology)
     assert len(polls) == 3  # two empty polls, then the matching one
 
 

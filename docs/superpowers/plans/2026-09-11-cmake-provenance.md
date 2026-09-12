@@ -75,11 +75,32 @@ a probe.
 INFO fields and discards `fw_version`. Carry it, and the digest fields the
 reader now parses, on `RoadrunnerDevice`.
 
-**Confirm against the firmware before coding:** the object's exact name, the
-field carrying the version, and whether it is the same `${git_describe}` string
-INFO reports. If the two can differ in format the reader accepts both — the
-`running_sha` contract is unchanged either way, being a string parser that does
-not care which side of the machine produced the string.
+**Confirmed against the firmware, and the answer is better than assumed.**
+`klippy/extras/high_resolution_filament_sensor.py` registers under
+`load_config_prefix`, so the object is `high_resolution_filament_sensor <name>`,
+and its `get_status` returns *both* halves of the provenance question:
+`identity.firmware_version` (the `${git_describe}` string INFO reports, from a
+NUL-padded ASCII register) alongside `identity.serial`, and a whole
+`firmware_image` block — `algorithm`, `digest`, `start`, `length`.
+
+**Ruling:** the Klipper path answers version *and* digest with no port access at
+all, so the admin protocol is the fallback for boards Klippy is not holding
+rather than the only digest source. The plan assumed the digest arrived only
+over the wire; it does not.
+
+**Three representations of one fact, normalised at each reader's boundary.**
+Klipper reports the digest as a hex *string* (`"%#010x"`), INFO reports an int,
+and `record_build` stores an int. Int is canonical — two of the three already
+are — and each reader converts on the way in, never at the comparison site. A
+compare that ever sees `"0xbbe38aa9" != 3185217705` is mismatch-outranks-version
+firing on a formatting difference: it flags a correctly flashed board, and
+reflashing never clears it. Test the conversion against the literal string shape
+the extra emits, not a hand-built int.
+
+Likewise the algorithm: Klipper names it (`"crc32-iso-hdlc"`), INFO numbers it
+(`1`). The name-to-id mapping lives beside `DIGEST_CRC32_ISO_HDLC` in `uf2.py`,
+which already owns the id, and **an unrecognised name is absence, not
+mismatch** — the same rule algorithm `0` gets.
 
 **Acceptance:** gate green. Tests assert the Klipper object is preferred when
 present, the INFO value is used when it is not, and that no path opens the port
@@ -186,7 +207,12 @@ mismatch says the board is not running what we wrote. It has
 `PROTOCOL_MISMATCH`'s shape: positive evidence about the device.
 
 Absence needs no new code: it falls through to the version reasons already
-there.
+there. It has three shapes, not two, and the third comes from the firmware: over
+UART the digest arrives **without** `start` and `length`, because the range
+register does not fit that transport. A digest with no range can tell two boards
+apart and cannot be checked against a file, so a missing range falls through to
+the version comparison exactly as a missing digest does. It is never the
+"ranges disagree" branch.
 
 A match discharges two existing ambers. `VERSION_ONLY` already documents
 resolving to None once our own record backs the match, and a digest match is
@@ -201,7 +227,9 @@ device rows, following `_screen_confidence` and `_screen_device_status` as the
 precedent — layering a signal on top, not folding it in.
 
 **Acceptance:** gate green. Tests assert: a mismatch beats a matching version;
-absence falls through; a match resolves `VERSION_ONLY` and `DEVICE_DIRTY`; and
+absence falls through; a digest reported without a range falls through rather
+than comparing; ranges that disagree are a mismatch with a reason; a match
+resolves `VERSION_ONLY` and `DEVICE_DIRTY`; and
 `needs_flash` is never False on absent evidence. Mutation-checked.
 
 ## Task 6: `flash_all` means all

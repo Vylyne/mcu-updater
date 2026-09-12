@@ -44,6 +44,29 @@ UF2_FLAG_NOT_MAIN_FLASH = 0x00000001
 DIGEST_NONE = 0
 DIGEST_CRC32_ISO_HDLC = 1
 
+#: The same algorithms as the Roadrunner's klippy extra *names* them. The two
+#: transports spell one fact two ways: INFO sends the byte above, and
+#: `firmware_image.algorithm` sends this string, because register 0x35 is fixed
+#: to one algorithm by definition and carries no algorithm byte to send. The
+#: mapping lives here, beside the ids, so a reader converts on the way in and
+#: the comparison never sees two spellings of the same algorithm.
+DIGEST_ALGORITHM_NAMES = {
+    "crc32-iso-hdlc": DIGEST_CRC32_ISO_HDLC,
+}
+
+
+def algorithm_id(name: object) -> int | None:
+    """The id an algorithm *name* means, or None for anything unrecognised.
+
+    None is absence, not mismatch - the same answer `DIGEST_NONE` gets. A board
+    running an algorithm this host has never heard of has told us nothing we can
+    compare, and treating that as a mismatch would flag it permanently with no
+    flash able to clear it.
+    """
+    if not isinstance(name, str):
+        return None
+    return DIGEST_ALGORITHM_NAMES.get(name.strip().lower())
+
 
 class Uf2Error(Exception):
     """The container could not be reconstructed over the requested range."""

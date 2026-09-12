@@ -10,7 +10,7 @@ import subprocess
 import sys
 import time
 from collections.abc import Callable
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from ..errors import BootloaderTimeoutError, UpdaterError
 from . import usb
@@ -39,6 +39,18 @@ class RoadrunnerDevice:
     serial: str
     port: str
     topology: usb.UsbDevice
+    #: What the confirming INFO reply said this board is running. Every field
+    #: defaults to None because every one of them is optional on the wire: a
+    #: board built before the digest registers existed ends its INFO payload at
+    #: the flash UID, and `DIGEST_NONE` is a current board that could not
+    #: compute one. **None is absence, never mismatch** - a device handed back
+    #: by `provision_roadrunner` or `clear_roadrunner` carries None here
+    #: legitimately, because those confirm an identity rather than an image.
+    fw_version: str | None = None
+    digest_algorithm: int | None = None
+    digest: int | None = None
+    image_start: int | None = None
+    image_length: int | None = None
 
 
 def _error(code: str, message: str, **data: object) -> RoadrunnerError:
@@ -93,6 +105,60 @@ def _entry_candidates(
     return candidates
 
 
+#: The INFO fields describing the image rather than the identity. `_valid_info`
+#: does not check any of them: they are enrichment, and a board that answers
+#: without them is a board this host is older or newer than, not a bad one.
+_PROVENANCE_INTS = ("digest_algorithm", "digest", "image_start", "image_length")
+_PROVENANCE_FIELDS = ("fw_version", *_PROVENANCE_INTS)
+
+
+def provenance(info: dict[str, object]) -> dict[str, Any]:
+    """The image fields of an INFO reply, keyword-ready, absent ones dropped.
+
+    Type-checked field by field rather than passed through, because these come
+    from a subprocess's JSON: a string where an int belongs would otherwise
+    reach the digest comparison and read as a mismatch against every artifact.
+    Dropping it means absence instead, which falls through to the version.
+    """
+    out: dict[str, Any] = {}
+    version = info.get("fw_version")
+    if isinstance(version, str) and version:
+        out["fw_version"] = version
+    for field in _PROVENANCE_INTS:
+        value = info.get(field)
+        if isinstance(value, int) and not isinstance(value, bool):
+            out[field] = value
+    return out
+
+
+def wire_provenance(paths: Paths) -> Callable[[str], dict[str, Any] | None]:
+    """An image-fields source for one provisioned serial that opens the port.
+
+    **Never from `fw.status`.** This confirms the board over the admin protocol,
+    which means a `usb.collect` sweep and a helper subprocess per serial, on a
+    tty Klipper may well be holding - the second half of "Klipper first, admin
+    protocol second". It belongs to callers that have already freed the ports
+    deliberately, and it is injected rather than reached for so that the reader
+    doing the joining cannot reach the wire by accident.
+
+    Returns None for anything it cannot confirm; the caller reads that as
+    absence, the same as a board that answered without a digest.
+    """
+
+    def read(serial: str) -> dict[str, Any] | None:
+        try:
+            device = find_provisioned(paths, serial)
+        except (UpdaterError, OSError):
+            return None
+        return {
+            field: getattr(device, field)
+            for field in _PROVENANCE_FIELDS
+            if getattr(device, field) is not None
+        }
+
+    return read
+
+
 def _valid_info(data: dict[str, object], serial: str, *, provisioned: bool) -> bool:
     return (
         data.get("protocol") == 1
@@ -113,7 +179,7 @@ def discover(paths: Paths) -> list[RoadrunnerDevice]:
         except RoadrunnerError:
             continue
         if _valid_info(info, serial, provisioned=False):
-            out.append(RoadrunnerDevice(serial, port, topology))
+            out.append(RoadrunnerDevice(serial, port, topology, **provenance(info)))
     return out
 
 
@@ -129,7 +195,7 @@ def find_untracked(paths: Paths, serial: str) -> RoadrunnerDevice:
     info = _helper(paths, "info", port)
     if not _valid_info(info, serial, provisioned=False):
         raise _error("roadrunner_invalid_probe", "Roadrunner INFO did not confirm the unprovisioned descriptor", serial=serial)
-    return RoadrunnerDevice(candidate_serial, port, topology)
+    return RoadrunnerDevice(candidate_serial, port, topology, **provenance(info))
 
 
 def find_provisioned(paths: Paths, serial: str) -> RoadrunnerDevice:
@@ -145,7 +211,7 @@ def find_provisioned(paths: Paths, serial: str) -> RoadrunnerDevice:
     info = _helper(paths, "info", port)
     if not _valid_info(info, serial, provisioned=True):
         raise _error("roadrunner_invalid_probe", "Roadrunner INFO did not confirm the provisioned descriptor", serial=serial)
-    return RoadrunnerDevice(candidate_serial, port, topology)
+    return RoadrunnerDevice(candidate_serial, port, topology, **provenance(info))
 
 
 #: Indistinguishable from "not back yet" while a board re-enumerates, so all
@@ -218,7 +284,7 @@ def _await_reenumeration(
             except RoadrunnerError:
                 continue
             if matches_serial(candidate_serial) and _valid_info(info, candidate_serial, provisioned=provisioned):
-                return RoadrunnerDevice(candidate_serial, port, candidate_topology)
+                return RoadrunnerDevice(candidate_serial, port, candidate_topology, **provenance(info))
             # Prefer what the wire protocol itself reported: the descriptor's
             # serial can already equal what was wanted (matches_serial passed)
             # while INFO disagrees - e.g. a write that updated the USB string
@@ -350,6 +416,8 @@ __all__ = [
     "discover",
     "find_provisioned",
     "find_untracked",
+    "provenance",
     "provision_roadrunner",
     "wait_for_provisioned",
+    "wire_provenance",
 ]

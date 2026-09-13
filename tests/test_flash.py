@@ -775,12 +775,108 @@ def test_rp2040_dispatches_to_bootsel_when_a_uf2_was_built(paths, settings, tmp_
     (vol / "INFO_UF2.TXT").write_text("", encoding="utf-8")
     rp_paths = dataclasses.replace(paths, bootsel_root=str(root))
 
+    uf2, cfg = _katapult_uf2(tmp_path)
+
+    flash_initial_bootloader(
+        rp_paths, settings, "rp2040", "unused.bin", uf2_bin=uf2, katapult_config=cfg
+    )
+
+    assert (vol / "katapult.uf2").exists()
+
+
+def _katapult_uf2(tmp_path, *, address="0x10004000"):
+    """A one-page Katapult image at the start of flash, and its `.config`."""
+    import struct
+
+    block = struct.pack(
+        "<8I", 0x0A324655, 0x9E5D5157, 0x2000, 0x10000000, 256, 0, 1, 0xE48BFF56
+    )
+    block += b"\xaa" * 256 + b"\0" * 220 + struct.pack("<I", 0x0AB16F30)
     uf2 = tmp_path / "katapult.uf2"
-    uf2.write_bytes(b"\0" * 8)
+    uf2.write_bytes(block)
+    cfg = tmp_path / "katapult.config"
+    lines = "CONFIG_MACH_RP2040=y\n"
+    if address is not None:
+        lines += f"CONFIG_LAUNCH_APP_ADDRESS={address}\n"
+    cfg.write_text(lines, encoding="utf-8")
+    return str(uf2), str(cfg)
 
-    flash_initial_bootloader(rp_paths, settings, "rp2040", "unused.bin", uf2_bin=str(uf2))
 
-    assert (vol / "katapult.uf2").read_bytes() == b"\0" * 8
+def test_bootsel_copies_katapult_with_the_application_sector_erased(
+    paths, settings, tmp_path
+):
+    """Parity with DFU's mass-erase. Without it a board that last ran other
+    firmware keeps that image at the application address, Katapult chain-loads
+    it, and the board never comes back as Katapult."""
+    from mcu_updater.uf2_erase import with_erased_sector
+
+    root = tmp_path / "bootsel_root"
+    vol = root / "RPI-RP2"
+    vol.mkdir(parents=True)
+    (vol / "INFO_UF2.TXT").write_text("", encoding="utf-8")
+    rp_paths = dataclasses.replace(paths, bootsel_root=str(root))
+    uf2, cfg = _katapult_uf2(tmp_path)
+    with open(uf2, "rb") as fh:
+        original = fh.read()
+
+    flash_initial_bootloader(
+        rp_paths, settings, "rp2040", "unused.bin", uf2_bin=uf2, katapult_config=cfg
+    )
+
+    assert (vol / "katapult.uf2").read_bytes() == with_erased_sector(original, 0x10004000)
+    with open(uf2, "rb") as fh:
+        assert fh.read() == original, "the built artifact itself must not change"
+
+
+@pytest.mark.parametrize("address", [None, "nonsense"], ids=["absent", "unreadable"])
+def test_bootsel_refuses_without_an_application_address(
+    paths, settings, tmp_path, address
+):
+    """No address, no erase - and no silent fallback to copying Katapult alone,
+    which is exactly the write that leaves a board chain-loading old firmware."""
+    root = tmp_path / "bootsel_root"
+    vol = root / "RPI-RP2"
+    vol.mkdir(parents=True)
+    (vol / "INFO_UF2.TXT").write_text("", encoding="utf-8")
+    rp_paths = dataclasses.replace(paths, bootsel_root=str(root))
+    uf2, cfg = _katapult_uf2(tmp_path, address=address)
+
+    with pytest.raises(FlashError) as exc:
+        flash_initial_bootloader(
+            rp_paths, settings, "rp2040", "unused.bin", uf2_bin=uf2, katapult_config=cfg
+        )
+    assert "LAUNCH_APP_ADDRESS" in str(exc.value)
+    assert not (vol / "katapult.uf2").exists()
+
+
+def test_bootsel_refuses_with_no_katapult_config(paths, settings, tmp_path):
+    uf2, _cfg = _katapult_uf2(tmp_path)
+    with pytest.raises(FlashError) as exc:
+        flash_initial_bootloader(paths, settings, "rp2040", "unused.bin", uf2_bin=uf2)
+    assert "LAUNCH_APP_ADDRESS" in str(exc.value)
+
+
+def test_bootsel_refuses_a_uf2_it_cannot_extend(paths, settings, tmp_path):
+    """A corrupt artifact is a flash failure the caller can read, not a
+    traceback out of the UF2 parser."""
+    _uf2, cfg = _katapult_uf2(tmp_path)
+    bad = tmp_path / "bad.uf2"
+    bad.write_bytes(b"\0" * 8)
+    with pytest.raises(FlashError) as exc:
+        flash_initial_bootloader(
+            paths, settings, "rp2040", "unused.bin", uf2_bin=str(bad), katapult_config=cfg
+        )
+    assert "UF2" in str(exc.value)
+
+
+def test_bootsel_reports_a_missing_uf2_as_a_flash_error(paths, settings, tmp_path):
+    _uf2, cfg = _katapult_uf2(tmp_path)
+    missing = str(tmp_path / "nope.uf2")
+    with pytest.raises(FlashError) as exc:
+        flash_initial_bootloader(
+            paths, settings, "rp2040", "unused.bin", uf2_bin=missing, katapult_config=cfg
+        )
+    assert missing in str(exc.value)
 
 
 def test_rp2040_refuses_with_no_uf2_built(paths, settings):

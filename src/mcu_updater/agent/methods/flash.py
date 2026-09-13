@@ -960,6 +960,8 @@ class FlashMixin(_Base):
                 # Unconditional, exactly like the CLI's add-mcu - ignored by the
                 # DFU branch, required by BOOTSEL's.
                 uf2_bin=uf2_bin,
+                # Where BOOTSEL erases the old application; DFU mass-erases.
+                katapult_config=self.paths.config_file(name, "katapult"),
                 reporter=ctx.reporter,
                 target_serial=target,
             )

@@ -1150,6 +1150,17 @@ boot — this is the normal case for a board getting a bootloader *re*-installed
 — so `state` here can legitimately be the board's own firmware name instead of
 `"katapult"`.
 
+Both routes now erase the previous application before Katapult boots, so that
+case should no longer arise from this method; matching stays
+firmware-agnostic regardless. DFU erases with `mass-erase`. BOOTSEL has no
+erase command, so the `.uf2` copied to the volume is Katapult's own blocks plus
+the first flash sector at Katapult's `LAUNCH_APP_ADDRESS` written as `0xff`
+pages — the vector table Katapult checks for is gone, and the board stays in
+Katapult. The built artifact is not modified; the extended copy is staged in a
+temporary directory. The address comes from the type's saved `katapult.config`:
+if it is missing or unreadable, or the image already writes that sector, the
+job fails with a flash error rather than copying Katapult alone.
+
 `candidates` are boards that appeared and are **not** in the registry — the ones
 to adopt. `already_tracked` are boards that appeared and already belong to a
 type, which is the normal case when re-installing a bootloader: such a board sits

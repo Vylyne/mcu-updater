@@ -36,12 +36,13 @@ from __future__ import annotations
 import os
 import re
 import sys
+import tempfile
 import threading
 import time
 from collections.abc import Sequence
 from typing import Any
 
-from .. import firmware
+from .. import firmware, profiles, uf2_erase
 from ..build import Reporter, null_reporter, run_streamed
 from ..devices import (
     STATE_BOOTSEL,
@@ -910,6 +911,7 @@ def flash_initial_bootloader(
     fw_bin: str,
     *,
     uf2_bin: str | None = None,
+    katapult_config: str | None = None,
     reporter: Reporter = null_reporter,
     target_serial: str | None = None,
 ) -> None:
@@ -926,36 +928,87 @@ def flash_initial_bootloader(
     `.uf2` - a `.bin` copied there is silently ignored - and a build only
     produces one when the tree does. DFU never looks at it; a caller flashing
     an STM32 can leave it unset.
+
+    **Both routes erase what the board ran before.** DFU does it with
+    `mass-erase`; BOOTSEL has no erase command, so the copied `.uf2` is
+    Katapult plus the application's first sector as `0xff` pages (see
+    `uf2_erase`). Without that, a board that last ran other firmware keeps it
+    at the application address and Katapult chain-loads it. `katapult_config`
+    is Katapult's saved `.config`, which says where that address is; BOOTSEL
+    refuses without it rather than copying Katapult alone.
     """
     from .. import flashers
 
     state = STATE_BOOTSEL if chipset.startswith("rp2040") else STATE_DFU
     flasher = flashers.select_for(chipset, state)
 
-    if state == STATE_BOOTSEL:
-        if uf2_bin is None:
-            raise FlashError(
-                f"no .uf2 was built for {chipset}. BOOTSEL mass storage ignores "
-                f"a .bin - build again once the tree produces one.",
-                chipset=chipset,
+    with tempfile.TemporaryDirectory(prefix="mcu-updater-bootsel-") as staging:
+        if state == STATE_BOOTSEL:
+            if uf2_bin is None:
+                raise FlashError(
+                    f"no .uf2 was built for {chipset}. BOOTSEL mass storage ignores "
+                    f"a .bin - build again once the tree produces one.",
+                    chipset=chipset,
+                )
+            staged = _stage_erasing_uf2(uf2_bin, katapult_config, staging, chipset)
+            reporter(
+                "info",
+                "Staged Katapult with the application sector erased, so the board "
+                "cannot chain-load whatever it ran before.",
             )
-        target = flashers.bootsel.target_for(uf2_bin, chipset=chipset, paths=paths)
-    else:
-        target = flashers.dfu_util.target_for(
-            fw_bin, chipset=chipset, dfu_serial=target_serial
-        )
+            target = flashers.bootsel.target_for(staged, chipset=chipset, paths=paths)
+        else:
+            target = flashers.dfu_util.target_for(
+                fw_bin, chipset=chipset, dfu_serial=target_serial
+            )
 
-    bench = flashers.Bench(
-        paths=paths,
-        settings=settings,
-        # Nothing on this path touches a service: the board is in its ROM
-        # bootloader (DFU or BOOTSEL), not on the Klipper bus, which is what
-        # both flashers' `needs_services_stopped: False` says.
-        controller=_no_services,
-    )
-    with flasher.prepared(bench, [target], PlainContext(reporter)) as session:
-        flasher.write(bench, session, target, PlainContext(reporter))
-        flasher.settled(bench, target, PlainContext(reporter))
+        bench = flashers.Bench(
+            paths=paths,
+            settings=settings,
+            # Nothing on this path touches a service: the board is in its ROM
+            # bootloader (DFU or BOOTSEL), not on the Klipper bus, which is what
+            # both flashers' `needs_services_stopped: False` says.
+            controller=_no_services,
+        )
+        with flasher.prepared(bench, [target], PlainContext(reporter)) as session:
+            flasher.write(bench, session, target, PlainContext(reporter))
+            flasher.settled(bench, target, PlainContext(reporter))
+
+
+def _stage_erasing_uf2(
+    uf2_bin: str, katapult_config: str | None, staging: str, chipset: str
+) -> str:
+    """Katapult's `.uf2` with the application sector blanked, written under
+    `staging` with the artifact's own file name. The artifact is not modified."""
+    address = None if katapult_config is None else uf2_erase.launch_address(katapult_config)
+    if address is None:
+        raise FlashError(
+            f"cannot tell where Katapult expects the application: "
+            f"{katapult_config or 'no Katapult .config'} has no readable "
+            f"{profiles.LAUNCH_ADDRESS_SYMBOL}. Without it the old application "
+            f"cannot be erased, and the board could boot straight past Katapult. "
+            f"Build Katapult for this type again.",
+            chipset=chipset,
+            path=katapult_config,
+        )
+    try:
+        with open(uf2_bin, "rb") as fh:
+            image = fh.read()
+    except OSError as exc:
+        raise FlashError(
+            f"firmware image not found at {uf2_bin}: {exc}", path=uf2_bin
+        ) from exc
+    try:
+        extended = uf2_erase.with_erased_sector(image, address)
+    except uf2_erase.Uf2EraseError as exc:
+        raise FlashError(
+            f"cannot erase the application sector through {uf2_bin}: {exc}",
+            path=uf2_bin,
+        ) from exc
+    staged = os.path.join(staging, os.path.basename(uf2_bin))
+    with open(staged, "wb") as fh:
+        fh.write(extended)
+    return staged
 
 
 

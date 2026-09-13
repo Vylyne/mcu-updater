@@ -493,8 +493,25 @@ def test_bootsel_flash_receives_the_uf2_path(adder, paths, fake_root, monkeypatc
 
     calls: list[dict] = []
 
-    def spy(paths, settings, chipset, fw_bin, *, uf2_bin=None, reporter=None, target_serial=None):
-        calls.append({"chipset": chipset, "fw_bin": fw_bin, "uf2_bin": uf2_bin})
+    def spy(
+        paths,
+        settings,
+        chipset,
+        fw_bin,
+        *,
+        uf2_bin=None,
+        katapult_config=None,
+        reporter=None,
+        target_serial=None,
+    ):
+        calls.append(
+            {
+                "chipset": chipset,
+                "fw_bin": fw_bin,
+                "uf2_bin": uf2_bin,
+                "katapult_config": katapult_config,
+            }
+        )
 
     monkeypatch.setattr("mcu_updater.flashers.flash.flash_initial_bootloader", spy)
 
@@ -503,6 +520,8 @@ def test_bootsel_flash_receives_the_uf2_path(adder, paths, fake_root, monkeypatc
     assert adder.runner.get(res["job_id"]).state == "succeeded"
     assert calls[0]["uf2_bin"] == uf2_path
     assert calls[0]["chipset"] == PICO_CHIPSET
+    # Without it BOOTSEL cannot erase the old application and refuses the write.
+    assert calls[0]["katapult_config"] == paths.config_file(PICO, "katapult")
 
 
 def test_the_new_bootsel_board_is_found_by_diffing_the_bus(adder, paths, fake_root, monkeypatch):

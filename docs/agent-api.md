@@ -1228,9 +1228,10 @@ pressed - rather than a new decision. Five conditions keep it from ever being a
 surprise:
 
 - only **untracked** devices; anything already in the registry is left alone. Not
-  filtered to Katapult — a board that already carried a valid application
-  chain-loads straight past Katapult on its first boot, so it can turn up
-  running its own firmware instead; the pairing-key match below is what
+  filtered to Katapult — both install routes erase the old application now,
+  but a board bootloadered by an older version or by hand can still chain-load
+  straight past Katapult and turn up running that firmware instead; the
+  pairing-key match below is what
   actually identifies it, the same as the live wait in `fw.add_mcu.start`
 - only an **unambiguous** match against the pairing key
 - only within the **TTL** (24h), so a board found in a drawer next month is the stranger it has become

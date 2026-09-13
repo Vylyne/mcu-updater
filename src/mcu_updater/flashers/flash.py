@@ -1028,9 +1028,10 @@ def adoptable_devices(
 ) -> list[BusDevice]:
     """Devices of this chipset that appeared and aren't tracked yet.
 
-    Not filtered to Katapult: a board that already carries a valid application
-    chain-loads straight past Katapult on its first boot, so it can legitimately
-    reappear running its own firmware instead. Matching is chipset + "wasn't on
+    Not filtered to Katapult: both install routes erase the old application
+    now, but a board bootloadered by an older version or by hand can still
+    carry one, chain-load straight past Katapult on its first boot, and
+    reappear running that firmware instead. Matching is chipset + "wasn't on
     the bus before" - the same thing a bare board's first boot gives for free.
 
     Replaces the original's fixed `time.sleep(3)` with a real poll.

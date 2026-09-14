@@ -239,6 +239,29 @@ direct `target_for` calls in `agent/methods/flash.py` and `cli.py` go away.
 That keeps `docs/decisions.md`'s rule that flashers describe a mechanism,
 never a product.
 
+**`needs_services_stopped` moves onto the target.** Today it is a class
+attribute that `group_by_stop` reads through `by_name(target.flasher)`, and it
+differs between the two flashers being merged:
+
+- `bootsel` has `False`. Nothing holds the port of a board that is already in
+  BOOTSEL.
+- `helper_bootsel` has `True`. The request goes over a port Klipper is holding.
+
+One flasher can't carry both answers. The loop therefore sets it on the
+`FlashTarget` when it picks the flasher, from the flasher and the device's
+state together. This is the same way `stop_services` is already a per-target
+tuple. Setting `True` for every BOOTSEL write would be simpler, but it would
+also stop Klipper for a board Klipper has never held. `docs/decisions.md`
+records the precedent: `needs_klipper_stopped` became `needs_services_stopped`
+only when the per-type list landed alongside it. The flag moves together with
+the thing that makes it true.
+
+**First-time install has a family too.** `flashers.flash` calls
+`select_for(chipset, state)` for a bare board with no type
+(`flashers/flash.py:943`). What gets installed on that board is katapult, so
+the flasher comes from the katapult family's `flashers:` list. `select_for` is
+removed only once `add-mcu` resolves its flasher that way.
+
 A family with no `flashers:` key is a config error that names the key. That
 is the same strictness rule as section 1. install.sh seeds `flashers:` for
 klipper and katapult.
@@ -315,7 +338,9 @@ so the handler cannot loop.
 
 - `on_change` receives the devices the poll found (today it takes no
   arguments) and passes each one to the `on_appear` capability of every
-  declared family whose helper has one. `adopt_paired` stays on the same hook.
+  declared family whose helper has one. `adopt_paired` stays on the same hook,
+  called through a small adapter that throws away the argument, so its own
+  signature doesn't change.
 - `provision` takes the operation lock without waiting (`lock.exclusive`
   raises `BusyError` rather than blocking). While a build or flash holds the
   lock, the handler skips, and the next poll retries. It never blocks the

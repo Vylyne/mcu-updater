@@ -102,11 +102,12 @@ Each entry has these fields:
 The builder parses its own block, so the loader never needs to know which
 builder is which.
 
-**Builder-specific and helper-specific keys are spelled
-`<builder or helper name>_<upstream tool's word>`.** This extends the rule
-already in `docs/decisions.md` (config keys borrow the upstream tool's
-vocabulary, namespaced where the bare word is already taken here): the prefix
-is now always there, and it is always the name of the seam that reads the key.
+**A key read by one seam module is spelled
+`<seam module name>_<param name>`.** The prefix is the name of the builder or
+helper module that reads the key. `docs/decisions.md` already says config keys
+borrow the upstream tool's vocabulary, and the param name keeps following that
+wherever an upstream word exists. What changes is that the prefix is now
+always there.
 
 | Today | After | Read by |
 | --- | --- | --- |
@@ -114,8 +115,17 @@ is now always there, and it is always the name of the seam that reads the key.
 | `cmake_target:` | `cmake_target:` (already fits) | the cmake builder |
 | `[firmware] cmake_args:` | unchanged (already fits) | the cmake builder |
 | `profile:` | `kconfig_make_profile:` | the kconfig_make builder |
-| `device_map:` | `knomi_serial_device_map:` | the knomi_serial helper's `identify` (section 3) |
+| `device_map:` | removed | the knomi_serial helper knows where its watcher writes |
 | `klipper_section:` | removed | the device-info handler knows its own Klipper object (section 5) |
+
+**Removing `device_map:` and `klipper_section:`.** Both are type keys today
+(README config table), and both describe how another program behaves rather
+than anything the user decides. `device_map:` says where the knomi_serial
+watcher writes its map, which defaults to `knomi/devices.json` under
+`printer_data`. `klipper_section:` says which Klipper object the klippy module
+registers. The helper already knows both facts for its own firmware. A
+firmware that behaves differently gets a different helper, not a different
+key value.
 
 Keys every type has stay unprefixed: `firmware`, `chipset`, `serials`,
 `canbus_uuids`, `stop_services`. So do family keys every family can have:

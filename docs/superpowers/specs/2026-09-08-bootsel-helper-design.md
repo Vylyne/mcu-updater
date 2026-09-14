@@ -1,5 +1,9 @@
 # Closed-loop BOOTSEL flashing through firmware helpers
 
+> **Superseded** by `2026-09-14-one-pipeline-design.md`. The BOOTSEL request
+> and readiness wait become helper capabilities that the flash loop runs
+> around the generic `bootsel` flasher.
+
 ## Purpose
 
 Allow `fw.flash` to update a configured, running Roadrunner with its staged

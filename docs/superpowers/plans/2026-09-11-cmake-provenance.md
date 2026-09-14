@@ -1,5 +1,11 @@
 # CMake types join the provenance axis — Implementation Plan
 
+> **Superseded** by `docs/superpowers/specs/2026-09-14-one-pipeline-design.md`.
+> Tasks 1 (`771ff49`) and 4 (`4ab49da`) shipped. Tasks 2, 3, 5, 6 and 7 are
+> folded into that spec's order of work, and its plan replaces them. The
+> transport table's UART row is wrong: Roadrunner reports the same device info
+> over usbserial, i2c and uart.
+
 Spec: `docs/superpowers/specs/2026-09-11-cmake-provenance-design.md`
 
 CMake types are second-class on one axis: provenance. There is no running

@@ -99,11 +99,34 @@ Each entry has these fields:
 - `stop_services`
 - a builder settings block
 
-Builder-specific keys stay in the section: `env:`, `cmake_target:`,
-`device_map:`, the kconfig profile keys. The builder parses its own block, so
-the loader never needs to know which builder is which. The rule from
-`docs/decisions.md` still applies: config keys borrow the upstream tool's
-vocabulary.
+The builder parses its own block, so the loader never needs to know which
+builder is which.
+
+**Builder-specific and helper-specific keys are spelled
+`<builder or helper name>_<upstream tool's word>`.** This extends the rule
+already in `docs/decisions.md` (config keys borrow the upstream tool's
+vocabulary, namespaced where the bare word is already taken here): the prefix
+is now always there, and it is always the name of the seam that reads the key.
+
+| Today | After | Read by |
+| --- | --- | --- |
+| `env:` | `platformio_env:` | the platformio builder |
+| `cmake_target:` | `cmake_target:` (already fits) | the cmake builder |
+| `[firmware] cmake_args:` | unchanged (already fits) | the cmake builder |
+| `profile:` | `kconfig_make_profile:` | the kconfig_make builder |
+| `device_map:` | `knomi_serial_device_map:` | the knomi_serial helper's `identify` (section 3) |
+| `klipper_section:` | removed | the device-info handler knows its own Klipper object (section 5) |
+
+Keys every type has stay unprefixed: `firmware`, `chipset`, `serials`,
+`canbus_uuids`, `stop_services`. So do family keys every family can have:
+`source`, `builder`, `helper`, `flashers`, `submodules`, `auto_provision`.
+
+Per-family kconfig keys (`<family>_extra_args`, `<family>_makefile_patches`)
+keep their family prefix. A kconfig type builds two families, so the family
+is what tells the builder which one a key applies to.
+
+An old spelling is refused with a message giving the new one. Until config
+migrations exist, a user renames the key by hand.
 
 This removes two hazards along with the bug:
 
@@ -131,6 +154,25 @@ unit enumerates identically. The identity lives in its firmware instead. The
 device map (`watcher.py`, read and never written), `listen.discover()` and
 asking the device all become knomi_serial's `identify` handler. A knomi with a
 unique by-id can still be tracked by by-id.
+
+**Roadrunner needs no `identify` handler.** Its USB descriptor serial is its
+identity, so it uses the by-id default. `byid.parse_entry` already reads
+`usb-Vylyne_Roadrunner_RR-<serial>-if00` as a device with fw `Vylyne`, chipset
+`Roadrunner` and serial `RR-...`, which lands in `BusWatcher`'s fingerprint.
+A provisioned `RR-<26 base32>` serial goes in the type's `serials:` like any
+other board's. The fw and chipset parsed from a by-id name are never how a
+row gets its family; the family comes from the declared type.
+
+The roadrunner helper handles what by-id can't confirm. That is all behind
+capabilities, none of it in the identity path:
+
+- **`device_info`**: the INFO probe (`_valid_info`, with a
+  `Vylyne`/`Roadrunner` topology check) when Klipper does not hold the board.
+- **`provision` / `on_appear`**: a sweep row whose serial matches
+  `RR-UNPROVISIONED-<16 hex>`, confirmed with `find_untracked` before
+  anything is written.
+- **`request_bootsel`**: confirms the board with `find_provisioned` before
+  requesting BOOTSEL.
 
 The PlatformIO row's `id` becomes the declared identity: the by-id path for a
 `serial:` section, the `device_id` for a `device_id:` section. The resolved
@@ -214,9 +256,13 @@ Cartographer's version special cases move behind these capabilities.
 Each family lists its flashers in order:
 
 ```ini
+[firmware klipper]
+source: ~/klipper
+flashers: flashtool
+
 [firmware katapult]
 source: ~/katapult
-flashers: flashtool, dfu_util, bootsel
+flashers: dfu_util, bootsel
 
 [firmware roadrunner]
 source: ~/roadrunner
@@ -224,6 +270,13 @@ builder: cmake
 helper: roadrunner
 flashers: bootsel
 ```
+
+`flashtool` is not in katapult's list. Replacing katapult over katapult needs a
+deployer, and this tool doesn't track or manage that. The risk is probably
+overstated, but it would be new scope. Katapult also doesn't report its version
+and rarely needs an update. Katapult gets written only through a ROM
+bootloader. `flashtool` writes klipper through katapult, so it belongs in
+klipper's list.
 
 Every flasher gains `supports(device, helper) -> bool`. The loop picks the
 first flasher in the family's list that supports the device. `chipsets` and
@@ -268,7 +321,7 @@ klipper and katapult.
 
 ## 8. Operations
 
-**`build(names)`** loops over the named types and calls each firmware's
+**`build(types)`** loops over the given types and calls each firmware's
 builder, collecting results. There is no per-provider command.
 
 **`flash(devices)`** is the one loop:
@@ -320,11 +373,22 @@ The rules are the provenance spec's, unchanged:
 
 ## 10. Auto-provisioning on appearance
 
-`[firmware roadrunner] auto_provision:` is a boolean that defaults to on.
+`auto_provision:` is a family key and is opt in. It is a boolean that defaults to
+off:
 
-Defaulting to on is safe because an unprovisioned Roadrunner exposes only its
-identity and admin registers. Klippy cannot reach a printing state with one, so
-provisioning it cannot interrupt anything the printer is doing. The klippy
+```ini
+[firmware roadrunner]
+helper: roadrunner
+auto_provision: true
+```
+
+A family whose helper has no `provision` capability refuses the key.
+
+Provisioning without asking is safe because an unprovisioned Roadrunner
+exposes only its identity and admin registers. Klippy cannot reach a printing
+state with one, so provisioning it cannot interrupt anything the printer is
+doing. It is opt in anyway, because the setting lives on the firmware and a
+firmware section shouldn't write to hardware nobody asked about. The klippy
 extra provisions on `klippy:connect` / `klippy:ready` as well, but that only
 covers boards already configured in Klipper. Host provisioning covers a board
 that is plugged in and not yet configured anywhere.
@@ -338,7 +402,8 @@ so the handler cannot loop.
 
 - `on_change` receives the devices the poll found (today it takes no
   arguments) and passes each one to the `on_appear` capability of every
-  declared family whose helper has one. `adopt_paired` stays on the same hook,
+  declared family that has `auto_provision: true` and a helper with that
+  capability. `adopt_paired` stays on the same hook,
   called through a small adapter that throws away the argument, so its own
   signature doesn't change.
 - `provision` takes the operation lock without waiting (`lock.exclusive`
@@ -348,25 +413,54 @@ so the handler cannot loop.
   flash.
 - It never runs from the status poll.
 
-**CLI:** there is no watcher. Tracking an `RR-UNPROVISIONED` serial provisions
-it first when `auto_provision` is on, then tracks the provisioned serial. This
-applies to both the CLI and the agent's `registry.py:236-252`. With
-`auto_provision` off, both keep today's `roadrunner_unprovisioned` refusal.
+## 11. Tracking an unprovisioned board provisions it
+
+The `roadrunner_unprovisioned` refusal (`agent/methods/registry.py:236-252`)
+is removed. It exists because the serial changes at provisioning, but the new
+serial isn't a mystery: `provision_roadrunner` generates it from the UUID the
+host passes in, and the board confirms it by re-enumerating with that serial.
+
+Tracking a serial goes through the type's family helper and never branches on
+the provider:
+
+1. If the helper has `provision` and recognises the serial as unprovisioned,
+   provision under the operation lock (confirm, write, wait for
+   re-enumeration). That is the same sequence `fw.roadrunner.provision` runs
+   today.
+2. Add the serial the board came back with to the type's `serials:`.
+
+Two constraints:
+
+- **The unprovisioned serial is never persisted.** Its 16 hex characters are
+  the RP2040 flash UID. The only serial written to config is the provisioned
+  one.
+- **This does not depend on `auto_provision`.** Tracking is an explicit request
+  for that one board; `auto_provision` only controls what the watcher does
+  without being asked. The CLI has no watcher, so this is its only
+  provisioning path, and the agent's `fw.serial.add` works the same way.
+
+A lock held by another operation refuses the track with `BusyError`, the same
+as any other write. It is not retried, because a person is waiting on the
+answer.
 
 ## Order of work
 
 Each step leaves `targets[]` and the verdicts unchanged until the step that is
 meant to change them.
 
+Two plans: steps 1-4 (config and inventory), then steps 5-9 (handlers and
+loops).
+
 1. **One type loader**, plus removing the display vocabulary. This fixes the
-   Roadrunner CLI tracking gap without changing the config format.
+   Roadrunner CLI tracking gap. The key renames from section 2 land here too,
+   since this is where builders start parsing their own blocks.
 2. **Strict firmware sections**, install.sh seeding with the katapult clone
    offer, and the flashtool fallback.
 3. **Inventory lift.** `targets[]` is unchanged.
 4. **The CLI reads the inventory.**
 5. **Device-info handlers**, with the UART limitation retired.
-6. **`flashers:` lists, `supports()`, helper steps in the loop**, and
-   auto-provisioning.
+6. **`flashers:` lists, `supports()`, helper steps in the loop**,
+   auto-provisioning, and provision-on-track (section 11).
 7. **The verdict**, with the new reason.
 8. **The build/flash/update-all loops**, retiring the refusals.
 9. **Docs and bench.** On the bench (192.168.83.105): a Roadrunner over
@@ -374,7 +468,8 @@ meant to change them.
    prove the topology match refuses the wrong volume.
 
 Step 1 goes ahead of strictness because it fixes the reported bug without
-requiring an install.sh run on either printer.
+requiring an install.sh run on either printer. The key renames do need a
+hand edit on any printer with a PlatformIO or kconfig type.
 
 Already shipped from the provenance plan: Task 1 (`771ff49`, the running
 version is reachable) and Task 4 (`4ab49da`, the UF2 image digest).
@@ -390,8 +485,13 @@ version is reachable) and Task 4 (`4ab49da`, the UF2 image digest).
   later devices, and `FlashLog` written before the failure is raised.
 - Strictness: an undeclared family, a missing `flashers:` key, and a misspelt
   helper each refuse with a message naming the fix.
-- Auto-provisioning: skips while the lock is held, doesn't run with
-  `auto_provision` off, and finishes after exactly one provision per board.
+- Auto-provisioning: doesn't run with `auto_provision` absent (the default),
+  skips while the lock is held, and finishes after exactly one provision per
+  board.
+- Provision-on-track: `serials:` gets the provisioned serial and never the
+  `RR-UNPROVISIONED` one, whatever `auto_provision` says. A lock held
+  elsewhere refuses the track.
+- Key spellings: each old key is refused with the new spelling in the message.
 - Every guarded line these steps rewrite has a mutation spec anchored to it.
   Re-anchor it in the same commit (AGENTS.md).
 

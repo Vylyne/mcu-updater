@@ -18,13 +18,160 @@ from __future__ import annotations
 
 import contextlib
 import os
-import shutil
 from collections.abc import Iterator
 from typing import Any
 
 from ..devices import STATE_BOOTSEL, bootsel_devices, bootsel_id_for, bootsel_scan
 from ..errors import BootselNotMountedError, DeviceNotFoundError, FlashError
 from .spec import Bench, FlashTarget
+
+
+def ensure_uf2(uf2: str) -> None:
+    """Refuse a missing image before a BOOTSEL transition is requested."""
+    if not os.path.exists(uf2):
+        raise FlashError(f"firmware image not found at {uf2}.", path=uf2)
+
+
+_COPY_CHUNK = 1 << 20
+
+
+class _VolumeVanished(Exception):
+    """Every byte of the image landed; the failure came after that.
+
+    Internal to this module - it never leaves :func:`copy_uf2`.
+    """
+
+    def __init__(self, error: OSError) -> None:
+        super().__init__(str(error))
+        self.error = error
+
+
+def _same_file(uf2: str, dest: str) -> bool:
+    """True when writing `dest` would truncate the image being read.
+
+    `shutil.copy2` refused this outright and the explicit copy has to keep
+    doing so: opening one inode for reading and for writing empties it, the
+    read then returns nothing, and a zero-byte file gets reported as a
+    completed flash. Only reachable if a firmware directory overlaps
+    `bootsel_root`, which nothing currently forbids.
+
+    Identity first (`samefile` compares the inode, so hard links and symlinks
+    are caught), resolved paths second for a filesystem whose inode numbers
+    cannot be trusted. Neither may raise: this runs against a mount that is
+    allowed to disappear, and a stat failure there means "not the same file",
+    not "refuse the flash".
+    """
+    with contextlib.suppress(OSError, ValueError):
+        if os.path.exists(dest) and os.path.samefile(uf2, dest):
+            return True
+    with contextlib.suppress(OSError, ValueError):
+        return os.path.normcase(os.path.realpath(uf2)) == os.path.normcase(
+            os.path.realpath(dest)
+        )
+    return False
+
+
+def _open_dest(dest: str) -> Any:
+    """The destination handle, unbuffered on purpose.
+
+    `buffering=0` removes Python's own buffer, and that is precisely what it
+    buys: nothing is holding the tail of the image when the read loop ends, so
+    a failure at flush time cannot arrive *after* :func:`_copy_bytes` has
+    already concluded every byte was handed over. A buffered writer would still
+    be sitting on the tail there, and its flush failure - a genuinely
+    incomplete write - would be indistinguishable from the board resetting once
+    the last block landed.
+
+    It does not remove the kernel page cache, and there is deliberately no
+    `fsync`: forcing FAT metadata writeback could refuse a write that actually
+    landed, which is the exact failure this boundary exists to remove. The
+    residue is honest and unmeasured - a kernel that defers a mid-image
+    writeback error to `close()` would present a truncated image as the benign
+    late case. Bench item for the first real flash: capture the errno and the
+    step it arrives at.
+    """
+    return open(dest, "wb", buffering=0)
+
+
+def _copy_bytes(uf2: str, dest: str) -> None:
+    """Write the image, distinguishing an incomplete write from a late one.
+
+    Raises `OSError` while bytes are still outstanding, and `_VolumeVanished`
+    once every byte has been written and only the close remains. No `copystat`
+    half: timestamps and permissions on a FAT volume that is about to
+    disappear are meaningless, and reaching for them is what turned a normal
+    ending into a reported failure.
+    """
+    complete = False
+    try:
+        with open(uf2, "rb") as src, _open_dest(dest) as out:
+            while True:
+                chunk = src.read(_COPY_CHUNK)
+                if not chunk:
+                    break
+                view = memoryview(chunk)
+                while view:
+                    view = view[out.write(view) :]
+            complete = True
+    except OSError as exc:
+        if complete:
+            raise _VolumeVanished(exc) from exc
+        raise
+
+
+def copy_uf2(uf2: str, mount: str, ctx: Any) -> None:
+    """Copy one validated UF2 to a selected BOOTSEL volume.
+
+    The boundary this draws is the whole point. The RP2040 boot ROM resets the
+    board the instant the final UF2 block lands, so on real hardware the mount
+    disappearing at the end of a *good* write is the normal path, not an edge
+    case: anything after the data - a close, a metadata step - fails on a
+    volume that is already gone. Reporting that as a failed copy would hide the
+    `FlashLog` record behind `result["flashed"]`, tell the operator a correct
+    board still needs flashing, and invite a re-flash.
+
+    Bytes still outstanding when the error arrives are the other case, and stay
+    a `FlashError`: a board unplugged mid-write, a full or erroring FAT volume.
+    Raw, that `OSError` would leave `write_all` altogether - past the Klipper
+    readiness gate it runs after the batch, which for `HelperBootsel` is
+    exactly when Klipper's units have just been restarted underneath a board in
+    an unknown state.
+
+    Cancellation is deliberately not checked in here; it stays between writes.
+    """
+    ensure_uf2(uf2)
+    dest = os.path.join(mount, os.path.basename(uf2))
+    if _same_file(uf2, dest):
+        raise FlashError(
+            f"refusing to copy {os.path.basename(uf2)} onto itself at {dest}: "
+            "the staged image and the BOOTSEL volume are the same file.",
+            path=uf2,
+            mount=mount,
+        )
+    ctx.reporter("info", f"Copying {uf2} to {dest}...")
+    vanished: OSError | None = None
+    try:
+        _copy_bytes(uf2, dest)
+    except _VolumeVanished as gone:
+        vanished = gone.error
+    except OSError as exc:
+        raise FlashError(
+            f"could not write {os.path.basename(uf2)} to {mount}: {exc}",
+            path=uf2,
+            mount=mount,
+        ) from exc
+    if vanished is not None:
+        ctx.reporter(
+            "info",
+            f"The volume went away once the last block landed ({vanished}) - "
+            "that is the board resetting into the firmware it just took, not a "
+            "failed write.",
+        )
+    ctx.reporter(
+        "info",
+        "Copied. The board flashes itself from the .uf2 and reboots once the "
+        "write lands - no further action needed here.",
+    )
 
 
 class Bootsel:
@@ -52,8 +199,7 @@ class Bootsel:
         self, bench: Bench, session: Any, target: FlashTarget, ctx: Any
     ) -> dict[str, Any]:
         uf2 = target.detail["uf2_file"]
-        if not os.path.exists(uf2):
-            raise FlashError(f"firmware image not found at {uf2}.", path=uf2)
+        ensure_uf2(uf2)
 
         if bench.settings.dry_run:
             ctx.reporter(
@@ -62,14 +208,7 @@ class Bootsel:
             return {"mount": None}
 
         mount = _find_mount(bench.paths)
-        dest = os.path.join(mount, os.path.basename(uf2))
-        ctx.reporter("info", f"Copying {uf2} to {dest}...")
-        shutil.copy2(uf2, dest)
-        ctx.reporter(
-            "info",
-            "Copied. The board flashes itself from the .uf2 and reboots once the "
-            "write lands - no further action needed here.",
-        )
+        copy_uf2(uf2, mount, ctx)
         return {"mount": mount}
 
     def settled(self, bench: Bench, target: FlashTarget, ctx: Any) -> None:

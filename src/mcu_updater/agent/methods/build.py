@@ -7,6 +7,7 @@ from typing import Any
 
 from ... import firmware, profiles, providers
 from ...errors import (
+    UnknownTypeError,
     UpdaterError,
 )
 from ...lock import exclusive
@@ -32,44 +33,33 @@ class BuildMixin(_Base):
         return self.runner
 
     def _provider_of(self, name: str) -> str:
-        """Which build system owns this type, by name.
+        """Which build system owns this type, by name, in RPC terms.
 
-        The whole reason `fw.display.build` existed as a separate method: the
-        caller had to know which kind of thing it was addressing, so the panel
-        carried a `kind` and picked a method from it. It does not have to. A type
-        name resolves to exactly one provider, and this is where that happens -
-        once, rather than at every call site that would otherwise branch.
-
-        Raises rather than guessing. A name belonging to neither is a typo or a
-        section somebody deleted, and defaulting it to kconfig would produce
-        "no saved klipper config" for a screen.
+        An adapter over `providers.provider_of`, which is the resolver itself
+        and is shared with the CLI. Only the error shape is this layer's: the
+        panel reads an `unknown_type` payload keyed `name`, while the package
+        error carries the package-wide `type=`/`known=` pair, so the two are
+        translated here rather than either being bent to the other.
         """
-        if name in self.pio_types():
-            return providers.PlatformIO.name
-        # Before the registry, not after. A cmake type is kept out of it by
-        # `config.py`'s foreign-builder rule, so the order does not matter
-        # today - but if that ever slipped, asking the registry first would
-        # answer `kconfig_make` for a Roadrunner and send it down a build path
-        # that has no .config to run, silently. Asking here first cannot.
-        if name in self._cmake_types():
-            return providers.Cmake.name
-        if name in self.registry().names():
-            return providers.KconfigMake.name
-        raise RpcError(
-            f"no type '{name}' is configured.",
-            data={
-                "code": "unknown_type",
-                "message": "no such type",
-                "data": {
-                    "name": name,
-                    "known": sorted(
-                        set(self.registry().names())
-                        | set(self.pio_types())
-                        | set(self._cmake_types())
-                    ),
+        try:
+            return providers.provider_of(self.paths, name)
+        except UnknownTypeError as exc:
+            raise RpcError(
+                exc.message,
+                data={
+                    "code": "unknown_type",
+                    # The sentence, not "no such type". `normalizeAgentError`
+                    # prefers this nested message over the outer one, so a bare
+                    # category label is what the operator actually reads - and
+                    # `fw.flash_all` used to reach them through `reg.get`, which
+                    # said the sentence. Unifying upward rather than downward.
+                    "message": f"MCU type '{name}' does not exist.",
+                    "data": {
+                        "name": name,
+                        "known": exc.data["known"],
+                    },
                 },
-            },
-        )
+            ) from None
 
     def _cmake_types(self) -> dict:
         """Configured types whose declared family is cmake-built.

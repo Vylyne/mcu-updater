@@ -102,15 +102,25 @@ def write_all(
                     done += 1
                     try:
                         extra = flasher.write(bench, session, target, ctx)
-                        flashed.append({**target.to_json(), **extra})
-                        # After the write and after it is recorded: a device that
-                        # came back slowly is still flashed.
-                        flasher.settled(bench, target, ctx)
                     except OperationCancelled:
                         raise
                     except UpdaterError as exc:
                         ctx.reporter("warn", f"{target.id}: {exc}")
                         failures.append({**target.to_json(), "error": str(exc)})
+                        continue
+                    flashed.append({**target.to_json(), **extra})
+                    # After the write and after it is recorded: a device that
+                    # came back slowly is still flashed. Its own handler, and
+                    # deliberately not `failures`: this target is already in
+                    # `flashed`, and a consumer summing both would report one
+                    # board twice. `Flasher.settled` is documented never to be
+                    # fatal, so this is the backstop for one that forgets.
+                    try:
+                        flasher.settled(bench, target, ctx)
+                    except OperationCancelled:
+                        raise
+                    except UpdaterError as exc:
+                        ctx.reporter("warn", f"{target.id}: {exc}")
 
     write_group(free)
     if stopped:

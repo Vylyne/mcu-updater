@@ -477,3 +477,245 @@ def test_discovery_failing_still_names_both_sources(c, pio_type, monkeypatch):
 
     assert "device map" in str(exc.value)
     assert "asking the devices directly" in str(exc.value)
+
+
+# --------------------------------------------------------------------------
+# flash: the third provider
+#
+# `flash -t roadrunner -s ...` died with `KeyError: 'roadrunner'` inside
+# `_ports_free` on a real printer, because "not in the kconfig registry" meant
+# "PlatformIO" for exactly as long as there were two providers. These tests are
+# about which provider the CLI decides a name belongs to, and nothing else.
+# --------------------------------------------------------------------------
+
+
+RR_SERIAL = "5K3DNTFCR1B3C9D0RZMYA3Y720"
+
+
+def _cmake_flashable(c, fake_root, *, helper: bool = True, staged: bool = True):
+    """A CMake type a flash can actually reach: a helper and a built UF2.
+
+    Separate from `cmake_type` above, which deliberately declares neither - the
+    build tests want the bare declaration, and a flash wants the two things that
+    make a declaration writable.
+    """
+    import os
+
+    tree = fake_root / "roadrunner" / "rp2040"
+    tree.mkdir(parents=True, exist_ok=True)
+    (tree / "CMakeLists.txt").write_bytes(b"project(roadrunner)\n")
+    helper_line = "helper: roadrunner\n" if helper else ""
+    with open(c.paths.main_config, "a", encoding="utf-8", newline="\n") as fh:
+        fh.write(
+            f"\n[firmware roadrunner]\nsource: {tree}\nbuilder: cmake\n{helper_line}"
+            f"\n[type roadrunner]\nchipset: rp2040\nfirmware: roadrunner\n"
+            f"cmake_target: roadrunner_v1_i2c_rgb\nserials: {RR_SERIAL}\n"
+        )
+    if staged:
+        os.makedirs(c.paths.artifact_dir("roadrunner"), exist_ok=True)
+        pathlib.Path(c.paths.uf2_file("roadrunner", "roadrunner")).write_bytes(b"UF2\n")
+    return tree
+
+
+@pytest.fixture
+def cmake_flashable(c, fake_root):
+    return _cmake_flashable(c, fake_root)
+
+
+def test_flashing_a_cmake_serial_alone_routes_to_the_helper(
+    c, cmake_flashable, captured, monkeypatch
+):
+    """`resolve_serial` only ever saw the kconfig registry, so a serial tracked
+    under a `[type roadrunner]` section was reported as tracked nowhere."""
+    monkeypatch.setattr(cli, "_confirm", lambda prompt: True)
+
+    with pytest.raises(SystemExit) as exc:
+        cli.flash_fw_cmd(
+            argparse.Namespace(type=None, serial=RR_SERIAL, yes=True, force=False)
+        )
+
+    assert exc.value.code == 0
+    assert len(captured) == 1
+    assert [t.flasher for t in captured[0]] == ["helper_bootsel"]
+    assert [t.id for t in captured[0]] == [RR_SERIAL]
+    assert captured[0][0].type == "roadrunner"
+
+
+def test_flashing_a_cmake_serial_with_its_type_routes_the_same_way(
+    c, cmake_flashable, captured, monkeypatch
+):
+    """The printer's failing command, verbatim. `-t` named the type correctly;
+    the CLI took "not in the registry" to mean the PlatformIO branch."""
+    monkeypatch.setattr(cli, "_confirm", lambda prompt: True)
+
+    with pytest.raises(SystemExit) as exc:
+        cli.flash_fw_cmd(
+            argparse.Namespace(
+                type="roadrunner", serial=RR_SERIAL, yes=True, force=False
+            )
+        )
+
+    assert exc.value.code == 0
+    assert [t.flasher for t in captured[0]] == ["helper_bootsel"]
+
+
+def test_the_cmake_target_carries_the_staged_uf2_and_its_stop_services(
+    c, cmake_flashable, captured, monkeypatch
+):
+    """`for_cmake`, not `for_display` - the resolver that indexes the PlatformIO
+    map is the one that raised KeyError."""
+    monkeypatch.setattr(cli, "_confirm", lambda prompt: True)
+
+    with pytest.raises(SystemExit):
+        cli.flash_fw_cmd(
+            argparse.Namespace(type=None, serial=RR_SERIAL, yes=True, force=False)
+        )
+
+    target = captured[0][0]
+    assert target.detail["uf2_file"] == c.paths.uf2_file("roadrunner", "roadrunner")
+    assert target.detail["chipset"] == "rp2040"
+    assert target.detail["helper"].name == "roadrunner"
+    assert "klipper" in target.stop_services
+
+
+def test_flashing_a_cmake_type_by_name_alone_is_refused(
+    c, cmake_flashable, captured, capsys, monkeypatch
+):
+    """Deferred work with its own spec, not a silent no-op. `bulk.py` refuses
+    the same thing for the same reason and points at the per-device call."""
+    monkeypatch.setattr(cli, "_confirm", lambda prompt: True)
+
+    with pytest.raises(SystemExit) as exc:
+        cli.flash_fw_cmd(argparse.Namespace(type="roadrunner", serial=None, yes=True))
+
+    assert exc.value.code == 1
+    err = capsys.readouterr().err
+    assert "CMake" in err and "roadrunner" in err
+    assert "-s <serial>" in err
+    assert captured == []
+
+
+def test_a_cmake_type_with_no_helper_says_so(c, fake_root, captured, monkeypatch):
+    """A family that configures no helper cannot put the board into BOOTSEL, and
+    nothing below that point can compensate for it."""
+    _cmake_flashable(c, fake_root, helper=False)
+    monkeypatch.setattr(cli, "_confirm", lambda prompt: True)
+
+    with pytest.raises(UpdaterError) as exc:
+        cli.flash_fw_cmd(
+            argparse.Namespace(type=None, serial=RR_SERIAL, yes=True, force=False)
+        )
+
+    assert "no firmware helper" in str(exc.value)
+    assert captured == []
+
+
+def test_a_cmake_type_with_nothing_built_says_to_build_it(
+    c, fake_root, captured, monkeypatch
+):
+    monkeypatch.setattr(cli, "_confirm", lambda prompt: True)
+    _cmake_flashable(c, fake_root, staged=False)
+
+    with pytest.raises(UpdaterError) as exc:
+        cli.flash_fw_cmd(
+            argparse.Namespace(type=None, serial=RR_SERIAL, yes=True, force=False)
+        )
+
+    assert "Build it first" in str(exc.value)
+    assert captured == []
+
+
+def test_an_untracked_serial_can_be_added_to_a_cmake_type(
+    c, fake_root, captured, monkeypatch
+):
+    """The add-prompt writes through the declared-section writer, so a CMake
+    type gains an identity without the kconfig registry claiming its build."""
+    _cmake_flashable(c, fake_root)
+    monkeypatch.setattr(cli, "_confirm", lambda prompt: True)
+
+    with pytest.raises(SystemExit) as exc:
+        cli.flash_fw_cmd(
+            argparse.Namespace(type="roadrunner", serial="RR-NEW", yes=True, force=False)
+        )
+
+    assert exc.value.code == 0
+    assert [t.id for t in captured[0]] == ["RR-NEW"]
+    reloaded = Registry.load(c.paths)
+    assert reloaded.resolve_declared_serial("RR-NEW") == "roadrunner"
+    assert "roadrunner" not in reloaded.names(), "still not a kconfig-built type"
+
+
+@pytest.mark.parametrize(
+    "type_name,serial",
+    [
+        ("roadrunner", RR_SERIAL),
+        ("roadrunner", None),
+        (None, RR_SERIAL),
+        ("roadrunner", "RR-NEW"),
+    ],
+)
+def test_no_cmake_argument_combination_raises_keyerror(
+    c, cmake_flashable, captured, monkeypatch, type_name, serial
+):
+    """The printer traceback, as a regression test: `KeyError: 'roadrunner'`
+    from `_ports_free` indexing the PlatformIO map with a CMake name."""
+    monkeypatch.setattr(cli, "_confirm", lambda prompt: True)
+
+    with pytest.raises((SystemExit, UpdaterError)):
+        cli.flash_fw_cmd(
+            argparse.Namespace(type=type_name, serial=serial, yes=True, force=False)
+        )
+
+
+def test_an_unknown_type_is_named_rather_than_indexed(c, monkeypatch):
+    """Before the seam this reached `pio.load(paths)[name]`. A typo is a typo,
+    whichever provider the user meant."""
+    from mcu_updater.errors import UnknownTypeError
+
+    monkeypatch.setattr(cli, "_confirm", lambda prompt: True)
+
+    with pytest.raises(UnknownTypeError) as exc:
+        cli.flash_fw_cmd(
+            argparse.Namespace(type="nosuchtype", serial=None, yes=True, force=False)
+        )
+
+    assert exc.value.data["type"] == "nosuchtype"
+
+
+def test_a_serial_tracked_under_another_provider_is_refused_with_its_name(
+    c, cmake_flashable, captured, monkeypatch
+):
+    """The kconfig-only search behind the old `resolve_serial` could not see a
+    CMake type, so `-t board -s <roadrunner serial>` looked like a brand new
+    device and offered to add it - tracking one board under two types. The
+    declared search sees it and says where it actually lives."""
+    from mcu_updater.errors import SerialTrackedElsewhereError
+
+    monkeypatch.setattr(cli, "_confirm", lambda prompt: True)
+
+    with pytest.raises(SerialTrackedElsewhereError) as exc:
+        cli.flash_fw_cmd(
+            argparse.Namespace(type="board", serial=RR_SERIAL, yes=True, force=False)
+        )
+
+    assert "Did you mean -t roadrunner?" in str(exc.value)
+    assert exc.value.data["tracked_under"] == ["roadrunner"]
+    assert captured == []
+
+
+def test_an_ambiguous_serial_still_asks_for_a_type(c, cmake_flashable, monkeypatch):
+    """One serial under two types, one of them CMake: the same disambiguation
+    prompt, now reachable across providers rather than within one."""
+    from mcu_updater.errors import AmbiguousSerialError
+
+    reg = Registry.load(c.paths)
+    reg.add_serial("board", RR_SERIAL)
+    reg.save(c.paths)
+    monkeypatch.setattr(cli, "_confirm", lambda prompt: True)
+
+    with pytest.raises(AmbiguousSerialError) as exc:
+        cli.flash_fw_cmd(
+            argparse.Namespace(type=None, serial=RR_SERIAL, yes=True, force=False)
+        )
+
+    assert sorted(exc.value.data["tracked_under"]) == ["board", "roadrunner"]

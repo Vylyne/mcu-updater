@@ -14,10 +14,24 @@ from __future__ import annotations
 import pathlib
 import shutil
 import subprocess
+import sys
 
 import pytest
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
+
+
+def test_helper_contract_imports_in_a_clean_interpreter():
+    """The helper protocol must not initialize the flasher registry."""
+    result = subprocess.run(
+        [sys.executable, "-c", "from mcu_updater.helpers import BootselHandoff"],
+        cwd=REPO_ROOT / "src",
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+    assert result.returncode == 0, result.stderr
 
 
 def _tracked_modes() -> dict[str, str]:

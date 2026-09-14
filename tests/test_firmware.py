@@ -493,3 +493,26 @@ def test_cmake_args_reaches_the_json_payload(paths):
     cannot see is a key nobody can debug."""
     family = firmware.FirmwareFamily(name="roadrunner", cmake_args="-DFOO=1")
     assert family.to_json()["cmake_args"] == "-DFOO=1"
+
+
+def test_helper_is_read_from_the_firmware_section(paths):
+    _write_firmware(paths, "roadrunner", helper="roadrunner")
+
+    assert firmware.load(paths)["roadrunner"].helper == "roadrunner"
+
+
+def test_an_empty_helper_name_has_no_requester():
+    from mcu_updater.helpers import for_name
+
+    assert for_name("", family="klipper") is None
+
+
+def test_an_unknown_helper_name_is_refused_with_its_family():
+    from mcu_updater.errors import ConfigCorruptError
+    from mcu_updater.helpers import for_name
+
+    with pytest.raises(ConfigCorruptError) as exc:
+        for_name("not-a-helper", family="roadrunner")
+
+    assert "roadrunner" in str(exc.value)
+    assert "not-a-helper" in str(exc.value)

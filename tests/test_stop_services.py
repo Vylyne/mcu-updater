@@ -5,11 +5,14 @@ granular wins, per-provider default when nothing at all was set.
 from __future__ import annotations
 
 from mcu_updater.config import McuType
+from mcu_updater.firmware import FirmwareFamily
+from mcu_updater.providers.cmake import CmakeType
 from mcu_updater.providers.pio import PioType
 from mcu_updater.settings import Settings
 from mcu_updater.stop_services import (
     DEFAULT_DISPLAY,
     DEFAULT_MCU,
+    for_cmake,
     for_display,
     for_mcu,
     resolve_stop_services,
@@ -81,6 +84,31 @@ def test_for_mcu_type_level_blank_stops_nothing(paths):
     mcu = McuType(name="bttebb36", firmwares=["klipper"], stop_services=[])
     settings = Settings()
     assert for_mcu(paths, mcu, settings) == ()
+
+
+def test_for_cmake_falls_back_to_the_mcu_default(paths):
+    target = CmakeType(name="roadrunner", firmware="roadrunner")
+    assert for_cmake(paths, target, Settings()) == DEFAULT_MCU
+
+
+def test_for_cmake_uses_type_then_family_then_updater_precedence(paths):
+    target = CmakeType(
+        name="roadrunner",
+        firmware="roadrunner",
+        stop_services=["type-service"],
+    )
+    families = {
+        "roadrunner": FirmwareFamily(
+            name="roadrunner", stop_services=["family-service"]
+        )
+    }
+    settings = Settings(stop_services=["updater-service"])
+
+    assert for_cmake(paths, target, settings, families) == ("type-service",)
+    target.stop_services = None
+    assert for_cmake(paths, target, settings, families) == ("family-service",)
+    families["roadrunner"] = FirmwareFamily(name="roadrunner")
+    assert for_cmake(paths, target, settings, families) == ("updater-service",)
 
 
 def test_for_display_falls_back_to_the_display_default(paths):

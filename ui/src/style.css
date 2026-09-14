@@ -1,4 +1,4 @@
-/* Palette copied from the Mainsail fork's own checkout, not invented - see
+/* Palette follows Mainsail's established theme conventions - see
    docs/standalone-ui.md's Phase 9 section for the source of every value
    (Vuetify 2's default dark/light presets and store/variables.ts). Dark is
    the default set on :root because Mainsail itself defaults to dark; a
@@ -142,7 +142,7 @@ main h1 {
 /* A global utility, not a toolbar-only one: TargetRow's header and device
    rows both push their trailing half (chips, version, verdict, actions) to
    the right edge with this, which is what makes those columns line up row to
-   row the way FirmwareUpdaterPanelTarget.vue's <v-spacer> does. Scoped to
+   row the way the target row's <v-spacer> does. Scoped to
    .panel-toolbar it silently did nothing there, and every row ended wherever
    its own content ran out. */
 .spacer {
@@ -160,7 +160,7 @@ main h1 {
 }
 
 /* Collapsible panels rotate their chevron rather than swap icons - same
-   500ms transform transition Mainsail's Panel.vue uses. */
+   500ms transform transition used by the panel. */
 .panel-collapse-btn svg {
   transition: transform 500ms;
 }
@@ -651,7 +651,7 @@ main.embed {
   cursor: default;
 }
 
-/* Remove/untrack-style rows - the fork panel's v-list-item color="error"
+/* Remove/untrack-style rows - the panel's v-list-item color="error"
    equivalent. Text-only red, not a filled background: this sits in a list
    next to plain rows, not standing alone the way a .btn-danger does. */
 .menu-item--danger {

@@ -31,7 +31,7 @@ import threading
 import time
 
 from .. import build as build_mod
-from .. import firmware, sections
+from .. import firmware, sections, uf2
 from ..build import Reporter, null_reporter
 from ..cfgdoc import CfgDocument
 from ..errors import BuildError, ConfigError
@@ -75,6 +75,12 @@ class CmakeType:
     #: `Install`, and looking a family back up from inside it would be a
     #: second config parse to answer something load() already knew.
     submodules: bool = False
+    #: Device identity remains owned by the shared ``[type ...]`` document,
+    #: even though CMake owns this type's build semantics.
+    chipset: str = ""
+    serials: list[str] = dataclasses.field(default_factory=list)
+    #: Optional type-level service override; ``None`` inherits the family.
+    stop_services: list[str] | None = None
 
     def to_json(self) -> dict:
         return {
@@ -84,6 +90,9 @@ class CmakeType:
             "firmware": self.firmware,
             "cmake_args": self.cmake_args,
             "submodules": self.submodules,
+            "chipset": self.chipset,
+            "serials": list(self.serials),
+            "stop_services": self.stop_services,
         }
 
 
@@ -129,6 +138,9 @@ def load(paths: Paths) -> dict[str, CmakeType]:
             firmware=first_fw,
             cmake_args=family.cmake_args,
             submodules=family.submodules,
+            chipset=(doc.get(section, "chipset") or "").strip(),
+            serials=doc.get_list(section, "serials"),
+            stop_services=doc.get_csv(section, "stop_services"),
         )
     return out
 
@@ -452,6 +464,11 @@ def record_build(paths: Paths, target: CmakeType, state: SourceState) -> None:
         "bin_sha256": build_mod.sha256_file(path),
         "bin_size": stat.st_size,
         "bin_mtime": stat.st_mtime,
+        # What a board running this image should report back over INFO.
+        # Absent for anything that would not parse as a UF2, and absent is
+        # never mismatch - the comparison falls through to the version string,
+        # the same as it does for a board too old to report a digest.
+        **uf2.digest_fields(path),
     }
     sidecar = paths.sidecar_file(target.name, target.firmware)
     os.makedirs(os.path.dirname(sidecar), exist_ok=True)

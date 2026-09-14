@@ -668,8 +668,8 @@ export async function runBulk(
  * a probe still in the post gets a saved menuconfig answer before it
  * arrives. `serial` or `canbusUuid` (from the untracked-devices list) is
  * adopted afterwards as a separate fw.serial.add/fw.canbus.add call,
- * mirroring the fork's createTypeAndTrack: a type created without its board
- * is recoverable in one tap, the reverse is not, so the two calls are
+ * because a type created without its board is recoverable in one tap, while
+ * the reverse is not, so the two calls are
  * sequenced rather than one request doing both. */
 export async function addType(
   draft: TypeDraft,

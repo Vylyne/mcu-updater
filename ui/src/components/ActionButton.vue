@@ -39,12 +39,12 @@ const props = withDefaults(
      * own targets[]/devices[] data. Absent for a non-destructive action. */
     previewDevices?: { id: string; name: string | null }[];
     /** "icon" (default) is a row's own [build]/[flash]/... buttons, matching
-     * the fork panel's icon-only actions - "text" renders as a `.menu-item`
+     * the panel's icon-only actions - "text" renders as a `.menu-item`
      * row, for the one context that currently uses it: TargetRow's own
      * overflow menu, alongside its "Edit type…"/"Remove type…" rows. */
     variant?: "icon" | "text";
     /** Whether this action currently *wants* doing, not just whether it
-     * *can* be done - the same swap FirmwareUpdaterPanelTarget.vue makes for
+     * *can* be done - the same swap the target row makes for
      * flash's icon and colour. Ignored outside variant="icon". */
     wanted?: boolean;
     /** True for a `build` action on a target whose saved config still
@@ -132,7 +132,7 @@ const busyMessage = computed(() =>
     : "The printer is moving - flashing would shut the MCU down mid-motion.",
 );
 
-// Icons by action id, same table FirmwareUpdaterPanelTarget.vue keeps - an
+// Icons by action id, same table the target row keeps - an
 // action id this row does not recognise falls back to a plain cog rather
 // than a gap.
 const ICONS: Record<string, string> = {

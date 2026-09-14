@@ -13,11 +13,12 @@ Written against mcu-updater `0c446f2` and roadrunner `rp2040/CMakeLists.txt` as
 it stood on 2026-09-04. The line numbers below are from that commit and have
 moved since; the arguments have not.
 
-This was **project 1 of two**. It ends at a staged `.uf2` and a manual
-BOOT/RESET flash — exactly the procedure `roadrunner/rp2040/README.md`
-documents. The closed-loop BOOTSEL flash (`REBOOT_BOOTSEL`, topology
-correlation, `needs_services_stopped`, a real `settled()`) is project 2 and has
-its own spec; see "Deliberately not in scope" below.
+This was **project 1 of two**. It originally ended at a staged `.uf2`; project 2
+has since added the helper-backed closed-loop BOOTSEL flash (`REBOOT_BOOTSEL`,
+topology correlation, stopped services, and post-write readiness). Its current
+behavior is documented in [cmake-provider.md](cmake-provider.md), while the
+mount and correlation reasoning remains in
+[bootsel-mountpoint-design.md](bootsel-mountpoint-design.md).
 
 ## Problem
 
@@ -171,25 +172,11 @@ deletes the user's section.** Config data loss, in a file that lives in
 
 ## Deliberately not in scope
 
-**The closed-loop BOOTSEL flash.** `REBOOT_BOOTSEL` (opcode `0x02`), the
-topology correlation across the reboot, the port parameter that lifts
-`_find_mount`'s multi-volume refusal, `Bootsel.needs_services_stopped` flipping
-to `True`, and a real `settled()`. That is project 2, and it builds on
-`docs/bootsel-mountpoint-design.md`, which measured the correlation facts on
-hestia 2026-09-04 and lists this loop as its own out-of-scope item.
-
-Until it lands, a Roadrunner is flashed the way its README documents: hold
-`BOOT`, press and release `RESET`, release `BOOT`, copy the staged `.uf2` to
-the mounted volume.
-
-**A `select_for` axis for BOOTSEL routing.** `Flashtool.chipsets` is
-`("stm32", "rp2040")` and its states include `STATE_KLIPPER`, and `Flashtool()`
-is first in a first-match `FLASHERS` tuple — so `select_for("rp2040",
-STATE_KLIPPER)` resolves to Katapult flashtool today, and a Roadrunner flasher
-registered after it would never be reached. The agreed fix is a third axis on
-`select_for`: whether the type carries a bootloader family (a Roadrunner
-declares none; an SKR Pico declares katapult). It belongs to project 2, where
-there is a flasher for it to select.
+**Replacing ordinary flasher selection with a generic helper axis.** Project 2
+did not change the chipset/state matching used by Katapult boards. A configured
+CMake family resolves its reviewed helper explicitly and constructs the
+`helper_bootsel` target directly. This prevents the existing RP2040 flashtool
+route from shadowing Roadrunner without altering it for boards that use it.
 
 **Narrowing the compile to one `make` target.** See "One `make` builds all six"
 above.

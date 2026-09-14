@@ -52,8 +52,7 @@ export interface TypeDraft {
 /** Mirrors config.py's TYPE_NAME_RE/TYPE_NAME_MAX exactly - a whitelist, not
  * a blacklist, because the name becomes both a config section and a
  * directory. The agent stays the authority; this only spares a round trip
- * and says why before the fact, the same reasoning the fork's own
- * FirmwareUpdaterPanelTypeDialog.vue gives for its identical regex. */
+ * and says why before the fact. */
 export const TYPE_NAME_RE = /^[A-Za-z0-9._-]+$/;
 export const TYPE_NAME_MAX = 64;
 

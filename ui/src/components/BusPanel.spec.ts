@@ -6,9 +6,12 @@ import { state } from "../store/agent";
 import type { BusDevice, Target } from "../api/targets";
 import { mdiLan } from "../icons";
 
-function makeTarget(name: string): Target {
+function makeTarget(
+  name: string,
+  provider: Target["provider"] = "kconfig_make",
+): Target {
   return {
-    provider: "kconfig_make",
+    provider,
     name,
     descriptor: "stm32g0b1xx",
     firmware: "klipper",
@@ -123,6 +126,25 @@ describe("BusPanel", () => {
     await item!.trigger("click");
 
     expect(spy).toHaveBeenCalledWith("bttebb36", mcuDevice.serial);
+  });
+
+  it("offers every configured target once in the serial adoption menu", async () => {
+    state.bus = [mcuDevice];
+    state.status = {
+      targets: [
+        makeTarget("klipper"),
+        makeTarget("roadrunner", "cmake"),
+        makeTarget("knomi", "platformio"),
+        makeTarget("roadrunner", "kconfig_make"),
+      ],
+    };
+    state.ping = { capabilities: ["fw.serial.add"] };
+    const wrapper = mount(BusPanel);
+
+    await wrapper.get('[title="Track this device…"]').trigger("click");
+
+    const items = wrapper.findAll(".menu-item").map((item) => item.text());
+    expect(items).toEqual(["klipper", "roadrunner", "knomi"]);
   });
 
   it("omits the + button entirely when is_mcu is false, but keeps ×", () => {
@@ -436,6 +458,39 @@ describe("BusPanel", () => {
     await wrapper.get('[title="Track this CAN device…"]').trigger("click");
     await wrapper.get(".menu-item").trigger("click");
     expect(spy).toHaveBeenCalledWith("bttebb36", "abc123");
+  });
+
+  it("offers every configured provider type in the CAN adoption menu", async () => {
+    state.canbus = {
+      interfaces: [],
+      devices: [
+        {
+          uuid: "abc123",
+          interface: "can1",
+          application: "Klipper",
+          state: "klipper",
+          tracked_by: null,
+          ignored: false,
+        },
+      ],
+      failures: [],
+      count: 1,
+      message: null,
+    };
+    state.status = {
+      targets: [
+        makeTarget("klipper"),
+        makeTarget("roadrunner", "cmake"),
+        makeTarget("knomi", "platformio"),
+      ],
+    };
+    state.ping = { capabilities: ["fw.canbus.add"] };
+    const wrapper = mount(BusPanel);
+
+    await wrapper.get('[title="Track this CAN device…"]').trigger("click");
+
+    const items = wrapper.findAll(".menu-item").map((item) => item.text());
+    expect(items).toEqual(["klipper", "roadrunner", "knomi"]);
   });
 
   it("offers New type from this… in the CAN + menu when canManageTypes", async () => {

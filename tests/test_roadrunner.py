@@ -10,7 +10,11 @@ import pytest
 
 from mcu_updater.agent.methods import Api
 from mcu_updater.agent.rpc import ERR_METHOD_NOT_FOUND, RpcError
+from mcu_updater.discovery import bootsel as bootsel_discovery
 from mcu_updater.discovery import roadrunner
+from mcu_updater.errors import BootloaderTimeoutError, FlashError
+from mcu_updater.flashers.spec import Bench
+from mcu_updater.helpers import BootselHandoff, for_name
 from mcu_updater.jobs import JobRunner
 from mcu_updater.settings import load_settings
 
@@ -80,6 +84,49 @@ def test_discovery_accepts_only_confirmed_unprovisioned_roadrunner(paths, fake_r
     assert found[0].port == str(fake_root / "ttyACM0")
     assert found[0].topology.name == "1-3"
     assert not hasattr(found[0], "flash_uid")
+
+
+def test_a_confirmed_device_carries_what_info_said_it_is_running(paths, fake_root, monkeypatch):
+    """The identity confirms *which* board; these say what is on it.
+
+    Carried on the device rather than re-probed later, because the probe that
+    confirmed the identity already read them - and re-opening the port to ask
+    again is the thing the Klipper-first ordering exists to avoid.
+    """
+    _candidate(paths, fake_root, monkeypatch)
+    data = _info()
+    data.update(
+        {
+            "fw_version": "v1.2.0-3-gdeadbee",
+            "digest_algorithm": 1,
+            "digest": 0xBBE38AA9,
+            "image_start": 0x10000000,
+            "image_length": 600,
+        }
+    )
+    monkeypatch.setattr(roadrunner, "_helper", lambda *_args: data)
+
+    found = roadrunner.discover(paths)[0]
+
+    assert found.fw_version == "v1.2.0-3-gdeadbee"
+    assert found.digest == 0xBBE38AA9
+    assert (found.image_start, found.image_length) == (0x10000000, 600)
+
+
+def test_a_board_too_old_to_report_a_digest_still_discovers(paths, fake_root, monkeypatch):
+    """A pre-revision board ends its INFO payload at the flash UID.
+
+    None here is absence, and absence falls through to the version comparison -
+    never a mismatch that no flash could clear.
+    """
+    _candidate(paths, fake_root, monkeypatch)
+    monkeypatch.setattr(roadrunner, "_helper", lambda *_args: _info())
+
+    found = roadrunner.discover(paths)[0]
+
+    assert found.fw_version == "dev"
+    assert found.digest_algorithm is None
+    assert found.digest is None
 
 
 @pytest.mark.parametrize(
@@ -207,7 +254,9 @@ def test_await_reenumeration_waits_then_resolves_on_the_same_topology(paths, mon
 
     result = roadrunner._await_same_topology(paths, topology, expected, provisioned=True)
 
-    assert result == roadrunner.RoadrunnerDevice(expected, port, topology)
+    # Identity only: the image fields the device now also carries come from
+    # the confirming INFO reply, and this test is about the wait, not them.
+    assert (result.serial, result.port, result.topology) == (expected, port, topology)
     assert len(polls) == 3  # two empty polls, then the matching one
 
 
@@ -302,6 +351,347 @@ def test_clear_reenumeration_reports_mismatch_when_still_provisioned(paths, monk
     assert exc.value.code == "roadrunner_mismatch"
     assert exc.value.data["observed_serial"] == PROVISIONED
     assert exc.value.data["observed_state"] == "provisioned"
+
+
+def test_request_bootsel_waits_for_the_old_cdc_topology_to_disappear(paths, monkeypatch):
+    device = roadrunner.RoadrunnerDevice(PROVISIONED, "/dev/ttyACM0", _topology())
+    polls = [[(PROVISIONED, device.port, device.topology)], []]
+    commands: list[tuple[str, str, str | None]] = []
+    monkeypatch.setattr(
+        roadrunner,
+        "_helper",
+        lambda _paths, operation, port, argument=None: commands.append(
+            (operation, port, argument)
+        )
+        or {"bootsel": True},
+    )
+    monkeypatch.setattr(
+        roadrunner, "_entry_candidates", lambda _paths, **_kwargs: polls.pop(0)
+    )
+    _fake_clock(monkeypatch)
+
+    result = roadrunner.Roadrunner().request_bootsel(paths, device)
+
+    assert result == device.topology
+    assert commands == [("bootsel", device.port, PROVISIONED)]
+    assert polls == []
+
+
+def test_request_bootsel_times_out_while_the_old_cdc_topology_remains(paths, monkeypatch):
+    device = roadrunner.RoadrunnerDevice(PROVISIONED, "/dev/ttyACM0", _topology())
+    commands: list[tuple[str, str, str | None]] = []
+    monkeypatch.setattr(
+        roadrunner,
+        "_helper",
+        lambda _paths, operation, port, argument=None: commands.append(
+            (operation, port, argument)
+        )
+        or {"bootsel": True},
+    )
+    monkeypatch.setattr(
+        roadrunner,
+        "_entry_candidates",
+        lambda _paths, **_kwargs: [(PROVISIONED, device.port, device.topology)],
+    )
+    _fake_clock(monkeypatch)
+
+    with pytest.raises(roadrunner.RoadrunnerError) as exc:
+        roadrunner.Roadrunner().request_bootsel(paths, device)
+
+    assert exc.value.code == "roadrunner_timeout"
+    assert "did not disappear" in str(exc.value)
+    assert commands == [("bootsel", device.port, PROVISIONED)]
+
+
+def test_request_bootsel_retries_unknown_inventory_before_confirmed_absence(
+    paths, monkeypatch
+):
+    device = roadrunner.RoadrunnerDevice(PROVISIONED, "/dev/ttyACM0", _topology())
+    polls: list[OSError | list[tuple[str, str, roadrunner.usb.UsbDevice]]] = [
+        OSError("USB sysfs unavailable"),
+        [],
+    ]
+    monkeypatch.setattr(roadrunner, "_helper", lambda *_args: {"bootsel": True})
+
+    def candidates(_paths, *, strict=False):
+        assert strict
+        result = polls.pop(0)
+        if isinstance(result, OSError):
+            raise result
+        return result
+
+    monkeypatch.setattr(roadrunner, "_entry_candidates", candidates)
+    _fake_clock(monkeypatch)
+
+    assert roadrunner.Roadrunner().request_bootsel(paths, device) == device.topology
+    assert polls == []
+
+
+def test_request_bootsel_times_out_when_inventory_remains_unknown(paths, monkeypatch):
+    device = roadrunner.RoadrunnerDevice(PROVISIONED, "/dev/ttyACM0", _topology())
+    monkeypatch.setattr(roadrunner, "_helper", lambda *_args: {"bootsel": True})
+
+    def unreadable(_paths, *, strict=False):
+        assert strict
+        raise OSError("USB sysfs unavailable")
+
+    monkeypatch.setattr(roadrunner, "_entry_candidates", unreadable)
+    _fake_clock(monkeypatch)
+
+    with pytest.raises(roadrunner.RoadrunnerError) as exc:
+        roadrunner.Roadrunner().request_bootsel(paths, device)
+
+    assert exc.value.code == "roadrunner_timeout"
+    assert "could not confirm" in str(exc.value).lower()
+
+
+def test_firmware_helper_confirms_the_provisioned_serial_before_request(
+    paths, settings, monkeypatch
+):
+    device = roadrunner.RoadrunnerDevice(PROVISIONED, "/dev/ttyACM0", _topology())
+    events: list[tuple[str, object]] = []
+    monkeypatch.setattr(
+        roadrunner,
+        "find_provisioned",
+        lambda requested_paths, serial: events.append(("confirm", serial)) or device,
+    )
+    monkeypatch.setattr(
+        roadrunner.Roadrunner,
+        "request_bootsel",
+        lambda _self, requested_paths, requested_device: events.append(
+            ("request", requested_device)
+        )
+        or requested_device.topology,
+    )
+    monkeypatch.setattr(
+        bootsel_discovery,
+        "serial_topology_for",
+        lambda requested_paths, port: events.append(("topology", port))
+        or "platform-fd880000.usb-usb-0:1.3",
+    )
+    bench = Bench(paths=paths, settings=settings, controller=lambda _name=None: None)
+
+    helper = for_name("roadrunner", family="roadrunner")
+    assert helper is not None
+    result = helper.request_bootsel(
+        bench, serial=PROVISIONED, chipset="rp2040", ctx=object()
+    )
+
+    assert result == BootselHandoff(
+        topology="platform-fd880000.usb-usb-0:1.3"
+    )
+    assert events == [
+        ("confirm", PROVISIONED),
+        ("topology", device.port),
+        ("request", device),
+    ]
+
+
+def test_firmware_helper_refuses_before_bootsel_when_confirmation_fails(
+    paths, settings, monkeypatch
+):
+    requested: list[object] = []
+    monkeypatch.setattr(
+        roadrunner,
+        "find_provisioned",
+        lambda _paths, serial: (_ for _ in ()).throw(
+            roadrunner._error(
+                "roadrunner_no_candidate",
+                "No confirmed provisioned Roadrunner matched that serial",
+                serial=serial,
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        roadrunner.Roadrunner,
+        "request_bootsel",
+        lambda *_args: requested.append(True),
+    )
+    bench = Bench(paths=paths, settings=settings, controller=lambda _name=None: None)
+
+    helper = for_name("roadrunner", family="roadrunner")
+    assert helper is not None
+    with pytest.raises(roadrunner.RoadrunnerError, match="No confirmed provisioned"):
+        helper.request_bootsel(
+            bench, serial="RR-BAD", chipset="rp2040", ctx=object()
+        )
+
+    assert requested == []
+
+
+def test_firmware_helper_refuses_before_bootsel_without_serial_by_path_evidence(
+    paths, settings, monkeypatch
+):
+    device = roadrunner.RoadrunnerDevice(PROVISIONED, "/dev/ttyACM0", _topology())
+    requested: list[object] = []
+    monkeypatch.setattr(roadrunner, "find_provisioned", lambda *_args: device)
+    monkeypatch.setattr(
+        bootsel_discovery,
+        "serial_topology_for",
+        lambda *_args: (_ for _ in ()).throw(
+            FlashError("no serial by-path topology matched the Roadrunner")
+        ),
+    )
+    monkeypatch.setattr(
+        roadrunner.Roadrunner,
+        "request_bootsel",
+        lambda *_args: requested.append(True),
+    )
+    bench = Bench(paths=paths, settings=settings, controller=lambda _name=None: None)
+
+    helper = for_name("roadrunner", family="roadrunner")
+    assert helper is not None
+    with pytest.raises(FlashError, match="no serial by-path"):
+        helper.request_bootsel(
+            bench, serial=PROVISIONED, chipset="rp2040", ctx=object()
+        )
+
+    assert requested == []
+
+
+def test_firmware_helper_wait_ready_retries_until_serial_and_info_are_confirmed(
+    paths, settings, monkeypatch
+):
+    device = roadrunner.RoadrunnerDevice(PROVISIONED, "/dev/ttyACM1", _topology())
+    attempts: list[str] = []
+
+    def find(_paths, serial):
+        attempts.append(serial)
+        if len(attempts) < 3:
+            raise roadrunner._error(
+                "roadrunner_no_candidate", "Roadrunner has not re-enumerated"
+            )
+        return device
+
+    monkeypatch.setattr(roadrunner, "find_provisioned", find)
+    _fake_clock(monkeypatch)
+    bench = Bench(paths=paths, settings=settings, controller=lambda _name=None: None)
+
+    helper = for_name("roadrunner", family="roadrunner")
+    assert helper is not None
+    helper.wait_ready(
+        bench, serial=PROVISIONED, chipset="rp2040", ctx=object()
+    )
+
+    assert attempts == [PROVISIONED, PROVISIONED, PROVISIONED]
+
+
+def test_firmware_helper_wait_ready_has_a_bounded_reenumeration_timeout(
+    paths, settings, monkeypatch
+):
+    attempts: list[str] = []
+
+    def missing(_paths, serial):
+        attempts.append(serial)
+        raise roadrunner._error(
+            "roadrunner_no_candidate", "Roadrunner has not re-enumerated"
+        )
+
+    monkeypatch.setattr(roadrunner, "find_provisioned", missing)
+    _fake_clock(monkeypatch)
+    bench = Bench(paths=paths, settings=settings, controller=lambda _name=None: None)
+
+    helper = for_name("roadrunner", family="roadrunner")
+    assert helper is not None
+    with pytest.raises(BootloaderTimeoutError) as exc:
+        helper.wait_ready(
+            bench, serial=PROVISIONED, chipset="rp2040", ctx=object()
+        )
+
+    assert exc.value.code == "bootloader_timeout"
+    assert exc.value.data["serial"] == PROVISIONED
+    assert len(attempts) == 5
+
+
+@pytest.mark.parametrize("code", ["roadrunner_invalid_probe", "roadrunner_helper"])
+def test_firmware_helper_wait_ready_retries_a_transient_probe_failure(
+    paths, settings, monkeypatch, code
+):
+    """A board that is only halfway back looks exactly like a failed probe.
+
+    During re-enumeration the `/dev/serial/by-id` symlink appears before the
+    tty can reliably be opened, so an INFO probe that errors is not evidence of
+    a bad identity - it is evidence of a board that is not ready yet. Retried
+    to the deadline, like plain absence.
+    """
+    error = roadrunner._error(code, "Roadrunner readiness failed")
+    attempts: list[str] = []
+
+    def fail(_paths, serial):
+        attempts.append(serial)
+        raise error
+
+    monkeypatch.setattr(roadrunner, "find_provisioned", fail)
+    _fake_clock(monkeypatch)
+    bench = Bench(paths=paths, settings=settings, controller=lambda _name=None: None)
+
+    helper = for_name("roadrunner", family="roadrunner")
+    assert helper is not None
+    with pytest.raises(BootloaderTimeoutError) as exc:
+        helper.wait_ready(
+            bench, serial=PROVISIONED, chipset="rp2040", ctx=object()
+        )
+
+    assert exc.value.code == "bootloader_timeout"
+    assert exc.value.data["serial"] == PROVISIONED
+    # The cause rides along: retrying an invalid probe would otherwise report a
+    # genuinely wrong identity as a bare timeout.
+    assert exc.value.data["last_error"] == "Roadrunner readiness failed"
+    assert len(attempts) == 5
+
+
+@pytest.mark.parametrize("code", ["roadrunner_invalid_probe", "roadrunner_helper"])
+def test_firmware_helper_wait_ready_accepts_a_board_that_settles_late(
+    paths, settings, monkeypatch, code
+):
+    device = roadrunner.RoadrunnerDevice(PROVISIONED, "/dev/ttyACM1", _topology())
+    attempts: list[str] = []
+
+    def find(_paths, serial):
+        attempts.append(serial)
+        if len(attempts) < 3:
+            raise roadrunner._error(code, "Roadrunner readiness failed")
+        return device
+
+    monkeypatch.setattr(roadrunner, "find_provisioned", find)
+    _fake_clock(monkeypatch)
+    bench = Bench(paths=paths, settings=settings, controller=lambda _name=None: None)
+
+    helper = for_name("roadrunner", family="roadrunner")
+    assert helper is not None
+    helper.wait_ready(
+        bench, serial=PROVISIONED, chipset="rp2040", ctx=object()
+    )
+
+    assert attempts == [PROVISIONED, PROVISIONED, PROVISIONED]
+
+
+def test_firmware_helper_wait_ready_stops_waiting_on_ambiguity(
+    paths, settings, monkeypatch
+):
+    """Two devices answering to one serial is not a slow return, so the wait
+    ends at once. Post-copy it is still only a warning - see
+    `test_helper_bootsel_settled_warns_on_non_timeout_roadrunner_errors`."""
+    error = roadrunner._error("roadrunner_ambiguous", "Roadrunner readiness failed")
+    attempts: list[str] = []
+
+    def fail(_paths, serial):
+        attempts.append(serial)
+        raise error
+
+    monkeypatch.setattr(roadrunner, "find_provisioned", fail)
+    _fake_clock(monkeypatch)
+    bench = Bench(paths=paths, settings=settings, controller=lambda _name=None: None)
+
+    helper = for_name("roadrunner", family="roadrunner")
+    assert helper is not None
+    with pytest.raises(roadrunner.RoadrunnerError) as exc:
+        helper.wait_ready(
+            bench, serial=PROVISIONED, chipset="rp2040", ctx=object()
+        )
+
+    assert exc.value is error
+    assert attempts == [PROVISIONED]
 
 
 def _ready_api(paths) -> Api:
@@ -426,6 +816,19 @@ def test_agent_clear_returns_to_unprovisioned_without_tracking(paths, monkeypatc
     response = api.dispatch("fw.roadrunner.clear", {"serial": PROVISIONED})
     assert response == {"serial": UNPROVISIONED, "prior_serial": PROVISIONED, "state": "unprovisioned"}
     assert api.registry().find_types_for_serial(UNPROVISIONED) == []
+
+
+def test_agent_refuses_maintenance_for_a_cmake_tracked_roadrunner(paths):
+    with open(paths.registry_file, "w", encoding="utf-8") as fh:
+        fh.write(
+            "[firmware roadrunner]\nsource: ~/roadrunner/rp2040\nbuilder: cmake\n"
+            "\n[type roadrunner]\nchipset: rp2040\nfirmware: roadrunner\n"
+            f"serials:\n    {PROVISIONED}\n"
+        )
+    with pytest.raises(RpcError) as exc:
+        _ready_api(paths).dispatch("fw.roadrunner.clear", {"serial": PROVISIONED})
+    assert exc.value.data["code"] == "roadrunner_tracked"
+    assert exc.value.data["data"]["tracked_under"] == ["roadrunner"]
 
 
 def _topology():

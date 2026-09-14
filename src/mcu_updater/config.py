@@ -567,6 +567,30 @@ class Registry:
     def names(self) -> list[str]:
         return sorted(self.types)
 
+    def declared_type_names(self) -> list[str]:
+        """All configured types, including those owned by another builder.
+
+        A provider owns a type's build/configuration semantics, while the
+        registry document owns physical identity.  Keeping those axes separate
+        lets adoption edit a CMake or PlatformIO type without pretending its
+        build belongs to Kconfig+make.
+        """
+        return sorted(declared.name for declared in sections.read(self._doc))
+
+    def _declared_section(self, name: str) -> str:
+        for declared in sections.read(self._doc):
+            if declared.name == name:
+                return declared.section
+        raise UnknownTypeError(
+            f"MCU type '{name}' does not exist.", type=name, known=self.declared_type_names()
+        )
+
+    def get_declared_chipset(self, name: str) -> str:
+        """Chipset for any declared type, regardless of its build provider."""
+        if name in self.types:
+            return self.types[name].chipset
+        return (self._doc.get(self._declared_section(name), "chipset") or "").strip()
+
     def get(self, name: str) -> McuType:
         try:
             return self.types[name]
@@ -585,6 +609,14 @@ class Registry:
         """Types tracking this serial. Normally 0 or 1; >1 is a misconfiguration."""
         return [name for name, mcu in self.types.items() if serial in mcu.serials]
 
+    def find_declared_types_for_serial(self, serial: str) -> list[str]:
+        """Every declared type tracking a serial, across all builders."""
+        return [
+            declared.name
+            for declared in sections.read(self._doc)
+            if serial in self._doc.get_list(declared.section, "serials")
+        ]
+
     def find_types_for_uuid(self, uuid: str) -> list[str]:
         """Types tracking this CAN uuid. Normally 0 or 1; >1 is a misconfiguration.
 
@@ -593,6 +625,14 @@ class Registry:
         different identity namespaces.
         """
         return [name for name, mcu in self.types.items() if uuid in mcu.canbus_uuids]
+
+    def find_declared_types_for_uuid(self, uuid: str) -> list[str]:
+        """Every declared type tracking a CAN uuid, across all builders."""
+        return [
+            declared.name
+            for declared in sections.read(self._doc)
+            if uuid in self._doc.get_list(declared.section, "canbus_uuids")
+        ]
 
     def resolve_serial(self, serial: str, mcu_type: str | None = None) -> str:
         """Work out which type a serial belongs to.
@@ -623,6 +663,48 @@ class Registry:
             )
 
         matches = self.find_types_for_serial(serial)
+        if not matches:
+            raise UnknownSerialError(
+                f"serial '{serial}' isn't tracked under any MCU type.", serial=serial
+            )
+        if len(matches) > 1:
+            raise AmbiguousSerialError(
+                f"serial '{serial}' is tracked under multiple types "
+                f"({', '.join(sorted(matches))}) - pass -t to disambiguate.",
+                serial=serial,
+                tracked_under=sorted(matches),
+            )
+        return matches[0]
+
+    def resolve_declared_serial(
+        self, serial: str, mcu_type: str | None = None
+    ) -> str:
+        """Resolve a serial across every declared type, regardless of builder.
+
+        This is the identity counterpart to :meth:`resolve_serial`: provider
+        registries own build semantics, while the shared document owns the
+        configured serial-to-type pairing.
+        """
+        if mcu_type is not None:
+            section = self._declared_section(mcu_type)
+            if serial in self._doc.get_list(section, "serials"):
+                return mcu_type
+            elsewhere = self.find_declared_types_for_serial(serial)
+            if elsewhere:
+                raise SerialTrackedElsewhereError(
+                    f"serial '{serial}' is already tracked under '{elsewhere[0]}', "
+                    f"not '{mcu_type}'. Did you mean -t {elsewhere[0]}?",
+                    serial=serial,
+                    requested=mcu_type,
+                    tracked_under=elsewhere,
+                )
+            raise UnknownSerialError(
+                f"serial '{serial}' isn't tracked under '{mcu_type}' yet.",
+                serial=serial,
+                requested=mcu_type,
+            )
+
+        matches = self.find_declared_types_for_serial(serial)
         if not matches:
             raise UnknownSerialError(
                 f"serial '{serial}' isn't tracked under any MCU type.", serial=serial
@@ -741,12 +823,34 @@ class Registry:
         mcu.serials.append(serial)
         return True
 
+    def add_declared_serial(self, name: str, serial: str) -> bool:
+        """Add an identity without broadening provider build ownership."""
+        if name in self.types:
+            return self.add_serial(name, serial)
+        section = self._declared_section(name)
+        serials = self._doc.get_list(section, "serials")
+        if serial in serials:
+            return False
+        self._doc.set(section, "serials", [*serials, serial])
+        return True
+
     def remove_serial(self, name: str, serial: str) -> bool:
         """Returns True if it was removed, False if it wasn't tracked."""
         mcu = self.get(name)
         if serial not in mcu.serials:
             return False
         mcu.serials.remove(serial)
+        return True
+
+    def remove_declared_serial(self, name: str, serial: str) -> bool:
+        """Remove an identity without broadening provider build ownership."""
+        if name in self.types:
+            return self.remove_serial(name, serial)
+        section = self._declared_section(name)
+        serials = self._doc.get_list(section, "serials")
+        if serial not in serials:
+            return False
+        self._doc.set(section, "serials", [item for item in serials if item != serial])
         return True
 
     def add_canbus_uuid(self, name: str, uuid: str) -> bool:
@@ -757,12 +861,38 @@ class Registry:
         mcu.canbus_uuids.append(uuid)
         return True
 
+    def add_declared_canbus_uuid(self, name: str, uuid: str) -> bool:
+        """Add a CAN identity without broadening provider build ownership."""
+        if name in self.types:
+            return self.add_canbus_uuid(name, uuid)
+        section = self._declared_section(name)
+        uuids = self._doc.get_list(section, "canbus_uuids")
+        if uuid in uuids:
+            return False
+        self._doc.set(section, "canbus_uuids", [*uuids, uuid])
+        return True
+
     def remove_canbus_uuid(self, name: str, uuid: str) -> bool:
         """Returns True if it was removed, False if it wasn't tracked."""
         mcu = self.get(name)
         if uuid not in mcu.canbus_uuids:
             return False
         mcu.canbus_uuids.remove(uuid)
+        return True
+
+    def remove_declared_canbus_uuid(self, name: str, uuid: str) -> bool:
+        """Remove a CAN identity without broadening provider build ownership."""
+        if name in self.types:
+            return self.remove_canbus_uuid(name, uuid)
+        section = self._declared_section(name)
+        uuids = self._doc.get_list(section, "canbus_uuids")
+        if uuid not in uuids:
+            return False
+        remaining = [item for item in uuids if item != uuid]
+        if remaining:
+            self._doc.set(section, "canbus_uuids", remaining)
+        else:
+            self._doc.remove_option(section, "canbus_uuids")
         return True
 
     def items(self) -> Iterable[tuple[str, McuType]]:

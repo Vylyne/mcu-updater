@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import contextlib
 import dataclasses
 import os
 
@@ -7,6 +8,7 @@ import pytest
 
 from mcu_updater import devices as devices_mod
 from mcu_updater import flashers
+from mcu_updater.discovery.roadrunner import RoadrunnerError
 from mcu_updater.errors import (
     AmbiguousDfuError,
     BootloaderTimeoutError,
@@ -14,15 +16,19 @@ from mcu_updater.errors import (
     DeviceNotFoundError,
     FlashError,
     OffsetMismatchError,
+    OperationCancelled,
     ToolMissingError,
     UnsupportedChipsetError,
 )
 from mcu_updater.flashers import flash as flash_mod
+from mcu_updater.flashers import registry as flasher_registry
 from mcu_updater.flashers.flash import (
     flash_dfu_stm32,
     flash_initial_bootloader,
     flash_katapult,
 )
+from mcu_updater.helpers import BootselHandoff
+from mcu_updater.service import NullService
 
 from .conftest import bootsel_device_node, cmd_tokens, make_device, mounted_bootsel_volume
 
@@ -848,6 +854,344 @@ def test_bootsel_copies_the_uf2_to_the_mounted_volume(paths, settings, tmp_path)
     assert result["mount"] == str(vol)
 
 
+def _volume_that_dies(monkeypatch, *, error, after_bytes):
+    """Make the BOOTSEL volume go away underneath a copy.
+
+    `after_bytes` is an int for a genuine mid-write death - that many bytes
+    land and the next write fails - or None for the RP2040's normal ending,
+    where every byte lands and the failure arrives afterwards, at close, as
+    the boot ROM resets the board out from under the mount.
+    """
+    real_open = flashers.bootsel._open_dest
+
+    class Handle:
+        def __init__(self, fh, path):
+            self._fh = fh
+            self._path = path
+            self._landed = 0
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_exc):
+            self.close()
+            return False
+
+        def _check_unbuffered(self):
+            # Pins the guarantee the classification rests on. If `_open_dest`
+            # ever buffers again, bytes a `write` reported as taken are still
+            # in Python's buffer when the loop ends, and a flush failure - an
+            # incomplete image - becomes indistinguishable from the board
+            # resetting after the last block. Every test using this fake fails
+            # the moment that stops being true, which is the point.
+            assert os.path.getsize(self._path) == self._landed, (
+                "the destination handle must stay unbuffered"
+            )
+
+        def write(self, data):
+            if after_bytes is None:
+                written = self._fh.write(data)
+                self._landed += written
+                self._check_unbuffered()
+                return written
+            payload = bytes(data)[:after_bytes]
+            if payload:
+                self._landed += self._fh.write(payload)
+                self._check_unbuffered()
+            raise error
+
+        def close(self):
+            with contextlib.suppress(OSError):
+                self._fh.close()
+            if after_bytes is None:
+                raise error
+
+    monkeypatch.setattr(
+        flashers.bootsel, "_open_dest", lambda dest: Handle(real_open(dest), dest)
+    )
+
+
+def test_a_volume_that_vanishes_after_the_last_byte_is_a_successful_write(
+    paths, settings, tmp_path, monkeypatch
+):
+    """On an RP2040 this is the *normal* ending, not an edge case.
+
+    The boot ROM resets the board the instant the final UF2 block lands, so
+    the volume is gone before anything after the data can run. Treating that
+    as a failed copy would report every good flash as broken, skip the
+    `FlashLog` record the operator needs, and invite a re-flash of a board
+    that is already correct - the I2 hazard through a third door.
+    """
+    root, vol = mounted_bootsel_volume(tmp_path)
+    rp_paths = dataclasses.replace(paths, bootsel_root=str(root))
+    uf2 = tmp_path / "katapult.uf2"
+    uf2.write_bytes(b"every-byte-of-this-image")
+    _volume_that_dies(
+        monkeypatch, error=OSError(5, "Input/output error"), after_bytes=None
+    )
+    events: list[tuple[str, str]] = []
+    bench = flashers.Bench(
+        paths=rp_paths, settings=settings, controller=lambda name=None: None
+    )
+    target = flashers.bootsel.target_for(str(uf2), chipset="rp2040")
+
+    result = flashers.Bootsel().write(
+        bench, None, target, flashers.PlainContext(lambda *a: events.append(a))
+    )
+
+    assert result == {"mount": str(vol)}
+    assert (vol / "katapult.uf2").read_bytes() == b"every-byte-of-this-image"
+    assert any(
+        level == "info" and "Input/output error" in text for level, text in events
+    )
+
+
+def test_a_vanished_volume_reaches_flashed_so_provenance_can_record(
+    paths, settings, tmp_path, monkeypatch
+):
+    """`_cmake_flash` records the `FlashLog` off `result["flashed"]`, so the
+    batch has to count this write as one - a failure row would silence the
+    ledger for the most common successful ending there is."""
+    root, vol = mounted_bootsel_volume(tmp_path)
+    rp_paths = dataclasses.replace(paths, bootsel_root=str(root))
+    uf2 = tmp_path / "katapult.uf2"
+    uf2.write_bytes(b"image")
+    _volume_that_dies(
+        monkeypatch, error=OSError(5, "Input/output error"), after_bytes=None
+    )
+    bench = flashers.Bench(
+        paths=rp_paths, settings=settings, controller=lambda name=None: None
+    )
+    target = flashers.bootsel.target_for(str(uf2), chipset="rp2040")
+
+    result = flashers.write_all(
+        bench, [target], flashers.PlainContext(lambda *a: None)
+    )
+
+    assert len(result["flashed"]) == 1
+    assert result["failures"] == []
+    assert result["flashed"][0]["mount"] == str(vol)
+
+
+def test_a_copy_that_dies_partway_through_the_data_is_still_a_failure(
+    paths, settings, tmp_path, monkeypatch
+):
+    """The other side of the same boundary: bytes that never landed are a
+    genuine failure however few are missing, and must not be excused by the
+    reset-at-the-end rule."""
+    root, vol = mounted_bootsel_volume(tmp_path)
+    rp_paths = dataclasses.replace(paths, bootsel_root=str(root))
+    uf2 = tmp_path / "katapult.uf2"
+    uf2.write_bytes(b"half-written-image")
+    _volume_that_dies(
+        monkeypatch, error=OSError(28, "No space left on device"), after_bytes=4
+    )
+    bench = flashers.Bench(
+        paths=rp_paths, settings=settings, controller=lambda name=None: None
+    )
+    target = flashers.bootsel.target_for(str(uf2), chipset="rp2040")
+
+    with pytest.raises(FlashError) as exc:
+        flashers.Bootsel().write(
+            bench, None, target, flashers.PlainContext(lambda *a: None)
+        )
+
+    assert exc.value.code == "flash_failed"
+    assert "No space left" in str(exc.value)
+    assert (vol / "katapult.uf2").read_bytes() == b"half"
+
+
+def test_the_destination_handle_never_holds_bytes_back(tmp_path):
+    """The unbuffered guarantee, on its own.
+
+    `_copy_bytes` concludes "every byte was handed over" from the write loop
+    ending. That is only true while nothing downstream is holding the tail: a
+    buffered handle would flush it at close, and a failure there - a truncated
+    image - would read as the benign board-reset ending.
+    """
+    dest = tmp_path / "probe.bin"
+
+    with flashers.bootsel._open_dest(str(dest)) as out:
+        out.write(b"ten-bytes!")
+        assert dest.stat().st_size == 10
+
+
+def test_a_multi_chunk_image_is_copied_whole(paths, settings, tmp_path, monkeypatch):
+    """Real UF2 images run past `_COPY_CHUNK`, so the loop's second pass is a
+    live path rather than a defensive one."""
+    root, vol = mounted_bootsel_volume(tmp_path)
+    rp_paths = dataclasses.replace(paths, bootsel_root=str(root))
+    image = (b"UF2\n" * 4096) + os.urandom(flashers.bootsel._COPY_CHUNK)
+    uf2 = tmp_path / "katapult.uf2"
+    uf2.write_bytes(image)
+    real_open = flashers.bootsel._open_dest
+    sizes: list[int] = []
+
+    class Counting:
+        def __init__(self, fh):
+            self._fh = fh
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_exc):
+            self._fh.close()
+            return False
+
+        def write(self, data):
+            sizes.append(len(data))
+            return self._fh.write(data)
+
+    monkeypatch.setattr(
+        flashers.bootsel, "_open_dest", lambda dest: Counting(real_open(dest))
+    )
+    bench = flashers.Bench(
+        paths=rp_paths, settings=settings, controller=lambda name=None: None
+    )
+    target = flashers.bootsel.target_for(str(uf2), chipset="rp2040")
+
+    flashers.Bootsel().write(
+        bench, None, target, flashers.PlainContext(lambda *a: None)
+    )
+
+    assert (vol / "katapult.uf2").read_bytes() == image
+    assert len(sizes) > 1
+
+
+def test_a_short_write_resumes_where_it_stopped(paths, settings, tmp_path, monkeypatch):
+    """A `write` that takes only part of what it was offered is a normal
+    outcome, not a failure - the loop has to resume from the byte it stopped
+    at rather than dropping or repeating the remainder."""
+    root, vol = mounted_bootsel_volume(tmp_path)
+    rp_paths = dataclasses.replace(paths, bootsel_root=str(root))
+    image = bytes(range(256)) * 8
+    uf2 = tmp_path / "katapult.uf2"
+    uf2.write_bytes(image)
+    real_open = flashers.bootsel._open_dest
+
+    class ShortWriter:
+        def __init__(self, fh):
+            self._fh = fh
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *_exc):
+            self._fh.close()
+            return False
+
+        def write(self, data):
+            return self._fh.write(bytes(data)[:7])
+
+    monkeypatch.setattr(
+        flashers.bootsel, "_open_dest", lambda dest: ShortWriter(real_open(dest))
+    )
+    bench = flashers.Bench(
+        paths=rp_paths, settings=settings, controller=lambda name=None: None
+    )
+    target = flashers.bootsel.target_for(str(uf2), chipset="rp2040")
+
+    flashers.Bootsel().write(
+        bench, None, target, flashers.PlainContext(lambda *a: None)
+    )
+
+    assert (vol / "katapult.uf2").read_bytes() == image
+
+
+def test_a_copy_onto_the_image_itself_is_refused_before_it_is_destroyed(
+    paths, settings, tmp_path
+):
+    """`shutil.copy2` refused this; the explicit copy has to as well.
+
+    Opening one inode for reading and for writing truncates it, the read then
+    returns nothing, and the loop would finish "successfully" having reported
+    a zero-byte file as a flashed image. Only reachable when a firmware
+    directory overlaps `bootsel_root` - which nothing forbids - and the file
+    it would destroy is the image the operator would re-flash with.
+    """
+    root, vol = mounted_bootsel_volume(tmp_path)
+    rp_paths = dataclasses.replace(paths, bootsel_root=str(root))
+    uf2 = vol / "katapult.uf2"
+    uf2.write_bytes(b"the-only-copy-of-this-image")
+    bench = flashers.Bench(
+        paths=rp_paths, settings=settings, controller=lambda name=None: None
+    )
+    target = flashers.bootsel.target_for(str(uf2), chipset="rp2040")
+
+    with pytest.raises(FlashError) as exc:
+        flashers.Bootsel().write(
+            bench, None, target, flashers.PlainContext(lambda *a: None)
+        )
+
+    assert exc.value.code == "flash_failed"
+    assert "onto itself" in str(exc.value)
+    assert uf2.read_bytes() == b"the-only-copy-of-this-image"
+
+
+def test_a_copy_that_dies_mid_write_is_a_structured_flash_failure(
+    paths, settings, tmp_path, monkeypatch
+):
+    """The volume can go away underneath the copy.
+
+    Unplugged mid-write, a full FAT volume, an I/O error on a board that reset
+    early - all `OSError`. Raw, it escapes `write_all` entirely, past the
+    Klipper readiness gate `on_ready` runs; the operator gets a traceback-shaped
+    failure instead of a `flash_failed` one, and for `HelperBootsel` that
+    happens with Klipper's services still down.
+    """
+    root, vol = mounted_bootsel_volume(tmp_path)
+    rp_paths = dataclasses.replace(paths, bootsel_root=str(root))
+    uf2 = tmp_path / "katapult.uf2"
+    uf2.write_bytes(b"image")
+
+    _volume_that_dies(
+        monkeypatch, error=OSError(5, "Input/output error"), after_bytes=0
+    )
+    bench = flashers.Bench(
+        paths=rp_paths, settings=settings, controller=lambda name=None: None
+    )
+    target = flashers.bootsel.target_for(str(uf2), chipset="rp2040")
+
+    with pytest.raises(FlashError) as exc:
+        flashers.Bootsel().write(
+            bench, None, target, flashers.PlainContext(lambda *a: None)
+        )
+
+    assert exc.value.code == "flash_failed"
+    assert "Input/output error" in str(exc.value)
+    assert exc.value.data["mount"] == str(vol)
+
+
+def test_a_copy_failure_still_reaches_the_klipper_readiness_gate(
+    paths, settings, tmp_path, monkeypatch
+):
+    root, vol = mounted_bootsel_volume(tmp_path)
+    rp_paths = dataclasses.replace(paths, bootsel_root=str(root))
+    uf2 = tmp_path / "katapult.uf2"
+    uf2.write_bytes(b"image")
+
+    _volume_that_dies(
+        monkeypatch, error=OSError(28, "No space left on device"), after_bytes=0
+    )
+    bench = flashers.Bench(
+        paths=rp_paths, settings=settings, controller=lambda name=None: None
+    )
+    target = flashers.bootsel.target_for(str(uf2), chipset="rp2040")
+    ready: list[object] = []
+
+    result = flashers.write_all(
+        bench,
+        [target],
+        flashers.PlainContext(lambda *a: None),
+        on_ready=lambda _reporter: ready.append(True),
+    )
+
+    assert result["flashed"] == []
+    assert len(result["failures"]) == 1
+    assert "No space left" in result["failures"][0]["error"]
+    assert ready == [True]
+
+
 def test_bootsel_dry_run_copies_nothing(paths, settings, tmp_path):
     root, vol = mounted_bootsel_volume(tmp_path)
     rp_paths = dataclasses.replace(paths, bootsel_root=str(root))
@@ -960,6 +1304,413 @@ def test_bootsel_refuses_more_than_one_mounted_volume(paths, settings, tmp_path,
     with pytest.raises(FlashError) as exc:
         flashers.Bootsel().write(bench, None, target, flashers.PlainContext(lambda *a: None))
     assert len(exc.value.data["mounts"]) == 2
+
+
+def test_helper_bootsel_requests_handoff_then_copies_only_to_matching_mount(
+    paths, settings, tmp_path
+):
+    root = tmp_path / "bootsel_root"
+    by_path = root / "BOOTSEL" / "by-path"
+    matching = by_path / "platform-x_usb-usb-0_1_3_1_0-scsi-0_0_0_0"
+    bystander = by_path / "platform-y_usb-usb-0_1_3_1_0-scsi-0_0_0_0"
+    for mount in (matching, bystander):
+        mount.mkdir(parents=True)
+        (mount / "INFO_UF2.TXT").write_text("", encoding="utf-8")
+    rp_paths = dataclasses.replace(paths, bootsel_root=str(root))
+    uf2 = tmp_path / "roadrunner.uf2"
+    uf2.write_bytes(b"road-runner")
+    calls: list[tuple[str, str]] = []
+
+    class Helper:
+        name = "test"
+
+        def request_bootsel(self, bench, *, serial, chipset, ctx):
+            calls.append((serial, chipset))
+            return BootselHandoff(topology="platform-x.usb-usb-0:1.3:1.0")
+
+    bench = flashers.Bench(
+        paths=rp_paths, settings=settings, controller=lambda name=None: None
+    )
+    target = flashers.helper_bootsel.target_for(
+        str(uf2),
+        type_name="roadrunner",
+        serial="RR-0123456789ABCDEFGHJKMNPQRS",
+        chipset="rp2040",
+        helper=Helper(),
+        stop_services=("klipper",),
+    )
+
+    result = flashers.HelperBootsel().write(
+        bench, None, target, flashers.PlainContext(lambda *a: None)
+    )
+
+    assert calls == [("RR-0123456789ABCDEFGHJKMNPQRS", "rp2040")]
+    assert (matching / "roadrunner.uf2").read_bytes() == b"road-runner"
+    assert not (bystander / "roadrunner.uf2").exists()
+    assert result == {"mount": str(matching)}
+
+
+def test_helper_bootsel_requires_services_stopped():
+    assert flashers.HelperBootsel.needs_services_stopped is True
+
+
+def test_helper_bootsel_waits_for_helper_before_service_restart(
+    paths, settings, tmp_path
+):
+    root = tmp_path / "bootsel_root"
+    by_path = root / "BOOTSEL" / "by-path"
+    matching = by_path / "platform-x_usb-usb-0_1_3_1_0-scsi-0_0_0_0"
+    matching.mkdir(parents=True)
+    (matching / "INFO_UF2.TXT").write_text("", encoding="utf-8")
+    rp_paths = dataclasses.replace(paths, bootsel_root=str(root))
+    uf2 = tmp_path / "roadrunner.uf2"
+    uf2.write_bytes(b"road-runner")
+    order: list[str] = []
+
+    class Service(NullService):
+        def stop(self, reporter):
+            order.append("stop")
+            super().stop(reporter)
+
+        def start(self, reporter):
+            order.append("start")
+            super().start(reporter)
+
+    class Helper:
+        name = "test"
+
+        def request_bootsel(self, bench, *, serial, chipset, ctx):
+            order.append("request")
+            return BootselHandoff(topology="platform-x.usb-usb-0:1.3:1.0")
+
+        def wait_ready(self, bench, *, serial, chipset, ctx):
+            order.append("ready")
+
+    service = Service()
+    bench = flashers.Bench(
+        paths=rp_paths, settings=settings, controller=lambda _name=None: service
+    )
+    target = flashers.helper_bootsel.target_for(
+        str(uf2),
+        type_name="roadrunner",
+        serial="RR-0123456789ABCDEFGHJKMNPQRS",
+        chipset="rp2040",
+        helper=Helper(),
+        stop_services=("klipper",),
+    )
+
+    result = flashers.write_all(
+        bench, [target], flashers.PlainContext(lambda *a: None)
+    )
+
+    assert order == ["stop", "request", "ready", "start"]
+    assert len(result["flashed"]) == 1
+    assert result["failures"] == []
+
+
+def test_a_whole_batch_still_succeeds_when_post_copy_readiness_fails(
+    paths, settings, tmp_path
+):
+    """The end-to-end shape of the ruling: real HelperBootsel, real write_all,
+    a helper whose readiness wait raises. A completed copy is reported as
+    flashed, nothing lands in failures, and the operator gets a warning."""
+    root = tmp_path / "bootsel_root"
+    by_path = root / "BOOTSEL" / "by-path"
+    matching = by_path / "platform-x_usb-usb-0_1_3_1_0-scsi-0_0_0_0"
+    matching.mkdir(parents=True)
+    (matching / "INFO_UF2.TXT").write_text("", encoding="utf-8")
+    rp_paths = dataclasses.replace(paths, bootsel_root=str(root))
+    uf2 = tmp_path / "roadrunner.uf2"
+    uf2.write_bytes(b"road-runner")
+
+    class Helper:
+        name = "test"
+
+        def request_bootsel(self, bench, *, serial, chipset, ctx):
+            return BootselHandoff(topology="platform-x.usb-usb-0:1.3:1.0")
+
+        def wait_ready(self, bench, *, serial, chipset, ctx):
+            raise RoadrunnerError(
+                "More than one Roadrunner matched that serial",
+                serial=serial,
+            )
+
+    events: list[tuple[str, str]] = []
+    bench = flashers.Bench(
+        paths=rp_paths, settings=settings, controller=lambda _name=None: NullService()
+    )
+    target = flashers.helper_bootsel.target_for(
+        str(uf2),
+        type_name="roadrunner",
+        serial="RR-0123456789ABCDEFGHJKMNPQRS",
+        chipset="rp2040",
+        helper=Helper(),
+        stop_services=("klipper",),
+    )
+
+    result = flashers.write_all(
+        bench, [target], flashers.PlainContext(lambda kind, text: events.append((kind, text)))
+    )
+
+    assert len(result["flashed"]) == 1
+    assert result["failures"] == []
+    assert (matching / "roadrunner.uf2").read_bytes() == b"road-runner"
+    # The bare message, not batch.py's "<id>: <message>" fallback: this pins
+    # that `settled` itself absorbed it, not just that the job survived.
+    assert ("warn", "More than one Roadrunner matched that serial") in events
+
+
+def test_helper_bootsel_settled_warns_when_helper_readiness_times_out(
+    paths, settings
+):
+    class Helper:
+        name = "test"
+
+        def request_bootsel(self, *_args, **_kwargs):
+            raise AssertionError("settled must not request BOOTSEL again")
+
+        def wait_ready(self, *_args, **_kwargs):
+            raise BootloaderTimeoutError("Roadrunner did not become ready")
+
+    target = flashers.helper_bootsel.target_for(
+        "roadrunner.uf2",
+        type_name="roadrunner",
+        serial="RR-0123456789ABCDEFGHJKMNPQRS",
+        chipset="rp2040",
+        helper=Helper(),
+    )
+    events: list[tuple[str, str]] = []
+    bench = flashers.Bench(
+        paths=paths, settings=settings, controller=lambda _name=None: None
+    )
+
+    flashers.HelperBootsel().settled(
+        bench,
+        target,
+        flashers.PlainContext(lambda *event: events.append(event)),
+    )
+
+    assert events == [("warn", "Roadrunner did not become ready")]
+
+
+@pytest.mark.parametrize(
+    "error",
+    [
+        RoadrunnerError("Roadrunner INFO response was invalid"),
+        RoadrunnerError("More than one Roadrunner matched that serial"),
+        FlashError("could not read serial by-path topology"),
+    ],
+)
+def test_helper_bootsel_settled_warns_on_non_timeout_roadrunner_errors(
+    paths, settings, error
+):
+    """The UF2 is already on the board by the time `settled` runs.
+
+    The spec's error list is entirely pre-copy or at-copy; there is no
+    post-write boundary, and the post-copy wait is non-fatal *in every
+    outcome*. A readiness probe that fails - for whatever reason - is reported
+    as a warning, never as a write that did not happen.
+    """
+
+    class Helper:
+        name = "test"
+
+        def request_bootsel(self, *_args, **_kwargs):
+            raise AssertionError("settled must not request BOOTSEL again")
+
+        def wait_ready(self, *_args, **_kwargs):
+            raise error
+
+    target = flashers.helper_bootsel.target_for(
+        "roadrunner.uf2",
+        type_name="roadrunner",
+        serial="RR-0123456789ABCDEFGHJKMNPQRS",
+        chipset="rp2040",
+        helper=Helper(),
+    )
+    events: list[tuple[str, str]] = []
+    bench = flashers.Bench(
+        paths=paths, settings=settings, controller=lambda _name=None: None
+    )
+
+    flashers.HelperBootsel().settled(
+        bench, target, flashers.PlainContext(lambda *event: events.append(event))
+    )
+
+    assert events == [("warn", str(error))]
+
+
+def test_helper_bootsel_settled_still_honours_cancellation(paths, settings):
+    """Non-fatal covers readiness, not a cancelled job."""
+
+    class Helper:
+        name = "test"
+
+        def request_bootsel(self, *_args, **_kwargs):
+            raise AssertionError("settled must not request BOOTSEL again")
+
+        def wait_ready(self, *_args, **_kwargs):
+            raise OperationCancelled("job cancelled")
+
+    target = flashers.helper_bootsel.target_for(
+        "roadrunner.uf2",
+        type_name="roadrunner",
+        serial="RR-0123456789ABCDEFGHJKMNPQRS",
+        chipset="rp2040",
+        helper=Helper(),
+    )
+    bench = flashers.Bench(
+        paths=paths, settings=settings, controller=lambda _name=None: None
+    )
+
+    with pytest.raises(OperationCancelled):
+        flashers.HelperBootsel().settled(
+            bench, target, flashers.PlainContext(lambda *a: None)
+        )
+
+
+def test_a_failed_settle_is_never_counted_as_both_flashed_and_failed(
+    paths, settings, tmp_path, monkeypatch
+):
+    """M1: a target appended to `flashed` must not also appear in `failures`.
+
+    A consumer that sums both - as the panel's counts do - would report two
+    outcomes for one board.
+    """
+    uf2 = tmp_path / "board.uf2"
+    uf2.write_bytes(b"image")
+
+    class Late:
+        name = "late"
+        label = "late"
+        chipsets: tuple[str, ...] = ("rp2040",)
+        states: tuple[str, ...] = ()
+        needs_services_stopped = False
+
+        @contextlib.contextmanager
+        def prepared(self, bench, targets, ctx):
+            yield None
+
+        def write(self, bench, session, target, ctx):
+            return {"mount": "/media/x"}
+
+        def settled(self, bench, target, ctx):
+            raise FlashError("the board came back slowly")
+
+    target = flashers.FlashTarget(
+        flasher="late", type="rp2040", id="board-1", detail={"uf2_file": str(uf2)}
+    )
+    bench = flashers.Bench(
+        paths=paths, settings=settings, controller=lambda _name=None: None
+    )
+    events: list[tuple[str, str]] = []
+
+    monkeypatch.setitem(flasher_registry._BY_NAME, "late", Late())
+    result = flashers.write_all(
+        bench, [target], flashers.PlainContext(lambda *event: events.append(event))
+    )
+
+    assert len(result["flashed"]) == 1
+    assert result["failures"] == []
+    assert ("warn", "board-1: the board came back slowly") in events
+
+
+def test_helper_bootsel_settled_skips_helper_readiness_in_dry_run(paths, settings):
+    settings.dry_run = True
+    waits: list[object] = []
+
+    class Helper:
+        name = "test"
+
+        def request_bootsel(self, *_args, **_kwargs):
+            raise AssertionError("settled must not request BOOTSEL again")
+
+        def wait_ready(self, *_args, **_kwargs):
+            waits.append(True)
+
+    target = flashers.helper_bootsel.target_for(
+        "roadrunner.uf2",
+        type_name="roadrunner",
+        serial="RR-0123456789ABCDEFGHJKMNPQRS",
+        chipset="rp2040",
+        helper=Helper(),
+    )
+    bench = flashers.Bench(
+        paths=paths, settings=settings, controller=lambda _name=None: None
+    )
+
+    flashers.HelperBootsel().settled(
+        bench, target, flashers.PlainContext(lambda *a: None)
+    )
+
+    assert waits == []
+
+
+def test_helper_bootsel_dry_run_does_not_request_or_copy(
+    paths, settings, tmp_path
+):
+    settings.dry_run = True
+    uf2 = tmp_path / "roadrunner.uf2"
+    uf2.write_bytes(b"road-runner")
+    requested: list[object] = []
+
+    class Helper:
+        name = "test"
+
+        def request_bootsel(self, *_args, **_kwargs):
+            requested.append(True)
+            raise AssertionError("dry run must not reboot hardware")
+
+    target = flashers.helper_bootsel.target_for(
+        str(uf2),
+        type_name="roadrunner",
+        serial="RR-0123456789ABCDEFGHJKMNPQRS",
+        chipset="rp2040",
+        helper=Helper(),
+    )
+    events: list[tuple[str, str]] = []
+    bench = flashers.Bench(
+        paths=paths, settings=settings, controller=lambda name=None: None
+    )
+
+    result = flashers.HelperBootsel().write(
+        bench, None, target, flashers.PlainContext(lambda *event: events.append(event))
+    )
+
+    assert requested == []
+    assert result == {"mount": None}
+    assert any("dry-run" in line for _level, line in events)
+
+
+def test_helper_bootsel_refuses_a_missing_uf2_before_requesting_bootsel(
+    paths, settings, tmp_path
+):
+    requested: list[object] = []
+
+    class Helper:
+        name = "test"
+
+        def request_bootsel(self, *_args, **_kwargs):
+            requested.append(True)
+            raise AssertionError("a missing artifact must fail before BOOTSEL")
+
+    target = flashers.helper_bootsel.target_for(
+        str(tmp_path / "missing.uf2"),
+        type_name="roadrunner",
+        serial="RR-0123456789ABCDEFGHJKMNPQRS",
+        chipset="rp2040",
+        helper=Helper(),
+    )
+    bench = flashers.Bench(
+        paths=paths, settings=settings, controller=lambda name=None: None
+    )
+
+    with pytest.raises(FlashError, match="firmware image not found"):
+        flashers.HelperBootsel().write(
+            bench, None, target, flashers.PlainContext(lambda *a: None)
+        )
+
+    assert requested == []
 
 
 # --------------------------------------------------------------------------

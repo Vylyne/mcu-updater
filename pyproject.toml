@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [project]
 name = "mcu-updater"
 dynamic = ["version"]
-description = "Klipper/Katapult MCU firmware management with a Moonraker agent and Mainsail UI"
+description = "Klipper/Katapult MCU firmware management with a Moonraker agent and standalone UI"
 readme = "README.md"
 requires-python = ">=3.11"
 # Deliberately empty. See docs/ - the agent talks to Moonraker over a unix

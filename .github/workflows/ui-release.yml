@@ -1,8 +1,7 @@
 # Publishes a Release that Moonraker's `type: web` update manager for
 # `[update_manager mcu-updater-ui]` can consume. Mirrors the pattern proven in
-# Vylyne/mainsail's .github/workflows/mu-release.yml, but simpler: this repo
-# owns its own tags outright, so there is no upstream version to sort under
-# and no "-vylyne.N" prerelease scheme to encode it. A plain ascending
+# The standalone UI release workflow is intentionally simple: this repo
+# owns its own tags outright. A plain ascending
 # `vX.Y.Z` is enough - see docs/decisions.md for why the fork needs more.
 #
 # Moonraker requires, for `type: web`:
@@ -26,10 +25,9 @@
 # newer there. The guard below asks the channel's own question rather than
 # using one baseline for both.
 #
-# Mainsail's Update Manager panel additionally hides anything that does not
-# satisfy `semver.gt(remote, local)` client-side - so the guard uses the same
-# semver package and the same comparison, and can't drift from what it
-# protects.
+# Update Manager clients additionally hide anything that does not satisfy
+# `semver.gt(remote, local)` - so the guard uses the same semver package and
+# comparison, and cannot drift from what it protects.
 
 name: ui-release
 
@@ -117,7 +115,7 @@ jobs:
       - run: npm ci
 
       # Fail fast, before spending time on a build that would publish a
-      # release Mainsail's UI (or the agent's own docs/decisions.md-linked
+      # release a host UI (or the agent's own docs/decisions.md-linked
       # semver expectations) would silently refuse to offer.
       - name: Refuse a tag the UI would hide
         env:

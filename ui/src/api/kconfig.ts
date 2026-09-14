@@ -67,8 +67,7 @@ export interface KconfigHelp {
 }
 
 /** `search`/`help` are never part of the agent's own menu payload - they are
- * client-side additions layered onto the last menu received, the same way
- * the fork's FwKconfigState does it. */
+ * client-side additions layered onto the last menu received. */
 export interface KconfigState extends KconfigMenu {
   search: KconfigSearchResult | null;
   help: KconfigHelp | null;

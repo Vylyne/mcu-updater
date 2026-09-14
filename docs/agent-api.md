@@ -1,6 +1,6 @@
 # Agent API
 
-The contract between `mcu-updater` (Python) and the Mainsail panel
+The contract between `mcu-updater` (Python) and the standalone UI
 (TypeScript). Both sides are hand-written, so **this file is the single source of
 truth** — and `tests/test_agent_methods.py` is what stops them drifting.
 
@@ -133,9 +133,9 @@ application error (see `data.code`), `-32603` internal.
 | `fw.artifacts` | `name` (required) | `{<fw>: Artifact, ...}`, one key per family the type declares |
 | `fw.settings.get` | — | `{settings: Settings}` |
 | `fw.settings.set` | `settings` (required, non-empty) | `{settings: Settings, changed: [key]}` — only the `SETTABLE` keys |
-| `fw.serial.add` | `name`, `serial` (required) | `{name, serial, added, chipset}` — track a bus device under an existing type |
+| `fw.serial.add` | `name`, `serial` (required) | `{name, serial, added, chipset}` — track a bus device under any declared type; its provider still owns builds |
 | `fw.serial.remove` | `name`, `serial` (required) | `{name, serial, removed}` — untrack a serial from a type; non-destructive, keeps its firmware and saved config |
-| `fw.canbus.add` | `name`, `uuid` (required) | `{name, uuid, added, chipset}` — track a CAN-addressed board under an existing type; parallel to `fw.serial.add`, not an overload of it |
+| `fw.canbus.add` | `name`, `uuid` (required) | `{name, uuid, added, chipset}` — track a CAN-addressed board under any declared type; parallel to `fw.serial.add`, not an overload of it |
 | `fw.canbus.remove` | `name`, `uuid` (required) | `{name, uuid, removed}` — untrack a CAN uuid from a type; non-destructive, same as `fw.serial.remove` |
 | `fw.build` | `name`, `fw`, `jobs?`, `clean?`, `reseed?` | `{job_id, job}` — returns immediately |
 | `fw.clean` | `name` (required) | `{name, provider, removed}` — deletes that target's generated build directory and returns its path, or `removed: null` for a build system that keeps none. Synchronous, not a job; takes the exclusive lock. Withheld from a read-only agent |
@@ -659,6 +659,32 @@ real explanation instead of a job that dies a second later. In order:
 | board is on the bus | `device_not_found` |
 | printer idle | `print_in_progress` (bypass with `force: true`) |
 
+For a `builder: cmake` type, the same `fw.flash {name?, serial, force?}` method
+uses the type's declared serial identity and the firmware family's configured
+helper instead of the legacy chipset/state flasher selection. Resolution spans
+all configured providers: an unknown serial, a duplicate declaration, or a
+`name` that points at a different owner fails as
+`unknown_serial`/`ambiguous_serial`/`serial_tracked_elsewhere` before a job is
+created. The named type must have a staged UF2 and a registered helper; the only
+currently registered helper is selected with `helper: roadrunner`.
+
+That helper confirms the exact Roadrunner protocol identity, captures the full
+USB serial topology before requesting BOOTSEL, and writes only when exactly one
+marker-bearing `INFO_UF2.TXT` mount matches it. Other BOOTSEL mounts are
+bystanders and do not block the write; zero or multiple topology matches refuse.
+After copying, the job waits for the same serial and Roadrunner INFO response
+before stopped services restart. That wait is non-fatal in every outcome: once
+the UF2 has been copied the job reports success, and a slow return, an
+unanswered probe, an identity that came back wrong, or two devices answering to
+one serial are all reported as a readiness warning on the job's log. A copy
+that completed is recorded in `flash.json` before any failure is reported,
+unless restarting stopped services itself fails: that restart failure
+propagates before the record is written, so a completed copy can go
+unrecorded. Short of that, a warning never looks like a board that still
+needs flashing. Every refusal above is pre-copy.
+The closed loop is host-test-only so far, not an end-to-end hardware-verified
+claim.
+
 **`uuid` is a third identity form**, alongside `serial`/`port` - `{uuid, name?,
 force?}` flashes a CAN-addressed board instead of a by-id one. Same ordering,
 with two differences a CAN uuid's lack of a chipset-segment identity forces:
@@ -808,14 +834,15 @@ Each provider enumerates its own targets:
 
 A cmake type carries a `targets[]` row like any other, and `fw.target.get
 {name, provider: "cmake"}` answers for it. Two things about that row are
-deliberately different, because saying them plainly beats a shape that looks
-complete and is not:
+deliberately different:
 
-- **`devices[]` is empty and `needs_flash` is `null`**, with
-  `extra.flashable: false`. Flashing a cmake type is not wired up —
-  `fw.flash` refuses a cmake name — so listing devices would advertise a
-  write that cannot happen. `null` rather than `false`: `false` would claim
-  we looked and found everything current.
+- **`devices[]` contains its configured `serials:` identities.** Exact serial
+  presence is reported, but `version`, `confidence`, and `needs_flash` remain
+  unknown: the status poll does not open a firmware-specific admin port. A
+  configured static firmware helper makes each present device's ordinary
+  `fw.flash {name, serial}` action available and sets `extra.flashable: true`;
+  without one, the devices remain visible but carry no flash action and
+  `extra.flashable` is false.
 - **`descriptor` is the `cmake_target`**, the way a PlatformIO row's is its
   env. A cmake type *does* name a family, so unlike a display its `fw` is
   the family rather than `null`.
@@ -1041,6 +1068,13 @@ BOOTSEL mount separately under their own USB topology paths
 (`/media/<user>/BOOTSEL/by-path/<tag>`), but the write itself cannot name which
 port it is for. Bench convention is one board at a time; unplug the others and
 rescan.
+
+That ambiguity applies to this generic scan and the manual first-install
+flasher. It does not describe a helper-backed `fw.flash` of a known running
+board: that path captures the selected serial device's topology before reboot
+and tolerates unrelated BOOTSEL mounts, while still refusing zero or multiple
+mounts that match the selected topology. A bare board has no running helper or
+provisioned serial, so its first install necessarily stays on the manual rule.
 
 Each device carries `id` (the boot ROM's flash-chip id, parsed from
 `/dev/disk/by-id/usb-RPI_RP2_<id>-...`, or `null` if it couldn't be parsed) and

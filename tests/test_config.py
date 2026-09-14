@@ -784,3 +784,61 @@ def test_saving_does_not_delete_a_type_this_registry_does_not_own(paths):
     assert "cmake_target: roadrunner_v1_i2c_rgb" in text
     assert "RR-ABCDEFGHIJKLMNOPQRSTUVWXYZ" in text
     assert "[type bttebb36]" in text
+
+
+def test_declared_identity_mutations_preserve_a_foreign_type(paths):
+    """Identity ownership is intentionally wider than build ownership."""
+    with open(paths.registry_file, "w", encoding="utf-8") as fh:
+        fh.write(_cfg_with_a_cmake_type())
+
+    with Registry.mutate(paths, "adopt roadrunner") as registry:
+        assert registry.get_declared_chipset("roadrunner") == "rp2040"
+        assert registry.add_declared_serial("roadrunner", "RR-NEW") is True
+        assert registry.add_declared_serial("roadrunner", "RR-NEW") is False
+        assert registry.add_declared_canbus_uuid("roadrunner", "abcdef012345") is True
+
+    text = open(paths.registry_file, encoding="utf-8").read()
+    assert "cmake_target: roadrunner_v1_i2c_rgb" in text
+    reloaded = Registry.load(paths)
+    assert "roadrunner" not in reloaded.types
+    assert reloaded.find_declared_types_for_serial("RR-NEW") == ["roadrunner"]
+    assert reloaded.find_declared_types_for_uuid("abcdef012345") == ["roadrunner"]
+
+
+def test_declared_identity_lookups_include_owned_and_foreign_types(paths):
+    with open(paths.registry_file, "w", encoding="utf-8") as fh:
+        fh.write(_cfg_with_a_cmake_type())
+    registry = Registry.load(paths)
+
+    assert registry.find_declared_types_for_serial("912345678901234567890") == ["bttebb36"]
+    assert registry.find_declared_types_for_serial("RR-ABCDEFGHIJKLMNOPQRSTUVWXYZ") == ["roadrunner"]
+    assert registry.declared_type_names() == ["bttebb36", "roadrunner"]
+
+
+def test_resolve_declared_serial_includes_foreign_provider_types(paths):
+    """Flash pairing must see CMake identities without making them Kconfig types."""
+    _write(paths, _cfg_with_a_cmake_type())
+    registry = Registry.load(paths)
+
+    assert (
+        registry.resolve_declared_serial("RR-ABCDEFGHIJKLMNOPQRSTUVWXYZ")
+        == "roadrunner"
+    )
+    assert (
+        registry.resolve_declared_serial(
+            "RR-ABCDEFGHIJKLMNOPQRSTUVWXYZ", "roadrunner"
+        )
+        == "roadrunner"
+    )
+    assert "roadrunner" not in registry.types
+
+
+def test_resolve_declared_serial_refuses_a_cross_type_pairing(paths):
+    _write(paths, _cfg_with_a_cmake_type())
+
+    with pytest.raises(SerialTrackedElsewhereError) as exc:
+        Registry.load(paths).resolve_declared_serial(
+            "912345678901234567890", "roadrunner"
+        )
+
+    assert exc.value.data["tracked_under"] == ["bttebb36"]

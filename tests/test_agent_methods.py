@@ -16,6 +16,7 @@ import pytest
 from mcu_updater import API_VERSION
 from mcu_updater.agent.methods import Api
 from mcu_updater.agent.rpc import ERR_INVALID_PARAMS, ERR_METHOD_NOT_FOUND, RpcError
+from mcu_updater.cfgdoc import CfgDocument
 from mcu_updater.settings import Settings
 
 from .conftest import make_device, write_settings
@@ -424,6 +425,22 @@ def test_adoptable_excludes_already_tracked_boards(api, fake_root, live_registry
     assert tracked["serial"] not in [d["serial"] for d in res["adoptable"]]
 
 
+def test_adoptable_excludes_a_serial_tracked_by_a_cmake_type(paths, fake_root, live_registry_text):
+    with open(paths.registry_file, "w", encoding="utf-8") as fh:
+        fh.write(
+            live_registry_text
+            + "\n[firmware roadrunner]\nsource: ~/roadrunner/rp2040\nbuilder: cmake\n"
+            + "\n[type roadrunner]\nchipset: rp2040\nfirmware: roadrunner\n"
+            + "serials:\n    RR-TRACKED\n"
+        )
+    make_device(fake_root / "bus", "Roadrunner", "rp2040", "RR-TRACKED")
+
+    result = Api(paths).dispatch("fw.bus.scan")
+    device = next(d for d in result["devices"] if d["serial"] == "RR-TRACKED")
+    assert device["tracked_by"] == "roadrunner"
+    assert "RR-TRACKED" not in [d["serial"] for d in result["adoptable"]]
+
+
 def test_adoptable_respects_the_chipset_filter(api, fake_root):
     make_device(fake_root / "bus", "katapult", "stm32f072xb", "AAAA")
     make_device(fake_root / "bus", "katapult", "rp2040", "BBBB")
@@ -566,6 +583,62 @@ def test_serial_add_refuses_an_unknown_type(api):
     assert exc.value.data["code"] == "unknown_type"
 
 
+def test_serial_adoption_supports_a_declared_cmake_type(paths, live_registry_text):
+    """A builder owns builds, not the stable board identity list."""
+    with open(paths.registry_file, "w", encoding="utf-8") as fh:
+        fh.write(
+            live_registry_text
+            + "\n[firmware roadrunner]\nsource: ~/roadrunner/rp2040\nbuilder: cmake\n"
+            + "\n[type roadrunner]\nchipset: rp2040\nfirmware: roadrunner\n"
+            + "cmake_target: roadrunner_v1_i2c_rgb\nserials:\n"
+        )
+    result = Api(paths).dispatch(
+        "fw.serial.add", {"name": "roadrunner", "serial": "RR-NEW"}
+    )
+    assert result == {
+        "name": "roadrunner",
+        "serial": "RR-NEW",
+        "added": True,
+        "chipset": "rp2040",
+    }
+    text = open(paths.registry_file, encoding="utf-8").read()
+    assert "cmake_target: roadrunner_v1_i2c_rgb" in text
+    assert "RR-NEW" in text
+
+
+def test_serial_adoption_refuses_foreign_to_owned_duplicate(paths, live_registry_text):
+    with open(paths.registry_file, "w", encoding="utf-8") as fh:
+        fh.write(
+            live_registry_text
+            + "\n[firmware roadrunner]\nsource: ~/roadrunner/rp2040\nbuilder: cmake\n"
+            + "\n[type roadrunner]\nchipset: rp2040\nfirmware: roadrunner\nserials:\n"
+            + "    RR-SHARED\n"
+        )
+    with pytest.raises(RpcError) as exc:
+        Api(paths).dispatch(
+            "fw.serial.add", {"name": "bttebb36", "serial": "RR-SHARED"}
+        )
+    assert exc.value.data["code"] == "serial_tracked_elsewhere"
+    assert exc.value.data["data"]["tracked_under"] == ["roadrunner"]
+
+
+def test_serial_adoption_refuses_foreign_to_foreign_duplicate(paths, live_registry_text):
+    with open(paths.registry_file, "w", encoding="utf-8") as fh:
+        fh.write(
+            live_registry_text
+            + "\n[firmware roadrunner]\nsource: ~/roadrunner/rp2040\nbuilder: cmake\n"
+            + "\n[type roadrunner-a]\nchipset: rp2040\nfirmware: roadrunner\nserials:\n"
+            + "    RR-SHARED\n"
+            + "\n[type roadrunner-b]\nchipset: rp2040\nfirmware: roadrunner\nserials:\n"
+        )
+    with pytest.raises(RpcError) as exc:
+        Api(paths).dispatch(
+            "fw.serial.add", {"name": "roadrunner-b", "serial": "RR-SHARED"}
+        )
+    assert exc.value.data["code"] == "serial_tracked_elsewhere"
+    assert exc.value.data["data"]["tracked_under"] == ["roadrunner-a"]
+
+
 @pytest.mark.parametrize("method", ["fw.serial.add", "fw.serial.remove"])
 @pytest.mark.parametrize("args", [{}, {"name": "bttebb36"}, {"serial": "X"}, {"name": " ", "serial": "X"}])
 def test_serial_methods_require_both_arguments(api, method, args):
@@ -585,6 +658,25 @@ def test_serial_remove_reports_whether_it_acted(api):
         {"name": "bttebb36", "serial": "123456789012345678901"},
     )
     assert again["removed"] is False
+
+
+def test_canbus_adoption_and_removal_support_a_declared_cmake_type(paths, live_registry_text):
+    with open(paths.registry_file, "w", encoding="utf-8") as fh:
+        fh.write(
+            live_registry_text
+            + "\n[firmware roadrunner]\nsource: ~/roadrunner/rp2040\nbuilder: cmake\n"
+            + "\n[type roadrunner]\nchipset: rp2040\nfirmware: roadrunner\n"
+            + "cmake_target: roadrunner_v1_i2c_rgb\nserials:\n"
+        )
+    api = Api(paths)
+    added = api.dispatch("fw.canbus.add", {"name": "roadrunner", "uuid": "abcdef012345"})
+    assert added["chipset"] == "rp2040"
+    assert api.dispatch(
+        "fw.canbus.remove", {"name": "roadrunner", "uuid": "abcdef012345"}
+    )["removed"] is True
+    text = open(paths.registry_file, encoding="utf-8").read()
+    assert "cmake_target: roadrunner_v1_i2c_rgb" in text
+    assert CfgDocument(text).get("type roadrunner", "canbus_uuids") is None
 
 
 def test_serial_remove_touches_nothing_but_the_registry(api, paths):

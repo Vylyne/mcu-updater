@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from .config import McuType
     from .paths import Paths
+    from .providers.cmake import CmakeType
     from .providers.pio import PioType
     from .settings import Settings
 
@@ -71,6 +72,26 @@ def for_mcu(
     return tuple(
         resolve_stop_services(
             mcu.stop_services, family.stop_services, settings.stop_services, default=DEFAULT_MCU
+        )
+    )
+
+
+def for_cmake(
+    paths: Paths,
+    target: CmakeType,
+    settings: Settings,
+    families: dict | None = None,
+) -> tuple[str, ...]:
+    """The resolved list for one CMake MCU type."""
+    from . import firmware as firmware_mod
+
+    family = firmware_mod.resolve(paths, target.firmware, families)
+    return tuple(
+        resolve_stop_services(
+            target.stop_services,
+            family.stop_services,
+            settings.stop_services,
+            default=DEFAULT_MCU,
         )
     )
 

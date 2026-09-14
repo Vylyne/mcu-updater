@@ -16,6 +16,7 @@ from .cmake import Cmake, CmakeType
 from .kconfig_make import KconfigMake
 from .platformio import PlatformIO
 from .registry import PROVIDERS, Selection, by_name, select
+from .selection import known_type_names, provider_of
 from .spec import BuildTarget, Install, Provider, Skipped
 
 __all__ = [
@@ -30,5 +31,7 @@ __all__ = [
     "Selection",
     "Skipped",
     "by_name",
+    "known_type_names",
+    "provider_of",
     "select",
 ]

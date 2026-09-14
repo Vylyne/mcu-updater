@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 from typing import Any
 
-from ... import firmware, flashers, providers, stop_services
+from ... import firmware, flashers, helpers, providers, stop_services
 from ...config import Registry
 from ...errors import (
     DfuPermissionError,
@@ -45,8 +45,12 @@ class FlashMixin(_Base):
             )
 
         name = args.get("name")
-        if name and self._provider_of(str(name)) == providers.PlatformIO.name:
-            return self._pio_flash(args)
+        if name:
+            provider = self._provider_of(str(name))
+            if provider == providers.PlatformIO.name:
+                return self._pio_flash(args)
+            if provider == providers.Cmake.name:
+                return self._cmake_flash(args, str(name), runner, settings)
 
         # `uuid` is the third identity form, alongside `serial`/`port` - a
         # CAN-addressed board rather than a by-id one. Checked before `serial`
@@ -172,6 +176,125 @@ class FlashMixin(_Base):
                 "serial": serial,
                 "fw_bin": fw_bin,
                 "klippy_state": klippy_state,
+            }
+
+        job = runner.submit("flash", {"name": mcu_type, "serial": serial}, run)
+        return {"job_id": job.id, "job": job.to_dict()}
+
+    def _cmake_flash(
+        self,
+        args: dict,
+        name: str,
+        runner: Any,
+        settings: Settings,
+    ) -> dict[str, Any]:
+        """Write one configured CMake UF2 through its firmware helper."""
+        serial_arg = args.get("serial") or args.get("id")
+        if not serial_arg:
+            raise RpcError("'serial' is required", ERR_INVALID_PARAMS)
+        serial = str(serial_arg)
+        force = bool(args.get("force"))
+
+        reg = self.registry()
+        mcu_type = reg.resolve_declared_serial(serial, name)
+
+        from ...providers import cmake as cmake_mod
+
+        target_type = cmake_mod.load(self.paths)[mcu_type]
+        families = firmware.load(self.paths)
+        family = firmware.resolve(self.paths, target_type.firmware, families)
+        helper = helpers.for_name(family.helper, family=family.name)
+        if helper is None:
+            raise FlashError(
+                f"CMake type '{mcu_type}' has no firmware helper configured.",
+                type=mcu_type,
+            )
+
+        fw_bin = self.paths.uf2_file(mcu_type, target_type.firmware)
+        if not os.path.exists(fw_bin):
+            raise RpcError(
+                f"no built firmware for {mcu_type} at {fw_bin}. Build it first.",
+                data={
+                    "code": "no_artifact",
+                    "message": "firmware has not been built",
+                    "data": {"type": mcu_type, "path": fw_bin},
+                },
+            )
+
+        # The provisioned serial is the durable identity. Roadrunner's USB
+        # descriptor is not a chipset string, so constrain only by exact serial
+        # here; the configured helper performs its own protocol confirmation
+        # after services release the port.
+        from ...devices import find_device
+
+        if find_device(self.paths, "", serial) is None:
+            raise RpcError(
+                f"{serial} is not attached. Is it plugged in and powered?",
+                data={
+                    "code": "device_not_found",
+                    "message": "board is not on the bus",
+                    "data": {"serial": serial},
+                },
+            )
+
+        from ...service import assert_printer_idle
+
+        assert_printer_idle(
+            settings,
+            activity=self._printer_activity,
+            force=force,
+            reporter=self._log_reporter,
+        )
+
+        units = stop_services.for_cmake(self.paths, target_type, settings, families)
+        target = flashers.helper_bootsel.target_for(
+            fw_bin,
+            type_name=mcu_type,
+            serial=serial,
+            chipset=target_type.chipset,
+            helper=helper,
+            stop_services=units,
+        )
+
+        def run(ctx) -> dict[str, Any]:
+            state_holder: dict[str, Any] = {}
+
+            def on_ready(reporter: Any) -> None:
+                state_holder["klippy_state"] = self._await_klippy_ready(reporter)
+
+            settings_now = self.settings()
+            result = flashers.write_all(
+                self._bench(settings_now), [target], ctx, on_ready=on_ready
+            )
+
+            # Before the refusal below, not after: the UF2 is on the board the
+            # moment the copy returns, and the post-copy readiness wait is
+            # non-fatal by spec. A job that still ends up failing must not also
+            # lose the ledger entry - "it failed" plus no recorded write is what
+            # makes an operator flash an already-correct board a second time.
+            if result["flashed"] and not settings_now.dry_run:
+                from ...build import FlashLog
+
+                side = cmake_mod.read_sidecar(self.paths, target_type) or {}
+                FlashLog(self.paths).record(
+                    serial,
+                    mcu_type=mcu_type,
+                    fw=target_type.firmware,
+                    bin_sha256=side.get("bin_sha256"),
+                    fw_sha=side.get("sha"),
+                    version=side.get("version"),
+                )
+
+            if result["failures"]:
+                raise FlashError(
+                    result["failures"][0]["error"], type=mcu_type, serial=serial
+                )
+
+            return {
+                "type": mcu_type,
+                "serial": serial,
+                "fw_bin": fw_bin,
+                "klippy_state": state_holder.get("klippy_state"),
             }
 
         job = runner.submit("flash", {"name": mcu_type, "serial": serial}, run)

@@ -7,6 +7,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+import pytest
+
 from mcu_updater.discovery import usb
 
 
@@ -65,3 +67,13 @@ def test_collect_treats_a_malformed_port_count_as_unknown(paths, tmp_path):
     found = usb.collect(dataclasses.replace(paths, usb_sysfs=str(root)))
 
     assert found[0].ports == 0
+
+
+def test_collect_strictly_reports_an_unreadable_inventory(paths, monkeypatch):
+    monkeypatch.setattr(
+        usb.os, "listdir", lambda _path: (_ for _ in ()).throw(OSError("unreadable"))
+    )
+
+    assert usb.collect(paths) == []
+    with pytest.raises(OSError, match="unreadable"):
+        usb.collect(paths, strict=True)

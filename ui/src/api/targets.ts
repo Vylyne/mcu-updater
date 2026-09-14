@@ -1,5 +1,5 @@
 // Wire types for `targets[]` (fw.status) and fw.target.get's `target`, hand-
-// mirrored from docs/agent-api.md the same way the Mainsail panel's types.ts
+// mirrored from docs/agent-api.md for the panel's types
 // is - see tests/test_agent_methods.py for the Python half of that contract.
 
 export type Provider = "kconfig_make" | "platformio" | "cmake";
@@ -48,8 +48,7 @@ export interface ProfileChange {
   line: string;
 }
 
-/** Mirrors the fork's `FwProfileVerdict`
- * (mainsail/src/store/server/fwUpdater/types.ts) - the third verdict a row
+/** The third verdict a row
  * can carry: do the inputs still say what the profile said. `managed: false`
  * (every type predating profiles) means no chip at all, not a chip saying
  * "unmanaged" on every row. */
@@ -80,9 +79,24 @@ export interface TargetDevice {
   actions: Action[];
 }
 
-/** One `targets[]` row - `TypeStatus` and `DisplayStatus` in one shape.
- * `extra` is present only on a display; an MCU row carries none of its
- * fields at all, deliberately (docs/agent-api.md's "targets" section). */
+/** One `targets[]` row - MCU, display, and CMake target status in one shape.
+ * `extra` carries only display- or CMake-specific fields; an MCU row carries
+ * none of its fields at all (docs/agent-api.md's "targets" section). */
+export interface DisplayExtra {
+  module_version: string | null;
+  source_version: string | null;
+  source_dirty: boolean | null;
+  klipper_section: string;
+  reachable: boolean;
+}
+
+export interface CmakeExtra {
+  source: string;
+  source_version: string | null;
+  source_dirty: boolean | null;
+  flashable: boolean;
+}
+
 export interface Target {
   provider: Provider;
   name: string;
@@ -93,17 +107,11 @@ export interface Target {
   needs_flash: boolean | null;
   devices: TargetDevice[];
   actions: Action[];
-  extra?: {
-    module_version: string | null;
-    source_version: string | null;
-    source_dirty: boolean | null;
-    klipper_section: string;
-    reachable: boolean;
-  };
+  extra?: DisplayExtra | CmakeExtra;
 }
 
-/** The compound key a target needs: nothing stops an MCU type and a display
- * sharing a `name` across their separate config files. */
+/** Keep provider in the render key so target identity matches the wire shape,
+ * even though configured `[type ...]` names share one namespace today. */
 export function targetKey(target: Pick<Target, "provider" | "name">): string {
   return `${target.provider}:${target.name}`;
 }

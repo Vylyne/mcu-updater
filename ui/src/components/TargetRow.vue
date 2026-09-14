@@ -6,7 +6,7 @@
 // blocked, choices?} renderer, this file just supplies preview devices and
 // the transient busy gate a payload never carries.
 //
-// Layout mirrors FirmwareUpdaterPanelTarget.vue in the Mainsail fork: a
+// Layout for a firmware target row: a
 // header line (name, descriptor, module version, device count, spacer,
 // artifact chip, profile chip, actions, overflow menu), then one sub-row per
 // device (state icon, identity, spacer, version, verdict, device actions,
@@ -56,9 +56,9 @@ const detailText = computed(() =>
 );
 
 // A display always carries `extra.klipper_section`; an MCU row carries no
-// `extra` at all. Reading that presence, not `target.provider`, is what
-// keeps this row generic - the provider branch the fork has here is exactly
-// the one this file exists to not repeat.
+// `extra`, while CMake carries source metadata without that display-specific
+// field. Reading the field's presence, not `target.provider`, keeps this row
+// generic - provider describes how to build, not what a target is.
 //
 // `extra.reachable` gets its own branch first: docs/agent-api.md's
 // fw.device.list section is explicit that "no displays configured" and "we
@@ -67,9 +67,16 @@ const detailText = computed(() =>
 // unreachable Klipper takes down too.
 const noDevicesHint = computed(() => {
   const extra = props.target.extra;
-  if (!extra) return "No serial devices are tracked for this type yet.";
+  if (!extra || !("klipper_section" in extra)) {
+    return "No serial devices are tracked for this type yet.";
+  }
   if (!extra.reachable) return "Could not reach Klipper to check for screens.";
   return `No screens found under [${extra.klipper_section} ...].`;
+});
+
+const moduleVersion = computed(() => {
+  const extra = props.target.extra;
+  return extra && "module_version" in extra ? extra.module_version : null;
 });
 
 const deviceSummary = computed(() => {
@@ -115,7 +122,7 @@ function offersOverride(action: Target["actions"][number]): boolean {
 
 /** The ones that belong in the header itself; everything else goes in the
  * overflow menu - same split, and same reasoning, as
- * FirmwareUpdaterPanelTarget.HEADER_ACTIONS: a board with no profile yet
+ * Header actions: a board with no profile yet
  * shows a blocked Build right beside the thing that unblocks it, rather than
  * burying it a click away. */
 const HEADER_ACTION_ORDER = ["build", "profile", "flash"];
@@ -155,7 +162,7 @@ const reseedDefault = computed(
 /** The profile chip, or nothing - nothing for a display (no answers to
  * seed) and nothing for an unmanaged type (every type predating profiles).
  * A moved seed names the profile rather than saying "profile updated",
- * mirroring FirmwareUpdaterPanelTarget.vue's profileChip getter. */
+ * mirroring the target row's profile chip getter. */
 const profileChip = computed(() => {
   const profile = props.target.profile;
   if (!profile || !profile.managed) return null;
@@ -267,10 +274,10 @@ async function toggle(): Promise<void> {
         {{ target.descriptor }}
       </span>
       <span
-        v-if="target.extra?.module_version"
+        v-if="moduleVersion"
         class="text-caption text--disabled"
       >
-        {{ target.extra.module_version }}
+        {{ moduleVersion }}
       </span>
       <span class="text-caption text--disabled">{{ deviceSummary }}</span>
 

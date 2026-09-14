@@ -901,3 +901,71 @@ def test_without_a_name_it_is_still_the_whole_fleet(bulk, paths, fake_root):
     assert bulk.runner.wait(timeout=60)
     job = bulk.runner.get(res["job_id"])
     assert sorted(f["serial"] for f in job.result["flash"]["flashed"]) == sorted([EBB_A, MMB_SERIAL])
+
+
+def test_an_unknown_type_still_reports_unknown_type(bulk):
+    """The typo path, pinned - including the part that deliberately moved.
+
+    `_require_flashable_type` used to fall through to `reg.get`, so a typo here
+    reported a kconfig-only `known` list and a differently-keyed payload than
+    the identical mistake made through `fw.build`. Both now come from the one
+    resolver: key `name`, `known` spanning every provider, and the sentence
+    (not a bare category label) as the nested message the panel reads.
+
+    Ruled deliberately: preserving two divergent payloads for one error is the
+    class of thing this branch exists to delete.
+    """
+    with pytest.raises(RpcError) as exc:
+        bulk.dispatch("fw.flash_all", {"name": "nosuchtype"})
+    assert exc.value.data["code"] == "unknown_type"
+    assert exc.value.data["data"]["name"] == "nosuchtype"
+    assert exc.value.data["message"] == "MCU type 'nosuchtype' does not exist."
+    assert bulk.runner.current() is None
+
+
+def test_a_cmake_type_is_refused_by_name_not_as_a_typo(bulk, paths, fake_root):
+    """The bug this task exists to fix.
+
+    A configured Roadrunner used to come back as `unknown_type` - the type
+    exists, so that was simply false, and it sent operators looking for a
+    misspelling. Type-level flash cannot serve a CMake type yet; the refusal
+    now says so and points at the per-device path that does work.
+    """
+    _declare_cmake(paths, fake_root)
+
+    with pytest.raises(RpcError) as exc:
+        bulk.dispatch("fw.flash_all", {"name": "roadrunner"})
+
+    assert exc.value.data["code"] == "type_not_bulk_flashable"
+    assert exc.value.data["data"]["name"] == "roadrunner"
+    assert "fw.flash" in str(exc.value)
+    assert bulk.runner.current() is None
+
+
+def test_a_cmake_type_never_reports_a_successful_flash_of_nothing(
+    bulk, paths, fake_root
+):
+    """Why the name is refused rather than accepted and enumerated.
+
+    `_boards_to_flash` walks the kconfig registry and has no CMake branch, so
+    accepting the name would select zero boards and report a clean sweep -
+    strictly worse than an error, because nothing was flashed and nothing said
+    so.
+    """
+    _declare_cmake(paths, fake_root)
+
+    with pytest.raises(RpcError):
+        bulk.dispatch("fw.flash_all", {"name": "roadrunner"})
+
+    reg = Registry.load(paths)
+    assert bulk._boards_to_flash(reg, "stale", "roadrunner") == []
+
+
+def test_update_all_refuses_a_cmake_type_the_same_way(bulk, paths, fake_root):
+    _declare_cmake(paths, fake_root)
+
+    with pytest.raises(RpcError) as exc:
+        bulk.dispatch("fw.update_all", {"name": "roadrunner"})
+
+    assert exc.value.data["code"] == "type_not_bulk_flashable"
+    assert bulk.runner.current() is None

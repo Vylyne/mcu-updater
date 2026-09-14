@@ -5,7 +5,7 @@ each one has been proposed again at least once — so the reasoning lives here
 rather than in a commit message nobody re-reads.
 
 This file is for *standing* decisions. Rules that a change can violate silently
-live in [CLAUDE.md](../CLAUDE.md)'s ground-rules table instead; the split is
+live in [AGENTS.md](../AGENTS.md)'s ground rules instead; the split is
 that a ground rule is checked before every commit, and a decision here is
 consulted before starting work that would undo it.
 
@@ -140,6 +140,38 @@ The standalone UI runs `fw.status` and the explicit `fw.canbus.scan` together
 on refresh. Their results are stored independently, and a generation guard
 prevents an older overlapping CAN scan from replacing a newer result.
 
+### New firmware-specific code goes behind the helper seam
+
+`helpers/` exists because of Cartographer. Its one oddity - a hand-maintained
+`CONFIG_VERSION` literal with no commit in it - was squeezed into the build and
+status paths as special cases, and it is still there, spread across files that
+have no other reason to know that vendor's name. The seam was added so the next
+such oddity would have somewhere to go that is not "inside whichever generic
+path noticed it first".
+
+So, going forward:
+
+- **Providers are generic.** A provider answers questions about a *build
+  system* - PlatformIO, CMake, kconfig+make. Nothing in `providers/` should
+  name a vendor or a board.
+- **Flashers are generic.** A flasher answers questions about a *transport* -
+  flashtool over USB/CAN, esptool, DFU, BOOTSEL mass-storage. `dfu` and
+  `bootsel` are the shape to copy: they describe a mechanism, not a product.
+- **Discovery may be firmware-specific, and legitimately is.** How a board
+  announces itself is a property of its firmware, so `discovery/roadrunner.py`
+  and `discovery/knomi_serial/` are in the right place. `byid` is generic.
+  `canbus`, as built, is Klipper/Katapult-specific - that is a known
+  inaccuracy of the current shape, not a licence to add more.
+- **Everything else vendor-shaped goes in `helpers/`.** A one-off protocol, a
+  provisioning step, a version string only one firmware stamps: a helper, named
+  in config on the `[firmware ...]` family, reached through `helpers/spec.py`.
+
+This is a rule about *new* code. Migrating what already exists - Cartographer's
+version handling in particular - needs its own design and plan; see the
+`## TODO` entry in [README.md](../README.md). The seam answers a narrower
+question today than discovery and version reporting need, so it likely has to
+widen before anything moves.
+
 ### Do not give `Confidence` a fourth degree of certainty
 
 Three tones and a tri-state `safe_to_write`, built the way `states.py` is. A
@@ -248,37 +280,8 @@ this.
 
 ## Conclusions that close an avenue
 
-### `vue-tsc` cannot type-check the Mainsail fork, at any version
+### Historical Mainsail-fork decisions
 
-Investigated 2026-08-21. The `.vue` `<script>` blocks in `Vylyne/mainsail` are
-unchecked by `npx vite build` — `vite.config.ts`'s `checker({ typescript })`
-covers bare `.ts` only — and that gap hid a real bug through every gate. Adding
-`vueTsc: true`, or a `vue-tsc` CI job, does not close it:
-
-- **Newest `vue-tsc` (3.3.10**, the only major compatible with this tree's
-  `typescript@6.0.3`) emits **6307** `error TS2339`, every one shaped
-  `Property '<x>' does not exist on type 'Vue3Instance<...>'`.
-  `@vue/language-core` infers a component's public type from a
-  `defineComponent(...)`-shaped export, which a `@Component class X extends Vue`
-  decorator export never produces. A real regression would be error #6308 among
-  6307 identical false positives.
-- **`vueCompilerOptions.target` is not the knob.** Tested explicitly at both
-  `2.7` and `3`, identical error count both times, with the override confirmed
-  read via `@vue/language-core`'s `CompilerOptionsResolver`. That setting
-  changes template-directive nuances, not whether class-component properties are
-  visible on `this`.
-- **Old `vue-tsc` (1.8.27**, contemporaneous with `vue-class-component`'s peak
-  usage) crashes against `typescript@6.0.3`:
-  `Search string not found: "/supportedTSExtensions = .*(?=;)/"`. It patches
-  TypeScript's internals by regex against compiled `tsc` source, and the pattern
-  is gone.
-
-The two failure modes bracket the whole option space: new `vue-tsc` runs but is
-structurally blind to this tree's component pattern; old `vue-tsc` understood
-that pattern but cannot load against this TypeScript version.
-
-**So the gap stays open, and it is a real one** — treat `npx vite build` as
-proving nothing about `.vue` script blocks, and review those by hand. The
-upstream half (raising the class-component pattern with
-`mainsail-crew/mainsail`) is in `docs/backlog.md`. Do not spend the fork's
-edited-file rebase budget on a fallback without asking.
+The former fork and its release channel are retired. This historical decision
+is superseded; the supported client is the standalone UI documented in
+`docs/mainsail-fork.md`.

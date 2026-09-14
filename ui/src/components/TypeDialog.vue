@@ -1,6 +1,6 @@
 <script setup lang="ts">
 // Create or edit an MCU type - fw.type.add/.update, mirroring
-// FirmwareUpdaterPanelTypeDialog.vue. `targets[]` (the fw.status projection)
+// The type dialog. `targets[]` (the fw.status projection)
 // doesn't carry chipset/katapult_installed/extra_args, so editing fetches the
 // same on-demand detail TargetRow's "Show detail" already uses
 // (fw.target.get) rather than adding a second wire shape for the same data.

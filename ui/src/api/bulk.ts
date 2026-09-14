@@ -1,6 +1,5 @@
-// Pure selection logic for fw.build_all/flash_all/update_all, mirroring the
-// fork's server/fwUpdater getters (bulkBuildTargets/bulkFlashTargets/
-// bulkHasWork) - kept here rather than in the store so it is testable without
+// Pure selection logic for fw.build_all/flash_all/update_all. Kept here rather
+// than in the store so it is testable without
 // mounting, the same reason api/jobs.ts's cancelIsImmediate is a plain
 // function. No store import: every function takes targets[] as an argument.
 //

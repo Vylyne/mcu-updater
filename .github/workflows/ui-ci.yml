@@ -1,7 +1,7 @@
 name: ui-ci
 
 # Non-mutating variants only (lint, typecheck, build, test, format --check),
-# per the fork's own rule (docs/decisions.md): a mutating gate lets CI pass by
+# A mutating gate lets CI pass by
 # rewriting the code it is supposed to police.
 
 on:
@@ -33,7 +33,7 @@ jobs:
       - name: Lint
         run: npm run lint
       - name: Type check
-        # Unlike the Mainsail fork (docs/decisions.md), this is a greenfield
+        # This standalone UI is a greenfield
         # <script setup lang="ts"> tree, so vue-tsc actually sees it.
         run: npm run typecheck
       - name: Format check

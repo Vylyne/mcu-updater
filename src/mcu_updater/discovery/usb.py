@@ -41,12 +41,14 @@ class UsbDevice:
     ports: int
 
 
-def collect(paths: Paths) -> list[UsbDevice]:
-    """Return physical USB devices, excluding their ``:1.0`` interfaces."""
+def collect(paths: Paths, *, strict: bool = False) -> list[UsbDevice]:
+    """Return physical USB devices, optionally surfacing an unreadable root."""
     root = paths.usb_sysfs or _DEFAULT_SYSFS
     try:
         names = sorted(os.listdir(root))
     except OSError:
+        if strict:
+            raise
         return []
     devices = []
     for name in names:

@@ -8,10 +8,11 @@ import platform
 import re
 import secrets
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterable
 from typing import Any
 
-from ... import API_VERSION, __version__, firmware, profiles, providers
+from ... import API_VERSION, __version__, firmware, helpers, profiles, providers
+from ... import uf2 as uf2_mod
 from ...build import read_sidecar
 from ...config import Registry
 from ...devices import (
@@ -23,7 +24,9 @@ from ...devices import (
     parse_entry,
     scan,
 )
+from ...discovery.byid import canonical_serial
 from ...errors import (
+    ConfigCorruptError,
     UpdaterError,
 )
 from ...flashers.pairings import PAIRING_TTL as _PAIRING_TTL
@@ -44,10 +47,57 @@ from ...states import (
 from ..rpc import ERR_INVALID_PARAMS, MethodNotFound, RpcError
 from ._api import _Base
 
+#: The Roadrunner's klippy extra registers with `load_config_prefix`, so every
+#: one of its printer objects is `high_resolution_filament_sensor <name>` and
+#: `_object_names_for` finds them all off the list it already caches.
+SENSOR_SECTION = "high_resolution_filament_sensor"
+
 #: How long a Moonraker query may block before we give up and report unknown.
 #: Small on purpose - these are best-effort enrichments of fw.status, and the
 #: whole call has a sub-second budget.
 PROBE_TIMEOUT = 1.5
+
+
+def _provenance_key(serial: str) -> str:
+    """One spelling for a serial, so the two sources can actually meet.
+
+    The board burns one string and reports it twice: through the USB serial
+    descriptor, which reaches us via `/dev/serial/by-id` with udev's interface
+    marker on the end, and through the identity register, which reaches us via
+    the klippy extra verbatim. A join that compared them raw would miss on the
+    suffix or on case - and a missed join is indistinguishable from "Klipper
+    did not answer", so it would silently send every board to the wire.
+    """
+    return canonical_serial(serial.strip()).upper()
+
+
+def _digest_int(value: object) -> int | None:
+    """Klipper's `"%#010x"` digest as the int every other side of this uses.
+
+    The extra sends a hex string on purpose - an identifier to compare, not a
+    quantity - while INFO sends four little-endian bytes and `record_build`
+    stores an int. Int is canonical and each reader converts on the way in,
+    because a comparison that ever saw `"0xbbe38aa9" != 3185217705` would call
+    a correctly flashed board stale forever: reflashing cannot clear a
+    formatting difference. Anything unparseable is absence, not mismatch.
+    """
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, str):
+        try:
+            return int(value, 16)
+        except ValueError:
+            return None
+    return None
+
+
+def _image_int(value: object) -> int | None:
+    """A reported image bound, or None. None is the rangeless-UART case."""
+    if isinstance(value, bool) or not isinstance(value, int):
+        return None
+    return value
 
 
 def _mtime(path: str) -> float | None:
@@ -403,13 +453,15 @@ class StatusMixin(_Base):
         return out
 
     def bus(self, reg: Registry) -> list[dict[str, Any]]:
-        owner: dict[str, str] = {}
-        for name, mcu in reg.items():
-            for serial in mcu.serials:
-                owner[serial] = name
+        bus_devices = scan(self.paths)
+        owner = {
+            device.serial: owners[0]
+            for device in bus_devices
+            if (owners := reg.find_declared_types_for_serial(device.serial))
+        }
         ignored = set(self.settings().ignored_serials)
         return [
-            serialize_device(d, owner.get(d.serial), ignored) for d in scan(self.paths)
+            serialize_device(d, owner.get(d.serial), ignored) for d in bus_devices
         ]
 
     # -- methods -----------------------------------------------------------
@@ -608,6 +660,11 @@ class StatusMixin(_Base):
     #: answer file that a build would read: this is the tree itself missing, and
     #: the fix is a `source:` key or a `git clone` rather than a menuconfig run.
     BLOCKED_NO_SOURCE = "no_source"
+    #: A `helper:` no registered helper answers to. Distinct from `no_config`,
+    #: which is a menuconfig run away: this one is a typo in printer's config,
+    #: and it blocks one row rather than the whole poll. The value is the
+    #: error's own `code`, so a panel switching on it needs no new vocabulary.
+    BLOCKED_CONFIG_CORRUPT = "config_corrupt"
 
     @staticmethod
     def _blocked(code: str, message: str, **data: Any) -> dict[str, Any]:
@@ -676,7 +733,8 @@ class StatusMixin(_Base):
         ] + [
             self._pio_target(payload, allowed) for payload in displays
         ] + [
-            self._cmake_target(payload, allowed) for payload in self.cmake_status()
+            self._cmake_target(payload, allowed, families)
+            for payload in self.cmake_status()
         ]
 
     def _mcu_target(
@@ -942,11 +1000,11 @@ class StatusMixin(_Base):
     def cmake_status(self) -> list[dict[str, Any]]:
         """One payload per cmake type: what it builds, and whether it is current.
 
-        The cmake counterpart of `pio_status()`. Thinner than either of the
-        others on purpose - there is no device half yet. A cmake type's boards
-        are flashed over BOOTSEL, which is its own piece of work, and
-        `fw.flash` refuses a cmake name today. Listing devices here would
-        advertise a write that cannot happen.
+        The cmake counterpart of `pio_status()`. Each row carries the chipset
+        and serials a board declares. Rows are listed regardless of whether a
+        helper is configured; a type without one still gets chipset and serials
+        but cannot be flashed. `fw.flash` resolves a cmake name through its
+        type's registered helper and flashes it over BOOTSEL when one is set.
         """
         from ...providers import cmake as cmake_mod
 
@@ -973,12 +1031,17 @@ class StatusMixin(_Base):
                     "build_blocked": cmake_mod.source_problem(
                         entry, probe_targets=False
                     ),
+                    "chipset": entry.chipset,
+                    "serials": list(entry.serials),
                 }
             )
         return out
 
     def _cmake_target(
-        self, payload: dict[str, Any], allowed: set[str]
+        self,
+        payload: dict[str, Any],
+        allowed: set[str],
+        families: dict[str, firmware.FirmwareFamily],
     ) -> dict[str, Any]:
         """A cmake type in the shared `targets[]` shape.
 
@@ -989,6 +1052,71 @@ class StatusMixin(_Base):
         name = payload["name"]
         status = ArtifactStatus(payload["artifact_reason"])
         problem = payload.get("build_blocked")
+        family = firmware.resolve(self.paths, payload["firmware"], families)
+        # Caught rather than raised: `dispatch` turns any UpdaterError into an
+        # RpcError for the whole `fw.status` call, so one mistyped helper name
+        # blanked the panel for every MCU of every provider. It is a fact about
+        # this type, so it is reported on this type's row.
+        helper_problem: str | None = None
+        try:
+            helper = helpers.for_name(family.helper, family=family.name)
+        except ConfigCorruptError as exc:
+            helper = None
+            helper_problem = str(exc)
+        helper_configured = helper is not None
+
+        sightings = scan(self.paths)
+        devices: list[dict[str, Any]] = []
+        for serial in payload["serials"]:
+            matches = [device for device in sightings if device.serial == serial]
+            present = len(matches) == 1
+            match = matches[0] if present else None
+            device_status = DeviceStatus(UNKNOWN_VERSION if present else OFFLINE)
+            device_actions = (
+                self._device_actions(
+                    allowed,
+                    flash=("fw.flash", {"name": name, "serial": serial}),
+                    present=present,
+                    has_artifact=bool(payload["has_firmware"]),
+                    what=f"{payload['firmware']} firmware",
+                    label=serial,
+                    blocked=(
+                        None
+                        if helper_problem is None
+                        else self._blocked(
+                            self.BLOCKED_CONFIG_CORRUPT, helper_problem, name=name
+                        )
+                    ),
+                    extra=(
+                        [
+                            {
+                                "id": "untrack",
+                                "label": "Stop tracking",
+                                "method": "fw.serial.remove",
+                                "params": {"name": name, "serial": serial},
+                                "blocked": None,
+                            }
+                        ]
+                        if "fw.serial.remove" in allowed
+                        else []
+                    ),
+                )
+                if helper_configured or helper_problem is not None
+                else []
+            )
+            devices.append(
+                {
+                    "id": serial,
+                    "name": None,
+                    "present": present,
+                    "state": match.state if match is not None else STATE_OFFLINE,
+                    "path": match.path if match is not None else None,
+                    "version": None,
+                    "confidence": None,
+                    **self._device_json(device_status),
+                    "actions": device_actions,
+                }
+            )
 
         actions: list[dict[str, Any]] = []
         if "fw.build" in allowed:
@@ -1030,18 +1158,14 @@ class StatusMixin(_Base):
             # No menuconfig, so nothing for a profile to seed. Present and null
             # for the same reason PlatformIO's is: one shape a reader can trust.
             "profile": None,
-            # No devices, so nothing to aggregate. Not False - that would claim
-            # we looked and found everything current.
-            "needs_flash": None,
-            "devices": [],
+            "needs_flash": self._aggregate(devices),
+            "devices": devices,
             "actions": actions,
             "extra": {
                 "source": payload["source"],
                 "source_version": payload["source_version"],
                 "source_dirty": payload["source_dirty"],
-                # Flashing a cmake type is not wired up yet, so a panel can say
-                # why the row has no device half instead of looking broken.
-                "flashable": False,
+                "flashable": helper_configured,
             },
         }
 
@@ -1223,6 +1347,7 @@ class StatusMixin(_Base):
         has_artifact: bool,
         what: str,
         label: str,
+        blocked: dict[str, Any] | None = None,
         extra: list[dict[str, Any]] | None = None,
     ) -> list[dict[str, Any]]:
         """What can be done to one device.
@@ -1237,7 +1362,12 @@ class StatusMixin(_Base):
         method, params = flash
         out: list[dict[str, Any]] = []
         if method in allowed:
-            if not has_artifact:
+            if blocked is not None:
+                # A caller-supplied reason outranks the generic ones: it is
+                # about the configuration rather than about this device, and it
+                # is what the operator has to fix first.
+                pass
+            elif not has_artifact:
                 blocked = self._blocked(
                     self.BLOCKED_NO_ARTIFACT,
                     f"no {what} has been built yet.",
@@ -1426,7 +1556,7 @@ class StatusMixin(_Base):
         return RpcError(exc.message, data=exc.to_dict())
 
     def _roadrunner_untracked(self, serial: str) -> None:
-        owners = self.registry().find_types_for_serial(serial)
+        owners = self.registry().find_declared_types_for_serial(serial)
         if owners:
             raise RpcError(
                 f"Roadrunner '{serial}' is already tracked under '{owners[0]}'.",
@@ -1518,7 +1648,7 @@ class StatusMixin(_Base):
         ignored = set(settings.ignored_canbus_uuids)
         devices = []
         for sighting in result.sightings:
-            elsewhere = reg.find_types_for_uuid(sighting.uuid)
+            elsewhere = reg.find_declared_types_for_uuid(sighting.uuid)
             devices.append(
                 {
                     "uuid": sighting.uuid,
@@ -2141,6 +2271,113 @@ class StatusMixin(_Base):
             for name in self._all_object_names()
             if name == prefix or name.startswith(prefix + " ")
         ]
+
+    def sensor_provenance(self) -> dict[str, dict[str, Any]]:
+        """Canonical serial -> what Klipper says that board is running.
+
+        **The Klipper half of the provenance read, and it answers both halves
+        of the question.** The extra's `get_status` carries `identity`, whose
+        `firmware_version` is the same `${git_describe}` string INFO reports,
+        *and* `firmware_image`, whose four fields are the image digest and the
+        range it covers. So a board Klippy is holding needs no port opened at
+        all - which matters because Klippy holding the port is exactly what
+        stops the admin protocol from opening it.
+
+        Both wire spellings are converted here rather than at the comparison:
+        the digest arrives as a hex string and the algorithm as a name, and one
+        unconverted value would read as a permanent mismatch on a board that is
+        running precisely what we flashed.
+
+        `start` and `length` are legitimately None over UART - the range lives
+        in a register that does not fit that transport. A digest with no range
+        can tell two boards apart and cannot be checked against a file, so it
+        is carried as-is and the comparison falls through to the version.
+        """
+        names = self._object_names_for(SENSOR_SECTION)
+        if not names:
+            return {}
+
+        query: dict[str, Any] = {name: ["identity", "firmware_image"] for name in names}
+        res = self._probe("printer.objects.query", {"objects": query})
+        status = (res or {}).get("status")
+        if not isinstance(status, dict):
+            return {}
+
+        out: dict[str, dict[str, Any]] = {}
+        for name in names:
+            values = status.get(name)
+            if not isinstance(values, dict):
+                continue
+            identity = values.get("identity")
+            identity = identity if isinstance(identity, dict) else {}
+            serial = identity.get("serial")
+            if not isinstance(serial, str) or not serial.strip():
+                # No serial is no join key. A board mid-connect reports the
+                # object with nothing in it, and guessing which tracked serial
+                # it is would attach one board's digest to another's row.
+                continue
+            image = values.get("firmware_image")
+            image = image if isinstance(image, dict) else {}
+            version = identity.get("firmware_version")
+            out[_provenance_key(serial)] = {
+                "source": "klipper",
+                "fw_version": version if isinstance(version, str) and version else None,
+                "digest_algorithm": uf2_mod.algorithm_id(image.get("algorithm")),
+                "digest": _digest_int(image.get("digest")),
+                "image_start": _image_int(image.get("start")),
+                "image_length": _image_int(image.get("length")),
+            }
+        return out
+
+    def device_provenance(
+        self,
+        serials: Iterable[str],
+        info_source: Callable[[str], dict[str, Any] | None] | None = None,
+    ) -> dict[str, dict[str, Any]]:
+        """What each tracked serial is running: Klipper first, the wire second.
+
+        The order is forced by the lock, not chosen: Klipper holds the usbserial
+        connection when connected, so a read that went to the wire first would
+        fail on exactly the machines where the answer was already sitting in the
+        object graph.
+
+        **The wire half is injected, never reached for.** `info_source` opens a
+        port - a `usb.collect` sweep and a helper subprocess per serial - which
+        no caller with `fw.status`'s sub-second budget can afford, and which
+        would be probing a tty Klipper may still hold even for a board it has
+        no object for. Callers that have already freed the ports deliberately
+        pass `discovery.roadrunner.wire_provenance(paths)`; everyone else
+        passes nothing and gets the Klipper answer or none at all.
+
+        The fallback trigger is "Klipper had no object for this serial", never
+        "Klipper's answer was incomplete". A reachable board that reports a
+        digest without a range is the rangeless-UART case, and going to the
+        wire to fill the range in would be the host substituting for the board.
+
+        Serials come back spelled as the caller spelled them, so a row can be
+        looked up by the serial it tracks rather than by the canonical form.
+        """
+        klipper = self.sensor_provenance()
+        out: dict[str, dict[str, Any]] = {}
+        for serial in serials:
+            answer = klipper.get(_provenance_key(serial))
+            if answer is not None:
+                out[serial] = answer
+                continue
+            if info_source is None:
+                continue
+            info = info_source(serial)
+            if not info:
+                continue
+            out[serial] = {
+                "source": "info",
+                "fw_version": info.get("fw_version"),
+                "digest_algorithm": info.get("digest_algorithm"),
+                "digest": info.get("digest"),
+                "image_start": info.get("image_start"),
+                "image_length": info.get("image_length"),
+            }
+        return out
 
     def _mcu_object_names(self) -> list[str]:
         """Klipper's printer objects that are MCUs."""

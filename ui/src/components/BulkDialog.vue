@@ -1,6 +1,6 @@
 <script setup lang="ts">
 // One confirmation for build_all/flash_all/update_all - mirroring
-// FirmwareUpdaterPanelBulkDialog.vue, minus the `name` filter: agent-api.md's
+// The bulk dialog, minus the `name` filter: agent-api.md's
 // methods table gives fw.build_all only `fw?, scope?`, no `name`, and rows
 // already carry per-type flash through their own actions[], so nothing is
 // lost by staying fleet-wide only.

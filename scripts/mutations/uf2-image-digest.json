@@ -1,0 +1,74 @@
+{
+  "_comment": "Reconstructing the flash image out of a UF2 container. Every guard here is a silent-failure shape: drop one and the digest is still a plausible 32-bit number, just not the one the board reports. A wrong number that looks like an answer is worse than an error, so each guard has to be shown load-bearing.",
+  "file": "src/mcu_updater/uf2.py",
+  "command": [
+    "python",
+    "-m",
+    "pytest",
+    "tests/test_uf2.py",
+    "tests/test_cmake.py",
+    "-q"
+  ],
+  "mutations": [
+    {
+      "name": "payloadSize is read per block, not assumed to be 256",
+      "find": "        for index in range(payload_size):",
+      "replace": "        for index in range(256):"
+    },
+    {
+      "name": "a block claiming more payload than a block holds is refused",
+      "find": "        if payload_size > UF2_MAX_PAYLOAD:",
+      "replace": "        if False:"
+    },
+    {
+      "name": "a NOT_MAIN_FLASH block's bytes stay out of the image",
+      "find": "        if flags & UF2_FLAG_NOT_MAIN_FLASH:\n            continue\n        for index in range(payload_size):",
+      "replace": "        for index in range(payload_size):"
+    },
+    {
+      "name": "a gap in the range is an error, not a hole filled with zeros",
+      "find": "    if not all(covered):",
+      "replace": "    if False:"
+    },
+    {
+      "name": "the container's magic values are checked",
+      "find": "            raise Uf2Error(f\"block at byte {offset} has bad magic\")",
+      "replace": "            pass"
+    },
+    {
+      "name": "the trailing magic is one of the three checked",
+      "find": "            or magic_end != UF2_MAGIC_END",
+      "replace": "            or False"
+    },
+    {
+      "name": "the first magic is one of the three checked",
+      "find": "            magic0 != UF2_MAGIC_START0",
+      "replace": "            False"
+    },
+    {
+      "name": "a file that is not a whole number of blocks is refused",
+      "find": "    if len(uf2) % UF2_BLOCK_SIZE != 0 or not uf2:",
+      "replace": "    if False:"
+    },
+    {
+      "name": "the digest covers exactly the reported length",
+      "find": "            if not 0 <= slot < length:",
+      "replace": "            if not 0 <= slot:"
+    },
+    {
+      "name": "the extent ignores blocks that are not main flash",
+      "find": "        if not flags & UF2_FLAG_NOT_MAIN_FLASH and payload_size",
+      "replace": "        if payload_size"
+    },
+    {
+      "name": "a container with no flash blocks has no extent to report",
+      "find": "    if not spans:",
+      "replace": "    if False:"
+    },
+    {
+      "name": "an unreadable artifact records no digest rather than a wrong one",
+      "find": "    except (OSError, Uf2Error, struct.error):\n        return {}",
+      "replace": "    except (OSError, Uf2Error, struct.error):\n        return {\"digest_algorithm\": DIGEST_NONE, \"digest\": 0, \"image_start\": 0, \"image_length\": 0}"
+    }
+  ]
+}

@@ -56,6 +56,24 @@ def test_a_cmake_type_loads_with_its_target_and_args(paths, tmp_path):
     assert rr.source == str(tmp_path)
     assert rr.cmake_args == "-DROADRUNNER_FIRMWARE_VERSION=${git_describe}"
     assert rr.submodules is False
+    assert rr.chipset == "rp2040"
+    assert rr.serials == ["RR-ABCDEFGHIJKLMNOPQRSTUVWXYZ"]
+    assert rr.stop_services is None
+
+
+def test_a_cmake_type_loads_its_own_stop_services_override(paths, tmp_path):
+    write_config(
+        paths,
+        ROADRUNNER_CFG.format(source=tmp_path).replace(
+            "cmake_target: roadrunner_v1_i2c_rgb",
+            "cmake_target: roadrunner_v1_i2c_rgb\nstop_services: klipper, roadrunner-watch",
+        ),
+    )
+
+    assert cmake.load(paths)["roadrunner"].stop_services == [
+        "klipper",
+        "roadrunner-watch",
+    ]
 
 
 def test_the_families_submodules_key_reaches_the_type(paths, tmp_path):
@@ -1139,3 +1157,41 @@ def test_a_cleaned_tree_reconfigures_on_the_next_build(paths, settings, repo, mo
     seen.clear()
     cmake.build(paths, settings, target)
     assert [c[0] for c in seen] == ["cmake", "make"]
+
+
+def test_the_record_carries_the_digest_a_board_should_report(paths, repo):
+    """What `entry_for` compares against, stored at the one moment we know it.
+
+    Named with the INFO payload's own field names, so the stored record and
+    the board's report compare field to field with nothing in between.
+    """
+    from .test_uf2 import ROUNDED_UP_CRC, VECTOR_START, _vector_uf2
+
+    source = repo / "rp2040"
+    target = _cmake_type(source)
+    _staged(paths, _vector_uf2())
+    cmake.record_build(paths, target, cmake.source_state(str(source)))
+
+    record = cmake.read_sidecar(paths, target)
+    assert record is not None
+    assert record["digest_algorithm"] == 1
+    assert record["digest"] == ROUNDED_UP_CRC
+    assert record["image_start"] == VECTOR_START
+    assert record["image_length"] == 768
+
+
+def test_an_artifact_that_is_not_a_uf2_still_records_a_build(paths, repo):
+    """Absence is never mismatch, and never a failed build either.
+
+    A digest we cannot compute costs the comparison one signal. Raising here
+    would cost the operator the whole build over a provenance nicety.
+    """
+    source = repo / "rp2040"
+    target = _cmake_type(source)
+    _staged(paths, b"NOT A UF2")
+    cmake.record_build(paths, target, cmake.source_state(str(source)))
+
+    record = cmake.read_sidecar(paths, target)
+    assert record is not None
+    assert "digest" not in record
+    assert cmake.artifact_status(paths, target, cmake.source_state(str(source))).is_current

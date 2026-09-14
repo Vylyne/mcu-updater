@@ -73,13 +73,12 @@ const ignoredCount = computed(
   () => ignored.value.length + ignoredCanbus.value.length,
 );
 
-// Only MCU types can adopt a serial (fw.serial.add) - a display is a
-// separate provider with its own port config, not a bus device to claim.
-const mcuTypeNames = computed(() => {
+// A provider describes how a target builds, not whether a discovered serial
+// or CAN identity can be adopted into it. Keep the first configured occurrence
+// when separate target records share a name: adoption accepts a target name.
+const targetNames = computed(() => {
   const targets = (state.status?.targets as Target[] | undefined) ?? [];
-  return targets
-    .filter((t) => t.provider === "kconfig_make")
-    .map((t) => t.name);
+  return [...new Set(targets.map((t) => t.name))];
 });
 
 const canAdopt = computed(() => hasCapability("fw.serial.add"));
@@ -113,10 +112,10 @@ const canManageTypes = computed(
 );
 
 const showAdoptItems = computed(
-  () => canAdopt.value && mcuTypeNames.value.length > 0,
+  () => canAdopt.value && targetNames.value.length > 0,
 );
 const showCanAdoptItems = computed(
-  () => canAdoptCan.value && mcuTypeNames.value.length > 0,
+  () => canAdoptCan.value && targetNames.value.length > 0,
 );
 const showNewTypeItem = computed(() => canManageTypes.value);
 // Whether the `+` trigger itself is worth showing at all - an empty dropdown
@@ -440,7 +439,7 @@ async function confirmClear(): Promise<void> {
             <div v-if="menuOpenFor === device.serial" class="menu-list">
               <template v-if="showAdoptItems">
                 <button
-                  v-for="name in mcuTypeNames"
+                  v-for="name in targetNames"
                   :key="name"
                   type="button"
                   class="menu-item"
@@ -502,7 +501,7 @@ async function confirmClear(): Promise<void> {
           <div v-if="menuOpenFor === canKey(device)" class="menu-list">
             <template v-if="showCanAdoptItems">
               <button
-                v-for="name in mcuTypeNames"
+                v-for="name in targetNames"
                 :key="name"
                 type="button"
                 class="menu-item"
@@ -595,7 +594,7 @@ async function confirmClear(): Promise<void> {
 
     <TypeDialog
       v-if="newTypeFor"
-      :existing-names="mcuTypeNames"
+      :existing-names="targetNames"
       :families="families"
       :suggested-chipset="
         isCanbusDevice(newTypeFor) ? null : newTypeFor.chipset

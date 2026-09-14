@@ -104,7 +104,7 @@ describe("TargetRow", () => {
     const target: Target = { ...mcuTarget, actions: [flashAction] };
     const wrapper = mount(TargetRow, { props: { target } });
     // Icon actions carry their reason as a title (a tooltip on hover, same
-    // as FirmwareUpdaterPanelTarget.vue's actionHint), not as visible text.
+    // as the target row's action hint), not as visible text.
     const flashButton = wrapper
       .findAll("button")
       .find((b) => b.attributes("title") === "build is already running");
@@ -146,6 +146,24 @@ describe("TargetRow", () => {
     const target: Target = { ...mcuTarget, devices: [] };
     const wrapper = mount(TargetRow, { props: { target } });
     expect(wrapper.text()).toContain("No serial devices are tracked");
+  });
+
+  it("does not describe a CMake target's source metadata as a screen", () => {
+    const target: Target = {
+      ...mcuTarget,
+      provider: "cmake",
+      devices: [],
+      extra: {
+        source: "/home/pi/roadrunner/rp2040",
+        source_version: "d34db33",
+        source_dirty: false,
+        flashable: false,
+      },
+    };
+    const wrapper = mount(TargetRow, { props: { target } });
+
+    expect(wrapper.text()).toContain("No serial devices are tracked");
+    expect(wrapper.text()).not.toContain("screen");
   });
 
   it("offers a scope override on a flash whose stale preview is empty", async () => {

@@ -1,6 +1,6 @@
 # mcu-updater
 
-![The MCU Firmware panel in Mainsail](docs/img/panel_1.png)
+![The standalone MCU Firmware panel](docs/img/panel_1.png)
 
 Firmware management for a Klipper printer with more than one MCU. It keeps a
 registry of your board types and the USB serials of the physical boards of each
@@ -77,8 +77,10 @@ Interfaces:
 [docs/decisions.md](docs/decisions.md) for the standing decisions that came out
 of it. What is still open:
 
-- [ ] Allow using non default klipper and katapult paths
+- [ ] **NEEDS DESIGN + PLAN** Declare every firmware in config, and retire "undefined equals klipper". `firmware.py` holds that *"every key is optional and the section itself is optional"*, `BUILTIN = FW_TARGETS` makes klipper and katapult unremovable by editing config, and `resolve()` never returns None - it invents a conventional family (`~/<fw>`, `out/<fw>.bin`) for any name it is handed. That legacy exists because of where the project started and a fear of breaking existing installs, not because it is right. Klipper and katapult should be declared like any other family, which is also how source paths stop being conventions - closing the old "allow non-default klipper and katapult paths" item. More config keys, possibly all of them, become mandatory; an empty or absent key should resolve to None or a safe default rather than silently meaning klipper.
+  Open before this can be planned: what reads `FW_TARGETS`/`BUILTIN` directly rather than through `resolve()`; what `paths.py` derives from the `~/<fw>` and `out/<fw>.bin` conventions and what it answers when they are absent; and what a fresh install does - whether `install.sh` writes the klipper and katapult sections or first run fails without them. That last one decides whether this is one commit or a phased migration.
 - [ ] **TEST ERROR** Reproduce and fix the flaky teardown `RuntimeError` in `test_an_unknown_inbound_method_gets_an_error_not_silence`.
+- [ ] **NEEDS DESIGN + PLAN** Move firmware-specific code behind the helper seam (`src/mcu_updater/helpers/`). Vendor knowledge is currently spread across `discovery/knomi_serial/`, `discovery/roadrunner.py`, `helpers/roadrunner.py`, `scripts/roadrunner_usb.py`, and Cartographer's version special-cases in the build and status paths. Now that a helper seam exists, that is where it belongs: the framework should assemble a board from config-declared building blocks and know nothing about which vendor made it. Evaluate scope first - `helpers/spec.py` today answers a narrower question than discovery and version-reporting need, so the seam likely has to widen before anything moves.
 
 ## Requirements
 
@@ -178,8 +180,9 @@ confirmation names and the `/dev/serial/by-id` path shown for every row are
 diagnostics only, not values this panel or the agent ever persists.
 
 `install.sh` sets up the agent and prints the one-line `moonraker.conf` change
-that points Mainsail's Update Manager at the fork instead of upstream. See
-[docs/agent-api.md](docs/agent-api.md) for the JSON-RPC contract between the two.
+for Moonraker's Update Manager. The standalone UI can be embedded in Mainsail
+with an iframe. See [docs/agent-api.md](docs/agent-api.md) for the JSON-RPC
+contract between the two.
 
 Flashing from the panel is **off by default** - installing or updating the
 agent never silently grants a browser the ability to write to a board. Turn it
@@ -252,6 +255,7 @@ source: ~/roadrunner/rp2040
 builder: cmake
 cmake_args: -DROADRUNNER_FIRMWARE_VERSION=${git_describe}
 submodules: yes
+helper: roadrunner
 ```
 
 `submodules:` runs `git submodule update --init --recursive` in the source tree
@@ -294,6 +298,11 @@ Per-type keys:
   names it - not a short form, since expanding one would mean knowing a
   naming convention that belongs to one vendor's `CMakeLists.txt`. A mixed
   RGB/GRB fleet needs two `[type]` sections, since `cmake_target:` is per-type.
+- **`helper`** - optional on `[firmware ...]`. Names a reviewed, statically
+  registered firmware helper; it is not a module path and configuration cannot
+  import arbitrary Python. A helper-backed CMake family can use its running
+  firmware to enter BOOTSEL and complete a normal `fw.flash`. Roadrunner uses
+  `helper: roadrunner`.
 - **`<fw>_extra_repos`** - one directory per line. Secondary source trees whose
   git SHA is tracked alongside the main tree, so a type is reported stale if
   *either* the main source or one of these has moved - e.g. `flylllplusbuffer`
@@ -595,6 +604,7 @@ source: ~/roadrunner/rp2040     ; the cmake directory, not the repo root
 builder: cmake
 cmake_args: -DROADRUNNER_FIRMWARE_VERSION=${git_describe}
 submodules: yes                 ; the tree vendors its SDK as a submodule
+helper: roadrunner              ; reviewed firmware-specific BOOTSEL requester
 
 [type roadrunner]
 chipset: rp2040
@@ -606,11 +616,19 @@ serials:
 
 A mixed RGB/GRB fleet - or any fleet where boards need different targets out
 of the same tree - takes two `[type]` sections, since `cmake_target:` is
-per-type, not per-board. There is no closed-loop flash for this chipset yet:
-staging produces `roadrunner.uf2` under
-`~/printer_data/mcu-updater/roadrunner/`, and getting it onto the board is
-still hold `BOOT`, press and release `RESET`, release `BOOT`, then copy the
-file to the mounted volume.
+per-type, not per-board. With `helper: roadrunner`, `fw.flash` selects one
+exactly declared `serials:` identity, confirms that Roadrunner over its admin
+protocol, captures its full controller-qualified USB topology before asking it
+to enter BOOTSEL, and copies the staged UF2 only to the one marker-bearing
+`INFO_UF2.TXT` mount that matches that topology. Other BOOTSEL boards may remain
+attached; zero or multiple matching mounts are refused. After the copy it waits
+for the same serial and protocol identity before stopped services restart.
+
+This closed loop has host-test coverage but has not yet been verified end to
+end on hardware. The manual first-install path is unchanged: a bare board that
+is already in BOOTSEL has no provisioned serial or running helper to address,
+so hold `BOOT`, press and release `RESET`, release `BOOT`, and use the ordinary
+one-board-at-a-time BOOTSEL workflow.
 
 ## Layout
 
@@ -670,7 +688,7 @@ in order. The dev box cannot test what matters here.
 2. `updatefw build <type>`. Then confirm the offsets agree *before* any write:
    the application's `FLASH_APPLICATION_ADDRESS` against the
    `Application Start:` the handshake reports.
-3. `updatefw flash <serial>`, then `fw.flash` from the Mainsail panel - both
+3. `updatefw flash <serial>`, then `fw.flash` from the standalone UI - both
    paths, because they select a flasher differently.
 4. `updatefw update-all --dry-run`, then for real.
 5. **Klipper is running and ready after every one of these.**

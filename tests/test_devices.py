@@ -22,7 +22,8 @@ from mcu_updater.devices import (
     scan,
     wait_for_device,
 )
-from mcu_updater.errors import BootloaderTimeoutError
+from mcu_updater.discovery.bootsel import mount_for_topology, serial_topology_for
+from mcu_updater.errors import BootloaderTimeoutError, FlashError
 
 from .conftest import make_device
 
@@ -501,6 +502,162 @@ def test_bootsel_scan_ignores_a_by_path_directory_with_no_marker(paths, tmp_path
 
     found = bootsel_scan(dataclasses.replace(paths, bootsel_root=str(root)))
     assert found == []
+
+
+def test_serial_topology_for_deduplicates_usb_and_usbv2_aliases(paths, monkeypatch):
+    names = (
+        "platform-fd880000.usb-usb-0:1.3:1.0",
+        "platform-fd880000.usb-usbv2-0:1.3:1.0",
+    )
+    monkeypatch.setattr(os, "listdir", lambda _directory: names)
+    monkeypatch.setattr(os.path, "samefile", lambda _entry, _port: True)
+
+    assert serial_topology_for(paths, "/dev/ttyACM0") == (
+        "platform-fd880000.usb-usb-0:1.3"
+    )
+
+
+def test_serial_topology_for_refuses_distinct_by_path_matches(paths, monkeypatch):
+    names = (
+        "platform-fd800000.usb-usb-0:1.3:1.0",
+        "platform-fd880000.usb-usb-0:1.3:1.0",
+    )
+    monkeypatch.setattr(os, "listdir", lambda _directory: names)
+    monkeypatch.setattr(os.path, "samefile", lambda _entry, _port: True)
+
+    with pytest.raises(FlashError, match="ambiguous"):
+        serial_topology_for(paths, "/dev/ttyACM0")
+
+
+def test_mount_for_topology_selects_matching_volume_and_ignores_bystander(
+    paths, tmp_path
+):
+    root = tmp_path / "bootsel_root"
+    by_path = root / "BOOTSEL" / "by-path"
+    matching = (
+        by_path
+        / "platform-fd880000_usb-usb-0_1_3_1_0-scsi-0_0_0_0"
+    )
+    bystander = (
+        by_path
+        / "platform-fd800000_usb-usb-0_1_6_3_1_1_1_0-scsi-0_0_0_0"
+    )
+    for mount in (matching, bystander):
+        mount.mkdir(parents=True)
+        (mount / "INFO_UF2.TXT").write_text("", encoding="utf-8")
+    rp_paths = dataclasses.replace(paths, bootsel_root=str(root))
+
+    assert mount_for_topology(
+        rp_paths, "platform-fd880000.usb-usbv2-0:1.3:1.0", timeout=0
+    ) == str(matching)
+
+
+def test_mount_for_topology_preserves_the_complete_hub_port_path(paths, tmp_path):
+    root = tmp_path / "bootsel_root"
+    by_path = root / "BOOTSEL" / "by-path"
+    parent_port = by_path / "platform-x_usb-usb-0_1_6_3_1_1_1_0-scsi-0_0_0_0"
+    exact_port = by_path / "platform-x_usb-usb-0_1_6_3_1_2_1_0-scsi-0_0_0_0"
+    for mount in (parent_port, exact_port):
+        mount.mkdir(parents=True)
+        (mount / "INFO_UF2.TXT").write_text("", encoding="utf-8")
+    rp_paths = dataclasses.replace(paths, bootsel_root=str(root))
+
+    assert mount_for_topology(
+        rp_paths, "platform-x.usb-usb-0:1.6.3.1.2:1.0", timeout=0
+    ) == str(exact_port)
+
+    assert mount_for_topology(
+        rp_paths, "platform-x.usb-usb-0:1.6.3.1.2", timeout=0
+    ) == str(exact_port)
+
+
+def test_mount_for_topology_refuses_two_normalized_matches(paths, tmp_path):
+    root = tmp_path / "bootsel_root"
+    by_path = root / "BOOTSEL" / "by-path"
+    for alias in ("usb", "usbv2"):
+        mount = by_path / f"platform-x_usb-{alias}-0_1_3_1_0-scsi-0_0_0_0"
+        mount.mkdir(parents=True)
+        (mount / "INFO_UF2.TXT").write_text("", encoding="utf-8")
+    rp_paths = dataclasses.replace(paths, bootsel_root=str(root))
+
+    with pytest.raises(FlashError, match="ambiguous"):
+        mount_for_topology(rp_paths, "platform-x.usb-usb-0:1.3:1.0", timeout=0)
+
+
+def test_mount_for_topology_does_not_accept_a_matching_stale_directory(
+    paths, tmp_path
+):
+    root = tmp_path / "bootsel_root"
+    stale = (
+        root
+        / "BOOTSEL"
+        / "by-path"
+        / "platform-x_usb-usb-0_1_3_1_0-scsi-0_0_0_0"
+    )
+    stale.mkdir(parents=True)
+    rp_paths = dataclasses.replace(paths, bootsel_root=str(root))
+
+    with pytest.raises(FlashError, match="no mounted BOOTSEL volume"):
+        mount_for_topology(rp_paths, "platform-x.usb-usb-0:1.3:1.0", timeout=0)
+
+
+def test_a_legacy_mount_names_the_un_upgraded_udev_rule(paths, tmp_path):
+    """The board is here, at a path no topology can ever match.
+
+    A host still carrying a pre-v5 udev rule mounts every BOOTSEL volume at
+    `<root>/RPI-RP2`, which the topology regex cannot satisfy. Everything up to
+    here succeeds - the board really did reboot into BOOTSEL and really is
+    mounted - so a bare "no volume appeared" sends the operator hunting for a
+    board that is sitting right there.
+    """
+    root = tmp_path / "bootsel_root"
+    legacy = root / "RPI-RP2"
+    legacy.mkdir(parents=True)
+    (legacy / "INFO_UF2.TXT").write_text("", encoding="utf-8")
+    rp_paths = dataclasses.replace(paths, bootsel_root=str(root))
+
+    with pytest.raises(FlashError) as exc:
+        mount_for_topology(rp_paths, "platform-x.usb-usb-0:1.3:1.0", timeout=0)
+
+    assert "legacy path" in str(exc.value)
+    assert "install.sh" in str(exc.value)
+    assert exc.value.data["legacy_mounts"] == [str(legacy)]
+
+
+def test_an_unknown_path_leaf_is_named_and_never_selected(paths, tmp_path):
+    """`ID_PATH_TAG` unset mounts at `.../by-path/unknown`.
+
+    Unmatchable by construction, so the wait would otherwise time out with the
+    wrong diagnosis. It is still not selected: one arbitrary BOOTSEL volume is
+    exactly what this whole path exists not to write to.
+    """
+    root = tmp_path / "bootsel_root"
+    unknown = root / "BOOTSEL" / "by-path" / "unknown"
+    unknown.mkdir(parents=True)
+    (unknown / "INFO_UF2.TXT").write_text("", encoding="utf-8")
+    rp_paths = dataclasses.replace(paths, bootsel_root=str(root))
+
+    with pytest.raises(FlashError) as exc:
+        mount_for_topology(rp_paths, "platform-x.usb-usb-0:1.3:1.0", timeout=0)
+
+    assert "unknown" in str(exc.value)
+    assert exc.value.data["unknown_mounts"] == [str(unknown)]
+    assert not (unknown / "written.uf2").exists()
+
+
+def test_an_unmatchable_mount_never_overrides_a_real_match(paths, tmp_path):
+    """Both diagnoses are timeout-only refinements, so a real match still wins."""
+    root = tmp_path / "bootsel_root"
+    by_path = root / "BOOTSEL" / "by-path"
+    matching = by_path / "platform-x_usb-usb-0_1_3_1_0-scsi-0_0_0_0"
+    for mount in (matching, by_path / "unknown", root / "RPI-RP2"):
+        mount.mkdir(parents=True)
+        (mount / "INFO_UF2.TXT").write_text("", encoding="utf-8")
+    rp_paths = dataclasses.replace(paths, bootsel_root=str(root))
+
+    assert mount_for_topology(
+        rp_paths, "platform-x.usb-usb-0:1.3:1.0", timeout=0
+    ) == str(matching)
 
 
 # --------------------------------------------------------------------------

@@ -115,17 +115,21 @@ always there.
 | `cmake_target:` | `cmake_target:` (already fits) | the cmake builder |
 | `[firmware] cmake_args:` | unchanged (already fits) | the cmake builder |
 | `profile:` | `kconfig_make_profile:` | the kconfig_make builder |
-| `device_map:` | removed | the knomi_serial helper knows where its watcher writes |
+| `device_map:` | `knomi_serial_device_map:` | the knomi_serial helper's `identify` (section 3) |
 | `klipper_section:` | removed | the device-info handler knows its own Klipper object (section 5) |
 
-**Removing `device_map:` and `klipper_section:`.** Both are type keys today
-(README config table), and both describe how another program behaves rather
-than anything the user decides. `device_map:` says where the knomi_serial
-watcher writes its map, which defaults to `knomi/devices.json` under
-`printer_data`. `klipper_section:` says which Klipper object the klippy module
-registers. The helper already knows both facts for its own firmware. A
-firmware that behaves differently gets a different helper, not a different
-key value.
+**`knomi_serial_device_map:` stays a key.** It is the path of the JSON file the
+knomi_serial watcher writes, relative to `printer_data`, with default
+`knomi/devices.json`. knomi_serial hardcodes that path today, but it may not
+stay hardcoded. Keeping the key means knomi_serial's own install can find
+`mcu_updater.cfg` and update it if the path ever moves, instead of this
+project having to ship a matching release.
+
+**`klipper_section:` is removed.** It says which Klipper object the klippy
+module registers, and nothing about that changes from one install to another.
+The device-info handler already knows it. A firmware whose klippy module
+registers a different object gets a different helper, not a different key
+value.
 
 Keys every type has stay unprefixed: `firmware`, `chipset`, `serials`,
 `canbus_uuids`, `stop_services`. So do family keys every family can have:

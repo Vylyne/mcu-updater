@@ -273,10 +273,7 @@ async function toggle(): Promise<void> {
       >
         {{ target.descriptor }}
       </span>
-      <span
-        v-if="moduleVersion"
-        class="text-caption text--disabled"
-      >
+      <span v-if="moduleVersion" class="text-caption text--disabled">
         {{ moduleVersion }}
       </span>
       <span class="text-caption text--disabled">{{ deviceSummary }}</span>

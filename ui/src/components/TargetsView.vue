@@ -34,9 +34,9 @@ const targets = computed(() => props.targets ?? []);
 const families = computed(
   () => (state.status?.firmware_families as Family[] | undefined) ?? [],
 );
-const existingTypeNames = computed(() =>
-  [...new Set(targets.value.map((t) => t.name))],
-);
+const existingTypeNames = computed(() => [
+  ...new Set(targets.value.map((t) => t.name)),
+]);
 
 const needsFlashCount = computed(() =>
   targets.value.reduce(

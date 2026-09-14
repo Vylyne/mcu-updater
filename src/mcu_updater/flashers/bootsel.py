@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import contextlib
 import os
+import time
 from collections.abc import Iterator
 from typing import Any
 
@@ -33,6 +34,20 @@ def ensure_uf2(uf2: str) -> None:
 
 
 _COPY_CHUNK = 1 << 20
+
+#: How long a board gets, after a clean copy, to take the image and reset. A
+#: returned copy only means the kernel has the bytes; on a bench host the
+#: re-enumerate wait that follows was starting before the board had received
+#: them. Roadrunner's admin tool settled on the same figure.
+APPLY_TIMEOUT = 60.0
+#: The same wait after a copy that raised once every byte was written. Most of
+#: those are the board resetting as the last block landed, so the volume is
+#: normally gone already; a volume still there is not going to leave late.
+APPLY_TIMEOUT_AFTER_ERROR = 10.0
+APPLY_POLL = 0.25
+#: The file the boot ROM publishes on the volume - the same marker
+#: `bootsel_scan` keys on. Present means the board is still in BOOTSEL.
+_BOOTSEL_MARKER = "INFO_UF2.TXT"
 
 
 class _VolumeVanished(Exception):
@@ -82,13 +97,9 @@ def _open_dest(dest: str) -> Any:
     incomplete write - would be indistinguishable from the board resetting once
     the last block landed.
 
-    It does not remove the kernel page cache, and there is deliberately no
-    `fsync`: forcing FAT metadata writeback could refuse a write that actually
-    landed, which is the exact failure this boundary exists to remove. The
-    residue is honest and unmeasured - a kernel that defers a mid-image
-    writeback error to `close()` would present a truncated image as the benign
-    late case. Bench item for the first real flash: capture the errno and the
-    step it arrives at.
+    It does not remove the kernel page cache; :func:`_copy_bytes` does that
+    with an `fsync`. See there for why that no longer risks refusing a write
+    that landed.
     """
     return open(dest, "wb", buffering=0)
 
@@ -97,10 +108,19 @@ def _copy_bytes(uf2: str, dest: str) -> None:
     """Write the image, distinguishing an incomplete write from a late one.
 
     Raises `OSError` while bytes are still outstanding, and `_VolumeVanished`
-    once every byte has been written and only the close remains. No `copystat`
-    half: timestamps and permissions on a FAT volume that is about to
-    disappear are meaningless, and reaching for them is what turned a normal
-    ending into a reported failure.
+    once every byte has been handed to the kernel. No `copystat` half:
+    timestamps and permissions on a FAT volume that is about to disappear are
+    meaningless, and reaching for them is what turned a normal ending into a
+    reported failure.
+
+    The `fsync` pushes the image out of the page cache before this returns, so
+    the apply wait in :func:`copy_uf2` measures the board rather than the
+    kernel's writeback delay. It used to be left out because forcing FAT
+    metadata writeback can fail on a volume the board has already reset away,
+    refusing a write that landed. It counts as the late case here for that
+    reason - and a writeback error that really did truncate the image is no
+    longer excused by that, because a board missing its last block never
+    resets and the wait sees its volume stay.
     """
     complete = False
     try:
@@ -113,10 +133,33 @@ def _copy_bytes(uf2: str, dest: str) -> None:
                 while view:
                     view = view[out.write(view) :]
             complete = True
+            os.fsync(out.fileno())
     except OSError as exc:
         if complete:
             raise _VolumeVanished(exc) from exc
         raise
+
+
+def _volume_still_mounted(mount: str) -> bool:
+    """Is the board still sitting in BOOTSEL at `mount`?
+
+    `isfile` answers False rather than raising on a mount whose device has
+    gone, which is exactly the answer wanted there.
+    """
+    return os.path.isfile(os.path.join(mount, _BOOTSEL_MARKER))
+
+
+def _wait_for_apply(mount: str, timeout: float) -> bool:
+    """Wait for the volume to go away - the board resetting into the image.
+
+    True once it has gone, False if it is still there after `timeout`.
+    """
+    deadline = time.monotonic() + timeout
+    while _volume_still_mounted(mount):
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(APPLY_POLL)
+    return True
 
 
 def copy_uf2(uf2: str, mount: str, ctx: Any) -> None:
@@ -136,6 +179,15 @@ def copy_uf2(uf2: str, mount: str, ctx: Any) -> None:
     readiness gate it runs after the batch, which for `HelperBootsel` is
     exactly when Klipper's units have just been restarted underneath a board in
     an unknown state.
+
+    Returning does not mean the board has the image, so this waits for the
+    volume to go away before it does: `APPLY_TIMEOUT` after a clean copy,
+    `APPLY_TIMEOUT_AFTER_ERROR` after a late error. Whatever waits for the
+    board to re-enumerate runs after this, so its timeout no longer starts
+    while the board is still taking the image. The wait lives here, not in
+    `settled`, because both flashers already know the mount here and `settled`
+    is handed none. A volume that stays is a warning, not a failure: the copy
+    finished, and the readiness check that follows is the verdict on the board.
 
     Cancellation is deliberately not checked in here; it stays between writes.
     """
@@ -160,17 +212,31 @@ def copy_uf2(uf2: str, mount: str, ctx: Any) -> None:
             path=uf2,
             mount=mount,
         ) from exc
-    if vanished is not None:
+    if vanished is None:
+        timeout = APPLY_TIMEOUT
+        ctx.reporter(
+            "info", "Copied. Waiting for the board to take the image and reset..."
+        )
+    else:
+        timeout = APPLY_TIMEOUT_AFTER_ERROR
         ctx.reporter(
             "info",
-            f"The volume went away once the last block landed ({vanished}) - "
-            "that is the board resetting into the firmware it just took, not a "
-            "failed write.",
+            f"The copy reported an error once every byte was written "
+            f"({vanished}) - normally the board resetting as the last block "
+            "landed. Checking that its volume has gone...",
         )
+    if not _wait_for_apply(mount, timeout):
+        late = "" if vanished is None else f" (the copy reported: {vanished})"
+        ctx.reporter(
+            "warn",
+            f"{mount} is still mounted {timeout:g}s after the copy{late} - the "
+            "board has not reset into the new image. The readiness check that "
+            "follows decides whether it came back.",
+        )
+        return
     ctx.reporter(
         "info",
-        "Copied. The board flashes itself from the .uf2 and reboots once the "
-        "write lands - no further action needed here.",
+        "The volume has gone: the board took the image and is rebooting.",
     )
 
 
@@ -215,7 +281,8 @@ class Bootsel:
         """Nothing to wait *for* here, and deliberately so - same reasoning as
         `DfuUtil.settled`. The board reboots as Katapult, under a serial it has
         never had before; waiting for that is adoption, which this could not do
-        because it cannot name the device it is waiting for."""
+        because it cannot name the device it is waiting for. Waiting for the
+        board to take the image already happened inside `write`."""
 
 
 def _find_mount(paths: Any) -> str:

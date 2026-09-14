@@ -34,6 +34,16 @@ def _instant_fake_builds(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr("mcu_updater.build.FAKE_BUILD_DELAY", 0.0)
 
 
+@pytest.fixture(autouse=True)
+def _bootsel_boards_apply_instantly(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A fake BOOTSEL volume never goes away, so a copy onto one would sit out
+    the whole apply wait. Real boards reset as the image lands; here they reset
+    at once. Tests of the wait itself restore the real check."""
+    monkeypatch.setattr(
+        "mcu_updater.flashers.bootsel._volume_still_mounted", lambda mount: False
+    )
+
+
 @pytest.fixture
 def fake_root(tmp_path: pathlib.Path) -> pathlib.Path:
     """A pretend ~ laid out the way a printer host is."""

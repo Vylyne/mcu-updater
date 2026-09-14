@@ -962,6 +962,7 @@ def add_mcu(args: argparse.Namespace) -> None:
             chipset,
             result.bin_path,
             uf2_bin=result.uf2_path,
+            katapult_config=c.paths.config_file(args.type, "katapult"),
             reporter=stdout_reporter,
         )
 

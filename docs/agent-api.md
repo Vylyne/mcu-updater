@@ -672,8 +672,11 @@ That helper confirms the exact Roadrunner protocol identity, captures the full
 USB serial topology before requesting BOOTSEL, and writes only when exactly one
 marker-bearing `INFO_UF2.TXT` mount matches it. Other BOOTSEL mounts are
 bystanders and do not block the write; zero or multiple topology matches refuse.
-After copying, the job waits for the same serial and Roadrunner INFO response
-before stopped services restart. That wait is non-fatal in every outcome: once
+The copy is synced to the volume, then the job waits for that mount to go away -
+the board resetting into the new image - for up to 60 seconds, or 10 seconds if
+the copy reported an error after every byte was written. A mount still there
+after that is a warning, not a failure. Only then does the job wait for the same
+serial and Roadrunner INFO response before stopped services restart. That wait is non-fatal in every outcome: once
 the UF2 has been copied the job reports success, and a slow return, an
 unanswered probe, an identity that came back wrong, or two devices answering to
 one serial are all reported as a readiness warning on the job's log. A copy
@@ -1150,6 +1153,23 @@ boot — this is the normal case for a board getting a bootloader *re*-installed
 — so `state` here can legitimately be the board's own firmware name instead of
 `"katapult"`.
 
+Both routes now erase the previous application before Katapult boots, so that
+case should no longer arise from this method; matching stays
+firmware-agnostic regardless. DFU erases with `mass-erase`. BOOTSEL has no
+erase command, so the `.uf2` copied to the volume is Katapult's own blocks plus
+the first flash sector at Katapult's `LAUNCH_APP_ADDRESS` written as `0xff`
+pages — the vector table Katapult checks for is gone, and the board stays in
+Katapult. The built artifact is not modified; the extended copy is staged in a
+temporary directory. The address comes from the type's saved `katapult.config`:
+if it is missing or unreadable, or the image already writes that sector, the
+job fails with a flash error rather than copying Katapult alone.
+
+After a BOOTSEL copy the job waits for the volume to go away before its wait for
+the board to re-enumerate begins, so that timeout no longer runs while the board
+is still taking the image: up to 60 seconds after a clean copy, 10 seconds after
+one that reported an error once every byte was written. A volume still mounted
+after that is logged as a warning and the re-enumerate wait proceeds.
+
 `candidates` are boards that appeared and are **not** in the registry — the ones
 to adopt. `already_tracked` are boards that appeared and already belong to a
 type, which is the normal case when re-installing a bootloader: such a board sits
@@ -1217,9 +1237,10 @@ pressed - rather than a new decision. Five conditions keep it from ever being a
 surprise:
 
 - only **untracked** devices; anything already in the registry is left alone. Not
-  filtered to Katapult — a board that already carried a valid application
-  chain-loads straight past Katapult on its first boot, so it can turn up
-  running its own firmware instead; the pairing-key match below is what
+  filtered to Katapult — both install routes erase the old application now,
+  but a board bootloadered by an older version or by hand can still chain-load
+  straight past Katapult and turn up running that firmware instead; the
+  pairing-key match below is what
   actually identifies it, the same as the live wait in `fw.add_mcu.start`
 - only an **unambiguous** match against the pairing key
 - only within the **TTL** (24h), so a board found in a drawer next month is the stranger it has become

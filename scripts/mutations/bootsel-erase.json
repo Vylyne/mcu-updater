@@ -1,0 +1,104 @@
+{
+  "_comment": "BOOTSEL erase-before-flash: the Katapult UF2 carries the application's first sector as 0xff pages, parity with DFU's mass-erase.",
+  "file": "src/mcu_updater/uf2_erase.py",
+  "command": [
+    "python",
+    "-m",
+    "pytest",
+    "tests/test_uf2_erase.py",
+    "tests/test_flash.py",
+    "tests/test_agent_add_mcu.py",
+    "-q"
+  ],
+  "mutations": [
+    {
+      "name": "an address off a sector boundary is refused",
+      "find": "    if address % SECTOR_SIZE:",
+      "replace": "    if False:"
+    },
+    {
+      "name": "an image already writing the sector is refused",
+      "find": "        if target < end and target + len(payload) > address:",
+      "replace": "        if False:"
+    },
+    {
+      "name": "an image with no main-flash block is refused",
+      "find": "    if not main:",
+      "replace": "    if False:"
+    },
+    {
+      "name": "erase pages are 0xff",
+      "find": "        (flags, page, b\"\\xff\" * PAGE_SIZE, family)",
+      "replace": "        (flags, page, b\"\\x00\" * PAGE_SIZE, family)"
+    },
+    {
+      "name": "erase pages carry the image's family id",
+      "find": "        (flags, page, b\"\\xff\" * PAGE_SIZE, family)",
+      "replace": "        (flags, page, b\"\\xff\" * PAGE_SIZE, 0)"
+    },
+    {
+      "name": "blocks are emitted in address order",
+      "find": "    ordered = sorted(blocks + erased, key=lambda b: b[1])",
+      "replace": "    ordered = blocks + erased"
+    },
+    {
+      "name": "every block is renumbered",
+      "find": "            number,\n",
+      "replace": "            0,\n"
+    },
+    {
+      "name": "every block carries the new total",
+      "find": "            count,\n",
+      "replace": "            1,\n"
+    },
+    {
+      "name": "start magic is checked",
+      "find": "            magic0 != UF2_MAGIC_START0",
+      "replace": "            False"
+    },
+    {
+      "name": "second start magic is checked",
+      "find": "            or magic1 != UF2_MAGIC_START1",
+      "replace": "            or False"
+    },
+    {
+      "name": "end magic is checked",
+      "find": "            or magic_end != UF2_MAGIC_END",
+      "replace": "            or False"
+    },
+    {
+      "name": "an oversized payload is refused",
+      "find": "        if size > UF2_MAX_PAYLOAD:",
+      "replace": "        if False:"
+    },
+    {
+      "name": "the launch address is read from the config's symbol",
+      "find": "    raw = answers.get(profiles.LAUNCH_ADDRESS_SYMBOL, \"\").strip()",
+      "replace": "    raw = answers.get(\"FLASH_APPLICATION_ADDRESS\", \"\").strip()"
+    },
+    {
+      "name": "BOOTSEL copies the erasing UF2, not Katapult alone",
+      "file": "src/mcu_updater/flashers/flash.py",
+      "find": "            target = flashers.bootsel.target_for(staged, chipset=chipset, paths=paths)",
+      "replace": "            target = flashers.bootsel.target_for(uf2_bin, chipset=chipset, paths=paths)"
+    },
+    {
+      "name": "BOOTSEL refuses without an application address",
+      "file": "src/mcu_updater/flashers/flash.py",
+      "find": "    if address is None:\n        raise FlashError(\n            f\"cannot tell where Katapult",
+      "replace": "    if False:\n        raise FlashError(\n            f\"cannot tell where Katapult"
+    },
+    {
+      "name": "an unreadable UF2 is a FlashError",
+      "file": "src/mcu_updater/flashers/flash.py",
+      "find": "    except uf2_erase.Uf2EraseError as exc:",
+      "replace": "    except ZeroDivisionError as exc:"
+    },
+    {
+      "name": "add_mcu.start passes Katapult's config",
+      "file": "src/mcu_updater/agent/methods/flash.py",
+      "find": "                katapult_config=self.paths.config_file(name, \"katapult\"),",
+      "replace": "                katapult_config=None,"
+    }
+  ]
+}

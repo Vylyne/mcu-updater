@@ -516,10 +516,11 @@ class FlashMixin(_Base):
         Every condition below exists to keep it from ever being a *surprise*:
 
         * only **untracked** devices - anything already in the registry is left
-          exactly as it is. Not filtered to Katapult: a board that already
-          carries a valid application chain-loads straight past Katapult on its
-          first boot, so it can legitimately turn up running its own firmware
-          instead - the pairing-key match below is what actually identifies it;
+          exactly as it is. Not filtered to Katapult: both install routes erase
+          the old application now, but a board bootloadered by an older version
+          or by hand can still chain-load straight past Katapult and turn up
+          running that firmware instead - the pairing-key match below is what
+          actually identifies it;
         * only an **unambiguous** match, for the same reason `_identify_dfu`
           refuses to name a colliding board: the DFU serial is derived by a sum
           and two boards could in principle share one;
@@ -960,6 +961,8 @@ class FlashMixin(_Base):
                 # Unconditional, exactly like the CLI's add-mcu - ignored by the
                 # DFU branch, required by BOOTSEL's.
                 uf2_bin=uf2_bin,
+                # Where BOOTSEL erases the old application; DFU mass-erases.
+                katapult_config=self.paths.config_file(name, "katapult"),
                 reporter=ctx.reporter,
                 target_serial=target,
             )
@@ -974,11 +977,11 @@ class FlashMixin(_Base):
 
                 Pairings(self.paths).record(pairing_key, name)
 
-            # Not filtered to Katapult: a board that already carries a valid
-            # application (a re-bootloadered board, say) chain-loads straight
-            # past Katapult on its first boot and can legitimately reappear
-            # running its own firmware instead. Chipset + "wasn't on the bus
-            # before" is what actually identifies it either way.
+            # Not filtered to Katapult: both routes erase the old application
+            # now, but an image that survives anyway (an erase the ROM skipped,
+            # say) chain-loads straight past Katapult and reappears running
+            # that firmware instead. Chipset + "wasn't on the bus before" is
+            # what actually identifies it either way.
             ctx.step("Waiting for the board to re-enumerate", 1, 2)
             appeared = wait_for_new_device(
                 self.paths,

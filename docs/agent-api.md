@@ -672,8 +672,11 @@ That helper confirms the exact Roadrunner protocol identity, captures the full
 USB serial topology before requesting BOOTSEL, and writes only when exactly one
 marker-bearing `INFO_UF2.TXT` mount matches it. Other BOOTSEL mounts are
 bystanders and do not block the write; zero or multiple topology matches refuse.
-After copying, the job waits for the same serial and Roadrunner INFO response
-before stopped services restart. That wait is non-fatal in every outcome: once
+The copy is synced to the volume, then the job waits for that mount to go away -
+the board resetting into the new image - for up to 60 seconds, or 10 seconds if
+the copy reported an error after every byte was written. A mount still there
+after that is a warning, not a failure. Only then does the job wait for the same
+serial and Roadrunner INFO response before stopped services restart. That wait is non-fatal in every outcome: once
 the UF2 has been copied the job reports success, and a slow return, an
 unanswered probe, an identity that came back wrong, or two devices answering to
 one serial are all reported as a readiness warning on the job's log. A copy
@@ -1160,6 +1163,12 @@ Katapult. The built artifact is not modified; the extended copy is staged in a
 temporary directory. The address comes from the type's saved `katapult.config`:
 if it is missing or unreadable, or the image already writes that sector, the
 job fails with a flash error rather than copying Katapult alone.
+
+After a BOOTSEL copy the job waits for the volume to go away before its wait for
+the board to re-enumerate begins, so that timeout no longer runs while the board
+is still taking the image: up to 60 seconds after a clean copy, 10 seconds after
+one that reported an error once every byte was written. A volume still mounted
+after that is logged as a warning and the re-enumerate wait proceeds.
 
 `candidates` are boards that appeared and are **not** in the registry — the ones
 to adopt. `already_tracked` are boards that appeared and already belong to a

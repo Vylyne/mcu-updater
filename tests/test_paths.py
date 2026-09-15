@@ -105,11 +105,6 @@ def test_per_type_layout(tmp_path):
     assert p.sidecar_file("bttebb36", "klipper").endswith("klipper.build.json")
 
 
-def test_source_tree_layout(tmp_path):
-    p = Paths.from_env(env={"MCU_UPDATER_HOME": str(tmp_path)})
-    assert p.flashtool.endswith(os.path.join("katapult", "scripts", "flashtool.py"))
-
-
 def test_the_platformio_sidecar_keeps_its_on_disk_path(paths):
     """Renamed accessor, same file: a build record already on a printer must
     still be found."""

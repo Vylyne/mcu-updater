@@ -167,10 +167,6 @@ class Paths:
     # --- external tools / trees ---
 
     @property
-    def flashtool(self) -> str:
-        return os.path.join(self.home, "katapult", "scripts", "flashtool.py")
-
-    @property
     def moonraker_sock(self) -> str:
         return os.path.join(self.printer_data, "comms", "moonraker.sock")
 

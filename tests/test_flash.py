@@ -62,6 +62,7 @@ def _stage_bin(paths, mcu_type: str = "board") -> None:
 
 
 def test_missing_flashtool_raises(paths, settings, fake_root):
+    seed_base_firmwares(paths)
     _stage_bin(paths)
     with pytest.raises(ToolMissingError) as exc:
         flash_katapult(paths, settings, "board", "chipA", "S1")
@@ -82,6 +83,7 @@ def test_flashtool_path_overrides_the_katapult_convention(paths, settings, fake_
 
 
 def test_missing_firmware_binary_raises(paths, settings, fake_root):
+    seed_base_firmwares(paths)
     (fake_root / "katapult" / "scripts").mkdir(parents=True)
     (fake_root / "katapult" / "scripts" / "flashtool.py").write_text("", encoding="utf-8")
     with pytest.raises(FlashError) as exc:

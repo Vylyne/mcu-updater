@@ -86,8 +86,9 @@ of it. What is still open:
 - Klipper checked out at `~/klipper`
 - Katapult: install.sh writes `[firmware katapult]` with the tree it finds at
   `~/katapult`, offers a single-branch clone if there is none, or takes a path
-  to an existing checkout or fork - override with `flashtool_path` in
-  `[updater]` if it lives somewhere else, e.g. a fork
+  to an existing checkout or fork. `flashtool.py` is found under the declared
+  `[firmware katapult]` `source:` (`<source>/scripts/flashtool.py`), or at
+  `flashtool_path` in `[updater]` if that is set
 - An ARM toolchain and `make`, i.e. whatever already builds Klipper for you
 - `python3-serial`- Katapult's `flashtool.py` imports it. `install.sh` offers to apt-install it. It is also the only system package the Roadrunner direct-USB provision/clear helper needs - no separate dependency to install for that feature.
 - `dfu-util`, only for installing Katapult onto a brand-new STM32 board

@@ -76,10 +76,16 @@ DFU_VID_PID = "0483:df11"
 
 
 def find_flashtool(paths: Paths, settings: Settings) -> str:
-    """Katapult's flashtool.py: the configured path, or the ~/katapult convention."""
+    """Katapult's flashtool.py: `flashtool_path` if set, else the declared katapult tree's.
+
+    Raises ConfigCorruptError, naming the section to add, when neither is set
+    and katapult is not declared. A flash stops on that. `fw.canbus.scan`
+    reports it instead, because that method answers rather than fails.
+    """
     if settings.flashtool_path:
         return firmware.expand_home(settings.flashtool_path, paths.home)
-    return paths.flashtool
+    katapult = firmware.resolve(paths, "katapult")
+    return os.path.join(katapult.source_dir(paths), "scripts", "flashtool.py")
 
 
 def device_for(

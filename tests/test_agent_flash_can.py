@@ -38,9 +38,14 @@ def _stage_artifact(paths, mcu_type=TYPE) -> str:
     return path
 
 
+def _flashtool_path(paths) -> str:
+    return os.path.join(paths.home, "katapult", "scripts", "flashtool.py")
+
+
 def _make_flashtool(paths) -> None:
-    os.makedirs(os.path.dirname(paths.flashtool), exist_ok=True)
-    with open(paths.flashtool, "w", encoding="utf-8") as fh:
+    flashtool = _flashtool_path(paths)
+    os.makedirs(os.path.dirname(flashtool), exist_ok=True)
+    with open(flashtool, "w", encoding="utf-8") as fh:
         fh.write("# fake flashtool.py, never actually executed\n")
 
 

@@ -1632,7 +1632,11 @@ class StatusMixin(_Base):
             )
             return out
 
-        flashtool = find_flashtool(self.paths, settings)
+        try:
+            flashtool = find_flashtool(self.paths, settings)
+        except ConfigCorruptError as exc:
+            out["message"] = str(exc)
+            return out
         if not os.path.exists(flashtool):
             out["message"] = f"flashtool.py not found at {flashtool}. Is katapult installed?"
             return out

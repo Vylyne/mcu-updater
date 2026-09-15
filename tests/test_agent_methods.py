@@ -1771,7 +1771,7 @@ def test_a_flash_writes_a_record(paths, live_registry_text):
     # flash_katapult checks for flashtool.py before anything else, even in a dry
     # run - a rehearsal of a flash that could not happen is not a useful rehearsal.
     os.makedirs(os.path.join(paths.home, "katapult", "scripts"), exist_ok=True)
-    with open(paths.flashtool, "w", encoding="utf-8") as fh:
+    with open(os.path.join(paths.home, "katapult", "scripts", "flashtool.py"), "w", encoding="utf-8") as fh:
         fh.write("# stub\n")
 
     real = dataclasses.replace(Settings(), service_backend="null", clean_before_build=False)

@@ -35,10 +35,10 @@ PIO_BUILDER = "platformio"
 def _declared_builders(paths: Paths) -> dict[str, str]:
     """Every declared type name -> the `builder:` of the family it names.
 
-    This re-derives the ownership rule that `pio.load()` and `cmake.load()`
-    each apply from their own side - "a type is ours if the family it declares
-    is built by us" - rather than calling those loads, and the duplication is
-    deliberate.
+    This applies the same ownership rule that `pio.load()` and `cmake.load()`
+    apply - "a type is ours if the family it declares is built by us" -
+    reading the same `typelist` walk those loads read, through its lenient
+    half rather than by calling those loads directly.
 
     Those loads *validate*: `cmake.load()` raises if a cmake type names no
     `cmake_target:`, `pio.load()` raises if a PlatformIO type names no `env:`.

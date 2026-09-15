@@ -9,10 +9,11 @@ type belongs to, decided by a key on the type rather than by which class of
 tree it happens to be.
 
 Both are gone. A type's provider is derived from its declared firmware's
-builder (see :mod:`~mcu_updater.firmware`, :mod:`~mcu_updater.config`'s
-``_is_foreign_builder``, and ``providers/pio.py``'s ``load()``) - a fact about
-the ``[firmware ...]`` section it names, not about how its own section is
-spelled or what key it carries. This module now only knows one spelling,
+builder (see :mod:`~mcu_updater.firmware`, :mod:`~mcu_updater.typelist`, and
+:mod:`~mcu_updater.config`'s ``_is_foreign_builder``, which each view now
+reads through) - a fact about the ``[firmware ...]`` section it names, not
+about how its own section is spelled or what key it carries. This module now
+only knows one spelling,
 ``[type <name>]``, and only answers "which sections declare a type" - naming
 and validation, not which of them build with what.
 """

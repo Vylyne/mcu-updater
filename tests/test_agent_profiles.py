@@ -150,7 +150,7 @@ def test_the_intent_is_recorded_in_the_hand_edited_config(api):
     # ...and only for the application. Katapult's is always derived, so a second
     # key would restate that rather than record anything.
     text = pathlib.Path(api.paths.main_config).read_text(encoding="utf-8")
-    assert text.count("profile:") == 1
+    assert text.count("kconfig_make_profile:") == 1
 
 
 def test_deriving_can_be_declined(api):

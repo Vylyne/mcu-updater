@@ -86,7 +86,7 @@ def test_an_env_can_be_named_separately_if_they_ever_diverge(paths):
     with open(paths.main_config, "w", encoding="utf-8") as fh:
         fh.write(
             _KNOMI_SERIAL_FAMILY
-            + "[type tool_screens]\nfirmware: knomi_serial\nenv: knomi_toolchanger\n"
+            + "[type tool_screens]\nfirmware: knomi_serial\nplatformio_env: knomi_toolchanger\n"
         )
     assert pio.load(paths)["tool_screens"].env == "knomi_toolchanger"
 
@@ -96,21 +96,21 @@ def test_a_shared_source_tree_is_the_default(paths, fake_root):
     with open(paths.main_config, "w", encoding="utf-8") as fh:
         fh.write(
             _KNOMI_SERIAL_FAMILY
-            + "[type knomi]\nfirmware: knomi_serial\nenv: knomi\n"
-            + "[type knomi_toolchanger]\nfirmware: knomi_serial\nenv: knomi_toolchanger\n"
+            + "[type knomi]\nfirmware: knomi_serial\nplatformio_env: knomi\n"
+            + "[type knomi_toolchanger]\nfirmware: knomi_serial\nplatformio_env: knomi_toolchanger\n"
         )
 
     found = pio.load(paths)
     assert {d.source for d in found.values()} == {str(fake_root / "knomi_serial")}
 
 
-def test_the_klipper_section_defaults_to_knomi_serial(paths):
-    """A second type sharing the same klippy extra needs no config at all;
-    one bringing its own module sets this."""
+def test_a_type_with_no_klipper_section_key_defaults_to_knomi_serial(paths):
+    """The key is no longer read from config at all - every type gets the
+    one klippy module's prefix, unconditionally."""
     with open(paths.main_config, "w", encoding="utf-8") as fh:
         fh.write(
             _KNOMI_SERIAL_FAMILY
-            + "[type knomi_toolchanger]\nfirmware: knomi_serial\nenv: knomi_toolchanger\n"
+            + "[type knomi_toolchanger]\nfirmware: knomi_serial\nplatformio_env: knomi_toolchanger\n"
         )
     assert pio.load(paths)["knomi_toolchanger"].klipper_section == "knomi_serial"
 
@@ -123,7 +123,7 @@ def test_an_absent_service_key_takes_the_default_watcher(paths):
     with open(paths.main_config, "w", encoding="utf-8") as fh:
         fh.write(
             _KNOMI_SERIAL_FAMILY
-            + "[type knomi_toolchanger]\nfirmware: knomi_serial\nenv: knomi_toolchanger\n"
+            + "[type knomi_toolchanger]\nfirmware: knomi_serial\nplatformio_env: knomi_toolchanger\n"
         )
     assert pio.load(paths)["knomi_toolchanger"].stop_services is None
 
@@ -136,7 +136,7 @@ def test_a_blank_legacy_service_key_still_stops_klipper(paths):
     with open(paths.main_config, "w", encoding="utf-8") as fh:
         fh.write(
             _KNOMI_SERIAL_FAMILY
-            + "[type knomi_toolchanger]\nfirmware: knomi_serial\nenv: knomi_toolchanger\n"
+            + "[type knomi_toolchanger]\nfirmware: knomi_serial\nplatformio_env: knomi_toolchanger\n"
             + "service:\n"
         )
     assert pio.load(paths)["knomi_toolchanger"].stop_services == ["klipper"]
@@ -150,7 +150,7 @@ def test_a_legacy_service_key_becomes_klipper_plus_the_named_unit(paths):
     with open(paths.main_config, "w", encoding="utf-8") as fh:
         fh.write(
             _KNOMI_SERIAL_FAMILY
-            + "[type knomi_toolchanger]\nfirmware: knomi_serial\nenv: knomi_toolchanger\n"
+            + "[type knomi_toolchanger]\nfirmware: knomi_serial\nplatformio_env: knomi_toolchanger\n"
             + "service: my_watcher\n"
         )
     assert pio.load(paths)["knomi_toolchanger"].stop_services == ["klipper", "my_watcher"]
@@ -162,7 +162,7 @@ def test_an_explicit_stop_services_key_wins_over_a_legacy_service_key(paths):
     with open(paths.main_config, "w", encoding="utf-8") as fh:
         fh.write(
             _KNOMI_SERIAL_FAMILY
-            + "[type knomi_toolchanger]\nfirmware: knomi_serial\nenv: knomi_toolchanger\n"
+            + "[type knomi_toolchanger]\nfirmware: knomi_serial\nplatformio_env: knomi_toolchanger\n"
             + "service: my_watcher\nstop_services: knomi_serial\n"
         )
     assert pio.load(paths)["knomi_toolchanger"].stop_services == ["knomi_serial"]
@@ -172,7 +172,7 @@ def test_stop_services_blank_means_stop_nothing(paths):
     with open(paths.main_config, "w", encoding="utf-8") as fh:
         fh.write(
             _KNOMI_SERIAL_FAMILY
-            + "[type knomi_toolchanger]\nfirmware: knomi_serial\nenv: knomi_toolchanger\n"
+            + "[type knomi_toolchanger]\nfirmware: knomi_serial\nplatformio_env: knomi_toolchanger\n"
             + "stop_services:\n"
         )
     assert pio.load(paths)["knomi_toolchanger"].stop_services == []
@@ -193,7 +193,7 @@ def test_pio_type_sections_do_not_disturb_the_mcu_registry(paths, live_registry_
             live_registry_text
             + "\n"
             + "[type knomi_toolchanger]\nchipset: esp32\nfirmware: knomi_serial\n"
-            "env: knomi_toolchanger\n"
+            "platformio_env: knomi_toolchanger\n"
         )
 
     assert "bttebb36" in Registry.load(paths).names()
@@ -204,7 +204,7 @@ def test_a_type_is_pio_when_its_declared_firmware_is_platformio_built(paths, fak
     with open(paths.main_config, "w", encoding="utf-8") as fh:
         fh.write(
             "[firmware knomi_serial]\nsource: ~/knomi_serial\nbuilder: platformio\n\n"
-            "[type knomi]\nchipset: esp32\nfirmware: knomi_serial\nenv: knomi\n"
+            "[type knomi]\nchipset: esp32\nfirmware: knomi_serial\nplatformio_env: knomi\n"
         )
 
     found = pio.load(paths)
@@ -221,7 +221,7 @@ def test_a_new_style_pio_type_is_not_picked_up_by_the_mcu_registry(paths, fake_r
     with open(paths.main_config, "w", encoding="utf-8") as fh:
         fh.write(
             "[firmware knomi_serial]\nsource: ~/knomi_serial\nbuilder: platformio\n\n"
-            "[type knomi]\nchipset: esp32\nfirmware: knomi_serial\nenv: knomi\n"
+            "[type knomi]\nchipset: esp32\nfirmware: knomi_serial\nplatformio_env: knomi\n"
         )
 
     assert Registry.load(paths).names() == []
@@ -236,7 +236,7 @@ def test_saving_the_registry_does_not_delete_a_new_style_pio_type(paths, fake_ro
     with open(paths.main_config, "w", encoding="utf-8") as fh:
         fh.write(
             "[firmware knomi_serial]\nsource: ~/knomi_serial\nbuilder: platformio\n\n"
-            "[type knomi]\nchipset: esp32\nfirmware: knomi_serial\nenv: knomi\n"
+            "[type knomi]\nchipset: esp32\nfirmware: knomi_serial\nplatformio_env: knomi\n"
         )
 
     reg = Registry.load(paths)

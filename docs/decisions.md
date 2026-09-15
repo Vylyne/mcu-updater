@@ -189,8 +189,9 @@ what `add_executable()` creates and what `make <target>` / `cmake --build
 --target <name>` address; an earlier draft called it `variant:`, which was
 wrong twice — it is not CMake's word, and CMake Tools already uses "variant"
 for the *build type* (Debug, Release, MinSizeRel), so a user would reasonably
-have put `Release` in it. `env:` for PlatformIO is the same rule, already
-applied: that is what `platformio.ini` calls the section.
+have put `Release` in it. `platformio_env:` follows the same rule: `env` is
+what `platformio.ini` calls the section, and the `platformio_` prefix says
+which module reads it.
 
 The user reading the key has the upstream tool's documentation open, not ours.
 A house synonym means they have to learn a mapping, and a synonym that
@@ -201,6 +202,15 @@ than `target:`, because `BuildTarget`, `FlashTarget` and the `targets[]` wire
 shape are three different things a bare `target:` would sit ambiguously
 beside. The prefix also says which vocabulary the word belongs to, which is
 the point.
+
+A key read by one seam module is spelled `<seam module>_<param>`:
+`platformio_env`, `cmake_target`, `kconfig_make_profile`,
+`knomi_serial_device_map`. The param keeps the upstream word; the prefix says
+which builder or helper reads it. Keys every type has (`firmware`, `chipset`,
+`serials`, `canbus_uuids`, `stop_services`) and keys every family can have
+(`source`, `builder`, `helper`, `flashers`, `submodules`) stay unprefixed, and
+per-family kconfig keys keep their family prefix (`klipper_extra_args`). An
+old spelling is refused with the new one named, never read under both.
 
 ### Do not spell the stop-list key `managed_services:`
 

@@ -1284,9 +1284,8 @@ builder: platformio
 [type knomi_toolchanger]
 chipset: esp32
 firmware: knomi_serial
-env: knomi_toolchanger            # REQUIRED - no default
+platformio_env: knomi_toolchanger  # REQUIRED - no default
 # source: ~/knomi_serial          defaults to the firmware family's source
-# klipper_section: knomi_serial   which [<prefix> X] sections are this type's
 # service: knomi_serial           port watcher to pause while flashing
 ```
 

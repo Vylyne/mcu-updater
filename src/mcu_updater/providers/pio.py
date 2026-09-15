@@ -3,7 +3,7 @@
 Different enough from an MCU to live apart. There is no Kconfig, no Katapult, no
 chipset to reason about - a PlatformIO env already names the board, the partition
 table and the build flags, so the env *is* the type. Adding the second display
-is another `[display <env>]` section and nothing structural.
+is another `[type <name>]` section and nothing structural.
 
 The device list is not here either: `[knomi_serial T0_knomi]` in Klipper's config
 already names how to find its port - directly with `serial:`, or by chip identity
@@ -94,8 +94,9 @@ class PioType:
     #: the `fw` axis providers.select() filters on.
     firmware: str = ""
     #: The Klipper section prefix whose entries are displays of this type.
-    #: `[knomi_serial T0_knomi]` -> `knomi_serial`. A second display with its own
-    #: klippy module would set this differently; one sharing the module leaves it.
+    #: `[knomi_serial T0_knomi]` -> `knomi_serial`. Fixed, not read from config:
+    #: the klippy module a firmware registers is a property of that module, not
+    #: a per-type choice - see `typelist.REMOVED_KEYS`.
     klipper_section: str = "knomi_serial"
     #: Units to stop before a write to this type, overriding `[firmware ...]`
     #: and `[updater]`. `None` means this type said nothing at the new key -
@@ -149,14 +150,15 @@ def load(paths: Paths) -> dict[str, PioType]:
         if entry.builder != "platformio":
             continue
         name, block = entry.name, entry.block
+        typelist.refuse_renamed_keys(entry, path=paths.main_config)
         first_fw = entry.firmwares[0]
         family = firmware.resolve(paths, first_fw, families_map)
         source = family.source_dir(paths)
 
-        env = (block.get("env") or "").strip()
+        env = (block.get("platformio_env") or "").strip()
         if not env:
             raise ConfigError(
-                f"'{name}' is a PlatformIO type but names no env: - the "
+                f"'{name}' is a PlatformIO type but names no platformio_env: - the "
                 f"PlatformIO environment to build is not optional.",
                 type=name,
             )
@@ -177,13 +179,12 @@ def load(paths: Paths) -> dict[str, PioType]:
             else:
                 unit = legacy.strip()
                 stop_services = ["klipper", unit] if unit else ["klipper"]
-        device_map = block.get("device_map")
+        device_map = block.get("knomi_serial_device_map")
         out[name] = PioType(
             name=name,
             env=env,
             source=source,
             firmware=first_fw,
-            klipper_section=(block.get("klipper_section") or "knomi_serial").strip(),
             stop_services=stop_services,
             device_map=(
                 "knomi/devices.json" if device_map is None else device_map

@@ -1,0 +1,60 @@
+{
+  "_comment": "Builder keys are spelled <seam module>_<param>, and the old spellings are refused rather than read. A reader left on the old name silently drops a user's setting (a profile no longer recorded, a PlatformIO type refused for a missing env it has); a refusal that stops firing lets an old key sit in a config that the next migration will not know to rewrite.",
+  "file": "src/mcu_updater/typelist.py",
+  "command": [
+    "python",
+    "-m",
+    "pytest",
+    "tests/test_typelist.py",
+    "tests/test_pio.py",
+    "tests/test_config.py",
+    "-q"
+  ],
+  "mutations": [
+    {
+      "name": "a renamed key is refused",
+      "find": "        if entry.block.has(old):",
+      "replace": "        if False:"
+    },
+    {
+      "name": "a removed key is refused",
+      "find": "        if entry.block.has(gone):",
+      "replace": "        if False:"
+    },
+    {
+      "name": "the strict load checks key spellings",
+      "find": "        refuse_renamed_keys(entry, path=path)",
+      "replace": "        pass"
+    },
+    {
+      "name": "the PlatformIO view checks key spellings itself",
+      "file": "src/mcu_updater/providers/pio.py",
+      "find": "        typelist.refuse_renamed_keys(entry, path=paths.main_config)",
+      "replace": "        pass"
+    },
+    {
+      "name": "platformio_env is the key read",
+      "file": "src/mcu_updater/providers/pio.py",
+      "find": "        env = (block.get(\"platformio_env\") or \"\").strip()",
+      "replace": "        env = (block.get(\"env\") or \"\").strip()"
+    },
+    {
+      "name": "knomi_serial_device_map is the key read",
+      "file": "src/mcu_updater/providers/pio.py",
+      "find": "        device_map = block.get(\"knomi_serial_device_map\")",
+      "replace": "        device_map = block.get(\"device_map\")"
+    },
+    {
+      "name": "kconfig_make_profile is the key read",
+      "file": "src/mcu_updater/config.py",
+      "find": "            mcu.profile = (block.get(\"kconfig_make_profile\") or \"\").strip()",
+      "replace": "            mcu.profile = (block.get(\"profile\") or \"\").strip()"
+    },
+    {
+      "name": "kconfig_make_profile is the key written",
+      "file": "src/mcu_updater/config.py",
+      "find": "                doc.set(section, \"kconfig_make_profile\", mcu.profile.strip())",
+      "replace": "                doc.set(section, \"profile\", mcu.profile.strip())"
+    }
+  ]
+}

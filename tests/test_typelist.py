@@ -17,7 +17,7 @@ from mcu_updater.errors import ConfigCorruptError
 from mcu_updater.providers import cmake as cmake_mod
 from mcu_updater.providers import pio as pio_mod
 
-from .conftest import write_main_config
+from .conftest import read_main_config, write_main_config
 
 FAMILIES = (
     "[firmware klipper]\nsource: ~/klipper\n\n"
@@ -110,3 +110,68 @@ def test_selection_is_not_broken_by_another_types_bad_section(paths):
         + "[type board]\nchipset: stm32f072xb\nfirmware: klipper\n",
     )
     assert providers.provider_of(paths, "board") == providers.KconfigMake.name
+
+
+OLD_SPELLINGS = [
+    pytest.param("[type knomi]\nfirmware: knomi_serial\nenv: knomi\n", "env", "platformio_env", id="env"),
+    pytest.param(
+        "[type board]\nchipset: stm32f072xb\nfirmware: klipper\nprofile: config.X\n",
+        "profile",
+        "kconfig_make_profile",
+        id="profile",
+    ),
+    pytest.param(
+        "[type knomi]\nfirmware: knomi_serial\nplatformio_env: knomi\ndevice_map: a.json\n",
+        "device_map",
+        "knomi_serial_device_map",
+        id="device_map",
+    ),
+]
+
+
+@pytest.mark.parametrize("section,old,new", OLD_SPELLINGS)
+def test_an_old_key_spelling_is_refused_naming_the_new_one(paths, section, old, new):
+    write_main_config(paths, FAMILIES + section)
+    with pytest.raises(ConfigCorruptError) as exc:
+        typelist.load(paths)
+    assert f"{old}:" in str(exc.value)
+    assert f"{new}:" in str(exc.value)
+
+
+KLIPPER_SECTION = (
+    FAMILIES
+    + "[type knomi]\nfirmware: knomi_serial\nplatformio_env: knomi\nklipper_section: knomi_serial\n"
+)
+
+
+@pytest.mark.parametrize("load", [typelist.load, pio_mod.load], ids=["typelist", "pio"])
+def test_klipper_section_is_refused_as_no_longer_read(paths, load):
+    write_main_config(paths, KLIPPER_SECTION)
+    with pytest.raises(ConfigCorruptError, match="klipper_section:, which is no longer read"):
+        load(paths)
+
+
+def test_the_new_spellings_are_read(paths):
+    write_main_config(
+        paths,
+        FAMILIES
+        + "[type knomi]\nfirmware: knomi_serial\nplatformio_env: knomi\n"
+        + "knomi_serial_device_map: elsewhere/devices.json\n\n"
+        + "[type board]\nchipset: stm32f072xb\nfirmware: klipper\n"
+        + "kconfig_make_profile: config.X\n",
+    )
+    knomi = pio_mod.load(paths)["knomi"]
+    assert knomi.env == "knomi"
+    assert knomi.device_map == "elsewhere/devices.json"
+    assert knomi.klipper_section == "knomi_serial"
+    assert Registry.load(paths).get("board").profile == "config.X"
+
+
+def test_a_saved_profile_uses_the_new_spelling(paths):
+    write_main_config(paths, FAMILIES + "[type board]\nchipset: stm32f072xb\nfirmware: klipper\n")
+    reg = Registry.load(paths)
+    reg.get("board").profile = "config.Y"
+    reg.save(paths)
+    text = read_main_config(paths)
+    assert "kconfig_make_profile: config.Y" in text
+    assert "\nprofile:" not in text

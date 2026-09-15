@@ -104,6 +104,7 @@ def load(paths: Paths) -> dict[str, CmakeType]:
         if entry.builder != BUILDER:
             continue
         name, block = entry.name, entry.block
+        typelist.refuse_renamed_keys(entry, path=paths.main_config)
         first_fw = entry.firmwares[0]
         family = firmware.resolve(paths, first_fw, families_map)
 

@@ -71,6 +71,49 @@ class TypeEntry:
         return self.builders[0] if self.builders else ""
 
 
+#: Keys one seam module reads are spelled `<seam module>_<param>` (spec §2,
+#: docs/decisions.md). Old spelling -> new spelling.
+RENAMED_KEYS: dict[str, str] = {
+    "env": "platformio_env",
+    "profile": "kconfig_make_profile",
+    "device_map": "knomi_serial_device_map",
+}
+
+#: Keys that are no longer read at all -> why.
+REMOVED_KEYS: dict[str, str] = {
+    "klipper_section": (
+        "the Klipper object a firmware's klippy module registers is fixed by "
+        "that module, not by config"
+    ),
+}
+
+
+def refuse_renamed_keys(entry: TypeEntry, *, path: str) -> None:
+    """Refuse an old key spelling, naming its replacement.
+
+    Refused rather than read under both names: config migrations do not exist
+    yet, and a silently accepted old key would outlive the day they do.
+    """
+    for old, new in RENAMED_KEYS.items():
+        if entry.block.has(old):
+            raise ConfigCorruptError(
+                f"{path}: '{entry.name}' uses {old}:, which is now spelled {new}:. "
+                f"Rename the key by hand - config migrations do not exist yet.",
+                path=path,
+                type=entry.name,
+                value=old,
+            )
+    for gone, why in REMOVED_KEYS.items():
+        if entry.block.has(gone):
+            raise ConfigCorruptError(
+                f"{path}: '{entry.name}' uses {gone}:, which is no longer read - "
+                f"{why}. Delete the line.",
+                path=path,
+                type=entry.name,
+                value=gone,
+            )
+
+
 def _builder_of(fw: str, families: dict[str, firmware.FirmwareFamily]) -> str:
     family = families.get(fw)
     return family.builder if family is not None else firmware.DEFAULT_BUILDER
@@ -146,6 +189,7 @@ def validate(
     """Refuse what `read` let through."""
     known = firmware.names_of(families)
     for entry in entries:
+        refuse_renamed_keys(entry, path=path)
         if not entry.firmwares:
             # Refused, not defaulted to klipper. Silence used to mean klipper,
             # which is exactly the implicit behaviour this key exists to remove.

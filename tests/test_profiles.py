@@ -885,7 +885,7 @@ def test_a_declared_family_seeds_from_its_own_tree(tmp_path, trees):
         "[type carto_v4]\n"
         "chipset: stm32g431xx\n"
         "firmware: cartographer\n"
-        "profile: config.TestBoardUSB\n",
+        "kconfig_make_profile: config.TestBoardUSB\n",
         encoding="utf-8",
     )
 

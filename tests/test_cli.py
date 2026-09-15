@@ -61,7 +61,7 @@ def pio_type(c, fake_root):
     with open(c.paths.main_config, "a", encoding="utf-8") as fh:
         fh.write(
             f"\n[firmware knomi_serial]\nsource: {tree}\nbuilder: platformio\n\n"
-            f"[type {ENV}]\nfirmware: knomi_serial\nenv: {ENV}\nservice:\n"
+            f"[type {ENV}]\nfirmware: knomi_serial\nplatformio_env: {ENV}\nservice:\n"
         )
     return tree
 
@@ -159,7 +159,7 @@ def test_update_all_names_what_it_skipped_rather_than_dropping_it(
     with open(c.paths.main_config, "a", encoding="utf-8") as fh:
         fh.write(
             "\n[firmware no_tree_fw]\nbuilder: platformio\n\n"
-            "[type no_tree]\nfirmware: no_tree_fw\nenv: no_tree\n"
+            "[type no_tree]\nfirmware: no_tree_fw\nplatformio_env: no_tree\n"
         )
 
     with pytest.raises(SystemExit) as exc:
@@ -293,7 +293,7 @@ def test_building_a_platformio_type_with_no_tree_refuses_before_the_lock(
     with open(c.paths.main_config, "a", encoding="utf-8") as fh:
         fh.write(
             "\n[firmware no_tree_fw]\nbuilder: platformio\n\n"
-            "[type no_tree]\nfirmware: no_tree_fw\nenv: no_tree\n"
+            "[type no_tree]\nfirmware: no_tree_fw\nplatformio_env: no_tree\n"
         )
 
     with pytest.raises(SystemExit) as exc:

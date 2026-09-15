@@ -27,7 +27,7 @@ Per-type keys, and that is all:
     Required. Which families this board runs, comma- or space-separated - an
     application and, for a board with one, its bootloader, e.g.
     ``cartographer, katapult``. A type with no bootloader simply omits one.
-``profile``
+``kconfig_make_profile``
     The vendor answer file this type's application config is seeded from, e.g.
     ``config.CartoV4USB``. Names a file in that firmware's own source tree, not
     one shipped here - see :mod:`mcu_updater.profiles`.
@@ -330,7 +330,7 @@ class Registry:
             mcu.serials = list(entry.serials)
             mcu.canbus_uuids = list(entry.canbus_uuids)
             mcu.firmwares = list(entry.firmwares)
-            mcu.profile = (block.get("profile") or "").strip()
+            mcu.profile = (block.get("kconfig_make_profile") or "").strip()
             mcu.stop_services = block.get_csv("stop_services")
             # Only the families this type actually declares - not every
             # globally-declared [firmware ...] section. mcu.fw() is
@@ -415,9 +415,9 @@ class Registry:
             doc.set(section, "firmware", ", ".join(mcu.firmwares))
 
             if mcu.profile.strip():
-                doc.set(section, "profile", mcu.profile.strip())
+                doc.set(section, "kconfig_make_profile", mcu.profile.strip())
             else:
-                doc.remove_option(section, "profile")
+                doc.remove_option(section, "kconfig_make_profile")
 
             if mcu.stop_services is None:
                 doc.remove_option(section, "stop_services")

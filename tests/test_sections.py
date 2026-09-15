@@ -93,7 +93,7 @@ def test_a_platformio_type_is_recognised_by_its_declared_firmware(paths):
     with open(paths.main_config, "w", encoding="utf-8") as fh:
         fh.write(
             "[firmware knomi_serial]\nsource: ~/knomi-serial\nbuilder: platformio\n\n"
-            "[type knomi_toolchanger]\nfirmware: knomi_serial\nenv: knomi_toolchanger\n"
+            "[type knomi_toolchanger]\nfirmware: knomi_serial\nplatformio_env: knomi_toolchanger\n"
         )
 
     found = pio.load(paths)
@@ -107,7 +107,7 @@ def test_a_pio_type_is_not_picked_up_by_the_mcu_registry(paths):
         fh.write(
             "[firmware knomi_serial]\nsource: ~/knomi-serial\nbuilder: platformio\n\n"
             "[type board]\nchipset: stm32f072xb\nfirmware: klipper\n"
-            "[type knomi]\nfirmware: knomi_serial\nenv: knomi\n"
+            "[type knomi]\nfirmware: knomi_serial\nplatformio_env: knomi\n"
         )
 
     assert Registry.load(paths).names() == ["board"]
@@ -122,7 +122,7 @@ def test_a_type_predating_firmware_is_refused_not_defaulted(paths):
     it (its own firmware:-required check predates this one, from step 7),
     so only the MCU registry's refusal is new here."""
     with open(paths.main_config, "w", encoding="utf-8") as fh:
-        fh.write("[type knomi]\nprovider: platformio\nenv: knomi\n")
+        fh.write("[type knomi]\nprovider: platformio\nplatformio_env: knomi\n")
 
     assert pio.load(paths) == {}
     with pytest.raises(ConfigCorruptError) as exc:

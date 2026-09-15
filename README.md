@@ -282,7 +282,7 @@ Per-type keys:
 - **`firmware`** - a **list** of the families this board actually runs, e.g.
   `cartographer, katapult` (comma- or space-separated). A type that uses no
   bootloader simply omits it. See [Firmware families](#firmware-families).
-- **`profile`** - the vendor answer file this type's config is seeded from, e.g.
+- **`kconfig_make_profile`** - the vendor answer file this type's config is seeded from, e.g.
   `config.CartoV4USB`. Names a file in that firmware's *own source tree*, not
   one shipped here. See [Profiles](#profiles).
 - **`<fw>_extra_args`** - appended to the `make` command line. `<fw>` is any
@@ -532,25 +532,24 @@ builder: platformio
 [type knomi_toolchanger]
 chipset: esp32
 firmware: knomi_serial
-env: knomi_toolchanger      ; REQUIRED - no default, unlike everything else here
+platformio_env: knomi_toolchanger      ; REQUIRED - no default, unlike everything else here
 ```
 
-`env:` is required and never defaulted, deliberately: the type name is often
-wrong for it (`knomi_serial` itself ships a `knomi_i2cscan` diagnostic env
-beside the firmware one) and `platformio.ini`'s `default_envs` names what
+`platformio_env:` is required and never defaulted, deliberately: the type name
+is often wrong for it (`knomi_serial` itself ships a `knomi_i2cscan` diagnostic
+env beside the firmware one) and `platformio.ini`'s `default_envs` names what
 builds by default, not a canonical choice - so guessing either would build the
 wrong thing silently. `platformio_bin` in `[updater]` points at `pio` if
 neither the `PATH` nor `~/.platformio/penv/bin/pio` finds it.
 
 | Key | Meaning |
 | --- | --- |
-| `env` | The PlatformIO env to build. **Required, no default.** |
+| `platformio_env` | The PlatformIO env to build. **Required, no default.** |
 | `source` | This display's own source tree, overriding the firmware family's |
-| `klipper_section` | The `printer.cfg` prefix its displays are declared under. Default `knomi_serial` |
 | `stop_services` | Units stopped before flashing this display, overriding `[firmware ...]`/`[updater]`. Default `klipper, knomi_serial`. See [Which services stop before a write](#which-services-stop-before-a-write) |
-| `device_map` | Where that watcher writes its id → port map, relative to `printer_data`. Default `knomi/devices.json` |
+| `knomi_serial_device_map` | Where that watcher writes its id → port map, relative to `printer_data`. Default `knomi/devices.json` |
 
-Every key but `env` defaults to what a Knomi needs - the three that usually
+Every key but `platformio_env` defaults to what a Knomi needs - the three that usually
 change are for a second display family with its own klippy module and port
 watcher.
 

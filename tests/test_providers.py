@@ -169,7 +169,7 @@ def test_a_source_less_family_still_falls_back_to_its_own_name(paths, settings):
     }
 
     assert "not found" in reasons["no_source"]
-    assert paths.fw_dir("no_source_fw") in reasons["no_source"]
+    assert os.path.join(paths.home, "no_source_fw") in reasons["no_source"]
     assert "not found" in reasons["bad_source"]
     assert "/nope/not/here" in reasons["bad_source"]
 
@@ -196,4 +196,4 @@ def test_pio_source_is_not_yet_applied_to_a_family_with_no_source(paths, setting
 
     install = Install.load(paths, settings)
     assert install.platformio["knomi"].source != str(tree)
-    assert install.platformio["knomi"].source == str(paths.fw_dir("knomi_serial"))
+    assert install.platformio["knomi"].source == str(os.path.join(paths.home, "knomi_serial"))

@@ -18,6 +18,8 @@ from mcu_updater.stop_services import (
     resolve_stop_services,
 )
 
+from .conftest import seed_base_firmwares, write_main_config
+
 # --------------------------------------------------------------------------
 # the pure resolver
 # --------------------------------------------------------------------------
@@ -57,36 +59,42 @@ def test_nothing_is_merged_from_a_less_granular_level():
 
 
 def test_for_mcu_falls_back_to_the_mcu_default(paths):
+    seed_base_firmwares(paths)
     mcu = McuType(name="bttebb36", firmwares=["klipper"])
     settings = Settings()
     assert for_mcu(paths, mcu, settings) == DEFAULT_MCU
 
 
 def test_for_mcu_honours_a_type_level_override(paths):
+    seed_base_firmwares(paths)
     mcu = McuType(name="bttebb36", firmwares=["klipper"], stop_services=["klipper-1"])
     settings = Settings()
     assert for_mcu(paths, mcu, settings) == ("klipper-1",)
 
 
 def test_for_mcu_honours_an_updater_level_override(paths):
+    seed_base_firmwares(paths)
     mcu = McuType(name="bttebb36", firmwares=["klipper"])
     settings = Settings(stop_services=["klipper-1"])
     assert for_mcu(paths, mcu, settings) == ("klipper-1",)
 
 
 def test_for_mcu_type_level_beats_updater_level(paths):
+    seed_base_firmwares(paths)
     mcu = McuType(name="bttebb36", firmwares=["klipper"], stop_services=["klipper"])
     settings = Settings(stop_services=["klipper-1"])
     assert for_mcu(paths, mcu, settings) == ("klipper",)
 
 
 def test_for_mcu_type_level_blank_stops_nothing(paths):
+    seed_base_firmwares(paths)
     mcu = McuType(name="bttebb36", firmwares=["klipper"], stop_services=[])
     settings = Settings()
     assert for_mcu(paths, mcu, settings) == ()
 
 
 def test_for_cmake_falls_back_to_the_mcu_default(paths):
+    write_main_config(paths, "[firmware roadrunner]\nsource: ~/roadrunner\n")
     target = CmakeType(name="roadrunner", firmware="roadrunner")
     assert for_cmake(paths, target, Settings()) == DEFAULT_MCU
 
@@ -112,12 +120,14 @@ def test_for_cmake_uses_type_then_family_then_updater_precedence(paths):
 
 
 def test_for_platformio_falls_back_to_the_platformio_default(paths):
+    write_main_config(paths, "[firmware knomi_serial]\nsource: ~/knomi_serial\nbuilder: platformio\n")
     display = PioType(name="knomi", env="knomi", firmware="knomi_serial")
     settings = Settings()
     assert for_platformio(paths, display, settings) == DEFAULT_PLATFORMIO
 
 
 def test_for_platformio_honours_a_type_level_override(paths):
+    write_main_config(paths, "[firmware knomi_serial]\nsource: ~/knomi_serial\nbuilder: platformio\n")
     display = PioType(
         name="knomi", env="knomi", firmware="knomi_serial", stop_services=["klipper"]
     )

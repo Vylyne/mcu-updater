@@ -17,6 +17,8 @@ from mcu_updater.config import Registry
 from mcu_updater.errors import ConfigCorruptError
 from mcu_updater.providers import pio
 
+from .conftest import seed_base_firmwares, with_base_firmwares
+
 # --------------------------------------------------------------------------
 # reading
 # --------------------------------------------------------------------------
@@ -71,7 +73,11 @@ def test_a_name_this_document_has_never_seen_gets_a_fresh_section():
 
 def test_a_registry_round_trips_without_changing_the_file(paths):
     with open(paths.registry_file, "w", encoding="utf-8") as fh:
-        fh.write("[type board]\nchipset: stm32f072xb\nfirmware: klipper\nserials:\n")
+        fh.write(
+            with_base_firmwares(
+                "[type board]\nchipset: stm32f072xb\nfirmware: klipper\nserials:\n"
+            )
+        )
 
     reg = Registry.load(paths)
     assert "board" in reg.names()
@@ -82,6 +88,7 @@ def test_a_registry_round_trips_without_changing_the_file(paths):
 
 
 def test_a_new_type_is_written_as_type(paths):
+    seed_base_firmwares(paths)
     reg = Registry.load(paths)
     reg.add_type("carto_v4", "stm32g431xx")
     reg.save(paths)
@@ -105,9 +112,11 @@ def test_a_pio_type_is_not_picked_up_by_the_mcu_registry(paths):
     the only thing keeping one reader out of the other's sections."""
     with open(paths.registry_file, "w", encoding="utf-8") as fh:
         fh.write(
-            "[firmware knomi_serial]\nsource: ~/knomi-serial\nbuilder: platformio\n\n"
-            "[type board]\nchipset: stm32f072xb\nfirmware: klipper\n"
-            "[type knomi]\nfirmware: knomi_serial\nplatformio_env: knomi\n"
+            with_base_firmwares(
+                "[firmware knomi_serial]\nsource: ~/knomi-serial\nbuilder: platformio\n\n"
+                "[type board]\nchipset: stm32f072xb\nfirmware: klipper\n"
+                "[type knomi]\nfirmware: knomi_serial\nplatformio_env: knomi\n"
+            )
         )
 
     assert Registry.load(paths).names() == ["board"]

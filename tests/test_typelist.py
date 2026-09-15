@@ -64,7 +64,7 @@ def test_read_never_refuses():
     doc = CfgDocument("[type orphan]\nfirmware: nowhere\n\n[type bare]\nchipset: x\n")
     entries = typelist.read(doc, {})
     assert [(e.name, e.firmwares, e.builder) for e in entries] == [
-        ("orphan", ("nowhere",), "kconfig_make"),
+        ("orphan", ("nowhere",), ""),
         ("bare", (), ""),
     ]
 

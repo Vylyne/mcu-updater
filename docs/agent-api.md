@@ -562,15 +562,14 @@ should say so rather than hand over a button that fails.
 ```json
 {"name": "cartographer", "source": "/home/biqu/MCU-Firmware---Based-on-Klipper",
  "artifact": "klipper", "builder": "kconfig_make", "cmake_args": "",
- "bootloader": false, "present": true, "configurable": true, "builtin": false}
+ "bootloader": false, "present": true, "configurable": true}
 ```
 
 Every firmware family this install knows about, for a picker to offer. `present`
 and `configurable` are separate answers: a declared family whose tree has not
 been cloned yet is a real state — it is what every install looks like between
 adding the section and running `git clone` — and it wants "check out the source",
-not "unknown family". `builtin` marks `klipper` and `katapult`, which cannot be
-removed by editing a config file.
+not "unknown family".
 
 `builder` is `[firmware ...]`'s own `builder:` key (default `kconfig_make`) —
 how a tree compiles is a property of the tree, not of a type that happens to

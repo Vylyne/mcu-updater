@@ -36,7 +36,7 @@ from .errors import (
 )
 from .flashers.flash import adoptable_devices, flash_initial_bootloader
 from .lock import exclusive
-from .paths import FW_TARGETS, Paths
+from .paths import Paths
 from .service import (
     Journal,
     ServiceController,
@@ -996,11 +996,11 @@ def build_parser(fw_choices: Sequence[str] | None = None) -> argparse.ArgumentPa
     """The CLI. `fw_choices` is what `--fw` will accept.
 
     Passed in rather than read here because a declared `[firmware x]` family is
-    a legitimate target, and argparse needs the list at construction time. It
-    defaults to the built-ins so a caller without a Paths - every test that
-    builds a parser to check wiring - still gets a working one.
+    a legitimate target, and argparse needs the list at construction time.
+    `None` accepts any name; an undeclared one is refused when it is resolved,
+    with the section to add.
     """
-    choices = list(fw_choices) if fw_choices else list(FW_TARGETS)
+    choices = list(fw_choices) if fw_choices else None
     parser = argparse.ArgumentParser(
         description="Klipper/Katapult Firmware Management Utility"
     )

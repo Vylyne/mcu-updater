@@ -26,12 +26,15 @@ from mcu_updater.discovery import canbus
 from mcu_updater.errors import UpdaterError
 from mcu_updater.settings import Settings
 
+from .conftest import seed_base_firmwares
+
 ENV = "knomi_toolchanger"
 
 
 @pytest.fixture
 def c(paths, fake_root, monkeypatch):
     """A CLI context pinned to the test tree, with no real services."""
+    seed_base_firmwares(paths)
     context = cli.Context(
         paths=paths, settings=Settings(service_backend="null", clean_before_build=False)
     )

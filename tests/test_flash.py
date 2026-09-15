@@ -30,7 +30,13 @@ from mcu_updater.flashers.flash import (
 from mcu_updater.helpers import BootselHandoff
 from mcu_updater.service import NullService
 
-from .conftest import bootsel_device_node, cmd_tokens, make_device, mounted_bootsel_volume
+from .conftest import (
+    bootsel_device_node,
+    cmd_tokens,
+    make_device,
+    mounted_bootsel_volume,
+    seed_base_firmwares,
+)
 
 
 def _cmds(events: list) -> list[str]:
@@ -40,6 +46,7 @@ def _cmds(events: list) -> list[str]:
 @pytest.fixture
 def ready(paths, settings, fake_root):
     """A staged firmware binary and an installed flashtool.py."""
+    seed_base_firmwares(paths)
     settings.dry_run = True
     (fake_root / "katapult" / "scripts").mkdir(parents=True, exist_ok=True)
     (fake_root / "katapult" / "scripts" / "flashtool.py").write_text("", encoding="utf-8")

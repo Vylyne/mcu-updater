@@ -11,7 +11,15 @@ import pytest
 from mcu_updater.build import makefile_patches
 from mcu_updater.config import MakefilePatch, McuType
 
+from .conftest import seed_base_firmwares
+
 ORIGINAL = b"# klipper src makefile\nsrc-y += sched.c\n"
+
+
+@pytest.fixture(autouse=True)
+def _declared(paths):
+    """Every test here patches klipper's own tree, so klipper must be declared."""
+    seed_base_firmwares(paths)
 
 
 def _mcu(*patches: MakefilePatch) -> McuType:

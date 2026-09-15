@@ -219,14 +219,13 @@ class McuType:
         return None
 
     def fw_order(self) -> list[str]:
-        """The families this type carries, built-ins first.
+        """The families this type carries, in declaration order.
 
-        Self-contained rather than asking the config: an McuType is handed
-        around without a Paths, and the order only has to be *stable* - it is
-        what the artifacts payload and the CLI listing are keyed by.
+        Families it holds per-family keys for but no longer declares follow, so
+        nothing a caller iterates is dropped.
         """
-        first = [fw for fw in firmware.BUILTIN if fw in self.fws]
-        return first + sorted(fw for fw in self.fws if fw not in firmware.BUILTIN)
+        declared = [fw for fw in self.firmwares if fw in self.fws]
+        return declared + [fw for fw in self.fws if fw not in self.firmwares]
 
     def to_json(self) -> dict[str, Any]:
         out: dict[str, Any] = {
@@ -428,7 +427,7 @@ class Registry:
             # is in `firmware:`. Dropped on every save rather than left stale.
             doc.remove_option(section, "katapult_installed")
 
-            for fw in fw_names:
+            for fw in dict.fromkeys([*mcu.fws, *fw_names]):
                 cfg = mcu.fws.get(fw)
                 args_key = f"{fw}_extra_args"
                 patch_key = f"{fw}_makefile_patches"
@@ -687,11 +686,9 @@ class Registry:
         have not wired up yet - which is the order the work actually happens in
         when a new probe arrives.
 
-        `application` is not validated here. The registry is a data structure
-        and does not know which `[firmware ...]` sections the config file
-        declares; `save()` and `load()` both check against that document, and
-        the agent checks before it calls this so the refusal names the families
-        that do exist.
+        Every family in the resulting `firmwares` must be declared in this
+        registry's document; an undeclared one is refused with the section to
+        add.
         """
         validate_type_name(name)
         if name in self.types and not overwrite:
@@ -699,6 +696,14 @@ class Registry:
         firmwares = [application]
         if katapult_installed and "katapult" not in firmwares:
             firmwares.append("katapult")
+        declared = firmware.load_from_doc(self._doc)
+        for fw in firmwares:
+            if fw not in declared:
+                raise ConfigCorruptError(
+                    f"'{name}' names firmware '{fw}'. {firmware.missing_section_message(fw)}",
+                    type=name,
+                    value=fw,
+                )
         mcu = McuType(
             name=name,
             chipset=chipset,

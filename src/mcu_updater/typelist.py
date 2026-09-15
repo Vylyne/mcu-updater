@@ -116,7 +116,7 @@ def refuse_renamed_keys(entry: TypeEntry, *, path: str) -> None:
 
 def _builder_of(fw: str, families: dict[str, firmware.FirmwareFamily]) -> str:
     family = families.get(fw)
-    return family.builder if family is not None else firmware.DEFAULT_BUILDER
+    return family.builder if family is not None else ""
 
 
 def read(doc: CfgDocument, families: dict[str, firmware.FirmwareFamily]) -> list[TypeEntry]:
@@ -206,8 +206,8 @@ def validate(
                 # board that runs something else.
                 raise ConfigCorruptError(
                     f"{path}: '{entry.name}' declares firmware '{fw}', which is not "
-                    f"a known family. Known: {', '.join(known)}. Declare it with a "
-                    f"[firmware {fw}] section, or fix the spelling.",
+                    f"a known family. Known: {', '.join(known) or 'none'}. Fix the "
+                    f"spelling, or declare it. {firmware.missing_section_message(fw)}",
                     path=path,
                     type=entry.name,
                     value=fw,

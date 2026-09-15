@@ -107,7 +107,6 @@ def test_per_type_layout(tmp_path):
 
 def test_source_tree_layout(tmp_path):
     p = Paths.from_env(env={"MCU_UPDATER_HOME": str(tmp_path)})
-    assert p.fw_dir("klipper") == os.path.join(str(tmp_path), "klipper")
     assert p.flashtool.endswith(os.path.join("katapult", "scripts", "flashtool.py"))
 
 

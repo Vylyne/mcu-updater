@@ -255,9 +255,6 @@ class StatusMixin(_Base):
                     "bootloader": family.bootloader,
                     "present": os.path.isdir(source),
                     "configurable": configurable.get(name, False),
-                    # Neither can be removed by editing a config file, and the
-                    # picker should not offer to.
-                    "builtin": name in firmware.BUILTIN,
                 }
             )
         return out

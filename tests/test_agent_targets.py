@@ -489,7 +489,7 @@ def test_build_is_blocked_without_saved_menuconfig_answers(paths, live_registry_
 def _ships_seeds(paths, *names: str) -> None:
     """Give the klipper tree vendor answer files, as a fork's root has."""
     for name in names or ("config.BoardUSB", "config.BoardCAN"):
-        with open(os.path.join(paths.fw_dir("klipper"), name), "w", encoding="utf-8") as fh:
+        with open(os.path.join(paths.home, "klipper", name), "w", encoding="utf-8") as fh:
             fh.write("CONFIG_MACH_STM32=y\n")
             fh.write(f'CONFIG_BOARD_NAME="{name}"\n')
 
@@ -709,8 +709,6 @@ def test_firmware_families_says_what_exists_not_just_what_parses(api, paths):
     assert set(families) == {"klipper", "katapult", "cartographer", "knomi_serial"}
     assert families["cartographer"]["present"] is False
     assert families["cartographer"]["configurable"] is False
-    assert families["cartographer"]["builtin"] is False
-    assert families["klipper"]["builtin"] is True
 
 
 def test_firmware_families_carries_builder_and_bootloader(api):
@@ -746,10 +744,12 @@ def test_firmware_families_carries_cmake_args(paths):
     )
 
 
-def test_firmware_families_keeps_the_builtins_first(api):
-    """Same order the CLI has always listed and the artifacts payload carries."""
+def test_firmware_families_are_listed_in_sorted_order(api):
+    """Nothing is built in any more, so there is no fixed "klipper, katapult
+    first" order to keep - the payload lists every declared family sorted by
+    name, same as `firmware.names()`."""
     names = [f["name"] for f in api.dispatch("fw.status")["firmware_families"]]
-    assert names[:2] == ["klipper", "katapult"]
+    assert names == sorted(names)
 
 
 def test_a_type_says_which_family_it_runs(api):

@@ -44,6 +44,11 @@
       "name": "the bootloader is the first declared family that is one",
       "find": "        for fw in self.firmwares:\n            if _is_bootloader(fw, families):\n                return fw",
       "replace": "        for fw in self.firmwares:\n            if False:\n                return fw"
+    },
+    {
+      "name": "a type's families keep their declared order",
+      "find": "        declared = [fw for fw in self.firmwares if fw in self.fws]",
+      "replace": "        declared = sorted(fw for fw in self.firmwares if fw in self.fws)"
     }
   ]
 }

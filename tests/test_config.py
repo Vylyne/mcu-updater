@@ -18,10 +18,15 @@ from mcu_updater.errors import (
     UnknownTypeError,
 )
 
-from .conftest import read_main_config, write_main_config
+from .conftest import read_main_config, seed_base_firmwares, with_base_firmwares, write_main_config
 
 
 def _write(paths, text: str) -> None:
+    """Write `text` as the whole registry file, declaring klipper and katapult
+    first unless `text` already does - most of these bodies predate every
+    family being declared and were never about that key."""
+    if "[firmware " not in text:
+        text = with_base_firmwares(text)
     os.makedirs(paths.config_dir, exist_ok=True)
     with open(paths.registry_file, "w", encoding="utf-8", newline="\n") as fh:
         fh.write(text)
@@ -190,6 +195,7 @@ def test_a_new_type_is_appended_and_reloads(paths, live_registry_text):
 
 def test_defaults_are_not_restated_in_the_file(paths):
     """A file full of restated defaults is harder to read and to diff."""
+    seed_base_firmwares(paths)
     reg = Registry.load(paths)
     reg.add_type("a", "rp2040")
     reg.save(paths)
@@ -204,6 +210,7 @@ def test_katapult_installed_false_leaves_no_bootloader_in_firmwares(paths):
     """The old katapult_installed key is retired - a bootloader is now just
     whatever is declared in firmware:, so "not installed" means "not listed",
     and the old key is never written."""
+    seed_base_firmwares(paths)
     reg = Registry.load(paths)
     reg.add_type("a", "rp2040", katapult_installed=False)
     reg.save(paths)
@@ -222,6 +229,7 @@ def test_clearing_extra_args_removes_the_key(paths):
 
 
 def test_a_patch_added_programmatically_round_trips(paths):
+    seed_base_firmwares(paths)
     reg = Registry.load(paths)
     mcu = reg.add_type("a", "stm32f072xb")
     mcu.fw("klipper").makefile_patches = [MakefilePatch(file="src/Makefile", line="src-y += buffer.c")]
@@ -234,6 +242,7 @@ def test_a_patch_added_programmatically_round_trips(paths):
 
 
 def test_an_extra_repo_added_programmatically_round_trips(paths):
+    seed_base_firmwares(paths)
     reg = Registry.load(paths)
     mcu = reg.add_type("a", "stm32f072xb")
     mcu.fw("klipper").extra_repos = ["/home/pi/buffer_manager"]
@@ -280,6 +289,7 @@ def test_stop_services_set_at_the_type_level(paths):
 
 
 def test_an_unset_stop_services_is_not_restated_in_the_file(paths):
+    seed_base_firmwares(paths)
     reg = Registry.load(paths)
     reg.add_type("a", "rp2040")
     reg.save(paths)
@@ -287,6 +297,7 @@ def test_an_unset_stop_services_is_not_restated_in_the_file(paths):
 
 
 def test_stop_services_round_trips_through_save_and_load(paths):
+    seed_base_firmwares(paths)
     reg = Registry.load(paths)
     mcu = reg.add_type("a", "rp2040")
     mcu.stop_services = ["klipper", "knomi_serial"]
@@ -345,6 +356,7 @@ def test_unknown_type_raises_with_the_known_list(paths, live_registry_text):
 
 
 def test_duplicate_type_raises_unless_overwriting(paths):
+    seed_base_firmwares(paths)
     reg = Registry.load(paths)
     reg.add_type("a", "stm32f072xb")
     with pytest.raises(DuplicateTypeError):
@@ -354,6 +366,7 @@ def test_duplicate_type_raises_unless_overwriting(paths):
 
 
 def test_add_and_remove_serial_report_whether_they_acted(paths):
+    seed_base_firmwares(paths)
     reg = Registry.load(paths)
     reg.add_type("a", "x")
     assert reg.add_serial("a", "S1") is True
@@ -374,6 +387,7 @@ def test_resolve_serial_untracked(paths, live_registry_text):
 
 
 def test_resolve_serial_ambiguous(paths):
+    seed_base_firmwares(paths)
     reg = Registry.load(paths)
     reg.add_type("a", "x")
     reg.add_type("b", "x")
@@ -514,6 +528,7 @@ def test_mutate_uses_its_own_lock_file(paths):
     """Registry edits must not queue behind a build holding the main lock for
     minutes - they touch different things."""
     assert paths.registry_lock_file != paths.lock_file
+    seed_base_firmwares(paths)
 
     from mcu_updater.lock import exclusive
 
@@ -606,7 +621,8 @@ def test_add_type_applies_the_rule_so_both_front_ends_agree(paths):
 # obvious thing to do by hand, and it silently unregistered boards.
 # --------------------------------------------------------------------------
 
-ANNOTATED = """[updater]
+ANNOTATED = with_base_firmwares(
+    """[updater]
 enable_flashing: true   # turned on for the panel
 
 [type bttebb36]
@@ -617,6 +633,7 @@ serials:
     912345678901234567890-if00  #mcu EBBT0
     123456789012345678901-if00  #mcu EBBT1
 """
+)
 
 
 def test_an_annotated_registry_still_tracks_every_board(paths):
@@ -664,6 +681,7 @@ def test_an_inline_comment_on_a_setting_is_not_part_of_its_value(paths):
 
 
 def test_add_and_remove_canbus_uuid_report_whether_they_acted(paths):
+    seed_base_firmwares(paths)
     reg = Registry.load(paths)
     reg.add_type("a", "x")
     assert reg.add_canbus_uuid("a", "bcb5346fc731") is True
@@ -673,6 +691,7 @@ def test_add_and_remove_canbus_uuid_report_whether_they_acted(paths):
 
 
 def test_find_types_for_uuid(paths):
+    seed_base_firmwares(paths)
     reg = Registry.load(paths)
     reg.add_type("a", "x")
     reg.add_type("b", "x")
@@ -726,6 +745,7 @@ def test_removing_the_last_canbus_uuid_drops_the_key_again(paths, live_registry_
 def test_canbus_uuid_is_a_separate_namespace_from_serial(paths):
     """A uuid and a by-id serial never collide even if the strings happen to
     match - `canbus_uuids:` and `serials:` are deliberately separate keys."""
+    seed_base_firmwares(paths)
     reg = Registry.load(paths)
     reg.add_type("a", "x")
     reg.add_serial("a", "SHARED")
@@ -736,7 +756,7 @@ def test_canbus_uuid_is_a_separate_namespace_from_serial(paths):
 
 
 def _cfg_with_a_cmake_type() -> str:
-    return (
+    return with_base_firmwares(
         "[firmware roadrunner]\n"
         "source: ~/roadrunner/rp2040\n"
         "builder: cmake\n"

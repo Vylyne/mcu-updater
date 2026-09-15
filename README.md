@@ -230,13 +230,10 @@ klipper_extra_repos:
     ~/buffer_manager
 ```
 
-`[firmware ...]` names a build system's own tree - `builder:` lives there, not
-on the type, because how a tree compiles is a property of the tree, not of a
-board that happens to use it. `[type ...]` names a board model and lists
-which families it runs. A section for `klipper` or `katapult` is only needed
-to override their defaults; every type that lists them resolves the plain
-`~/<name>` / `kconfig_make` / `out/<name>.bin` convention with no section at
-all.
+Every family a type names is declared, `klipper` and `katapult` included.
+install.sh writes those two with the source paths it finds. A config missing
+one is refused with the exact lines to add. Within a section every key is
+optional: no `source:` means `~/<name>`.
 
 `builder:` takes three values: `kconfig_make` (the default, above), `platformio`
 (see [ESP32 displays](#esp32-displays)) and `cmake` (see
@@ -404,10 +401,10 @@ project does not edit another project's allowlist on your behalf.
 
 ### Firmware families
 
-Every type builds klipper and katapult by convention: source at `~/<name>`,
-output at `out/<name>.bin`. A vendor fork breaks both. Cartographer's firmware
-is a Klipper fork that lives in `~/MCU-Firmware---Based-on-Klipper` and, being
-a Klipper fork, still drops `out/klipper.bin`. Declare the mismatch once:
+A declared family with no `source:` builds from `~/<name>` and leaves
+`out/<artifact>.bin`. A vendor fork breaks both. Cartographer's firmware is a
+Klipper fork that lives in `~/MCU-Firmware---Based-on-Klipper` and, being a
+Klipper fork, still drops `out/klipper.bin`. Declare the mismatch once:
 
 ```ini
 [firmware cartographer]

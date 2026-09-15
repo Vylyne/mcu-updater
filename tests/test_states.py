@@ -24,6 +24,8 @@ from mcu_updater.providers import pio
 from mcu_updater.providers.pio import PioType, SourceState
 from mcu_updater.states import ArtifactStatus, DeviceStatus
 
+from .conftest import seed_base_firmwares
+
 TREE = SourceState(head="d34db33", version="0.4.0", dirty=False, on_tag=False)
 
 
@@ -376,6 +378,7 @@ def test_an_unprovable_mcu_artifact_reports_stale_rather_than_current(paths):
 
 
 def test_a_matching_mcu_artifact_is_current(paths, monkeypatch):
+    seed_base_firmwares(paths)
     monkeypatch.setattr(build, "git_head", lambda _: "abc1234")
     monkeypatch.setattr(build, "sha256_file", lambda _: "cfghash")
     _mcu_artifact(paths, sidecar={"fw_sha": "abc1234", "config_sha256": "cfghash"})
@@ -391,6 +394,7 @@ def test_a_matching_mcu_artifact_is_current(paths, monkeypatch):
     ],
 )
 def test_the_mcu_reasons_survive_verbatim(paths, monkeypatch, sidecar, expected):
+    seed_base_firmwares(paths)
     monkeypatch.setattr(build, "git_head", lambda _: "abc1234")
     monkeypatch.setattr(build, "sha256_file", lambda _: "cfghash")
     _mcu_artifact(paths, sidecar=sidecar)

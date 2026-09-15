@@ -835,7 +835,7 @@ def monkey_head(api, paths):
     """
     import mcu_updater.build as build_mod
 
-    build_mod._head_cache[os.path.abspath(paths.fw_dir("klipper"))] = (
+    build_mod._head_cache[os.path.abspath(os.path.join(paths.home, "klipper"))] = (
         float("inf"),
         HEAD,
     )

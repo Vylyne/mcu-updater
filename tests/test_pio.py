@@ -16,6 +16,8 @@ import pytest
 from mcu_updater.errors import ConfigError, FlashError, SourceTreeMissingError
 from mcu_updater.providers import pio
 
+from .conftest import with_base_firmwares
+
 # Captured verbatim from a successful `pio run -e knomi_toolchanger -t upload`
 # on the printer. Parsing invented output is how the dfu-util altsetting bug
 # happened, so the fixtures here are the real thing.
@@ -235,8 +237,10 @@ def test_saving_the_registry_does_not_delete_a_new_style_pio_type(paths, fake_ro
 
     with open(paths.main_config, "w", encoding="utf-8") as fh:
         fh.write(
-            "[firmware knomi_serial]\nsource: ~/knomi_serial\nbuilder: platformio\n\n"
-            "[type knomi]\nchipset: esp32\nfirmware: knomi_serial\nplatformio_env: knomi\n"
+            with_base_firmwares(
+                "[firmware knomi_serial]\nsource: ~/knomi_serial\nbuilder: platformio\n\n"
+                "[type knomi]\nchipset: esp32\nfirmware: knomi_serial\nplatformio_env: knomi\n"
+            )
         )
 
     reg = Registry.load(paths)

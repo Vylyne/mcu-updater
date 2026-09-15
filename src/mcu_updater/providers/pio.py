@@ -371,7 +371,7 @@ def record_build(paths: Paths, display: PioType, state: SourceState) -> None:
         "bin_size": stat.st_size,
         "bin_mtime": stat.st_mtime,
     }
-    sidecar = paths.display_sidecar(display.env)
+    sidecar = paths.platformio_sidecar(display.env)
     os.makedirs(os.path.dirname(sidecar), exist_ok=True)
     tmp = sidecar + ".tmp"
     with open(tmp, "w", encoding="utf-8") as fh:
@@ -424,7 +424,7 @@ def read_sidecar(paths: Paths, display: PioType) -> dict | None:
     "no provenance", and telling them apart would not change any answer.
     """
     try:
-        with open(paths.display_sidecar(display.env), encoding="utf-8") as fh:
+        with open(paths.platformio_sidecar(display.env), encoding="utf-8") as fh:
             record = json.load(fh)
     except (OSError, ValueError):
         return None

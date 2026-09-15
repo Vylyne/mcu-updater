@@ -383,8 +383,8 @@ def build_fw_cmd(args: argparse.Namespace) -> None:
     # A PlatformIO type's own env already names the board, the partition table
     # and the flags, so `-f` is not merely optional there, it is meaningless,
     # and there is no menuconfig to fall back to.
-    if args.type in install.displays:
-        display = install.displays[args.type]
+    if args.type in install.platformio:
+        display = install.platformio[args.type]
         target = providers.BuildTarget(
             providers.PlatformIO.name, args.type, display.firmware
         )
@@ -438,7 +438,7 @@ def _target_for(
     order, so a caller that only needs "which provider is this" does not have
     to repeat them. None means no provider claims the name.
     """
-    display = install.displays.get(name)
+    display = install.platformio.get(name)
     if display is not None:
         return providers.BuildTarget(providers.PlatformIO.name, name, display.firmware)
     entry = install.cmake.get(name)
@@ -564,7 +564,7 @@ def _cmake_targets(c: Context, mcu_type: str, serial: str) -> list:
     setup the operator has to fix before any write is possible, so they are said
     plainly rather than discovered as a missing-file error two layers down.
 
-    `stop_services.for_cmake` is the only resolver that applies: `for_display`
+    `stop_services.for_cmake` is the only resolver that applies: `for_platformio`
     indexes the PlatformIO map - which is the `KeyError: 'roadrunner'` this
     whole change exists to remove - and `for_mcu` wants a kconfig `McuType`.
 
@@ -652,7 +652,7 @@ def _pio_targets(
             # the message below naming both sources rather than a tool error
             # from the fallback.
             stdout_reporter("warn", f"could not ask the devices ({exc})")
-    units = stop_services.for_display(c.paths, display, c.settings)
+    units = stop_services.for_platformio(c.paths, display, c.settings)
     if not found:
         where = pio.device_map_path(c.paths, display) or "(no device_map configured)"
         own_watcher = [u for u in units if u != "klipper"]
@@ -701,7 +701,7 @@ def _ports_free(c: Context, names: Sequence[str], label: str):
     displays = pio.load(c.paths)
     units: list[str] = []
     for name in names:
-        for unit in stop_services.for_display(c.paths, displays[name], c.settings):
+        for unit in stop_services.for_platformio(c.paths, displays[name], c.settings):
             if unit not in units:
                 units.append(unit)
 
@@ -866,7 +866,7 @@ def update_all(args: argparse.Namespace) -> None:
     """
     c = ctx()
     install = providers.Install.load(c.paths, c.settings)
-    if not install.registry and not install.displays:
+    if not install.registry and not install.platformio:
         print("No types configured.", file=sys.stderr)
         sys.exit(1)
 
@@ -906,13 +906,13 @@ def update_all(args: argparse.Namespace) -> None:
         # Selected after building, because a build is what makes a device stale -
         # and inside the stop, because with no Moonraker to ask, asking the
         # devices themselves is how a PlatformIO family gets enumerated.
-        with _ports_free(c, sorted(install.displays), "update-all"):
+        with _ports_free(c, sorted(install.platformio), "update-all"):
             targets: list = []
             for name in sorted(install.registry.names()):
                 reg_mcu = install.registry.get(name)
                 targets += _board_targets(c, name, reg_mcu.serials)
                 targets += _canbus_targets(c, name, reg_mcu.canbus_uuids)
-            for name in sorted(install.displays):
+            for name in sorted(install.platformio):
                 try:
                     targets += _pio_targets(c, name, allow_discovery=True)
                 except UpdaterError as exc:

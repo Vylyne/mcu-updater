@@ -152,7 +152,7 @@ class Paths:
         """
         return os.path.join(self.data_dir, ".dfu-pairings.json")
 
-    def display_sidecar(self, env: str) -> str:
+    def platformio_sidecar(self, env: str) -> str:
         """Build provenance for one display env: which commit the image is from.
 
         In our data tree even though the image itself lives in the source repo's

@@ -101,7 +101,7 @@ class FirmwareFamily:
     #: are the pair the flash-time offset checks compare.
     bootloader: bool = False
     #: Units to stop before a write of this family, overriding `[updater]`
-    #: and overridden by a `[type ...]`/`[display ...]` that names its own.
+    #: and overridden by a `[type ...]` that names its own.
     #: `None` means this family said nothing - inherit the next level out.
     #: See `stop_services.py`.
     stop_services: list[str] | None = None

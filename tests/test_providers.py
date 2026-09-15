@@ -183,7 +183,7 @@ def test_pio_source_is_not_yet_applied_to_a_family_with_no_source(paths, setting
     `source:` of its own falls back to `~/<family name>`, the same as any
     other firmware family, not to `pio_source`.
 
-    This is a deliberate, temporary gap: the old `[display ...]` fallback was
+    This is a deliberate, temporary gap: the old display-section fallback was
     retired earlier than planned, which left `pio_source` disconnected ahead of
     the rest of the legacy purge. Reconnecting it - or retiring the setting -
     belongs with `default_source`'s own removal, still outstanding.
@@ -195,5 +195,5 @@ def test_pio_source_is_not_yet_applied_to_a_family_with_no_source(paths, setting
         fh.write("[firmware knomi_serial]\nbuilder: platformio\n\n[type knomi]\nfirmware: knomi_serial\nplatformio_env: knomi\n")
 
     install = Install.load(paths, settings)
-    assert install.displays["knomi"].source != str(tree)
-    assert install.displays["knomi"].source == str(paths.fw_dir("knomi_serial"))
+    assert install.platformio["knomi"].source != str(tree)
+    assert install.platformio["knomi"].source == str(paths.fw_dir("knomi_serial"))

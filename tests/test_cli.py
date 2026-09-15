@@ -562,7 +562,7 @@ def test_flashing_a_cmake_serial_with_its_type_routes_the_same_way(
 def test_the_cmake_target_carries_the_staged_uf2_and_its_stop_services(
     c, cmake_flashable, captured, monkeypatch
 ):
-    """`for_cmake`, not `for_display` - the resolver that indexes the PlatformIO
+    """`for_cmake`, not `for_platformio` - the resolver that indexes the PlatformIO
     map is the one that raised KeyError."""
     monkeypatch.setattr(cli, "_confirm", lambda prompt: True)
 

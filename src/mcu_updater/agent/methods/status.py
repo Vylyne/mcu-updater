@@ -526,10 +526,10 @@ class StatusMixin(_Base):
         }
 
     def pio_status(self) -> list[dict[str, Any]]:
-        """Configured display types, each with the screens Klipper expects.
+        """Configured PlatformIO types, each with the screens Klipper expects.
 
         Rolled into fw.status so the panel paints in one call, like everything
-        else. Cheap when unconfigured: no `[display]` sections means no work at
+        else. Cheap when unconfigured: no `[type]` sections means no work at
         all, not even the configfile query.
         """
         from ...providers import pio as pio_mod
@@ -575,7 +575,7 @@ class StatusMixin(_Base):
                         # file a record under, no record yet, or a record
                         # discarded because what the screen reports running no
                         # longer matches it.
-                        "confidence": self._screen_confidence(entry, flashlog),
+                        "confidence": self._platformio_confidence(entry, flashlog),
                     }
                 )
             out.append(
@@ -1177,7 +1177,7 @@ class StatusMixin(_Base):
 
         devices = []
         for screen in payload["screens"]:
-            device = self._screen_device_status(screen)
+            device = self._platformio_device_status(screen)
             devices.append(
                 {
                     "id": screen["configured_path"],
@@ -1185,7 +1185,7 @@ class StatusMixin(_Base):
                     # for their [mcu] section, and the same kind of fact.
                     "name": screen["section"],
                     "present": screen["present"],
-                    "state": self._screen_state(screen),
+                    "state": self._platformio_state(screen),
                     "path": screen.get("resolved_path"),
                     "version": screen.get("firmware_version"),
                     # Our record of how this screen was identified at write
@@ -1202,7 +1202,7 @@ class StatusMixin(_Base):
                         ),
                         present=screen["present"],
                         has_artifact=bool(payload["has_firmware"]),
-                        what="display firmware",
+                        what=f"{payload['firmware']} firmware",
                         label=screen["name"],
                     ),
                 }
@@ -1237,7 +1237,7 @@ class StatusMixin(_Base):
                 allowed=allowed,
                 has_artifact=bool(payload["has_firmware"]),
                 flashable=[d for d in devices if d["present"]],
-                what="display firmware",
+                what=f"{payload['firmware']} firmware",
                 flash_method="fw.flash",
                 update_method=None,
             )
@@ -1274,7 +1274,7 @@ class StatusMixin(_Base):
         }
 
     @staticmethod
-    def _screen_confidence(entry: dict[str, Any], flashlog: Any) -> str | None:
+    def _platformio_confidence(entry: dict[str, Any], flashlog: Any) -> str | None:
         """How this screen's identity was confirmed when we last wrote to it.
 
         The display counterpart of the lookup in `flash_state`, and it answers
@@ -1299,7 +1299,7 @@ class StatusMixin(_Base):
         return (record or {}).get("confidence")
 
     @staticmethod
-    def _screen_device_status(screen: dict[str, Any]) -> DeviceStatus:
+    def _platformio_device_status(screen: dict[str, Any]) -> DeviceStatus:
         """Does this screen want firmware, and why?
 
         A screen has two independent ways to want it: a protocol mismatch is the
@@ -1319,7 +1319,7 @@ class StatusMixin(_Base):
         return DeviceStatus(screen.get("reason"))
 
     @staticmethod
-    def _screen_state(screen: dict[str, Any]) -> str:
+    def _platformio_state(screen: dict[str, Any]) -> str:
         """The slot an MCU row fills with klipper/katapult/offline.
 
         Three states again, but the middle one is the point: a port that opens
@@ -2016,7 +2016,7 @@ class StatusMixin(_Base):
         """
         # Every configured type's section prefix, not just Knomi's - a second
         # display with its own klippy module declares a different one. Falls back
-        # to knomi_serial so this still answers before any [display] section
+        # to knomi_serial so this still answers before any [type] section
         # exists, which is how it gets used while setting one up.
         prefixes = {d.klipper_section for d in self.pio_types().values()}
         prefixes.discard("")
@@ -2184,7 +2184,7 @@ class StatusMixin(_Base):
     def _watcher_map(self) -> dict[str, Any]:
         """Each display family's watcher: is it running, and what has it found?
 
-        Keyed by display type, because the watcher is a property of the family
+        Keyed by PlatformIO type, because the watcher is a property of the family
         rather than of the host - a second display family brings its own.
 
         `active` is not decoration. The map carries no timestamps by design, so
@@ -2204,7 +2204,7 @@ class StatusMixin(_Base):
             # `fw.status`'s own MCU join, not here, and this map exists to
             # answer one question - is this display's own watcher up? - which
             # only the non-klipper units bear on.
-            resolved = stop_services.for_display(self.paths, display, settings)
+            resolved = stop_services.for_platformio(self.paths, display, settings)
             watcher = next((u for u in resolved if u != "klipper"), None)
             svc = (
                 make_controller(settings, call=self._call_for_service, name=watcher)
@@ -2227,7 +2227,7 @@ class StatusMixin(_Base):
         return out
 
     def pio_types(self) -> dict:
-        """Configured `[display <env>]` sections."""
+        """Configured `[type <env>]` sections."""
         from ...providers import pio as pio_mod
 
         return pio_mod.load(self.paths)

@@ -10,11 +10,11 @@ from mcu_updater.providers.cmake import CmakeType
 from mcu_updater.providers.pio import PioType
 from mcu_updater.settings import Settings
 from mcu_updater.stop_services import (
-    DEFAULT_DISPLAY,
     DEFAULT_MCU,
+    DEFAULT_PLATFORMIO,
     for_cmake,
-    for_display,
     for_mcu,
+    for_platformio,
     resolve_stop_services,
 )
 
@@ -52,7 +52,7 @@ def test_nothing_is_merged_from_a_less_granular_level():
 
 
 # --------------------------------------------------------------------------
-# for_mcu / for_display: the convenience wrappers
+# for_mcu / for_platformio: the convenience wrappers
 # --------------------------------------------------------------------------
 
 
@@ -111,15 +111,15 @@ def test_for_cmake_uses_type_then_family_then_updater_precedence(paths):
     assert for_cmake(paths, target, settings, families) == ("updater-service",)
 
 
-def test_for_display_falls_back_to_the_display_default(paths):
+def test_for_platformio_falls_back_to_the_platformio_default(paths):
     display = PioType(name="knomi", env="knomi", firmware="knomi_serial")
     settings = Settings()
-    assert for_display(paths, display, settings) == DEFAULT_DISPLAY
+    assert for_platformio(paths, display, settings) == DEFAULT_PLATFORMIO
 
 
-def test_for_display_honours_a_type_level_override(paths):
+def test_for_platformio_honours_a_type_level_override(paths):
     display = PioType(
         name="knomi", env="knomi", firmware="knomi_serial", stop_services=["klipper"]
     )
     settings = Settings()
-    assert for_display(paths, display, settings) == ("klipper",)
+    assert for_platformio(paths, display, settings) == ("klipper",)

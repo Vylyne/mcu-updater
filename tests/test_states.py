@@ -287,7 +287,7 @@ def test_a_record_from_before_hashing_still_judges_by_size_and_mtime(paths, disp
     _bin(display)
     pio.record_build(paths, display, TREE)
 
-    sidecar = paths.display_sidecar(display.env)
+    sidecar = paths.platformio_sidecar(display.env)
     with open(sidecar, encoding="utf-8") as fh:
         record = json.load(fh)
     del record["bin_sha256"]
@@ -325,7 +325,7 @@ def test_no_record_at_all_is_the_other_kind_of_unknown(paths, display):
 
 def test_a_corrupt_record_is_absence_of_evidence_not_evidence_of_a_rebuild(paths, display):
     _bin(display)
-    sidecar = paths.display_sidecar(display.env)
+    sidecar = paths.platformio_sidecar(display.env)
     os.makedirs(os.path.dirname(sidecar), exist_ok=True)
     with open(sidecar, "w", encoding="utf-8") as fh:
         fh.write("{not json")

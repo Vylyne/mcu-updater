@@ -1,9 +1,10 @@
 """Which sections declare a type: naming, and nothing else.
 
 ``[mcu carto_v4]`` and ``[display knomi_toolchanger]`` were two spellings of one
-idea, aliased here so :mod:`~mcu_updater.config` and
-:mod:`~mcu_updater.providers.pio` could each read their own kind without
-learning there was more than one way to spell one. The ``provider:`` key that
+thing; both are now ``[type ...]``. They were once aliased here so
+:mod:`~mcu_updater.config` and :mod:`~mcu_updater.providers.pio` could each
+read their own kind without learning there was more than one way to spell
+one. The ``provider:`` key that
 came after them was the same idea moved into the file: which build system a
 type belongs to, decided by a key on the type rather than by which class of
 tree it happens to be.

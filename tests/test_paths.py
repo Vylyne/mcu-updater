@@ -111,6 +111,14 @@ def test_source_tree_layout(tmp_path):
     assert p.flashtool.endswith(os.path.join("katapult", "scripts", "flashtool.py"))
 
 
+def test_the_platformio_sidecar_keeps_its_on_disk_path(paths):
+    """Renamed accessor, same file: a build record already on a printer must
+    still be found."""
+    assert paths.platformio_sidecar("knomi") == os.path.join(
+        paths.data_dir, "displays", "knomi.build.json"
+    )
+
+
 def test_paths_are_frozen():
     import dataclasses
 

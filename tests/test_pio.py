@@ -60,8 +60,8 @@ def display(tree):
 
 # --------------------------------------------------------------------------
 # config: a type belongs to this provider when the firmware family it
-# declares is platformio-built - there is no provider: key and no [display]
-# prefix any more.
+# declares is platformio-built - there is no provider: key and no legacy
+# `display` section prefix any more.
 # --------------------------------------------------------------------------
 
 #: One [firmware ...] section, reused by every test below that just needs
@@ -675,7 +675,7 @@ def test_a_rebuild_by_someone_else_invalidates_our_provenance(paths, display):
 
 def test_a_corrupt_sidecar_is_unknown_rather_than_an_exception(paths, display):
     _bin(display)
-    sidecar = paths.display_sidecar(display.env)
+    sidecar = paths.platformio_sidecar(display.env)
     os.makedirs(os.path.dirname(sidecar), exist_ok=True)
     with open(sidecar, "w", encoding="utf-8") as fh:
         fh.write("{not json")
@@ -692,8 +692,8 @@ def test_the_sidecar_stays_out_of_the_users_source_tree(paths, display):
     """.pio/build is PlatformIO's, and `pio run -t clean` owns it."""
     _bin(display)
     record_build(paths, display, TREE)
-    assert paths.display_sidecar(display.env).startswith(paths.data_dir)
-    assert ".pio" not in paths.display_sidecar(display.env)
+    assert paths.platformio_sidecar(display.env).startswith(paths.data_dir)
+    assert ".pio" not in paths.platformio_sidecar(display.env)
 
 
 def test_a_dry_run_build_records_no_provenance(paths, settings, display, monkeypatch):
@@ -704,4 +704,4 @@ def test_a_dry_run_build_records_no_provenance(paths, settings, display, monkeyp
 
     pio.build(paths, settings, display)
 
-    assert not os.path.exists(paths.display_sidecar(display.env))
+    assert not os.path.exists(paths.platformio_sidecar(display.env))

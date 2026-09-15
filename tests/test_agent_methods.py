@@ -13,7 +13,7 @@ import sys
 
 import pytest
 
-from mcu_updater import API_VERSION
+from mcu_updater import API_VERSION, typelist
 from mcu_updater.agent.methods import Api
 from mcu_updater.agent.rpc import ERR_INVALID_PARAMS, ERR_METHOD_NOT_FOUND, RpcError
 from mcu_updater.cfgdoc import CfgDocument
@@ -947,6 +947,17 @@ def test_type_remove_refuses_an_unknown_type(api):
     with pytest.raises(RpcError) as exc:
         api.dispatch("fw.type.remove", {"name": "nope"})
     assert exc.value.data["code"] == "unknown_type"
+
+
+def test_type_remove_removes_a_cmake_type(api, paths):
+    with open(paths.main_config, "a", encoding="utf-8", newline="\n") as fh:
+        fh.write(
+            "\n[firmware roadrunner]\nsource: ~/rr\nbuilder: cmake\n\n"
+            "[type rr]\nchipset: rp2040\nfirmware: roadrunner\ncmake_target: t\nserials:\n    RR-X\n"
+        )
+    res = api.dispatch("fw.type.remove", {"name": "rr", "force": True})
+    assert res["removed_serials"] == 1
+    assert "rr" not in {e.name for e in typelist.load(paths)}
 
 
 # --------------------------------------------------------------------------

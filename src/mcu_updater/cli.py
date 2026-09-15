@@ -19,14 +19,25 @@ import os
 import sys
 from collections.abc import Sequence
 
-from . import __version__, firmware, flashers, profiles, providers, stop_services
-from .build import artifact_status, build, menuconfig_tty
+from . import (
+    __version__,
+    firmware,
+    flashers,
+    inventory,
+    profiles,
+    providers,
+    stop_services,
+    tracking,
+    typelist,
+)
+from .build import build, menuconfig_tty
 from .config import Registry
 from .devices import (
     STATE_KATAPULT,
     STATE_KLIPPER,
-    device_state,
+    STATE_OFFLINE,
     find_untracked,
+    scan,
 )
 from .errors import (
     ConfigNotFoundError,
@@ -227,10 +238,8 @@ def apply_profile(args: argparse.Namespace) -> None:
 
 def add_serial(args: argparse.Namespace) -> None:
     c = ctx()
-    reg = c.registry()
-    reg.get(args.type)  # raises UnknownTypeError
-    if reg.add_serial(args.type, args.serial):
-        reg.save(c.paths)
+    added, _ = tracking.add_serial(c.paths, args.type, args.serial)
+    if added:
         print(f"Added serial {args.serial} to {args.type}")
     else:
         print(f"Serial {args.serial} already exists under {args.type}")
@@ -238,26 +247,21 @@ def add_serial(args: argparse.Namespace) -> None:
 
 def remove_mcu_type(args: argparse.Namespace) -> None:
     c = ctx()
-    reg = c.registry()
-    mcu = reg.get(args.type)
+    n = len(c.registry().declared_serials(args.type))  # UnknownTypeError if absent
 
+    # Asked before the lock is taken: a prompt must not hold the registry.
     if not args.force:
-        n = len(mcu.serials)
         if not _confirm(f"Remove type '{args.type}' and its {n} tracked serial(s)?"):
             print("Aborted.")
             return
 
-    reg.remove_type(args.type)
-    reg.save(c.paths)
+    tracking.remove_type(c.paths, args.type)
     print(f"Removed MCU Type: {args.type}")
 
 
 def remove_serial(args: argparse.Namespace) -> None:
     c = ctx()
-    reg = c.registry()
-    reg.get(args.type)
-    if reg.remove_serial(args.type, args.serial):
-        reg.save(c.paths)
+    if tracking.remove_serial(c.paths, args.type, args.serial):
         print(f"Removed serial {args.serial} from {args.type}")
     else:
         print(f"Serial {args.serial} isn't tracked under {args.type} - nothing to do.")
@@ -266,7 +270,6 @@ def remove_serial(args: argparse.Namespace) -> None:
 def status_cmd(args: argparse.Namespace) -> None:
     """Read-only overview. Promoted from menu-only to a real subcommand."""
     c = ctx()
-    reg = c.registry()
     if getattr(args, "can", False):
         from .discovery import canbus
 
@@ -297,40 +300,55 @@ def status_cmd(args: argparse.Namespace) -> None:
             print("  No CAN interfaces found.")
         elif not result.sightings and not result.failures:
             print("  No unclaimed CAN devices answered.")
-    if not reg:
+
+    entries = typelist.load(c.paths)
+    if not entries:
         print("No MCU types configured yet.")
         return
 
-    for name in reg.names():
-        mcu = reg.get(name)
-        print(f"\n{name}  (chipset={mcu.chipset or '?'})")
+    install = providers.Install.load(c.paths, c.settings)
+    targets_by_type: dict[str, list[providers.BuildTarget]] = {}
+    for provider in providers.PROVIDERS:
+        for target in provider.targets(install):
+            targets_by_type.setdefault(target.name, []).append(target)
+    rows = inventory.index(inventory.build(entries, inventory.Sweep(byid=tuple(scan(c.paths)))))
 
-        # What this type actually uses, not every family that exists. A board
-        # running cartographer carries klipper config keys too, and listing them
-        # as "not built" is noise about firmware nobody intends to build for it.
-        for fw in mcu.families():
-            status = artifact_status(
-                c.paths, name, fw, extra_repos=mcu.fw_get(fw).extra_repos
-            )
+    for entry in entries:
+        print(f"\n{entry.name}  (chipset={entry.chipset or '?'})")
+
+        # What this type builds, from its own provider - not every family that
+        # exists, which would be noise about firmware nobody builds for it.
+        for target in targets_by_type.get(entry.name, []):
+            # A bootloader is built on demand, never by a sweep, so "not
+            # built" would be noise on every kconfig type.
+            if target.on_demand:
+                continue
+            label = target.fw or target.provider
+            try:
+                status = providers.by_name(target.provider).artifact_status(install, target)
+            except UpdaterError as exc:
+                print(f"  {label}: unknown ({exc})")
+                continue
             if status.reason == NEVER_BUILT:
-                print(f"  {fw}: not built")
+                print(f"  {label}: not built")
             elif not status.is_current:
-                print(f"  {fw}: STALE ({status.reason})")
+                print(f"  {label}: STALE ({status.reason})")
             else:
-                print(f"  {fw}: up to date")
+                print(f"  {label}: up to date")
 
-        if not mcu.serials:
+        if not entry.serials:
             print("  (no tracked serials)")
             continue
-        for serial in mcu.serials:
-            state, _ = device_state(c.paths, mcu.chipset, serial)
+        for serial in entry.serials:
+            row = rows.get((entry.name, inventory.SERIAL, serial))
+            state = row.state if row is not None else STATE_OFFLINE
             label = {
                 STATE_KLIPPER: "online (klipper)",
                 STATE_KATAPULT: "online (katapult/bootloader)",
-            }.get(state, "offline" if state == "offline" else f"online ({state})")
+            }.get(state, "offline" if state == STATE_OFFLINE else f"online ({state})")
             print(f"  - {serial}: {label}")
 
-    untracked = find_untracked(c.paths, reg.all_serials())
+    untracked = find_untracked(c.paths, {s for e in entries for s in e.serials})
     if untracked:
         print("\nUntracked devices on the bus:")
         for dev in untracked:

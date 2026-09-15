@@ -58,6 +58,7 @@ Firmware and boards:
 - [x] A first, unsaved menuconfig session pre-set from the type's own recorded chipset
 - [x] Flash-time bootloader offset check
 - [x] Board tracking by `/dev/serial/by-id` serial
+- [x] The CLI's `status`, `add-serial`, `remove-serial` and `remove-type` cover every type, whatever builds it
 - [x] Displays re-identified at flash time, once the ports are free
 - [x] Discovery surface - one vocabulary for where a device is and how sure we are
 - [x] CAN device discovery and tracking by `canbus_uuid`
@@ -77,7 +78,7 @@ Interfaces:
 [docs/decisions.md](docs/decisions.md) for the standing decisions that came out
 of it. What is still open:
 
-- [ ] **NEEDS PLAN** One pipeline: one type list, one inventory, one flash loop, one verdict. Design: [docs/superpowers/specs/2026-09-14-one-pipeline-design.md](docs/superpowers/specs/2026-09-14-one-pipeline-design.md). This covers declaring every firmware in config (install.sh seeds klipper and katapult), moving firmware-specific code behind helper capabilities, per-firmware `flashers:` lists, Roadrunner auto-provisioning, and the rest of the CMake provenance work. It also fixes the Roadrunner board that is tracked in the UI but not the CLI.
+- [ ] **IN PROGRESS** One pipeline: one type list, one inventory, one flash loop, one verdict. Design: [docs/superpowers/specs/2026-09-14-one-pipeline-design.md](docs/superpowers/specs/2026-09-14-one-pipeline-design.md). This covers declaring every firmware in config (install.sh seeds klipper and katapult), moving firmware-specific code behind helper capabilities, per-firmware `flashers:` lists, Roadrunner auto-provisioning, and the rest of the CMake provenance work. It also fixes the Roadrunner board that is tracked in the UI but not the CLI. Plan 1 (config and inventory) has landed; plan 2 is device-info handlers, flasher lists and the loops.
 - [ ] **TEST ERROR** Reproduce and fix the flaky teardown `RuntimeError` in `test_an_unknown_inbound_method_gets_an_error_not_silence`.
 - [ ] **NEEDS DESIGN** Run config migrations as the first step of agent startup, so that restarting the service migrates an existing install. First check the restrictions the service runs under.
 

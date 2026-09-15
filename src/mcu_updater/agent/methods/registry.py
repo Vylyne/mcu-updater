@@ -6,14 +6,13 @@ import dataclasses
 import re
 from typing import Any
 
-from ... import firmware
+from ... import firmware, tracking
 from ... import settings as settings_mod
 from ...config import MakefilePatch, Registry
 from ...devices import (
     scan,
 )
 from ...errors import (
-    SerialTrackedElsewhereError,
     UuidTrackedElsewhereError,
 )
 from ...settings import save_settings
@@ -271,20 +270,7 @@ class RegistryMixin(_Base):
                 },
             )
 
-        with Registry.mutate(self.paths, f"add serial {serial}") as reg:
-            chipset = reg.get_declared_chipset(name)  # UnknownTypeError if absent
-            # One board tracked under two types would get flashed twice with
-            # different firmware, so this is refused rather than merged.
-            elsewhere = [t for t in reg.find_declared_types_for_serial(serial) if t != name]
-            if elsewhere:
-                raise SerialTrackedElsewhereError(
-                    f"serial '{serial}' is already tracked under '{elsewhere[0]}'. "
-                    f"Remove it from there first if it really belongs to '{name}'.",
-                    serial=serial,
-                    requested=name,
-                    tracked_under=elsewhere,
-                )
-            added = reg.add_declared_serial(name, serial)
+        added, chipset = tracking.add_serial(self.paths, name, serial)
 
         self._changed()
         return {"name": name, "serial": serial, "added": added, "chipset": chipset}
@@ -464,8 +450,8 @@ class RegistryMixin(_Base):
         force = bool(args.get("force"))
 
         with Registry.mutate(self.paths, f"remove type {name}") as reg:
-            mcu = reg.get(name)
-            count = len(mcu.serials)
+            serials = reg.declared_serials(name)  # UnknownTypeError if absent
+            count = len(serials)
             if count and not force:
                 raise RpcError(
                     f"'{name}' still tracks {count} board(s). Remove them first, or "
@@ -473,10 +459,10 @@ class RegistryMixin(_Base):
                     data={
                         "code": "type_has_serials",
                         "message": "type still tracks boards",
-                        "data": {"type": name, "serials": list(mcu.serials)},
+                        "data": {"type": name, "serials": serials},
                     },
                 )
-            reg.remove_type(name)
+            reg.remove_declared_type(name)
 
         self._changed()
         return {
@@ -497,9 +483,7 @@ class RegistryMixin(_Base):
         name = self._require_str(args, "name")
         serial = self._require_str(args, "serial")
 
-        with Registry.mutate(self.paths, f"remove serial {serial}") as reg:
-            reg.get_declared_chipset(name)  # UnknownTypeError if the type doesn't exist
-            removed = reg.remove_declared_serial(name, serial)
+        removed = tracking.remove_serial(self.paths, name, serial)
 
         self._changed()
         return {"name": name, "serial": serial, "removed": removed}

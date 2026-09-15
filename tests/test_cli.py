@@ -20,13 +20,13 @@ import pathlib
 
 import pytest
 
-from mcu_updater import cli, flashers
+from mcu_updater import cli, flashers, typelist
 from mcu_updater.config import Registry
 from mcu_updater.discovery import canbus
-from mcu_updater.errors import UpdaterError
+from mcu_updater.errors import SerialTrackedElsewhereError, UpdaterError
 from mcu_updater.settings import Settings
 
-from .conftest import seed_base_firmwares
+from .conftest import make_device, seed_base_firmwares
 
 ENV = "knomi_toolchanger"
 
@@ -722,3 +722,55 @@ def test_an_ambiguous_serial_still_asks_for_a_type(c, cmake_flashable, monkeypat
         )
 
     assert sorted(exc.value.data["tracked_under"]) == ["board", "roadrunner"]
+
+
+def _declare_roadrunner(paths, serial: str) -> None:
+    with open(paths.main_config, "a", encoding="utf-8", newline="\n") as fh:
+        fh.write(
+            "\n[firmware roadrunner]\nsource: ~/roadrunner/rp2040\nbuilder: cmake\n\n"
+            "[type roadrunner]\nchipset: rp2040\nfirmware: roadrunner\n"
+            f"cmake_target: roadrunner_v1_usbserial\nserials:\n    {serial}\n"
+        )
+
+
+def test_status_lists_a_cmake_type_and_its_board(c, fake_root, capsys):
+    """The open bug: tracked in the UI, invisible to the CLI."""
+    _declare_roadrunner(c.paths, "RR-ONE")
+    cli.status_cmd(cli.build_parser().parse_args(["status"]))
+    out = capsys.readouterr().out
+    assert "\nroadrunner  (chipset=rp2040)" in out
+    assert "  roadrunner: " in out
+    assert "  - RR-ONE: offline" in out
+
+    make_device(fake_root / "bus", "Vylyne", "Roadrunner", "RR-ONE")
+    cli.status_cmd(cli.build_parser().parse_args(["status"]))
+    assert "  - RR-ONE: online" in capsys.readouterr().out
+
+
+def test_status_lists_a_platformio_type(c, pio_type, capsys):
+    cli.status_cmd(cli.build_parser().parse_args(["status"]))
+    assert f"\n{ENV}  (chipset=?)" in capsys.readouterr().out
+
+
+def test_add_serial_tracks_a_board_under_a_cmake_type(c):
+    _declare_roadrunner(c.paths, "RR-ONE")
+    cli.add_serial(argparse.Namespace(type="roadrunner", serial="RR-NEW"))
+    assert Registry.load(c.paths).declared_serials("roadrunner") == ["RR-ONE", "RR-NEW"]
+
+
+def test_add_serial_refuses_a_board_tracked_under_another_type(c):
+    _declare_roadrunner(c.paths, "RR-ONE")
+    with pytest.raises(SerialTrackedElsewhereError):
+        cli.add_serial(argparse.Namespace(type="roadrunner", serial="AAAA-if00"))
+
+
+def test_remove_serial_untracks_a_board_under_a_cmake_type(c):
+    _declare_roadrunner(c.paths, "RR-ONE")
+    cli.remove_serial(argparse.Namespace(type="roadrunner", serial="RR-ONE"))
+    assert Registry.load(c.paths).declared_serials("roadrunner") == []
+
+
+def test_remove_type_removes_a_cmake_type(c):
+    _declare_roadrunner(c.paths, "RR-ONE")
+    cli.remove_mcu_type(argparse.Namespace(type="roadrunner", force=True))
+    assert "roadrunner" not in {e.name for e in typelist.load(c.paths)}

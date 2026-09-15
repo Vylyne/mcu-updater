@@ -1,0 +1,35 @@
+{
+  "_comment": "The CLI and the agent track boards through one implementation, for every builder. A CLI that looks types up in the kconfig registry is the Roadrunner board tracked in the UI and invisible to the CLI; a tracking path that stops refusing a serial held by another type gets one board flashed twice with different firmware.",
+  "file": "src/mcu_updater/tracking.py",
+  "command": [
+    "python",
+    "-m",
+    "pytest",
+    "tests/test_cli.py",
+    "tests/test_agent_methods.py",
+    "-q"
+  ],
+  "mutations": [
+    {
+      "name": "a serial tracked under another type is refused",
+      "find": "        if elsewhere:",
+      "replace": "        if False:"
+    },
+    {
+      "name": "a serial is added to whichever builder's type declares it",
+      "find": "        added = reg.add_declared_serial(name, serial)",
+      "replace": "        added = reg.add_serial(name, serial)"
+    },
+    {
+      "name": "remove-type removes whichever builder's type it names",
+      "find": "        return reg.remove_declared_type(name)",
+      "replace": "        return reg.remove_type(name).serials"
+    },
+    {
+      "name": "status reads each board's state from the inventory",
+      "file": "src/mcu_updater/cli.py",
+      "find": "            row = rows.get((entry.name, inventory.SERIAL, serial))",
+      "replace": "            row = None"
+    }
+  ]
+}

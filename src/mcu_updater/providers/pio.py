@@ -36,9 +36,8 @@ import shutil
 import threading
 import time
 
-from .. import firmware, sections
+from .. import firmware, typelist
 from ..build import Reporter, null_reporter, run_streamed, sha256_file
-from ..cfgdoc import CfgDocument
 from ..discovery.knomi_serial import DEVICE_MAP_VERSION as DEVICE_MAP_VERSION
 from ..discovery.knomi_serial import WatcherDevice as WatcherDevice
 from ..discovery.knomi_serial import device_map_path as device_map_path
@@ -137,34 +136,24 @@ class PioType:
 
 
 def load(paths: Paths) -> dict[str, PioType]:
-    """Read this provider's type sections from the shared config file.
+    """The PlatformIO types: the one type list, filtered by builder.
 
-    A type is ours if the family it declares (`firmware:`) is built by
-    `platformio` - the same "provider is derived from the family's builder"
-    rule `config.py` applies. A type predating that key is no longer
-    recognised at all.
+    A view over :mod:`..typelist`, kept until its callers read the list
+    directly. Lenient about other sections, like the list's own `read`; an
+    ill-formed PlatformIO section is still refused here.
     """
-    try:
-        with open(paths.main_config, encoding="utf-8") as fh:
-            doc = CfgDocument(fh.read())
-    except OSError:
-        return {}
-
-    families_map = firmware.load_from_doc(doc)
+    entries, families_map = typelist.read_config(paths)
 
     out: dict[str, PioType] = {}
-    for declared in sections.read(doc):
-        name, section = declared.name, declared.section
-        declared_fws = doc.get_csv(section, "firmware") or []
-        if not declared_fws:
+    for entry in entries:
+        if entry.builder != "platformio":
             continue
-        first_fw = declared_fws[0]
+        name, block = entry.name, entry.block
+        first_fw = entry.firmwares[0]
         family = firmware.resolve(paths, first_fw, families_map)
-        if family.builder != "platformio":
-            continue
         source = family.source_dir(paths)
 
-        env = (doc.get(section, "env") or "").strip()
+        env = (block.get("env") or "").strip()
         if not env:
             raise ConfigError(
                 f"'{name}' is a PlatformIO type but names no env: - the "
@@ -172,7 +161,7 @@ def load(paths: Paths) -> dict[str, PioType]:
                 type=name,
             )
 
-        stop_services = doc.get_csv(section, "stop_services")
+        stop_services = block.get_csv("stop_services")
         if stop_services is None:
             # Legacy `service:` key. Its meaning does not carry over
             # mechanically: today it means "pause this *in addition to*
@@ -182,19 +171,19 @@ def load(paths: Paths) -> dict[str, PioType]:
             # not `["knomi_serial"]`. Absent takes the default watcher, same
             # as it always did; present-but-blank means no watcher at all,
             # which is still just klipper.
-            legacy = doc.get(section, "service")
+            legacy = block.get("service")
             if legacy is None:
                 stop_services = None  # no key at all: inherit the next level
             else:
                 unit = legacy.strip()
                 stop_services = ["klipper", unit] if unit else ["klipper"]
-        device_map = doc.get(section, "device_map")
+        device_map = block.get("device_map")
         out[name] = PioType(
             name=name,
             env=env,
             source=source,
             firmware=first_fw,
-            klipper_section=(doc.get(section, "klipper_section") or "knomi_serial").strip(),
+            klipper_section=(block.get("klipper_section") or "knomi_serial").strip(),
             stop_services=stop_services,
             device_map=(
                 "knomi/devices.json" if device_map is None else device_map

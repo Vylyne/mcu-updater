@@ -1,5 +1,5 @@
 {
-  "_comment": "A type's provider is derived from its declared firmware's builder, not a provider: key - config.py owns the kconfig_make types and every other provider owns its own, and each has to claim the right sections and leave the others' alone, or a type is silently built by the wrong tool, or dropped from the file entirely on the next save. The rule is general, not a platformio special case: config.py excludes any builder that is not kconfig_make.",
+  "_comment": "A type's provider is derived from its declared firmware's builder, not a provider: key - config.py owns the kconfig_make types and every other provider owns its own, and each has to claim the right sections and leave the others' alone, or a type is silently built by the wrong tool, or dropped from the file entirely on the next save. The rule is general, not a platformio special case: every view filters the one type list (typelist.py) by builder.",
   "file": "src/mcu_updater/config.py",
   "command": [
     "python",
@@ -9,17 +9,19 @@
     "tests/test_pio.py",
     "tests/test_sections.py",
     "tests/test_providers.py",
+    "tests/test_typelist.py",
     "-q"
   ],
   "mutations": [
     {
       "name": "families built by different tools are refused",
-      "find": "            if len(builders) > 1:",
-      "replace": "            if False:"
+      "file": "src/mcu_updater/typelist.py",
+      "find": "        if len(set(entry.builders)) > 1:",
+      "replace": "        if False:"
     },
     {
       "name": "a type built by a foreign builder is excluded from this registry",
-      "find": "            if declared_fws and builders != {\"kconfig_make\"}:",
+      "find": "            if entry.builder != \"kconfig_make\":",
       "replace": "            if False:"
     },
     {
@@ -30,7 +32,7 @@
     {
       "name": "a type is selected by its declared firmware's builder",
       "file": "src/mcu_updater/providers/pio.py",
-      "find": "        if family.builder != \"platformio\":",
+      "find": "        if entry.builder != \"platformio\":",
       "replace": "        if False:"
     },
     {
@@ -49,8 +51,8 @@
       "_comment": "Absent inherits the next level out (the built-in default, klipper plus the watcher); present-but-empty still means klipper alone, never nothing. Easy to flatten into a single falsy check that treats both the same, which would wrongly inherit for a deliberate blank or wrongly override for an absent key.",
       "name": "an absent service: key is not the same as a blank one",
       "file": "src/mcu_updater/providers/pio.py",
-      "find": "            legacy = doc.get(section, \"service\")\n            if legacy is None:\n                stop_services = None  # no key at all: inherit the next level\n            else:",
-      "replace": "            legacy = doc.get(section, \"service\")\n            if not legacy:\n                stop_services = None  # no key at all: inherit the next level\n            else:"
+      "find": "            legacy = block.get(\"service\")\n            if legacy is None:\n                stop_services = None  # no key at all: inherit the next level\n            else:",
+      "replace": "            legacy = block.get(\"service\")\n            if not legacy:\n                stop_services = None  # no key at all: inherit the next level\n            else:"
     }
   ]
 }

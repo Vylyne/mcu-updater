@@ -52,7 +52,7 @@ import re
 from collections.abc import Iterable, Iterator
 from typing import Any
 
-from . import firmware, sections
+from . import firmware, sections, typelist
 from .cfgdoc import CfgDocument
 from .errors import (
     AmbiguousSerialError,
@@ -330,107 +330,38 @@ class Registry:
     @classmethod
     def load(cls, paths: Paths) -> Registry:
         path = paths.registry_file
-        if not os.path.exists(path):
+        doc = typelist.read_doc(paths)
+        if doc is None:
             return cls({}, CfgDocument())
-
-        try:
-            with open(path, encoding="utf-8") as fh:
-                doc = CfgDocument(fh.read())
-        except OSError as exc:
-            raise ConfigCorruptError(f"could not read {path}: {exc}", path=path) from exc
-
-        if doc.duplicate_sections:
-            dupes = ", ".join(f"[{name}]" for name in doc.duplicate_sections)
-            raise ConfigCorruptError(
-                f"{path}: duplicate section(s) {dupes}. Only the first copy is read, so "
-                f"everything in the later one is silently ignored - merge them into one.",
-                path=path,
-                value=doc.duplicate_sections,
-            )
 
         # Which families exist is itself config, and it is in this same
         # document - so read it from the doc already parsed rather than
-        # reopening the file once per registry load. Kept whole (not just the
-        # names) so a type's declared families can be checked against their
-        # builders below.
+        # reopening the file once per registry load.
         families_map = firmware.load_from_doc(doc)
-        fw_names = firmware.names_of(families_map)
+        entries = typelist.read(doc, families_map)
+        typelist.validate(entries, families_map, path=path)
 
         types: dict[str, McuType] = {}
-        for declared in sections.read(doc):
-            name, section = declared.name, declared.section
-            mcu = McuType(name=name, chipset=(doc.get(section, "chipset") or "").strip())
-            mcu.serials = doc.get_list(section, "serials")
-            mcu.canbus_uuids = doc.get_list(section, "canbus_uuids")
-
-            declared_fws = doc.get_csv(section, "firmware") or []
-            if not declared_fws:
-                # Refused, not defaulted to klipper - silence used to mean
-                # klipper (kconfig_make), which is exactly the implicit
-                # behaviour this key exists to remove.
-                raise ConfigCorruptError(
-                    f"{path}: '{name}' declares no firmware: key. Every type "
-                    f"must name at least one firmware family it runs, e.g. "
-                    f"'firmware: klipper'.",
-                    path=path,
-                    type=name,
-                )
-            for fw in declared_fws:
-                if fw not in fw_names:
-                    # Refused rather than defaulted. A typo here would otherwise
-                    # build and flash klipper at a board that runs something else,
-                    # which is exactly the mistake this key exists to prevent.
-                    raise ConfigCorruptError(
-                        f"{path}: '{name}' declares firmware '{fw}', which is not "
-                        f"a known family. Known: {', '.join(fw_names)}. Declare it with a "
-                        f"[firmware {fw}] section, or fix the spelling.",
-                        path=path,
-                        type=name,
-                        value=fw,
-                    )
-            builders = {
-                firmware.resolve(paths, fw, families_map).builder for fw in declared_fws
-            }
-            if len(builders) > 1:
-                # A type is built by exactly one provider - the seam that
-                # compiles it is chosen from its families' builder, so a type
-                # whose declared families disagree has no single answer.
-                #
-                # Checked *before* the ownership skip below. Under the old
-                # `== {"platformio"}` form the order did not matter, because a
-                # mixed set never equalled it; under `!= {"kconfig_make"}` a
-                # mixed set matches, and letting the skip run first would turn
-                # this error into a silently ignored section.
-                raise ConfigCorruptError(
-                    f"{path}: '{name}' declares firmware families built by "
-                    f"different tools ({', '.join(sorted(builders))}): "
-                    f"{', '.join(declared_fws)}. A type is built by exactly one "
-                    f"provider - split it into two types if it genuinely needs "
-                    f"both.",
-                    path=path,
-                    type=name,
-                    value=declared_fws,
-                )
-            if declared_fws and builders != {"kconfig_make"}:
-                # A type whose declared firmware is built by anything other
-                # than kconfig+make belongs to that provider's registry, not
-                # this one - providers/pio.py's load() and providers/cmake.py's
-                # apply the same rule from their own side. A type with no
-                # explicit firmware: at all defaults to klipper (kconfig_make)
-                # and is unaffected.
+        for entry in entries:
+            if entry.builder != "kconfig_make":
+                # Another builder's type. Its provider's view reads it from the
+                # same list; this registry holds the kconfig_make types.
                 continue
-            mcu.firmwares = declared_fws
-            mcu.profile = (doc.get(section, "profile") or "").strip()
-            mcu.stop_services = doc.get_csv(section, "stop_services")
+            name, block = entry.name, entry.block
+            mcu = McuType(name=name, chipset=entry.chipset)
+            mcu.serials = list(entry.serials)
+            mcu.canbus_uuids = list(entry.canbus_uuids)
+            mcu.firmwares = list(entry.firmwares)
+            mcu.profile = (block.get("profile") or "").strip()
+            mcu.stop_services = block.get_csv("stop_services")
             # Only the families this type actually declares - not every
             # globally-declared [firmware ...] section. mcu.fw() is
-            # setdefault, so iterating fw_names here would seed a phantom
-            # slot for every family in the file on every type, not just the
-            # ones it runs.
+            # setdefault, so iterating every family here would seed a phantom
+            # slot for each one on every type.
             for fw in mcu.firmwares:
                 cfg = mcu.fw(fw)
-                cfg.extra_args = (doc.get(section, f"{fw}_extra_args") or "").strip()
-                for raw_patch in doc.get_list(section, f"{fw}_makefile_patches"):
+                cfg.extra_args = (block.get(f"{fw}_extra_args") or "").strip()
+                for raw_patch in block.get_list(f"{fw}_makefile_patches"):
                     patch = MakefilePatch.parse(raw_patch)
                     if patch is None:
                         raise ConfigCorruptError(
@@ -441,7 +372,7 @@ class Registry:
                             value=raw_patch,
                         )
                     cfg.makefile_patches.append(patch)
-                cfg.extra_repos = doc.get_list(section, f"{fw}_extra_repos")
+                cfg.extra_repos = block.get_list(f"{fw}_extra_repos")
             types[name] = mcu
 
         return cls(types, doc)

@@ -31,9 +31,8 @@ import threading
 import time
 
 from .. import build as build_mod
-from .. import firmware, sections, uf2
+from .. import firmware, typelist, uf2
 from ..build import Reporter, null_reporter
-from ..cfgdoc import CfgDocument
 from ..errors import BuildError, ConfigError
 from ..paths import Paths
 from ..settings import Settings
@@ -97,32 +96,18 @@ class CmakeType:
 
 
 def load(paths: Paths) -> dict[str, CmakeType]:
-    """Read this provider's type sections from the shared config file.
-
-    A type is ours if the family it declares is built by `cmake` - the same
-    "provider is derived from the family's builder" rule `config.py` and
-    `pio.load()` apply from their own sides.
-    """
-    try:
-        with open(paths.main_config, encoding="utf-8") as fh:
-            doc = CfgDocument(fh.read())
-    except OSError:
-        return {}
-
-    families_map = firmware.load_from_doc(doc)
+    """The cmake types: the one type list (:mod:`..typelist`), filtered by builder."""
+    entries, families_map = typelist.read_config(paths)
 
     out: dict[str, CmakeType] = {}
-    for declared in sections.read(doc):
-        name, section = declared.name, declared.section
-        declared_fws = doc.get_csv(section, "firmware") or []
-        if not declared_fws:
+    for entry in entries:
+        if entry.builder != BUILDER:
             continue
-        first_fw = declared_fws[0]
+        name, block = entry.name, entry.block
+        first_fw = entry.firmwares[0]
         family = firmware.resolve(paths, first_fw, families_map)
-        if family.builder != BUILDER:
-            continue
 
-        cmake_target = (doc.get(section, "cmake_target") or "").strip()
+        cmake_target = (block.get("cmake_target") or "").strip()
         if not cmake_target:
             raise ConfigError(
                 f"'{name}' is a cmake type but names no cmake_target: - one "
@@ -138,9 +123,9 @@ def load(paths: Paths) -> dict[str, CmakeType]:
             firmware=first_fw,
             cmake_args=family.cmake_args,
             submodules=family.submodules,
-            chipset=(doc.get(section, "chipset") or "").strip(),
-            serials=doc.get_list(section, "serials"),
-            stop_services=doc.get_csv(section, "stop_services"),
+            chipset=entry.chipset,
+            serials=list(entry.serials),
+            stop_services=block.get_csv("stop_services"),
         )
     return out
 

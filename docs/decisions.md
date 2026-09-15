@@ -285,3 +285,15 @@ this.
 The former fork and its release channel are retired. This historical decision
 is superseded; the supported client is the standalone UI documented in
 `docs/mainsail-fork.md`.
+
+### One walk over `[type]` sections
+
+`typelist.py` is the only code that walks `[type]` sections. `Registry.load`,
+`pio.load` and `cmake.load` are views that filter its list by builder, until
+their callers read the list directly. Three private walks were how a Roadrunner
+type existed for the agent and not for the CLI. A new reader of type sections
+reads the list; it does not open the file.
+
+`typelist.read` never raises and `typelist.validate` is strict. Anything that
+answers a question about one name (`providers.selection`) uses the lenient
+half, so one malformed section cannot break another type.

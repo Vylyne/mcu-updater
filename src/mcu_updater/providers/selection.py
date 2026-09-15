@@ -18,8 +18,7 @@ agent.
 
 from __future__ import annotations
 
-from .. import firmware, sections
-from ..cfgdoc import CfgDocument
+from .. import typelist
 from ..config import Registry
 from ..errors import UnknownTypeError
 from ..paths import Paths
@@ -52,24 +51,13 @@ def _declared_builders(paths: Paths) -> dict[str, str]:
     A section naming no family at all is absent from the result: both loads
     skip it, so neither provider claims it, and it falls through to the
     registry exactly as it does today.
+
+    Read through `typelist.read_config`, which never raises for an undeclared
+    family. Do not route this through `firmware.resolve()`: that refuses an
+    undeclared name, and one bad section must not break resolving another.
     """
-    try:
-        with open(paths.main_config, encoding="utf-8") as fh:
-            doc = CfgDocument(fh.read())
-    except OSError:
-        return {}
-
-    families_map = firmware.load_from_doc(doc)
-
-    out: dict[str, str] = {}
-    for declared in sections.read(doc):
-        declared_fws = doc.get_csv(declared.section, "firmware") or []
-        if not declared_fws:
-            continue
-        family = firmware.resolve(paths, declared_fws[0], families_map)
-        if family.builder:
-            out[declared.name] = family.builder
-    return out
+    entries, _ = typelist.read_config(paths)
+    return {entry.name: entry.builder for entry in entries if entry.builder}
 
 
 def provider_of(paths: Paths, name: str) -> str:

@@ -8,6 +8,7 @@ tmp_path stands in for a whole printer host - no mocks, no monkeypatching of
 
 from __future__ import annotations
 
+import os
 import pathlib
 
 import pytest
@@ -97,6 +98,18 @@ def cmd_tokens(cmd_line: str) -> list[str]:
     path with a space in it cannot produce a false match.
     """
     return cmd_line.split()
+
+
+def write_main_config(paths: Paths, text: str) -> None:
+    """Write `text` as the whole mcu-updater.cfg of the fake install."""
+    os.makedirs(os.path.dirname(paths.main_config), exist_ok=True)
+    with open(paths.main_config, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(text)
+
+
+def read_main_config(paths: Paths) -> str:
+    with open(paths.main_config, encoding="utf-8") as fh:
+        return fh.read()
 
 
 def write_settings(paths: Paths, **values: object) -> None:

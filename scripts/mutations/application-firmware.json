@@ -9,6 +9,7 @@
     "tests/test_config.py",
     "tests/test_agent_methods.py",
     "tests/test_agent_targets.py",
+    "tests/test_typelist.py",
     "-q"
   ],
   "mutations": [
@@ -19,13 +20,14 @@
     },
     {
       "name": "the declared firmware list is kept, not discarded on load",
-      "find": "            mcu.firmwares = declared_fws",
+      "find": "            mcu.firmwares = list(entry.firmwares)",
       "replace": "            mcu.firmwares = [\"klipper\"]"
     },
     {
       "name": "a family nobody declared is refused rather than accepted",
-      "find": "                if fw not in fw_names:",
-      "replace": "                if False:"
+      "file": "src/mcu_updater/typelist.py",
+      "find": "            if fw not in known:",
+      "replace": "            if False:"
     },
     {
       "_comment": "load() now refuses a type with no firmware: key at all (step 11), so save() cannot leave it implicit even for the plain-klipper case any more - it is always written, never omitted as a restated default.",

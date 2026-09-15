@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import os
 import pathlib
+import re
 
 import pytest
 
@@ -110,6 +111,33 @@ def write_main_config(paths: Paths, text: str) -> None:
 def read_main_config(paths: Paths) -> str:
     with open(paths.main_config, encoding="utf-8") as fh:
         return fh.read()
+
+
+#: What install.sh seeds on a host whose trees are at the conventional paths.
+BASE_FIRMWARES = (
+    "[firmware klipper]\nsource: ~/klipper\nflashers: flashtool\n\n"
+    "[firmware katapult]\nsource: ~/katapult\nflashers: dfu_util, bootsel\n\n"
+)
+
+
+def with_base_firmwares(text: str) -> str:
+    """`text` with klipper and katapult declared ahead of its first family or type.
+
+    Only for text that declares neither: adding a second copy of a section is a
+    duplicate-section refusal.
+    """
+    match = re.search(r"^\[(firmware|type)\s", text, re.MULTILINE)
+    if match is None:
+        separator = "\n" if text and not text.endswith("\n") else ""
+        return text + separator + BASE_FIRMWARES
+    return text[: match.start()] + BASE_FIRMWARES + text[match.start() :]
+
+
+def seed_base_firmwares(paths: Paths) -> None:
+    """Declare klipper and katapult in the fake install, the way install.sh does."""
+    from mcu_updater import seed
+
+    seed.seed_firmware_sections(paths, {})
 
 
 def write_settings(paths: Paths, **values: object) -> None:

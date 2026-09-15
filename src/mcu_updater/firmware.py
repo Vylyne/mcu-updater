@@ -23,10 +23,9 @@ conventions above, which is why this can land without touching a single
 existing install. `resolve()` always returns a family rather than None for the
 same reason - callers never have to branch on "was it configured".
 
-Deliberately not here: which flasher a family uses. That is chosen by chipset
-rather than by firmware - one family can need dfu-util on an STM32 board and
-BOOTSEL on an RP2040 one - so a `flasher:` key here would let a user pick a
-combination that cannot work.
+`flashers:` is written for klipper and katapult by install.sh but not read yet:
+until the flash loop reads each family's list, the flasher is still chosen by
+chipset and state.
 """
 
 from __future__ import annotations
@@ -50,6 +49,14 @@ BUILTIN = FW_TARGETS
 #: Klipper, Katapult and every fork of either use Kconfig + `make`; PlatformIO
 #: is the only other builder today and always names itself explicitly.
 DEFAULT_BUILDER = "kconfig_make"
+
+#: Keys install.sh writes into the two sections it seeds, beside `source:`.
+#: Nothing reads `flashers:` yet - the flash loop does, in the next plan. Kept
+#: here so the lines a refusal tells a user to add match what install.sh writes.
+SEEDED_KEYS: dict[str, tuple[tuple[str, str], ...]] = {
+    "klipper": (("flashers", "flashtool"),),
+    "katapult": (("flashers", "dfu_util, bootsel"),),
+}
 
 
 def expand_home(path: str, home: str) -> str:

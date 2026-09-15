@@ -20,7 +20,9 @@ import os
 
 import pytest
 
+from mcu_updater import firmware, inventory
 from mcu_updater.agent.methods import Api
+from mcu_updater.config import Registry
 from mcu_updater.states import (
     TONE_ATTENTION,
     TONE_UNKNOWN,
@@ -1114,3 +1116,37 @@ def test_the_status_poll_never_shells_out_for_a_cmake_type(paths, tmp_path, monk
     Api(paths, runner=_runner()).dispatch("fw.status")
 
     assert calls == []
+
+
+def test_a_cmake_row_takes_presence_from_the_inventory_it_is_given(paths, tmp_path):
+    _cmake_config(paths, tmp_path, serial="RR-INJECTED")
+    api = Api(paths, runner=_runner())
+    payload = next(p for p in api.cmake_status() if p["serials"] == ["RR-INJECTED"])
+    row = inventory.Row(
+        type=payload["name"],
+        builder="cmake",
+        kind=inventory.SERIAL,
+        id="RR-INJECTED",
+        present=True,
+        state="klipper",
+        path="/dev/injected",
+    )
+    target = api._cmake_target(
+        payload, set(api.available_methods()), firmware.load(paths), inventory.index([row])
+    )
+    device = target["devices"][0]
+    assert device["present"] is True
+    assert device["path"] == "/dev/injected"
+
+
+def test_type_status_takes_board_state_from_the_inventory(paths, fake_root, live_registry_text):
+    """The by-id chipset segment no longer hides a board (plan ruling 8)."""
+    with open(paths.registry_file, "w", encoding="utf-8") as fh:
+        fh.write(live_registry_text)
+    reg = Registry.load(paths)
+    name = next(n for n in reg.names() if reg.get(n).serials)
+    serial = reg.get(name).serials[0]
+    make_device(fake_root / "bus", "Klipper", "notthechipset", serial)
+
+    out = Api(paths).type_status(reg, name, versions={}, canbus={})
+    assert out["serials"][0]["state"] == "klipper"

@@ -11,7 +11,8 @@ import time
 from collections.abc import Callable, Iterable
 from typing import Any
 
-from ... import API_VERSION, __version__, firmware, helpers, profiles, providers
+from ... import API_VERSION, __version__, firmware, helpers, profiles, providers, typelist
+from ... import inventory as inventory_mod
 from ... import uf2 as uf2_mod
 from ...build import read_sidecar
 from ...config import Registry
@@ -20,7 +21,6 @@ from ...devices import (
     STATE_KLIPPER,
     STATE_OFFLINE,
     BusDevice,
-    device_state,
     parse_entry,
     scan,
 )
@@ -342,6 +342,7 @@ class StatusMixin(_Base):
         name: str,
         versions: dict[str, dict[str, str]] | None = None,
         canbus: dict[str, dict[str, Any]] | None = None,
+        rows: dict[tuple[str, str, str], inventory_mod.Row] | None = None,
     ) -> dict[str, Any]:
         """One type's state, including what each of its boards is *running*.
 
@@ -354,6 +355,9 @@ class StatusMixin(_Base):
         compared against the tree its own firmware is built from - a board
         running cartographer measured against upstream klipper reads as behind
         forever.
+
+        `rows` is the indexed inventory; passed in by `status()` so one sweep
+        serves every type.
         """
         from ...build import git_head
 
@@ -377,9 +381,13 @@ class StatusMixin(_Base):
         artifact_sha = sidecar.get("bin_sha256")
         built_version = sidecar.get("version")
 
+        if rows is None:
+            rows = inventory_mod.index(self.inventory())
         serials = []
         for serial in mcu.serials:
-            state, path = device_state(self.paths, mcu.chipset, serial)
+            row = rows.get((name, inventory_mod.SERIAL, serial))
+            state = row.state if row is not None else STATE_OFFLINE
+            path = row.path if row is not None else None
             entry = {"serial": serial, "state": state, "path": path}
             entry.update(
                 self.flash_state(
@@ -449,6 +457,18 @@ class StatusMixin(_Base):
             out[fw] = block
         return out
 
+    def inventory(
+        self, canbus: dict[str, dict[str, Any]] | None = None
+    ) -> list[inventory_mod.Row]:
+        """Every declared identity joined with one by-id sweep.
+
+        Lenient about the type list: a config error is raised by the registry
+        load every status path already makes, not a second time here.
+        """
+        entries, _ = typelist.read_config(self.paths)
+        sweep = inventory_mod.Sweep(byid=tuple(scan(self.paths)), canbus=canbus or {})
+        return inventory_mod.build(entries, sweep)
+
     def bus(self, reg: Registry) -> list[dict[str, Any]]:
         bus_devices = scan(self.paths)
         owner = {
@@ -493,7 +513,8 @@ class StatusMixin(_Base):
         # the same things as these two in one shape; if it ever needs a fact
         # they do not carry, that is a missing key here, not there.
         canbus = self._latest_canbus_info
-        types = [self.type_status(reg, n, versions, canbus) for n in reg.names()]
+        rows = inventory_mod.index(self.inventory(canbus))
+        types = [self.type_status(reg, n, versions, canbus, rows) for n in reg.names()]
         displays = self.pio_status()
         return {
             "bus": self.bus(reg),
@@ -519,7 +540,7 @@ class StatusMixin(_Base):
             # types[] and displays[] said in one shape, so a panel can render
             # an MCU, a display and whatever comes next with a single
             # component. The two originals retired at API_VERSION 2.
-            "targets": self.targets(reg, types, displays),
+            "targets": self.targets(reg, types, displays, rows),
         }
 
     def pio_status(self) -> list[dict[str, Any]]:
@@ -715,8 +736,11 @@ class StatusMixin(_Base):
         reg: Registry,
         types: list[dict[str, Any]],
         displays: list[dict[str, Any]],
+        rows: dict[tuple[str, str, str], inventory_mod.Row] | None = None,
     ) -> list[dict[str, Any]]:
         """`types[]` and `displays[]` in one shape."""
+        if rows is None:
+            rows = inventory_mod.index(self.inventory())
         allowed = set(self.available_methods())
         # Read once for the whole projection. Every type asks the same two
         # questions of it - can this tree be configured, and what does it ship -
@@ -730,7 +754,7 @@ class StatusMixin(_Base):
         ] + [
             self._pio_target(payload, allowed) for payload in displays
         ] + [
-            self._cmake_target(payload, allowed, families)
+            self._cmake_target(payload, allowed, families, rows)
             for payload in self.cmake_status()
         ]
 
@@ -1039,6 +1063,7 @@ class StatusMixin(_Base):
         payload: dict[str, Any],
         allowed: set[str],
         families: dict[str, firmware.FirmwareFamily],
+        rows: dict[tuple[str, str, str], inventory_mod.Row] | None = None,
     ) -> dict[str, Any]:
         """A cmake type in the shared `targets[]` shape.
 
@@ -1062,12 +1087,12 @@ class StatusMixin(_Base):
             helper_problem = str(exc)
         helper_configured = helper is not None
 
-        sightings = scan(self.paths)
+        if rows is None:
+            rows = inventory_mod.index(self.inventory())
         devices: list[dict[str, Any]] = []
         for serial in payload["serials"]:
-            matches = [device for device in sightings if device.serial == serial]
-            present = len(matches) == 1
-            match = matches[0] if present else None
+            device_row = rows.get((name, inventory_mod.SERIAL, serial))
+            present = device_row is not None and device_row.present
             device_status = DeviceStatus(UNKNOWN_VERSION if present else OFFLINE)
             device_actions = (
                 self._device_actions(
@@ -1106,8 +1131,8 @@ class StatusMixin(_Base):
                     "id": serial,
                     "name": None,
                     "present": present,
-                    "state": match.state if match is not None else STATE_OFFLINE,
-                    "path": match.path if match is not None else None,
+                    "state": device_row.state if device_row is not None else STATE_OFFLINE,
+                    "path": device_row.path if device_row is not None else None,
                     "version": None,
                     "confidence": None,
                     **self._device_json(device_status),

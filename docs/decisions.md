@@ -313,3 +313,11 @@ never decides who builds them.
 `typelist.read` never raises and `typelist.validate` is strict. Anything that
 answers a question about one name (`providers.selection`) uses the lenient
 half, so one malformed section cannot break another type.
+
+### Presence comes from the inventory
+
+`inventory.py` joins the declared identities from the one type list with one
+injected sweep. A status path, the CLI or anything else that asks "is this
+board plugged in" reads a row; it does not scan and match on its own. The rule
+is exact serial, exactly one sighting. The by-id chipset segment is not a
+filter: it is the firmware's choice of name, not the board's identity.

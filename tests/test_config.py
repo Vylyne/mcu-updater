@@ -5,6 +5,7 @@ import sys
 
 import pytest
 
+from mcu_updater import typelist
 from mcu_updater.cfgdoc import CfgDocument
 from mcu_updater.config import MakefilePatch, McuType, Registry, section_name, validate_type_name
 from mcu_updater.errors import (
@@ -16,6 +17,8 @@ from mcu_updater.errors import (
     UnknownSerialError,
     UnknownTypeError,
 )
+
+from .conftest import read_main_config, write_main_config
 
 
 def _write(paths, text: str) -> None:
@@ -842,3 +845,55 @@ def test_resolve_declared_serial_refuses_a_cross_type_pairing(paths):
         )
 
     assert exc.value.data["tracked_under"] == ["bttebb36"]
+
+
+def test_removing_a_kconfig_type_leaves_every_other_builders_sections(paths, example_registry_text):
+    write_main_config(paths, example_registry_text)
+    reg = Registry.load(paths)
+    reg.remove_type("hexadistrofusion")
+    reg.save(paths)
+    text = read_main_config(paths)
+    assert "[type hexadistrofusion]" not in text
+    assert "[type knomi]" in text
+    assert "[type roadrunner]" in text
+    assert "[firmware roadrunner]" in text
+
+
+def test_a_save_never_deletes_a_section_it_was_not_asked_to(paths, example_registry_text):
+    """Ownership is removal, not absence from `types`: a view that does not
+    hold a type must not be able to delete it by saving."""
+    write_main_config(paths, example_registry_text)
+    reg = Registry.load(paths)
+    reg.types.pop("bttebb36")
+    reg.save(paths)
+    assert "[type bttebb36]" in read_main_config(paths)
+
+
+def test_removing_a_type_that_was_never_saved_is_not_an_error(paths, example_registry_text):
+    write_main_config(paths, example_registry_text)
+    reg = Registry.load(paths)
+    reg.add_type("fresh", "stm32f072xb")
+    reg.remove_type("fresh")
+    assert "fresh" not in reg.names()
+
+
+def test_declared_serials_answers_for_every_builder(paths, example_registry_text):
+    write_main_config(paths, example_registry_text)
+    reg = Registry.load(paths)
+    assert reg.declared_serials("roadrunner") == ["RR-ABCDEFGHIJKLMNOPQRSTUVWXYZ"]
+    assert reg.declared_serials("bttebb36") == reg.get("bttebb36").serials
+    assert isinstance(reg.declared_serials("knomi"), list)
+    with pytest.raises(UnknownTypeError):
+        reg.declared_serials("nope")
+
+
+def test_a_declared_type_is_removed_whatever_builds_it(paths, example_registry_text):
+    write_main_config(paths, example_registry_text)
+    reg = Registry.load(paths)
+    for name in ("roadrunner", "knomi", "bttebb36"):
+        expected = reg.declared_serials(name)
+        assert reg.remove_declared_type(name) == expected
+    reg.save(paths)
+    remaining = {entry.name for entry in typelist.load(paths)}
+    assert not {"roadrunner", "knomi", "bttebb36"} & remaining
+    assert "[firmware roadrunner]" in read_main_config(paths)

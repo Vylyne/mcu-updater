@@ -288,11 +288,17 @@ is superseded; the supported client is the standalone UI documented in
 
 ### One walk over `[type]` sections
 
-`typelist.py` is the only code that walks `[type]` sections. `Registry.load`,
-`pio.load` and `cmake.load` are views that filter its list by builder, until
-their callers read the list directly. Three private walks were how a Roadrunner
-type existed for the agent and not for the CLI. A new reader of type sections
-reads the list; it does not open the file.
+`typelist.py` is the only code that decides which builder owns a `[type]`
+section. `Registry.load`, `pio.load` and `cmake.load` are views that filter its
+list by builder, until their callers read the list directly. Three private
+walks were how a Roadrunner type existed for the agent and not for the CLI. A
+new reader of type sections reads the list; it does not open the file.
+
+`Registry`'s `declared_*` methods (`declared_type_names`,
+`find_declared_types_for_serial`, and friends) still call `sections.read`
+directly - deliberately, since they answer "what's in the file, whoever builds
+it", the one place ownership does not apply. That walk names sections; it
+never decides who builds them.
 
 `typelist.read` never raises and `typelist.validate` is strict. Anything that
 answers a question about one name (`providers.selection`) uses the lenient

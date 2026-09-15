@@ -25,9 +25,9 @@
       "replace": "            if False:"
     },
     {
-      "name": "a foreign-builder type's section survives a save",
-      "find": "            if _is_foreign_builder(paths, doc, declared.section, families_map):",
-      "replace": "            if False:"
+      "name": "a type's section is deleted by its removal, and only by that",
+      "find": "            self._doc.remove_section(self._declared_section(name))",
+      "replace": "            pass"
     },
     {
       "name": "a type is selected by its declared firmware's builder",

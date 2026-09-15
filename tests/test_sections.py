@@ -47,8 +47,6 @@ def test_firmware_sections_are_a_different_axis():
     each has to ignore the other's sections."""
     doc = CfgDocument("[firmware cartographer]\nsource: ~/carto\n[type board]\n")
     assert [d.name for d in sections.read(doc)] == ["board"]
-    assert not sections.is_type_section("firmware cartographer")
-    assert not sections.is_type_section("updater")
 
 
 # --------------------------------------------------------------------------

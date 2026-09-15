@@ -117,28 +117,6 @@ class FwConfig:
         return out
 
 
-def _is_foreign_builder(
-    paths: Paths, doc: CfgDocument, section: str, families_map: dict[str, Any]
-) -> bool:
-    """Whether a `[type ...]` section belongs to some *other* provider.
-
-    Ownership is positive, not a list of exclusions: this registry holds the
-    `kconfig_make` types and nothing else. Written as an exclusion it was a
-    closed set of two builders, and every builder added after that silently
-    fell through to here - which for `save()` means deleting the user's
-    section. See docs/cmake-provider-design.md.
-    """
-    declared_fws = doc.get_csv(section, "firmware") or []
-    if not declared_fws:
-        # Vacuously not foreign, not "defaults to klipper" - load() refuses a
-        # section with no firmware: key before this is ever reachable for one.
-        return False
-    return any(
-        firmware.resolve(paths, fw, families_map).builder != "kconfig_make"
-        for fw in declared_fws
-    )
-
-
 def _is_bootloader(fw: str, families: dict[str, Any] | None) -> bool:
     """Whether a declared family is a bootloader.
 
@@ -404,21 +382,15 @@ class Registry:
             reg.save(paths)
 
     def save(self, paths: Paths) -> None:
-        """Atomic write, preserving everything the document already had."""
+        """Atomic write, preserving everything the document already had.
+
+        Writes the types this registry holds and deletes nothing. A section is
+        deleted by `remove_type` / `remove_declared_type`, so a type this
+        registry does not hold (another builder's) cannot be lost by a save.
+        """
         doc = self._doc
         families_map = firmware.load_from_doc(doc)
         fw_names = firmware.names_of(families_map)
-
-        for declared in sections.read(doc):
-            if declared.name in self.types:
-                continue
-            if _is_foreign_builder(paths, doc, declared.section, families_map):
-                # Not one of ours by its declared firmware's builder - load()
-                # excludes it from self.types for the same reason. Leaving it
-                # alone here is what stops that exclusion from reading as "the
-                # user deleted this type".
-                continue
-            doc.remove_section(declared.section)
 
         for name, mcu in self.types.items():
             # Whatever section a type already has, so an untouched config
@@ -744,6 +716,7 @@ class Registry:
     def remove_type(self, name: str) -> McuType:
         mcu = self.get(name)
         del self.types[name]
+        self._drop_section(name)
         return mcu
 
     def add_serial(self, name: str, serial: str) -> bool:
@@ -783,6 +756,27 @@ class Registry:
             return False
         self._doc.set(section, "serials", [item for item in serials if item != serial])
         return True
+
+    def declared_serials(self, name: str) -> list[str]:
+        """A declared type's serials, whichever builder owns it."""
+        if name in self.types:
+            return list(self.types[name].serials)
+        return self._doc.get_list(self._declared_section(name), "serials")
+
+    def remove_declared_type(self, name: str) -> list[str]:
+        """Delete a declared type, whichever builder owns it.
+
+        Returns the serials it tracked, so a caller can say what went with it.
+        """
+        serials = self.declared_serials(name)
+        self.types.pop(name, None)
+        self._drop_section(name)
+        return serials
+
+    def _drop_section(self, name: str) -> None:
+        """Delete a type's section, if the document has one yet."""
+        if name in self.declared_type_names():
+            self._doc.remove_section(self._declared_section(name))
 
     def add_canbus_uuid(self, name: str, uuid: str) -> bool:
         """Returns True if it was added, False if already present."""

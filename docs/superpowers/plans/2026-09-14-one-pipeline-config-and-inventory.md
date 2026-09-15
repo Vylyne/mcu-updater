@@ -2811,6 +2811,10 @@ In `status_cmd`, delete `reg = c.registry()` (line 269) and replace everything f
         # What this type builds, from its own provider - not every family that
         # exists, which would be noise about firmware nobody builds for it.
         for target in targets_by_type.get(entry.name, []):
+            # A bootloader is built on demand, never by a sweep, so "not
+            # built" would be noise on every kconfig type.
+            if target.on_demand:
+                continue
             label = target.fw or target.provider
             try:
                 status = providers.by_name(target.provider).artifact_status(install, target)

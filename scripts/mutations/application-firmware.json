@@ -49,6 +49,11 @@
       "name": "a type's families keep their declared order",
       "find": "        declared = [fw for fw in self.firmwares if fw in self.fws]",
       "replace": "        declared = sorted(fw for fw in self.firmwares if fw in self.fws)"
+    },
+    {
+      "name": "add_type refuses a family it assembled that nobody declared",
+      "find": "            if fw not in declared:",
+      "replace": "            if False:"
     }
   ]
 }

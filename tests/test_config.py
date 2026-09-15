@@ -446,6 +446,44 @@ def test_a_type_with_no_firmware_key_is_refused(paths):
     assert "firmware" in str(exc.value)
 
 
+def test_add_type_refuses_an_undeclared_family(paths):
+    """`add_type` builds `firmwares` from `application` and
+    `katapult_installed` before a single line is written - each name it
+    assembles must already have a `[firmware ...]` section, the same rule
+    `Registry.load` enforces for a hand-edited file. A regression that drops
+    this check would let a typo'd application silently resolve to the
+    `~/<name>` convention again."""
+    write_main_config(paths, with_base_firmwares(""))
+    reg = Registry.load(paths)
+
+    with pytest.raises(ConfigCorruptError) as exc:
+        reg.add_type("a", "x", application="undeclared_family")
+
+    assert exc.value.data["value"] == "undeclared_family"
+    from mcu_updater import firmware
+
+    assert firmware.missing_section_message("undeclared_family") in str(exc.value)
+    # Refused before mutation: neither the in-memory registry nor the file on
+    # disk gained the type.
+    assert "a" not in reg.types
+    assert "[type a]" not in read_main_config(paths)
+
+
+def test_add_type_refuses_an_undeclared_katapult(paths):
+    """The same refusal for the other half of `firmwares`: a config that only
+    declares `klipper` still requires `katapult` be declared before a
+    katapult-installed type can name it."""
+    write_main_config(paths, "[firmware klipper]\nsource: ~/klipper\n")
+    reg = Registry.load(paths)
+
+    with pytest.raises(ConfigCorruptError) as exc:
+        reg.add_type("a", "x")
+
+    assert exc.value.data["value"] == "katapult"
+    assert "a" not in reg.types
+    assert "[type a]" not in read_main_config(paths)
+
+
 def test_firmware_accepts_space_separated_families(paths):
     """`firmware:` used to require a comma; a Moonraker-style space-separated
     list must load the same families, not be misread as one bad family name."""

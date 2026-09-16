@@ -61,20 +61,39 @@ def _insert_at(text: str) -> int | None:
     return start
 
 
+def _read_missing(paths: Paths) -> tuple[str, list[str]]:
+    """The config text and which of `FAMILIES` it does not yet declare."""
+    try:
+        with open(paths.main_config, encoding="utf-8") as fh:
+            text = fh.read()
+    except FileNotFoundError:
+        text = ""
+    doc = CfgDocument(text)
+    missing = [fw for fw in FAMILIES if not doc.has_section(f"firmware {fw}")]
+    return text, missing
+
+
 def seed_firmware_sections(paths: Paths, sources: dict[str, str]) -> list[str]:
     """Add whichever of klipper and katapult the config does not declare.
 
     `sources` maps a family to the tree install.sh found. A family missing from
     it, or mapped to "", is written as ``~/<name>``. Returns the families added.
+
+    Checked once outside the lock first, so a no-op re-run - the common case,
+    since install.sh may run again on a host that already has both sections -
+    never takes the lock at all. The lock is non-blocking with a single 50ms
+    retry, so a re-run that happened to overlap a panel write would otherwise
+    exit install.sh with 1 for a run that had nothing to do.
     """
+    text, missing = _read_missing(paths)
+    if not missing:
+        return []
+
     with ExclusiveLock(paths, path=paths.registry_lock_file).acquire("seed firmware sections"):
-        try:
-            with open(paths.main_config, encoding="utf-8") as fh:
-                text = fh.read()
-        except FileNotFoundError:
-            text = ""
-        doc = CfgDocument(text)
-        missing = [fw for fw in FAMILIES if not doc.has_section(f"firmware {fw}")]
+        # Re-read under the lock: `text`/`missing` above may already be stale
+        # by the time it was acquired, the same reason `Registry.mutate` reads
+        # inside its own lock rather than trusting a caller's earlier load.
+        text, missing = _read_missing(paths)
         if not missing:
             return []
         block = "".join(

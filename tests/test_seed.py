@@ -53,6 +53,39 @@ def test_a_rerun_changes_nothing(paths):
     assert read_main_config(paths) == before
 
 
+def test_a_rerun_with_the_lock_held_elsewhere_still_succeeds_as_a_no_op(paths):
+    """The lock is non-blocking with one retry, so a re-run that overlaps a
+    panel write must not even attempt to take it once both sections already
+    exist - otherwise install.sh exits 1 for a run that had nothing to do."""
+    seed.seed_firmware_sections(paths, {})
+    before = read_main_config(paths)
+
+    from mcu_updater.lock import ExclusiveLock
+
+    with ExclusiveLock(paths, path=paths.registry_lock_file).acquire("a panel write"):
+        assert seed.seed_firmware_sections(paths, {}) == []
+
+    assert read_main_config(paths) == before
+
+
+def test_a_rerun_never_calls_acquire_when_nothing_is_missing(paths, monkeypatch):
+    """Deterministic, platform-independent proof of the same property as
+    above: a held lock would make `acquire` raise, so a no-op re-run must
+    never call it at all."""
+    seed.seed_firmware_sections(paths, {})
+    before = read_main_config(paths)
+
+    from mcu_updater.errors import BusyError
+
+    def _refuse(self, label):
+        raise BusyError("another firmware operation is already running")
+
+    monkeypatch.setattr(seed.ExclusiveLock, "acquire", _refuse)
+
+    assert seed.seed_firmware_sections(paths, {}) == []
+    assert read_main_config(paths) == before
+
+
 def test_a_source_under_home_is_written_with_a_tilde(paths):
     seed.seed_firmware_sections(paths, {"katapult": os.path.join(paths.home, "forks", "katapult")})
     assert "source: ~/forks/katapult\n" in read_main_config(paths)

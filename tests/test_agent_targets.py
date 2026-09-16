@@ -836,9 +836,9 @@ def test_a_type_can_name_the_firmware_it_runs_when_it_is_created(paths, live_reg
 
 
 def test_an_undeclared_family_is_refused_rather_than_quietly_accepted(paths, live_registry_text):
-    """An unknown family has no ~/<name> fallback: `firmware.resolve` and the
-    save-time revalidation both refuse it with a generic config_corrupt. Refusing
-    at fw.type.add says so immediately, naming the known families."""
+    """Without the agent's check, `Registry.add_type` would still refuse the
+    typo - as config_corrupt with `missing_section_message` and no known list.
+    The agent's refusal is `unknown_firmware` with `data.known`, naming them."""
     with open(paths.registry_file, "w", encoding="utf-8") as fh:
         fh.write(live_registry_text)
     api = Api(paths)

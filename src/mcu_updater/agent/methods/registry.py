@@ -274,13 +274,11 @@ class RegistryMixin(_Base):
     def _require_family(self, args: dict, key: str = "firmware") -> str:
         """The firmware family named in `args`, checked against what exists.
 
-        Refused rather than accepted-and-broken: `firmware.resolve` now refuses
-        an undeclared family outright, and `Registry._save` refuses to persist
-        one too, but both of those fire only once something tries to build,
-        flash, or write the type - a typo here would otherwise sit accepted
-        until then. This is the same rule, checked immediately, with a message
-        naming the known families rather than the generic `config_corrupt` a
-        save-time refusal would produce.
+        Without this a typo is still refused - by `Registry.add_type` for
+        fw.type.add, and by `Registry._save`'s revalidation for fw.type.update -
+        but as `config_corrupt` carrying `missing_section_message`, with no list
+        of what is known. The difference is the error: `unknown_firmware`, with
+        `data.known`, so the panel can offer the declared families.
         """
         value = str(args.get(key) or "").strip()
         if not value:

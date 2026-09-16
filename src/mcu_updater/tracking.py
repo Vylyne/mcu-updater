@@ -21,8 +21,11 @@ def add_serial(paths: Paths, name: str, serial: str) -> tuple[bool, str]:
         # An unprovisioned Roadrunner's serial is `RR-UNPROVISIONED-<flash-uid>`
         # - the trailing 16 hex characters ARE the RP2040 flash UID, which this
         # plan's constraints forbid ever persisting. Checked here, not only from
-        # the agent's live bus scan, so a direct write - CLI included - cannot
-        # save one before it is provisioned.
+        # the agent's live bus scan, so every caller of this function - agent
+        # fw.serial.add, CLI add-serial, the flash prompt and add-mcu adoption -
+        # refuses one. Not every registry write: the agent's pairing-key
+        # adoption (agent/methods/flash.py) calls Registry.add_serial directly,
+        # and only ever for kconfig types.
         from .discovery.roadrunner import UNPROVISIONED_RE
 
         if UNPROVISIONED_RE.fullmatch(serial):

@@ -1,5 +1,5 @@
 {
-  "_comment": "Declaring a board model before its hardware exists. A type describes a model, not a board on the bus - and naming the wrong firmware family for one is refused up front, naming the known families. An undeclared family has no ~/<name> fallback: firmware.resolve and the save-time revalidation both raise ConfigCorruptError with missing_section_message, a generic config_corrupt rather than a refusal listing what is known.",
+  "_comment": "Declaring a board model before its hardware exists. A type describes a model, not a board on the bus - and naming the wrong firmware family for one is refused by the agent as unknown_firmware, with data.known naming the declared families. Without that check fw.type.add falls back to Registry.add_type's refusal: config_corrupt carrying missing_section_message, with no list of what is known.",
   "file": "src/mcu_updater/agent/methods/registry.py",
   "command": [
     "python",

@@ -202,18 +202,25 @@ def names_of(families: dict[str, FirmwareFamily]) -> tuple[str, ...]:
     return tuple(sorted(families))
 
 
-def missing_section_message(fw: str) -> str:
-    """How to fix an undeclared family: the lines to paste."""
+#: Where to look next, whichever families are missing - said once per message.
+MISSING_SECTION_TRAILER = (
+    "Re-running install.sh writes the klipper and katapult sections for you.\n"
+    "Every section is shown, commented, in mcu-updater.cfg and README.md in the "
+    "mcu-updater checkout."
+)
+
+
+def missing_section_snippet(fw: str) -> str:
+    """The section one undeclared family needs, without the shared trailer."""
     lines = [f"[firmware {fw}]", f"source: ~/{fw}"]
     lines += [f"{key}: {value}" for key, value in SEEDED_KEYS.get(fw, ())]
     body = "\n".join(f"    {line}" for line in lines)
-    return (
-        f"No [firmware {fw}] section is declared. Add one to mcu-updater.cfg:\n"
-        f"{body}\n"
-        f"Re-running install.sh writes the klipper and katapult sections for you.\n"
-        f"Every section is shown, commented, in mcu-updater.cfg and README.md in the "
-        f"mcu-updater checkout."
-    )
+    return f"No [firmware {fw}] section is declared. Add one to mcu-updater.cfg:\n{body}"
+
+
+def missing_section_message(fw: str) -> str:
+    """How to fix an undeclared family: the lines to paste, then where to look."""
+    return f"{missing_section_snippet(fw)}\n{MISSING_SECTION_TRAILER}"
 
 
 def resolve(

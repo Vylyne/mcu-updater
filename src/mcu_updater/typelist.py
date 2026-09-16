@@ -225,15 +225,18 @@ def validate(
                 value=list(entry.firmwares),
             )
     if missing:
+        # `firmware: klipperr, klipperr` is one typo, not two.
+        missing = {name: list(dict.fromkeys(fws)) for name, fws in missing.items()}
         misses = [(name, fw) for name, fws in missing.items() for fw in fws]
         first_type, first_fw = misses[0]
         families_missing = list(dict.fromkeys(fw for _, fw in misses))
         listed = "\n".join(f"  {name} -> {fw}" for name, fw in misses)
-        snippets = "\n".join(firmware.missing_section_message(fw) for fw in families_missing)
+        snippets = "\n\n".join(firmware.missing_section_snippet(fw) for fw in families_missing)
         raise ConfigCorruptError(
             f"{path}: firmware that is not a known family (known: "
             f"{', '.join(known) or 'none'}):\n{listed}\n"
-            f"Fix the spelling, or declare it.\n{snippets}",
+            f"Fix the spelling, or declare it.\n\n{snippets}\n\n"
+            f"{firmware.MISSING_SECTION_TRAILER}",
             path=path,
             type=first_type,
             value=first_fw,

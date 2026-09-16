@@ -196,15 +196,29 @@ def test_every_undeclared_family_is_reported_at_once(paths):
     assert "one -> klipperr" in message
     assert "two -> katapultt" in message
     assert "two -> klipperr" in message
-    # One snippet per distinct family, in first-seen order.
-    assert message.count(firmware.missing_section_message("klipperr")) == 1
-    assert message.count(firmware.missing_section_message("katapultt")) == 1
-    assert message.index("[firmware klipperr]") < message.index("[firmware katapultt]")
+    # One snippet per distinct family, in first-seen order, a blank line
+    # between them, and the shared trailer once at the end.
+    klipperr = firmware.missing_section_snippet("klipperr")
+    katapultt = firmware.missing_section_snippet("katapultt")
+    assert message.count(klipperr) == 1
+    assert message.count(katapultt) == 1
+    assert f"{klipperr}\n\n{katapultt}" in message
+    assert message.count(firmware.MISSING_SECTION_TRAILER) == 1
+    assert message.endswith(firmware.MISSING_SECTION_TRAILER)
+    assert message.count("install.sh") == 1
     assert exc.value.data["missing"] == {"one": ["klipperr"], "two": ["katapultt", "klipperr"]}
     # The first miss still fills the original fields.
     assert exc.value.data["type"] == "one"
     assert exc.value.data["value"] == "klipperr"
     assert exc.value.data["path"] == paths.registry_file
+
+
+def test_a_family_repeated_on_one_type_is_one_miss(paths):
+    write_main_config(paths, FAMILIES + "[type a]\nchipset: x\nfirmware: klipperr, klipperr\n")
+    with pytest.raises(ConfigCorruptError) as exc:
+        typelist.load(paths)
+    assert str(exc.value).count("a -> klipperr") == 1
+    assert exc.value.data["missing"] == {"a": ["klipperr"]}
 
 
 def test_a_single_undeclared_family_keeps_the_type_and_value_fields(paths):

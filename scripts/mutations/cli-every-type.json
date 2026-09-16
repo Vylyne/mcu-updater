@@ -41,6 +41,12 @@
       "file": "src/mcu_updater/cli.py",
       "find": "            if target.on_demand:",
       "replace": "            if False:"
+    },
+    {
+      "name": "status does not call a type tracking only CAN uuids untracked",
+      "file": "src/mcu_updater/cli.py",
+      "find": "        if not entry.serials and not entry.canbus_uuids:",
+      "replace": "        if not entry.serials:"
     }
   ]
 }

@@ -777,6 +777,39 @@ def test_status_lists_a_platformio_type(c, pio_type, capsys):
     assert f"\n{ENV}  (chipset=?)" in capsys.readouterr().out
 
 
+def _status_block(out: str, name: str) -> list[str]:
+    block = out.split(f"\n{name}  (chipset=", 1)[1]
+    return block.split("\n\n", 1)[0].splitlines()[1:]
+
+
+def test_status_says_a_type_with_no_devices_tracks_none(c, pio_type, capsys):
+    """One wording for every type, whatever builds it."""
+    reg = Registry.load(c.paths)
+    reg.add_type("empty", "stm32f072xb")
+    save_registry(reg, c.paths)
+    cli.status_cmd(cli.build_parser().parse_args(["status"]))
+    out = capsys.readouterr().out
+    assert cli.NO_TRACKED_DEVICES == "  (no tracked devices)"
+    assert cli.NO_TRACKED_DEVICES in _status_block(out, "empty")
+    assert cli.NO_TRACKED_DEVICES in _status_block(out, ENV)
+    assert "no tracked serials" not in out
+
+
+def test_status_does_not_call_a_can_only_type_untracked(c, capsys):
+    """A CAN board is tracked by uuid, not by a USB serial."""
+    reg = Registry.load(c.paths)
+    reg.add_type("canboard", "stm32f072xb")
+    save_registry(reg, c.paths)
+    with open(c.paths.main_config, encoding="utf-8") as fh:
+        text = fh.read()
+    with open(c.paths.main_config, "w", encoding="utf-8") as fh:
+        fh.write(text.replace("[type canboard]", "[type canboard]\ncanbus_uuids: 0123456789ab", 1))
+    assert typelist.load(c.paths)[-1].canbus_uuids == ("0123456789ab",)
+    cli.status_cmd(cli.build_parser().parse_args(["status"]))
+    out = capsys.readouterr().out
+    assert "no tracked" not in "\n".join(_status_block(out, "canboard"))
+
+
 def test_add_serial_tracks_a_board_under_a_cmake_type(c):
     _declare_roadrunner(c.paths, "RR-ONE")
     cli.add_serial(argparse.Namespace(type="roadrunner", serial="RR-NEW"))

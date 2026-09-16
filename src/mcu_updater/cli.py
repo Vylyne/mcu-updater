@@ -57,6 +57,10 @@ from .service import (
 from .settings import Settings, load_settings
 from .states import NEVER_BUILT
 
+#: What `status` prints under a type that tracks no board at all - no USB
+#: serial and no CAN uuid. One wording for every type, whatever builds it.
+NO_TRACKED_DEVICES = "  (no tracked devices)"
+
 # --------------------------------------------------------------------------
 # process-wide context
 # --------------------------------------------------------------------------
@@ -335,8 +339,8 @@ def status_cmd(args: argparse.Namespace) -> None:
             else:
                 print(f"  {label}: up to date")
 
-        if not entry.serials:
-            print("  (no tracked serials)")
+        if not entry.serials and not entry.canbus_uuids:
+            print(NO_TRACKED_DEVICES)
             continue
         for serial in entry.serials:
             row = rows.get((entry.name, inventory.SERIAL, serial))

@@ -19,7 +19,7 @@ from mcu_updater.agent.rpc import ERR_INVALID_PARAMS, ERR_METHOD_NOT_FOUND, RpcE
 from mcu_updater.cfgdoc import CfgDocument
 from mcu_updater.settings import Settings
 
-from .conftest import make_device, write_settings
+from .conftest import make_device, read_main_config, write_main_config, write_settings
 
 
 @pytest.fixture
@@ -785,6 +785,27 @@ def test_type_update_can_clear_katapult_installed(api):
     assert api.registry().get("bttebb36").bootloader() is None
     api.dispatch("fw.type.update", {"name": "bttebb36", "katapult_installed": True})
     assert api.registry().get("bttebb36").bootloader() == "katapult"
+
+
+def test_type_update_katapult_installed_refuses_an_undeclared_family(paths):
+    """The katapult_installed branch used to set `mcu.firmwares` without
+    checking the family was declared, so this saved a config the agent then
+    refused to load - every type vanishing from every surface on the next
+    read. Refused before the write now, the same way `Registry.load` would
+    refuse it on the way back in."""
+    write_main_config(
+        paths,
+        "[firmware klipper]\nsource: ~/klipper\n\n"
+        "[type bttebb36]\nchipset: stm32g0b1xx\nfirmware: klipper\n",
+    )
+    api = Api(paths)
+    before = read_main_config(paths)
+
+    with pytest.raises(RpcError) as exc:
+        api.dispatch("fw.type.update", {"name": "bttebb36", "katapult_installed": True})
+    assert exc.value.data["code"] == "config_corrupt"
+
+    assert read_main_config(paths) == before
 
 
 def test_type_update_warns_when_a_chipset_change_orphans_a_binary(api, paths):

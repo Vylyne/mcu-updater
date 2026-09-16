@@ -386,6 +386,12 @@ class Registry:
         Writes the types this registry holds and deletes nothing. A section is
         deleted by `remove_type` / `remove_declared_type`, so a type this
         registry does not hold (another builder's) cannot be lost by a save.
+
+        Validated with the same check `Registry.load` applies before any byte
+        reaches disk - a mutation that sets `mcu.firmwares` to something
+        `typelist.validate` would refuse (an undeclared family, a mixed-builder
+        type, ...) must not produce a document the next `load` refuses, which
+        would take every type down with it rather than only the bad one.
         """
         doc = self._doc
         families_map = firmware.load_from_doc(doc)
@@ -448,6 +454,14 @@ class Registry:
                     doc.set(section, repos_key, list(repos))
                 else:
                     doc.remove_option(section, repos_key)
+
+        # `read`/`validate` rather than a second validator - reusing the exact
+        # walk `Registry.load` uses, over the document as it now stands (every
+        # `doc.set`/`remove_option` above has already run). Raising here means
+        # nothing below this line executes: no tmp file, no replace.
+        typelist.validate(
+            typelist.read(doc, families_map), families_map, path=paths.registry_file
+        )
 
         os.makedirs(os.path.dirname(paths.registry_file), exist_ok=True)
         tmp = paths.registry_file + ".tmp"

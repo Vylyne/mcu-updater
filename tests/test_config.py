@@ -562,6 +562,20 @@ def test_mutate_writes_nothing_if_the_body_raises(paths, live_registry_text):
     assert _read(paths) == before
 
 
+def test_mutate_refuses_to_save_a_document_typelist_would_refuse_on_load(paths):
+    """`save()` must not persist a document that fails the same check
+    `Registry.load` applies - not just the katapult_installed branch that found
+    this, but any caller that gets a type's `firmwares` into that shape."""
+    seed_base_firmwares(paths)
+
+    with pytest.raises(ConfigCorruptError):
+        with Registry.mutate(paths, "corrupt it") as reg:
+            mcu = reg.add_type("bogus", "rp2040", katapult_installed=False)
+            mcu.firmwares.append("ghost")
+
+    assert "bogus" not in Registry.load(paths).names()
+
+
 def test_mutate_uses_its_own_lock_file(paths):
     """Registry edits must not queue behind a build holding the main lock for
     minutes - they touch different things."""

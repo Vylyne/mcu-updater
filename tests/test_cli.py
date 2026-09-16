@@ -105,6 +105,23 @@ def test_status_without_can_does_not_scan_can(c, monkeypatch):
     cli.status_cmd(args)
 
 
+def test_status_leaves_the_on_demand_katapult_target_out(c, capsys):
+    """`board` carries katapult on demand - built only by name, never a sweep.
+
+    Listing it as "not built" on every kconfig type would be noise about
+    firmware nobody asked for, so the block for a plain klipper+katapult type
+    names only its application.
+    """
+    cli.status_cmd(cli.build_parser().parse_args(["status"]))
+    out = capsys.readouterr().out
+    board_block = out.split("\nboard  (chipset=", 1)[1]
+    board_block = board_block.split("\n\n", 1)[0]
+    assert board_block.splitlines()[1:] == [
+        "  klipper: not built",
+        "  - AAAA-if00: offline",
+    ]
+
+
 def _device_map(paths, tree, **devices) -> None:
     """What the watcher writes while it is running - the CLI's only offline
     source for which PlatformIO devices exist and where."""

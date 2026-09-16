@@ -30,6 +30,12 @@
       "file": "src/mcu_updater/cli.py",
       "find": "            row = rows.get((entry.name, inventory.SERIAL, serial))",
       "replace": "            row = None"
+    },
+    {
+      "name": "status leaves an on-demand bootloader target out of a type's block",
+      "file": "src/mcu_updater/cli.py",
+      "find": "            if target.on_demand:",
+      "replace": "            if False:"
     }
   ]
 }

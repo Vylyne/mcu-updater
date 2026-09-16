@@ -14,7 +14,8 @@ Klipper-style, because it lives next to ``printer.cfg`` and gets hand-edited::
 Per-type keys, and that is all:
 
 ``chipset``
-    Required. Matches the chipset segment of the /dev/serial/by-id name.
+    Required. Drives flasher and build selection, not presence - see
+    docs/decisions.md "Presence comes from the inventory".
 ``serials``
     One tracked board per line.
 ``canbus_uuids``

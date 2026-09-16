@@ -274,11 +274,13 @@ class RegistryMixin(_Base):
     def _require_family(self, args: dict, key: str = "firmware") -> str:
         """The firmware family named in `args`, checked against what exists.
 
-        Refused rather than accepted-and-broken: an undeclared family resolves
-        to the conventional `~/<name>`, so a typo would silently produce a type
-        that builds nothing and reports "never built" for good. `Registry.load`
-        already refuses the same thing when the file is read by hand; this is
-        the same rule applied to the same value arriving from a browser.
+        Refused rather than accepted-and-broken: `firmware.resolve` now refuses
+        an undeclared family outright, and `Registry.save` refuses to persist
+        one too, but both of those fire only once something tries to build,
+        flash, or write the type - a typo here would otherwise sit accepted
+        until then. This is the same rule, checked immediately, with a message
+        naming the known families rather than the generic `config_corrupt` a
+        save-time refusal would produce.
         """
         value = str(args.get(key) or "").strip()
         if not value:

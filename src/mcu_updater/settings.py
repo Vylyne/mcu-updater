@@ -75,9 +75,9 @@ class Settings:
     #: ~/.platformio/penv/bin/pio will not find it.
     platformio_bin: str = ""
 
-    #: Katapult's flashtool.py, if it is not at the ~/katapult/scripts/flashtool.py
-    #: convention - a fork checked out elsewhere, say. `~` expands against this
-    #: printer's home the same way a [firmware] source: does.
+    #: Katapult's flashtool.py, if it is not under the declared katapult family's
+    #: source tree's scripts/ directory - a fork checked out elsewhere, say. `~`
+    #: expands against this printer's home the same way a [firmware] source: does.
     flashtool_path: str = ""
 
     #: A UI-only cosmetic preference, not a behaviour one - the agent never reads

@@ -41,7 +41,8 @@ def _declared_builders(paths: Paths) -> dict[str, str]:
     half rather than by calling those loads directly.
 
     Those loads *validate*: `cmake.load()` raises if a cmake type names no
-    `cmake_target:`, `pio.load()` raises if a PlatformIO type names no `env:`.
+    `cmake_target:`, `pio.load()` raises if a PlatformIO type names no
+    `platformio_env:`.
     Resolving one name must not depend on every other section being
     well-formed. Asking them would mean a malformed screen section breaking
     `flash -t <kconfig type>`, which is a wider blast radius than the question

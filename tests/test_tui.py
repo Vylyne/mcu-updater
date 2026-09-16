@@ -12,7 +12,7 @@ import dataclasses
 
 import pytest
 
-from mcu_updater import cli, tui, typelist
+from mcu_updater import cli, firmware, tui, typelist
 from mcu_updater.config import Registry
 from mcu_updater.settings import Settings
 
@@ -98,12 +98,19 @@ def test_add_mcu_does_not_offer_a_non_kconfig_type(c, monkeypatch, capsys):
     assert not any("roadrunner" in line for line in options)
 
 
+def _roadrunner_on_bus(fake_root, serial: str) -> None:
+    """A Roadrunner as it really enumerates (discovery/roadrunner.py's
+    `usb-Vylyne_Roadrunner_<serial>-if00`): its chipset token is `Roadrunner`,
+    never the type's `chipset: rp2040`."""
+    (fake_root / "bus" / f"usb-Vylyne_Roadrunner_{serial}-if00").write_text("", encoding="utf-8")
+
+
 def test_add_serial_on_a_non_kconfig_type_tracks_a_detected_board(
     c, fake_root, monkeypatch, capsys
 ):
-    make_device(fake_root / "bus", "Vylyne", "rp2040", "RR-NEW")
-    # A board already tracked under the other type is never offered.
-    make_device(fake_root / "bus", "Klipper", "rp2040", RR_SERIAL)
+    _roadrunner_on_bus(fake_root, "RR-NEW")
+    # A board already tracked under a type is never offered.
+    _roadrunner_on_bus(fake_root, RR_SERIAL)
 
     answers(monkeypatch, "2", "1")  # roadrunner, then the detected board
     tui.menu_add_serial()
@@ -116,6 +123,20 @@ def test_add_serial_on_a_non_kconfig_type_tracks_a_detected_board(
     assert Registry.load(c.paths).declared_serials("roadrunner") == [RR_SERIAL, "RR-NEW"]
     with open(c.paths.main_config, encoding="utf-8") as fh:
         assert "RR-NEW" in fh.read()
+
+
+def test_add_serial_on_a_kconfig_type_still_filters_by_chipset(
+    c, fake_root, monkeypatch, capsys
+):
+    make_device(fake_root / "bus", "katapult", "stm32f072xb", "BBBB")
+    make_device(fake_root / "bus", "katapult", "rp2040", "CCCC")
+    _roadrunner_on_bus(fake_root, "RR-NEW")
+
+    answers(monkeypatch, "1", "0")  # board, then cancel
+    tui.menu_add_serial()
+
+    options = _menu_lines(capsys.readouterr().out, "Select a serial to add to 'board'")
+    assert options == ["1. BBBB (detected on bus)", "2. Enter serial manually", "0. Cancel"]
 
 
 def test_remove_serial_on_a_non_kconfig_type_untracks_it(c, monkeypatch, capsys):
@@ -159,6 +180,42 @@ def test_flash_single_device_passes_every_key_the_handler_reads(c, monkeypatch):
     assert called == [
         argparse.Namespace(type="board", serial="AAAA-if00", yes=False, force=False)
     ]
+
+
+def test_build_never_asks_a_cmake_type_for_a_firmware_target(c, monkeypatch):
+    """`build_fw_cmd`'s cmake and platformio branches ignore `-f`."""
+    called: list[argparse.Namespace] = []
+    monkeypatch.setattr(cli, "build_fw_cmd", called.append)
+    asked = answers(monkeypatch, "2")  # roadrunner - and nothing else is asked
+    tui.menu_build()
+    assert asked == ["> "]
+    assert called == [argparse.Namespace(type="roadrunner", fw=None, jobs=None)]
+
+
+def test_build_never_asks_a_platformio_type_for_a_firmware_target(c, fake_root, monkeypatch):
+    tree = fake_root / "knomi"
+    tree.mkdir()
+    (tree / "platformio.ini").write_text("[env:knomi]\n", encoding="utf-8")
+    with open(c.paths.main_config, "a", encoding="utf-8", newline="\n") as fh:
+        fh.write(
+            f"\n[firmware knomi_serial]\nsource: {tree}\nbuilder: platformio\n\n"
+            "[type knomi]\nfirmware: knomi_serial\nplatformio_env: knomi\n"
+        )
+    called: list[argparse.Namespace] = []
+    monkeypatch.setattr(cli, "build_fw_cmd", called.append)
+    answers(monkeypatch, "3")
+    tui.menu_build()
+    assert called == [argparse.Namespace(type="knomi", fw=None, jobs=None)]
+
+
+def test_build_still_asks_a_kconfig_type_for_a_firmware_target(c, monkeypatch, capsys):
+    called: list[argparse.Namespace] = []
+    monkeypatch.setattr(cli, "build_fw_cmd", called.append)
+    answers(monkeypatch, "1", "1")  # board, then the first firmware target
+    tui.menu_build()
+    assert "Select firmware target:" in capsys.readouterr().out
+    first = firmware.names(c.paths)[0]
+    assert called == [argparse.Namespace(type="board", fw=first, jobs=None)]
 
 
 def test_a_refused_add_prints_the_error_and_returns_to_the_menu(c, monkeypatch, capsys):

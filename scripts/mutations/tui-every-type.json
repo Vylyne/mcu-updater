@@ -23,6 +23,11 @@
       "name": "add-serial reaches the CLI handler for a non-kconfig type",
       "find": "    if entry is None:\n        return\n    untracked = _untracked_for(entry, entries)\n",
       "replace": "    if entry is None or entry.builder != \"kconfig_make\":\n        return\n    untracked = _untracked_for(entry, entries)\n"
+    },
+    {
+      "name": "only a kconfig type's detected boards are narrowed to its chipset",
+      "find": "    chipset = (entry.chipset or None) if filters_by_chipset(entry) else None\n",
+      "replace": "    chipset = entry.chipset or None\n"
     }
   ]
 }

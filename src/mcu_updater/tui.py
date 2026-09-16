@@ -55,6 +55,25 @@ def flashable_type(entry: TypeEntry) -> bool:
     return entry.builder in FLASH_BUILDERS
 
 
+#: Builders whose by-id name carries the chipset, so detected boards are
+#: narrowed to the type's own. A Katapult or Klipper name does; a Roadrunner's
+#: (`usb-Vylyne_Roadrunner_<serial>`) does not, so every other builder lists
+#: every untracked board, the way `status` does.
+CHIPSET_FILTERED_BUILDERS = frozenset({KCONFIG_BUILDER})
+
+#: Builders whose `build_fw_cmd` path reads `-f`. Its cmake and platformio
+#: branches ignore it, so the menu does not ask.
+BUILD_FW_BUILDERS = frozenset({KCONFIG_BUILDER})
+
+
+def filters_by_chipset(entry: TypeEntry) -> bool:
+    return entry.builder in CHIPSET_FILTERED_BUILDERS
+
+
+def build_asks_fw(entry: TypeEntry) -> bool:
+    return entry.builder in BUILD_FW_BUILDERS
+
+
 def _entries() -> list[TypeEntry]:
     """Every declared type, whatever builds it. Always a fresh read."""
     return typelist.load(cli.ctx().paths)
@@ -157,14 +176,16 @@ def pick_fw_target() -> str | None:
 
 
 def _untracked_for(entry: TypeEntry, entries: list[TypeEntry]) -> list[BusDevice]:
-    """Boards on the bus that no declared type tracks, of this type's chipset.
+    """Boards on the bus that no declared type tracks.
 
     The discovery `status` uses - `find_untracked` against every declared
     type's serials, whatever builds it - so a board tracked under a CMake type
-    is never offered for adoption somewhere else.
+    is never offered for adoption somewhere else. Narrowed to this type's
+    chipset only where the by-id name carries one (`filters_by_chipset`).
     """
     known = {serial for e in entries for serial in e.serials}
-    return find_untracked(cli.ctx().paths, known, chipset=entry.chipset or None)
+    chipset = (entry.chipset or None) if filters_by_chipset(entry) else None
+    return find_untracked(cli.ctx().paths, known, chipset=chipset)
 
 
 def pick_serial_for_type(entry: TypeEntry, entries: list[TypeEntry]) -> str | None:
@@ -317,9 +338,14 @@ def menu_build() -> None:
     mcu_type = pick_mcu_type(allow_new=True, accepts=buildable_type)
     if mcu_type is None:
         return
-    fw = pick_fw_target()
-    if fw is None:
+    entry = next((e for e in _entries() if e.name == mcu_type), None)
+    if entry is None:
         return
+    fw: str | None = None
+    if build_asks_fw(entry):
+        fw = pick_fw_target()
+        if fw is None:
+            return
     call_action(cli.build_fw_cmd, argparse.Namespace(type=mcu_type, fw=fw, jobs=None))
 
 

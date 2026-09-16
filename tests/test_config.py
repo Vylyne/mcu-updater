@@ -451,8 +451,8 @@ def test_add_type_refuses_an_undeclared_family(paths):
     `katapult_installed` before a single line is written - each name it
     assembles must already have a `[firmware ...]` section, the same rule
     `Registry.load` enforces for a hand-edited file. A regression that drops
-    this check would let a typo'd application silently resolve to the
-    `~/<name>` convention again."""
+    this check would leave the typo to the save-time revalidation instead,
+    after the type was already added in memory."""
     write_main_config(paths, with_base_firmwares(""))
     reg = Registry.load(paths)
 

@@ -28,7 +28,8 @@ def add_serial(paths: Paths, name: str, serial: str) -> tuple[bool, str]:
         if UNPROVISIONED_RE.fullmatch(serial):
             raise UnprovisionedSerialError(
                 f"'{serial}' is an unprovisioned Roadrunner's diagnostic identity, "
-                f"not a stable serial - provision it first, then track the "
+                f"not a stable serial - provision it first (the web UI's Provision "
+                f"Roadrunner action, or fw.roadrunner.provision), then track the "
                 f"resulting RR-... serial.",
                 serial=serial,
             )

@@ -11,7 +11,7 @@ import pytest
 from mcu_updater.build import makefile_patches
 from mcu_updater.config import MakefilePatch, McuType
 
-from .conftest import seed_base_firmwares
+from .conftest import save_registry, seed_base_firmwares
 
 ORIGINAL = b"# klipper src makefile\nsrc-y += sched.c\n"
 
@@ -164,7 +164,7 @@ def test_patches_are_reverted_when_make_blows_up(paths, settings, fake_root, mon
     mcu.fw("klipper").makefile_patches = [
         MakefilePatch(file="src/Makefile", line="src-y += buffer.c")
     ]
-    reg.save(paths)
+    save_registry(reg, paths)
 
     os.makedirs(paths.type_dir("board"), exist_ok=True)
     with open(paths.config_file("board", "klipper"), "w", encoding="utf-8") as fh:

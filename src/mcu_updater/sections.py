@@ -34,7 +34,7 @@ class TypeSection:
     """One declared type: what it is called, where it is written.
 
     ``section`` is the header as it appears in the file, not one derived from
-    ``name`` - `save()` writes back to whatever section a type already has
+    ``name`` - `Registry._save()` writes back to whatever section a type already has
     rather than rebuilding the header, so an untouched config never diffs.
     """
 

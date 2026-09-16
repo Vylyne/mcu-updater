@@ -101,6 +101,17 @@ def cmd_tokens(cmd_line: str) -> list[str]:
     return cmd_line.split()
 
 
+def save_registry(reg, paths: Paths) -> None:
+    """Write a fixture registry to the fake install, as it stands.
+
+    Production writes only through `Registry.mutate`, which is why `_save` is
+    private. A fixture building its starting state has no lock to contend for
+    and nothing to re-read, so it is the one place outside config.py's own
+    tests that writes directly - and only through here.
+    """
+    reg._save(paths)
+
+
 def write_main_config(paths: Paths, text: str) -> None:
     """Write `text` as the whole mcu-updater.cfg of the fake install."""
     os.makedirs(os.path.dirname(paths.main_config), exist_ok=True)

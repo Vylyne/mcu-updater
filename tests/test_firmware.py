@@ -17,7 +17,7 @@ from mcu_updater.config import Registry
 from mcu_updater.errors import ConfigCorruptError, SourceTreeMissingError
 from mcu_updater.firmware import FirmwareFamily
 
-from .conftest import seed_base_firmwares
+from .conftest import save_registry, seed_base_firmwares
 
 
 def _write_firmware(paths, name, **keys):
@@ -239,7 +239,7 @@ def _registry(paths) -> Registry:
     seed_base_firmwares(paths)
     reg = Registry.load(paths)
     reg.add_type("board", "stm32f072xb")
-    reg.save(paths)
+    save_registry(reg, paths)
     return reg
 
 
@@ -322,7 +322,7 @@ def test_a_declared_family_gets_its_own_per_type_keys(paths):
     reg.add_type("carto_v4", "stm32g431xx")
     reg.get("carto_v4").firmwares = ["cartographer", "katapult"]
     reg.get("carto_v4").fw("cartographer").extra_args = "-DSCANNER"
-    reg.save(paths)
+    save_registry(reg, paths)
 
     reloaded = Registry.load(paths)
     assert reloaded.get("carto_v4").fw_get("cartographer").extra_args == "-DSCANNER"
@@ -335,7 +335,7 @@ def test_a_declared_family_appears_in_a_types_own_ordering(paths):
     reg = Registry.load(paths)
     reg.add_type("carto_v4", "stm32g431xx")
     reg.get("carto_v4").firmwares = ["klipper", "katapult", "cartographer"]
-    reg.save(paths)
+    save_registry(reg, paths)
 
     order = Registry.load(paths).get("carto_v4").fw_order()
     assert order[:2] == ["klipper", "katapult"]
@@ -354,7 +354,7 @@ def test_a_declared_family_builds_from_its_own_tree(paths, settings, fake_root):
     seed_base_firmwares(paths)
     reg = Registry.load(paths)
     reg.add_type("carto_v4", "stm32g431xx")
-    reg.save(paths)
+    save_registry(reg, paths)
     _write_saved_config(paths, "carto_v4", "cartographer")
 
     with pytest.raises(SourceTreeMissingError) as exc:
@@ -393,7 +393,7 @@ def test_a_type_runs_klipper_unless_it_says_otherwise(paths):
     seed_base_firmwares(paths)
     reg = Registry.load(paths)
     reg.add_type("bttebb36", "stm32g0b1xx", katapult_installed=False)
-    reg.save(paths)
+    save_registry(reg, paths)
     assert Registry.load(paths).get("bttebb36").application() == "klipper"
 
 
@@ -405,7 +405,7 @@ def test_firmware_is_written_even_for_the_plain_klipper_default(paths):
     seed_base_firmwares(paths)
     reg = Registry.load(paths)
     reg.add_type("bttebb36", "stm32g0b1xx", katapult_installed=False)
-    reg.save(paths)
+    save_registry(reg, paths)
     assert "firmware: klipper" in open(paths.main_config, encoding="utf-8").read()
 
 
@@ -416,7 +416,7 @@ def test_a_bootloader_is_recorded_explicitly_now(paths):
     seed_base_firmwares(paths)
     reg = Registry.load(paths)
     reg.add_type("bttebb36", "stm32g0b1xx")  # katapult_installed defaults True
-    reg.save(paths)
+    save_registry(reg, paths)
     assert "firmware: klipper, katapult" in open(paths.main_config, encoding="utf-8").read()
     assert Registry.load(paths).get("bttebb36").firmwares == ["klipper", "katapult"]
 
@@ -427,7 +427,7 @@ def test_a_declared_application_round_trips(paths):
     reg = Registry.load(paths)
     reg.add_type("carto_v4", "stm32g431xx")
     reg.get("carto_v4").firmwares = ["cartographer", "katapult"]
-    reg.save(paths)
+    save_registry(reg, paths)
 
     assert Registry.load(paths).get("carto_v4").application() == "cartographer"
 
@@ -440,7 +440,7 @@ def test_a_misspelt_family_is_refused_rather_than_defaulted(paths):
     seed_base_firmwares(paths)
     reg = Registry.load(paths)
     reg.add_type("carto_v4", "stm32g431xx")
-    reg.save(paths)
+    save_registry(reg, paths)
     text = open(paths.main_config, encoding="utf-8").read()
     with open(paths.main_config, "w", encoding="utf-8") as fh:
         fh.write(text.replace("[type carto_v4]", "[type carto_v4]\nfirmware: cartographr"))
@@ -457,7 +457,7 @@ def test_a_type_lists_only_the_families_it_uses(paths):
     reg = Registry.load(paths)
     reg.add_type("carto_v4", "stm32g431xx")
     reg.get("carto_v4").firmwares = ["cartographer", "katapult"]
-    reg.save(paths)
+    save_registry(reg, paths)
 
     mcu = Registry.load(paths).get("carto_v4")
     assert mcu.families() == ["cartographer", "katapult"]
@@ -471,7 +471,7 @@ def test_a_board_with_no_bootloader_lists_only_its_application(paths):
     seed_base_firmwares(paths)
     reg = Registry.load(paths)
     reg.add_type("bare", "stm32f072xb", katapult_installed=False)
-    reg.save(paths)
+    save_registry(reg, paths)
     assert Registry.load(paths).get("bare").families() == ["klipper"]
 
 

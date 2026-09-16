@@ -17,16 +17,24 @@ from __future__ import annotations
 
 import argparse
 import pathlib
+import sys
+import types
 
 import pytest
 
-from mcu_updater import cli, flashers, typelist
+from mcu_updater import cli, flashers, tracking, typelist
 from mcu_updater.config import Registry
 from mcu_updater.discovery import canbus
-from mcu_updater.errors import SerialTrackedElsewhereError, UnprovisionedSerialError, UpdaterError
+from mcu_updater.errors import (
+    BusyError,
+    SerialTrackedElsewhereError,
+    UnprovisionedSerialError,
+    UpdaterError,
+)
+from mcu_updater.lock import ExclusiveLock
 from mcu_updater.settings import Settings
 
-from .conftest import make_device, seed_base_firmwares
+from .conftest import make_device, save_registry, seed_base_firmwares
 
 ENV = "knomi_toolchanger"
 
@@ -43,7 +51,7 @@ def c(paths, fake_root, monkeypatch):
     reg = Registry.load(paths)
     reg.add_type("board", "stm32f072xb")
     reg.add_serial("board", "AAAA-if00")
-    reg.save(paths)
+    save_registry(reg, paths)
 
     # Saved menuconfig answers, or `select()` correctly skips it as unbuildable
     # and the type never reaches the build half at all.
@@ -730,7 +738,7 @@ def test_an_ambiguous_serial_still_asks_for_a_type(c, cmake_flashable, monkeypat
 
     reg = Registry.load(c.paths)
     reg.add_serial("board", RR_SERIAL)
-    reg.save(c.paths)
+    save_registry(reg, c.paths)
     monkeypatch.setattr(cli, "_confirm", lambda prompt: True)
 
     with pytest.raises(AmbiguousSerialError) as exc:
@@ -805,3 +813,199 @@ def test_remove_type_removes_a_cmake_type(c):
     _declare_roadrunner(c.paths, "RR-ONE")
     cli.remove_mcu_type(argparse.Namespace(type="roadrunner", force=True))
     assert "roadrunner" not in {e.name for e in typelist.load(c.paths)}
+
+
+# --------------------------------------------------------------------------
+# registry writes: one path, through the registry lock
+# --------------------------------------------------------------------------
+
+
+UNPROVISIONED = "RR-UNPROVISIONED-50543165187A4D1C"
+
+
+def _main(fake_root, monkeypatch, argv: list[str]) -> int:
+    """Drive `cli.main` against the test tree; the exit code it ends with.
+
+    Through `main` rather than the handler, because "a refusal prints a message
+    and exits non-zero" is `main`'s top-level `UpdaterError` handler at work -
+    a handler called directly raises, which is not what a user sees."""
+    monkeypatch.setenv("MCU_UPDATER_HOME", str(fake_root))
+    monkeypatch.setenv("MCU_UPDATER_FAKE_BUS", str(fake_root / "bus"))
+    monkeypatch.delenv("MCU_UPDATER_CONFIG_DIR", raising=False)
+    monkeypatch.delenv("MCU_UPDATER_DATA_DIR", raising=False)
+    try:
+        cli.main(argv)
+    except SystemExit as exc:
+        return exc.code if isinstance(exc.code, int) else 1
+    return 0
+
+
+def test_the_flash_prompt_tracks_a_new_serial_through_tracking(
+    c, fake_root, captured, monkeypatch
+):
+    """The add-prompt used to write with no lock, onto a registry read before
+    the prompt - so an edit the panel made while the prompt waited was erased
+    by the save."""
+    calls: list[tuple[str, str]] = []
+    real = tracking.add_serial
+
+    def spy(paths, name, serial):
+        calls.append((name, serial))
+        return real(paths, name, serial)
+
+    monkeypatch.setattr(tracking, "add_serial", spy)
+    monkeypatch.setattr(cli, "_confirm", lambda prompt: True)
+
+    code = _main(fake_root, monkeypatch, ["flash", "-t", "board", "-s", "BBBB-if00", "-y"])
+
+    assert code == 0
+    assert calls == [("board", "BBBB-if00")]
+    assert Registry.load(c.paths).declared_serials("board") == ["AAAA-if00", "BBBB-if00"]
+
+
+def test_the_flash_prompt_refuses_a_serial_tracked_elsewhere_while_it_waited(
+    c, fake_root, cmake_flashable, captured, monkeypatch, capsys
+):
+    """The serial was untracked when the prompt was asked, and tracked under
+    another type by the time it was answered. The write re-checks under the
+    lock, so one board is not tracked under two types."""
+
+    def confirm_while_the_panel_tracks_it(prompt):
+        with Registry.mutate(c.paths, "the panel") as writable:
+            writable.add_declared_serial("roadrunner", "BBBB-if00")
+        return True
+
+    monkeypatch.setattr(cli, "_confirm", confirm_while_the_panel_tracks_it)
+
+    code = _main(fake_root, monkeypatch, ["flash", "-t", "board", "-s", "BBBB-if00", "-y"])
+
+    assert code == 1
+    assert "already tracked under 'roadrunner'" in capsys.readouterr().err
+    assert Registry.load(c.paths).declared_serials("board") == ["AAAA-if00"]
+    assert captured == []
+
+
+def test_flash_refuses_a_serial_tracked_elsewhere_with_a_message(
+    c, fake_root, cmake_flashable, captured, monkeypatch, capsys
+):
+    monkeypatch.setattr(cli, "_confirm", lambda prompt: True)
+
+    code = _main(fake_root, monkeypatch, ["flash", "-t", "board", "-s", RR_SERIAL, "-y"])
+
+    err = capsys.readouterr().err
+    assert code == 1
+    assert err.startswith("ERROR: ") and "Traceback" not in err
+    assert RR_SERIAL not in Registry.load(c.paths).declared_serials("board")
+    assert captured == []
+
+
+def test_the_flash_prompt_refuses_an_unprovisioned_roadrunner_serial(
+    c, fake_root, cmake_flashable, captured, monkeypatch, capsys
+):
+    """`add_declared_serial` has no idea what an unprovisioned serial is, so
+    answering "y" persisted the RP2040's flash UID."""
+    monkeypatch.setattr(cli, "_confirm", lambda prompt: True)
+
+    code = _main(
+        fake_root, monkeypatch, ["flash", "-t", "roadrunner", "-s", UNPROVISIONED, "-y"]
+    )
+
+    err = capsys.readouterr().err
+    assert code == 1
+    assert err.startswith("ERROR: ") and "unprovisioned Roadrunner" in err
+    assert UNPROVISIONED not in Registry.load(c.paths).declared_serials("roadrunner")
+    assert captured == []
+
+
+def _adopting(monkeypatch, *serials: str) -> None:
+    """add-mcu as far as the adoption prompt, with every candidate accepted."""
+    monkeypatch.setattr(
+        cli,
+        "_build_interactive",
+        lambda c, t, fw: types.SimpleNamespace(bin_path="k.bin", uf2_path=None),
+    )
+    monkeypatch.setattr(cli, "flash_initial_bootloader", lambda *a, **kw: None)
+    monkeypatch.setattr(
+        cli,
+        "adoptable_devices",
+        lambda paths, before, chipset: [
+            types.SimpleNamespace(serial=s, path=f"/dev/serial/by-id/{s}") for s in serials
+        ],
+    )
+    monkeypatch.setattr(cli, "_confirm", lambda prompt: True)
+
+
+def test_add_mcu_adopts_a_new_board_through_tracking(c, fake_root, monkeypatch):
+    _adopting(monkeypatch, "CCCC-if00")
+
+    code = _main(fake_root, monkeypatch, ["add-mcu", "-t", "board"])
+
+    assert code == 0
+    assert Registry.load(c.paths).declared_serials("board") == ["AAAA-if00", "CCCC-if00"]
+
+
+def test_add_mcu_refuses_to_adopt_a_board_tracked_under_another_type(
+    c, fake_root, monkeypatch, capsys
+):
+    """Adoption wrote with `reg.add_serial`, which looks only at the type it
+    adds to - a board another type already tracked became tracked twice."""
+    _declare_roadrunner(c.paths, "RR-ONE")
+    _adopting(monkeypatch, "RR-ONE")
+
+    code = _main(fake_root, monkeypatch, ["add-mcu", "-t", "board"])
+
+    err = capsys.readouterr().err
+    assert code == 1
+    assert "already tracked under 'roadrunner'" in err
+    assert Registry.load(c.paths).declared_serials("board") == ["AAAA-if00"]
+
+
+def _registry_lock_is_held(c, monkeypatch) -> None:
+    """The registry lock refusing, on every platform - flock is a no-op on
+    Windows, so really holding it proves nothing there."""
+    real = ExclusiveLock.acquire
+
+    def acquire(self, label):
+        if self.path == c.paths.registry_lock_file:
+            raise BusyError("another firmware operation is already running (the panel).")
+        return real(self, label)
+
+    monkeypatch.setattr(ExclusiveLock, "acquire", acquire)
+
+
+def test_add_type_writes_under_the_registry_lock(c, fake_root, monkeypatch, capsys):
+    _registry_lock_is_held(c, monkeypatch)
+
+    code = _main(fake_root, monkeypatch, ["add-type", "-t", "newboard", "-c", "rp2040"])
+
+    err = capsys.readouterr().err
+    assert code == 1
+    assert err.startswith("ERROR: ") and "already running" in err
+    assert "newboard" not in Registry.load(c.paths).names()
+
+
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="flock is unavailable on Windows; the lock degrades to a no-op there",
+)
+def test_add_type_is_refused_while_the_registry_lock_is_really_held(
+    c, fake_root, monkeypatch, capsys
+):
+    with ExclusiveLock(c.paths, path=c.paths.registry_lock_file).acquire("the panel"):
+        code = _main(fake_root, monkeypatch, ["add-type", "-t", "newboard", "-c", "rp2040"])
+
+    assert code == 1
+    assert "the panel" in capsys.readouterr().err
+    assert "newboard" not in Registry.load(c.paths).names()
+
+
+def test_add_type_writes_when_the_lock_is_free(c, fake_root, monkeypatch):
+    code = _main(fake_root, monkeypatch, ["add-type", "-t", "newboard", "-c", "rp2040"])
+
+    assert code == 0
+    assert Registry.load(c.paths).get("newboard").chipset == "rp2040"
+
+
+def test_registry_has_no_public_save():
+    """`Registry.mutate` is the one write path: lock, re-read, change, save."""
+    assert not hasattr(Registry, "save")

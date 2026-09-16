@@ -19,7 +19,7 @@ from mcu_updater.agent.rpc import ERR_INVALID_PARAMS, ERR_METHOD_NOT_FOUND, RpcE
 from mcu_updater.cfgdoc import CfgDocument
 from mcu_updater.settings import Settings
 
-from .conftest import make_device, read_main_config, write_main_config, write_settings
+from .conftest import make_device, read_main_config, save_registry, write_main_config, write_settings
 
 
 @pytest.fixture
@@ -130,7 +130,7 @@ def test_status_surfaces_extra_repos(api, paths):
 
     reg = Registry.load(paths)
     reg.get("flylllplusbuffer").fw("klipper").extra_repos = ["/home/pi/buffer_manager"]
-    reg.save(paths)
+    save_registry(reg, paths)
 
     types = {t["name"]: t for t in api.dispatch("fw.type.list")["types"]}
     assert types["flylllplusbuffer"]["klipper"]["extra_repos"] == ["/home/pi/buffer_manager"]

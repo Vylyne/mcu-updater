@@ -14,14 +14,14 @@ from mcu_updater.errors import (
     SourceTreeMissingError,
 )
 
-from .conftest import cmd_tokens, seed_base_firmwares
+from .conftest import cmd_tokens, save_registry, seed_base_firmwares
 
 
 def _registry(paths) -> Registry:
     seed_base_firmwares(paths)
     reg = Registry.load(paths)
     reg.add_type("board", "stm32f072xb")
-    reg.save(paths)
+    save_registry(reg, paths)
     return reg
 
 
@@ -238,7 +238,7 @@ def test_extra_args_are_split_shell_style(paths, settings):
     settings.dry_run = True
     reg = _registry(paths)
     reg.get("board").fw("klipper").extra_args = 'FOO=bar BAZ="a b"'
-    reg.save(paths)
+    save_registry(reg, paths)
     _write_config(paths)
 
     cmds: list[str] = []

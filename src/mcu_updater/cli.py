@@ -41,7 +41,6 @@ from .devices import (
 )
 from .errors import (
     ConfigNotFoundError,
-    DuplicateTypeError,
     UnknownSerialError,
     UpdaterError,
 )
@@ -121,8 +120,11 @@ def add_mcu_type(args: argparse.Namespace) -> None:
             print("Aborting add.")
             return
 
-    try:
-        reg.add_type(
+    # The prompt above read without the lock, and must: a prompt must not hold
+    # the registry. The write re-reads under it, so an edit made while the
+    # prompt waited is kept rather than overwritten by that earlier read.
+    with Registry.mutate(c.paths, f"add type {args.type}") as writable:
+        writable.add_type(
             args.type,
             args.chipset,
             klipper_args=args.klipper_args,
@@ -130,9 +132,6 @@ def add_mcu_type(args: argparse.Namespace) -> None:
             katapult_installed=not args.no_katapult,
             overwrite=True,
         )
-    except DuplicateTypeError:  # pragma: no cover - overwrite=True can't raise it
-        raise
-    reg.save(c.paths)
     print(f"Successfully added/updated MCU Type: {args.type}")
 
 
@@ -836,12 +835,14 @@ def flash_fw_cmd(args: argparse.Namespace) -> None:
             ):
                 print("Aborted.")
                 sys.exit(1)
-            # The declared-section writer, which delegates to `add_serial` for a
-            # kconfig type and edits the type's own section for any other - so a
-            # CMake type gains an identity without the kconfig registry claiming
-            # its build.
-            reg.add_declared_serial(args.type, args.serial)
-            reg.save(c.paths)
+            # Asked above, written here: the prompt holds no lock. `add-serial`'s
+            # own path, so the write re-checks under the registry lock what the
+            # read before the prompt could not promise still holds - tracked
+            # under no other type, not an unprovisioned Roadrunner's diagnostic
+            # identity - and a CMake type gains an identity without the kconfig
+            # registry claiming its build. The flash below reads the registry
+            # afresh, so the stale `reg` is not consulted again.
+            tracking.add_serial(c.paths, args.type, args.serial)
             print(f"Added serial {args.serial} to {args.type}")
             mcu_type = args.type
     else:
@@ -994,14 +995,13 @@ def add_mcu(args: argparse.Namespace) -> None:
         )
         return
 
-    reg = c.registry()
     for dev in candidates:
         if _confirm(
             f"Found unassigned Katapult device: {dev.serial} ({dev.path}). "
             f"Add it to '{args.type}'?"
         ):
-            if reg.add_serial(args.type, dev.serial):
-                reg.save(c.paths)
+            added, _ = tracking.add_serial(c.paths, args.type, dev.serial)
+            if added:
                 print(f"Added serial {dev.serial} to {args.type}")
 
 

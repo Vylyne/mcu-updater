@@ -362,7 +362,10 @@ class Registry:
 
         ``with Registry.mutate(paths, "add serial") as reg: reg.add_serial(...)``
 
-        The load happens *inside* the lock, deliberately. `save()` rewrites the
+        The only way a registry reaches disk: `_save` is private so that no caller
+        can write one it read outside the lock.
+
+        The load happens *inside* the lock, deliberately. `_save()` rewrites the
         whole document, so saving a Registry that was read before someone else's
         edit erases that edit - and the agent and the CLI are separate processes
         that both write this file. Re-reading under the lock makes that impossible
@@ -379,9 +382,9 @@ class Registry:
         with ExclusiveLock(paths, path=paths.registry_lock_file).acquire(label):
             reg = cls.load(paths)
             yield reg
-            reg.save(paths)
+            reg._save(paths)
 
-    def save(self, paths: Paths) -> None:
+    def _save(self, paths: Paths) -> None:
         """Atomic write, preserving everything the document already had.
 
         Writes the types this registry holds and deletes nothing. A section is
@@ -416,7 +419,7 @@ class Registry:
                 doc.remove_option(section, "canbus_uuids")
 
             # Always written, never omitted as a restated default: load() now
-            # refuses a type with no firmware: key at all, so save() cannot
+            # refuses a type with no firmware: key at all, so _save() cannot
             # leave it implicit even for the plain-klipper case.
             doc.set(section, "firmware", ", ".join(mcu.firmwares))
 

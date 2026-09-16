@@ -17,7 +17,7 @@ from mcu_updater.errors import ConfigCorruptError
 from mcu_updater.providers import cmake as cmake_mod
 from mcu_updater.providers import pio as pio_mod
 
-from .conftest import read_main_config, write_main_config
+from .conftest import read_main_config, save_registry, write_main_config
 
 FAMILIES = (
     "[firmware klipper]\nsource: ~/klipper\n\n"
@@ -171,7 +171,7 @@ def test_a_saved_profile_uses_the_new_spelling(paths):
     write_main_config(paths, FAMILIES + "[type board]\nchipset: stm32f072xb\nfirmware: klipper\n")
     reg = Registry.load(paths)
     reg.get("board").profile = "config.Y"
-    reg.save(paths)
+    save_registry(reg, paths)
     text = read_main_config(paths)
     assert "kconfig_make_profile: config.Y" in text
     assert "\nprofile:" not in text

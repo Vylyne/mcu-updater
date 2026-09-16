@@ -17,7 +17,7 @@ from mcu_updater.config import Registry
 from mcu_updater.errors import ConfigCorruptError
 from mcu_updater.providers import pio
 
-from .conftest import seed_base_firmwares, with_base_firmwares
+from .conftest import save_registry, seed_base_firmwares, with_base_firmwares
 
 # --------------------------------------------------------------------------
 # reading
@@ -81,7 +81,7 @@ def test_a_registry_round_trips_without_changing_the_file(paths):
 
     reg = Registry.load(paths)
     assert "board" in reg.names()
-    reg.save(paths)
+    save_registry(reg, paths)
 
     text = open(paths.registry_file, encoding="utf-8").read()
     assert "[type board]" in text
@@ -91,7 +91,7 @@ def test_a_new_type_is_written_as_type(paths):
     seed_base_firmwares(paths)
     reg = Registry.load(paths)
     reg.add_type("carto_v4", "stm32g431xx")
-    reg.save(paths)
+    save_registry(reg, paths)
 
     assert "[type carto_v4]" in open(paths.registry_file, encoding="utf-8").read()
 

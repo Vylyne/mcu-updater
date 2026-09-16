@@ -275,7 +275,7 @@ class RegistryMixin(_Base):
         """The firmware family named in `args`, checked against what exists.
 
         Refused rather than accepted-and-broken: `firmware.resolve` now refuses
-        an undeclared family outright, and `Registry.save` refuses to persist
+        an undeclared family outright, and `Registry._save` refuses to persist
         one too, but both of those fire only once something tries to build,
         flash, or write the type - a typo here would otherwise sit accepted
         until then. This is the same rule, checked immediately, with a message

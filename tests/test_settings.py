@@ -6,6 +6,8 @@ from mcu_updater.config import Registry
 from mcu_updater.errors import ConfigError
 from mcu_updater.settings import Settings, load_settings, save_settings
 
+from .conftest import save_registry
+
 
 def test_missing_file_yields_defaults(paths):
     s = load_settings(paths.settings_file)
@@ -239,7 +241,7 @@ def test_saving_the_registry_keeps_the_settings(paths, live_registry_text):
 
     reg = Registry.load(paths)
     reg.add_serial("bttebb36", "NEWBOARD-if00")
-    reg.save(paths)
+    save_registry(reg, paths)
 
     assert load_settings(paths.settings_file).enable_flashing is True
     assert "NEWBOARD-if00" in Registry.load(paths).get("bttebb36").serials

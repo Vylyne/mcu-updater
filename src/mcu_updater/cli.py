@@ -842,8 +842,11 @@ def flash_fw_cmd(args: argparse.Namespace) -> None:
             # identity - and a CMake type gains an identity without the kconfig
             # registry claiming its build. The flash below reads the registry
             # afresh, so the stale `reg` is not consulted again.
-            tracking.add_serial(c.paths, args.type, args.serial)
-            print(f"Added serial {args.serial} to {args.type}")
+            added, _ = tracking.add_serial(c.paths, args.type, args.serial)
+            if added:
+                print(f"Added serial {args.serial} to {args.type}")
+            else:
+                print(f"Serial {args.serial} is already tracked under {args.type}")
             mcu_type = args.type
     else:
         mcu_type = reg.resolve_declared_serial(args.serial)
@@ -995,14 +998,26 @@ def add_mcu(args: argparse.Namespace) -> None:
         )
         return
 
+    refused = False
     for dev in candidates:
         if _confirm(
             f"Found unassigned Katapult device: {dev.serial} ({dev.path}). "
             f"Add it to '{args.type}'?"
         ):
-            added, _ = tracking.add_serial(c.paths, args.type, dev.serial)
+            # One refused board (tracked under another type, an unprovisioned
+            # identity, the registry busy) says why and moves on: the rest were
+            # just flashed too, and each still deserves its own prompt. Reported
+            # the way `main` reports it, and in the exit code once all are asked.
+            try:
+                added, _ = tracking.add_serial(c.paths, args.type, dev.serial)
+            except UpdaterError as exc:
+                print(f"ERROR: {exc}", file=sys.stderr)
+                refused = True
+                continue
             if added:
                 print(f"Added serial {dev.serial} to {args.type}")
+    if refused:
+        sys.exit(1)
 
 
 # --------------------------------------------------------------------------

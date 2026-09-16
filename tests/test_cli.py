@@ -1006,6 +1006,61 @@ def test_add_type_writes_when_the_lock_is_free(c, fake_root, monkeypatch):
     assert Registry.load(c.paths).get("newboard").chipset == "rp2040"
 
 
+def test_add_type_keeps_an_edit_made_while_the_overwrite_prompt_waited(
+    c, fake_root, monkeypatch
+):
+    """The overwrite prompt reads the registry without the lock. Saving that
+    read would erase whatever was written while the prompt waited; the write
+    re-reads under the lock instead."""
+
+    def confirm_while_the_panel_adds_a_type(prompt):
+        with Registry.mutate(c.paths, "the panel") as writable:
+            writable.add_type("paneltype", "rp2040")
+        return True
+
+    monkeypatch.setattr(cli, "_confirm", confirm_while_the_panel_adds_a_type)
+
+    code = _main(fake_root, monkeypatch, ["add-type", "-t", "board", "-c", "stm32g0b1xx"])
+
+    assert code == 0
+    reloaded = Registry.load(c.paths)
+    assert reloaded.get("board").chipset == "stm32g0b1xx"
+    assert "paneltype" in reloaded.names()
+
+
+def test_add_mcu_offers_the_rest_after_refusing_one(c, fake_root, monkeypatch, capsys):
+    """Every candidate was just flashed; one refusal must not leave the others
+    unasked. The refusal still shows, in the message and the exit code."""
+    _declare_roadrunner(c.paths, "RR-ONE")
+    _adopting(monkeypatch, "RR-ONE", "CCCC-if00")
+
+    code = _main(fake_root, monkeypatch, ["add-mcu", "-t", "board"])
+
+    err = capsys.readouterr().err
+    assert code == 1
+    assert "ERROR: " in err and "already tracked under 'roadrunner'" in err
+    assert Registry.load(c.paths).declared_serials("board") == ["AAAA-if00", "CCCC-if00"]
+
+
+def test_the_flash_prompt_says_so_when_the_serial_was_tracked_while_it_waited(
+    c, fake_root, captured, monkeypatch, capsys
+):
+    def confirm_while_the_panel_tracks_it_here(prompt):
+        with Registry.mutate(c.paths, "the panel") as writable:
+            writable.add_declared_serial("board", "BBBB-if00")
+        return True
+
+    monkeypatch.setattr(cli, "_confirm", confirm_while_the_panel_tracks_it_here)
+
+    code = _main(fake_root, monkeypatch, ["flash", "-t", "board", "-s", "BBBB-if00", "-y"])
+
+    out = capsys.readouterr().out
+    assert code == 0
+    assert "Serial BBBB-if00 is already tracked under board" in out
+    assert "Added serial" not in out
+    assert Registry.load(c.paths).declared_serials("board") == ["AAAA-if00", "BBBB-if00"]
+
+
 def test_registry_has_no_public_save():
     """`Registry.mutate` is the one write path: lock, re-read, change, save."""
     assert not hasattr(Registry, "save")

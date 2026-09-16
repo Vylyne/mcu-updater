@@ -400,7 +400,7 @@ def test_a_type_runs_klipper_unless_it_says_otherwise(paths):
 def test_firmware_is_written_even_for_the_plain_klipper_default(paths):
     """Unlike katapult_installed / extra_args / makefile_patches, firmware: is
     never omitted as a restated default - load() requires it on every
-    type, so save() cannot leave it
+    type, so _save() cannot leave it
     implicit even when there is nothing else to distinguish this type."""
     seed_base_firmwares(paths)
     reg = Registry.load(paths)

@@ -528,7 +528,7 @@ def test_the_file_stays_valid_klipper_style_cfg(paths, live_registry_text):
 
 
 def test_mutate_reads_inside_the_lock_so_it_cannot_clobber(paths, live_registry_text):
-    """save() rewrites the whole document, so a Registry loaded before someone
+    """_save() rewrites the whole document, so a Registry loaded before someone
     else's edit would erase it on save. The agent and the CLI are separate
     processes that both write this file, so mutate() must re-read, not trust a
     caller's earlier load."""
@@ -563,7 +563,7 @@ def test_mutate_writes_nothing_if_the_body_raises(paths, live_registry_text):
 
 
 def test_mutate_refuses_to_save_a_document_typelist_would_refuse_on_load(paths):
-    """`save()` must not persist a document that fails the same check
+    """`_save()` must not persist a document that fails the same check
     `Registry.load` applies - not just the katapult_installed branch that found
     this, but any caller that gets a type's `firmwares` into that shape."""
     seed_base_firmwares(paths)
@@ -842,8 +842,8 @@ def test_a_type_built_by_a_third_builder_is_not_loaded_into_this_registry(paths)
 def test_saving_does_not_delete_a_type_this_registry_does_not_own(paths):
     """The data-loss guard.
 
-    `save()` removes any declared type absent from `self.types`, so a type
-    excluded by `load()` is one `save()` would delete - silently, from a
+    `_save()` removes any declared type absent from `self.types`, so a type
+    excluded by `load()` is one `_save()` would delete - silently, from a
     hand-edited file in printer_data/config. The platformio exclusion has
     always been paired with a matching save-time skip; a third builder needs
     the same, and gets it by inverting both checks rather than adding a second

@@ -11,18 +11,28 @@
   "mutations": [
     {
       "name": "the flash add-prompt tracks through tracking, not an unlocked direct write",
-      "find": "            tracking.add_serial(c.paths, args.type, args.serial)\n",
-      "replace": "            reg.add_declared_serial(args.type, args.serial)\n            reg._save(c.paths)\n"
+      "find": "            added, _ = tracking.add_serial(c.paths, args.type, args.serial)\n",
+      "replace": "            added = reg.add_declared_serial(args.type, args.serial)\n            reg._save(c.paths)\n"
     },
     {
       "name": "add-mcu adoption tracks through tracking, so a board tracked elsewhere is refused",
-      "find": "            added, _ = tracking.add_serial(c.paths, args.type, dev.serial)\n",
-      "replace": "            with Registry.mutate(c.paths, \"adopt\") as writable:\n                added = writable.add_declared_serial(args.type, dev.serial)\n"
+      "find": "                added, _ = tracking.add_serial(c.paths, args.type, dev.serial)\n",
+      "replace": "                with Registry.mutate(c.paths, \"adopt\") as writable:\n                    added = writable.add_declared_serial(args.type, dev.serial)\n"
+    },
+    {
+      "name": "add-mcu reports a refused candidate and still offers the rest",
+      "find": "            except UpdaterError as exc:\n                print(f\"ERROR: {exc}\", file=sys.stderr)\n                refused = True\n                continue\n",
+      "replace": "            except UpdaterError:\n                raise\n"
     },
     {
       "name": "add-type writes under the registry lock",
       "find": "    with Registry.mutate(c.paths, f\"add type {args.type}\") as writable:\n        writable.add_type(\n            args.type,\n            args.chipset,\n            klipper_args=args.klipper_args,\n            katapult_args=args.katapult_args,\n            katapult_installed=not args.no_katapult,\n            overwrite=True,\n        )\n",
       "replace": "    if True:\n        writable = reg\n        writable.add_type(\n            args.type,\n            args.chipset,\n            klipper_args=args.klipper_args,\n            katapult_args=args.katapult_args,\n            katapult_installed=not args.no_katapult,\n            overwrite=True,\n        )\n        writable._save(c.paths)\n"
+    },
+    {
+      "name": "the flash add-prompt does not claim to have added a serial that was already tracked",
+      "find": "            if added:\n                print(f\"Added serial {args.serial} to {args.type}\")\n",
+      "replace": "            if True:\n                print(f\"Added serial {args.serial} to {args.type}\")\n"
     }
   ]
 }

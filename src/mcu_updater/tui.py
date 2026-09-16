@@ -38,6 +38,26 @@ FLASH_BUILDERS = frozenset({KCONFIG_BUILDER, "cmake", "platformio"})
 #: type-level ("Flash its boards individually") before anything is written.
 FLASH_TYPE_LEVEL_BUILDERS = frozenset({KCONFIG_BUILDER, "platformio"})
 
+#: Builders `flash_fw_cmd` flashes one tracked serial for. Not platformio: its
+#: `-s` is matched against a device's port or device_id (`_pio_targets`), never
+#: a by-id serial, so a serial picked here would match no device.
+FLASH_SINGLE_DEVICE_BUILDERS = frozenset({KCONFIG_BUILDER, "cmake"})
+
+#: Builders whose flash device picker also offers untracked boards and manual
+#: entry - `flash -s` then offers to track it. Anything else picks from its
+#: tracked serials only: tracking a new board is add-serial's job.
+FLASH_UNTRACKED_BUILDERS = frozenset({KCONFIG_BUILDER})
+
+#: What a picker says when types are declared but its handler accepts none.
+KCONFIG_ONLY_MENUCONFIG = "No kconfig types are declared - menuconfig works on kconfig types only."
+KCONFIG_ONLY_ADD_MCU = "No kconfig types are declared - add-mcu works on kconfig types only."
+NONE_BUILDABLE = (
+    "No buildable types are declared - build works on kconfig, cmake and platformio types only."
+)
+NONE_FLASHABLE = (
+    "No flashable types are declared - flash works on kconfig, cmake and platformio types only."
+)
+
 
 def every_type(entry: TypeEntry) -> bool:
     return True
@@ -72,6 +92,18 @@ def filters_by_chipset(entry: TypeEntry) -> bool:
 
 def build_asks_fw(entry: TypeEntry) -> bool:
     return entry.builder in BUILD_FW_BUILDERS
+
+
+def flashes_whole_type(entry: TypeEntry) -> bool:
+    return entry.builder in FLASH_TYPE_LEVEL_BUILDERS
+
+
+def flashes_one_device(entry: TypeEntry) -> bool:
+    return entry.builder in FLASH_SINGLE_DEVICE_BUILDERS
+
+
+def flash_offers_untracked(entry: TypeEntry) -> bool:
+    return entry.builder in FLASH_UNTRACKED_BUILDERS
 
 
 def _entries() -> list[TypeEntry]:
@@ -131,6 +163,7 @@ def pick_mcu_type(
     entries: list[TypeEntry] | None = None,
     allow_new: bool = True,
     accepts: Callable[[TypeEntry], bool] = every_type,
+    none_accepted: str = "",
 ) -> str | None:
     """Picker over the declared types `accepts` lets through.
 
@@ -139,11 +172,18 @@ def pick_mcu_type(
     the new name - so a flow that needs a type never dead-ends just because none
     exist yet. That flow declares a kconfig type, which every menu offering it
     accepts.
+
+    `none_accepted` is said when types are declared but `accepts` refuses them
+    all - "no types configured" would be untrue then.
     """
     if entries is None:
         entries = _entries()
     types = [entry for entry in entries if accepts(entry)]
-    if not types:
+    if not types and entries:
+        print(none_accepted or "None of the declared MCU types can be used here.")
+        if not allow_new:
+            return None
+    elif not types:
         if not allow_new:
             print("No MCU types configured yet.")
             return None
@@ -189,17 +229,19 @@ def _untracked_for(entry: TypeEntry, entries: list[TypeEntry]) -> list[BusDevice
 
 
 def pick_serial_for_type(entry: TypeEntry, entries: list[TypeEntry]) -> str | None:
-    """Tracked serials, plus untracked devices detected on the bus, plus manual
-    entry. Used by Flash, where either is a valid target.
+    """Tracked serials, plus - where `flash_offers_untracked` - untracked
+    devices detected on the bus and manual entry. Used by Flash.
 
     Not `canbus_uuids`: `flash -s` resolves against `serials:` only, and would
     offer to add a uuid there."""
     tracked = list(entry.serials)
-    untracked = _untracked_for(entry, entries)
+    offers_untracked = flash_offers_untracked(entry)
+    untracked = _untracked_for(entry, entries) if offers_untracked else []
 
     options = [f"{s} (tracked)" for s in tracked]
     options += [f"{d.serial} (untracked, detected on bus)" for d in untracked]
-    options.append("Enter serial manually")
+    if offers_untracked:
+        options.append("Enter serial manually")
 
     idx = prompt_choice(f"Select a device under '{entry.name}'", options)
     if idx is None:
@@ -316,14 +358,18 @@ def menu_remove_serial() -> None:
 
 
 def menu_add_mcu() -> None:
-    mcu_type = pick_mcu_type(allow_new=True, accepts=kconfig_type)
+    mcu_type = pick_mcu_type(
+        allow_new=True, accepts=kconfig_type, none_accepted=KCONFIG_ONLY_ADD_MCU
+    )
     if mcu_type is None:
         return
     call_action(cli.add_mcu, argparse.Namespace(type=mcu_type))
 
 
 def menu_menuconfig() -> None:
-    mcu_type = pick_mcu_type(allow_new=True, accepts=kconfig_type)
+    mcu_type = pick_mcu_type(
+        allow_new=True, accepts=kconfig_type, none_accepted=KCONFIG_ONLY_MENUCONFIG
+    )
     if mcu_type is None:
         return
     fw = pick_fw_target()
@@ -335,7 +381,9 @@ def menu_menuconfig() -> None:
 
 
 def menu_build() -> None:
-    mcu_type = pick_mcu_type(allow_new=True, accepts=buildable_type)
+    mcu_type = pick_mcu_type(
+        allow_new=True, accepts=buildable_type, none_accepted=NONE_BUILDABLE
+    )
     if mcu_type is None:
         return
     entry = next((e for e in _entries() if e.name == mcu_type), None)
@@ -351,18 +399,20 @@ def menu_build() -> None:
 
 def menu_flash() -> None:
     entries = _entries()
-    mcu_type = pick_mcu_type(entries, allow_new=False, accepts=flashable_type)
+    mcu_type = pick_mcu_type(
+        entries, allow_new=False, accepts=flashable_type, none_accepted=NONE_FLASHABLE
+    )
     if mcu_type is None:
         return
     entry = next(e for e in entries if e.name == mcu_type)
     serials = list(entry.serials)
 
     # Only the scopes `flash_fw_cmd` accepts for this type's builder.
-    whole_type = entry.builder in FLASH_TYPE_LEVEL_BUILDERS
+    whole_type = flashes_whole_type(entry)
     scope_options = []
     if whole_type:
         scope_options.append("Flash every tracked serial under this type")
-    if serials:
+    if serials and flashes_one_device(entry):
         scope_options.append("Flash one specific device")
     if not scope_options:
         print(f"No serials tracked under '{mcu_type}'.")

@@ -1,5 +1,5 @@
 {
-  "_comment": "The TUI's pickers read the kconfig-only Registry, so a Roadrunner, CMake or PlatformIO type the CLI tracks did not exist in the menu. The type list is what every picker reads; menuconfig still offers kconfig types only; add-serial reaches the CLI handler for a non-kconfig type.",
+  "_comment": "The TUI's pickers read the kconfig-only Registry, so a Roadrunner, CMake or PlatformIO type the CLI tracks did not exist in the menu. The type list is what every picker reads; menuconfig still offers kconfig types only; add-serial reaches the CLI handler for a non-kconfig type. Build asks for a firmware target only for types whose handler reads -f.",
   "file": "src/mcu_updater/tui.py",
   "command": [
     "python",
@@ -16,8 +16,8 @@
     },
     {
       "name": "menuconfig offers kconfig types only",
-      "find": "    mcu_type = pick_mcu_type(allow_new=True, accepts=kconfig_type)\n    if mcu_type is None:\n        return\n    fw = pick_fw_target()\n",
-      "replace": "    mcu_type = pick_mcu_type(allow_new=True)\n    if mcu_type is None:\n        return\n    fw = pick_fw_target()\n"
+      "find": "        allow_new=True, accepts=kconfig_type, none_accepted=KCONFIG_ONLY_MENUCONFIG\n",
+      "replace": "        allow_new=True, none_accepted=KCONFIG_ONLY_MENUCONFIG\n"
     },
     {
       "name": "add-serial reaches the CLI handler for a non-kconfig type",
@@ -28,6 +28,11 @@
       "name": "only a kconfig type's detected boards are narrowed to its chipset",
       "find": "    chipset = (entry.chipset or None) if filters_by_chipset(entry) else None\n",
       "replace": "    chipset = entry.chipset or None\n"
+    },
+    {
+      "name": "build asks for a firmware target only where the handler reads one",
+      "find": "    if build_asks_fw(entry):\n",
+      "replace": "    if True:\n"
     }
   ]
 }

@@ -9,7 +9,7 @@ disagreeing.
 from __future__ import annotations
 
 from .config import Registry
-from .errors import SerialTrackedElsewhereError
+from .errors import SerialTrackedElsewhereError, UnprovisionedSerialError
 from .paths import Paths
 
 
@@ -17,6 +17,22 @@ def add_serial(paths: Paths, name: str, serial: str) -> tuple[bool, str]:
     """Track `serial` under type `name`. Returns (added, the type's chipset)."""
     with Registry.mutate(paths, f"add serial {serial}") as reg:
         chipset = reg.get_declared_chipset(name)  # UnknownTypeError if absent
+
+        # An unprovisioned Roadrunner's serial is `RR-UNPROVISIONED-<flash-uid>`
+        # - the trailing 16 hex characters ARE the RP2040 flash UID, which this
+        # plan's constraints forbid ever persisting. Checked here, not only from
+        # the agent's live bus scan, so a direct write - CLI included - cannot
+        # save one before it is provisioned.
+        from .discovery.roadrunner import UNPROVISIONED_RE
+
+        if UNPROVISIONED_RE.fullmatch(serial):
+            raise UnprovisionedSerialError(
+                f"'{serial}' is an unprovisioned Roadrunner's diagnostic identity, "
+                f"not a stable serial - provision it first, then track the "
+                f"resulting RR-... serial.",
+                serial=serial,
+            )
+
         # One board tracked under two types would get flashed twice with
         # different firmware, so this is refused rather than merged.
         elsewhere = [t for t in reg.find_declared_types_for_serial(serial) if t != name]

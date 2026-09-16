@@ -23,7 +23,7 @@ import pytest
 from mcu_updater import cli, flashers, typelist
 from mcu_updater.config import Registry
 from mcu_updater.discovery import canbus
-from mcu_updater.errors import SerialTrackedElsewhereError, UpdaterError
+from mcu_updater.errors import SerialTrackedElsewhereError, UnprovisionedSerialError, UpdaterError
 from mcu_updater.settings import Settings
 
 from .conftest import make_device, seed_base_firmwares
@@ -779,6 +779,20 @@ def test_add_serial_refuses_a_board_tracked_under_another_type(c):
     _declare_roadrunner(c.paths, "RR-ONE")
     with pytest.raises(SerialTrackedElsewhereError):
         cli.add_serial(argparse.Namespace(type="roadrunner", serial="AAAA-if00"))
+
+
+def test_add_serial_refuses_an_unprovisioned_roadrunner_diagnostic_serial(c):
+    """The CLI could reach cmake types (Roadrunner included) once tracking was
+    shared, but only the agent's `serial_add` ever refused the diagnostic
+    identity - so `add-serial -t roadrunner RR-UNPROVISIONED-...` saved it."""
+    _declare_roadrunner(c.paths, "RR-ONE")
+    with pytest.raises(UnprovisionedSerialError):
+        cli.add_serial(
+            argparse.Namespace(type="roadrunner", serial="RR-UNPROVISIONED-50543165187A4D1C")
+        )
+    assert "RR-UNPROVISIONED-50543165187A4D1C" not in Registry.load(c.paths).declared_serials(
+        "roadrunner"
+    )
 
 
 def test_remove_serial_untracks_a_board_under_a_cmake_type(c):

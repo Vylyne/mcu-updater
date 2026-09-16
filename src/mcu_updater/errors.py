@@ -81,6 +81,18 @@ class SerialTrackedElsewhereError(ConfigError):
     code = "serial_tracked_elsewhere"
 
 
+class UnprovisionedSerialError(ConfigError):
+    """A Roadrunner's diagnostic identity, not a stable serial.
+
+    `RR-UNPROVISIONED-<flash-uid>`'s trailing 16 hex characters ARE the RP2040
+    flash UID, which this plan's constraints forbid ever persisting - so this is
+    refused wherever a serial is written, CLI and agent alike, rather than only
+    by the agent's live-scan guard.
+    """
+
+    code = "roadrunner_unprovisioned"
+
+
 class UuidTrackedElsewhereError(ConfigError):
     """A CAN uuid already tracked under a different type.
 

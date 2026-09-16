@@ -1,0 +1,28 @@
+{
+  "_comment": "The TUI's pickers read the kconfig-only Registry, so a Roadrunner, CMake or PlatformIO type the CLI tracks did not exist in the menu. The type list is what every picker reads; menuconfig still offers kconfig types only; add-serial reaches the CLI handler for a non-kconfig type.",
+  "file": "src/mcu_updater/tui.py",
+  "command": [
+    "python",
+    "-m",
+    "pytest",
+    "tests/test_tui.py",
+    "-q"
+  ],
+  "mutations": [
+    {
+      "name": "the type picker reads every declared type, not the kconfig registry's",
+      "find": "    return typelist.load(cli.ctx().paths)\n",
+      "replace": "    return [e for e in typelist.load(cli.ctx().paths) if e.builder == \"kconfig_make\"]\n"
+    },
+    {
+      "name": "menuconfig offers kconfig types only",
+      "find": "    mcu_type = pick_mcu_type(allow_new=True, accepts=kconfig_type)\n    if mcu_type is None:\n        return\n    fw = pick_fw_target()\n",
+      "replace": "    mcu_type = pick_mcu_type(allow_new=True)\n    if mcu_type is None:\n        return\n    fw = pick_fw_target()\n"
+    },
+    {
+      "name": "add-serial reaches the CLI handler for a non-kconfig type",
+      "find": "    if entry is None:\n        return\n    untracked = _untracked_for(entry, entries)\n",
+      "replace": "    if entry is None or entry.builder != \"kconfig_make\":\n        return\n    untracked = _untracked_for(entry, entries)\n"
+    }
+  ]
+}

@@ -175,3 +175,53 @@ def test_a_saved_profile_uses_the_new_spelling(paths):
     text = read_main_config(paths)
     assert "kconfig_make_profile: config.Y" in text
     assert "\nprofile:" not in text
+
+
+def test_every_undeclared_family_is_reported_at_once(paths):
+    """Raising on the first miss meant a config with two typos took two
+    round-trips to fix: correct one, reload, discover the next."""
+    write_main_config(
+        paths,
+        FAMILIES
+        + "[type one]\nchipset: x\nfirmware: klipperr\n\n"
+        + "[type two]\nchipset: x\nfirmware: katapultt, klipperr\n",
+    )
+    from mcu_updater import firmware
+
+    with pytest.raises(ConfigCorruptError) as exc:
+        typelist.load(paths)
+
+    message = str(exc.value)
+    assert "not a known family" in message
+    assert "one -> klipperr" in message
+    assert "two -> katapultt" in message
+    assert "two -> klipperr" in message
+    # One snippet per distinct family, in first-seen order.
+    assert message.count(firmware.missing_section_message("klipperr")) == 1
+    assert message.count(firmware.missing_section_message("katapultt")) == 1
+    assert message.index("[firmware klipperr]") < message.index("[firmware katapultt]")
+    assert exc.value.data["missing"] == {"one": ["klipperr"], "two": ["katapultt", "klipperr"]}
+    # The first miss still fills the original fields.
+    assert exc.value.data["type"] == "one"
+    assert exc.value.data["value"] == "klipperr"
+    assert exc.value.data["path"] == paths.registry_file
+
+
+def test_a_single_undeclared_family_keeps_the_type_and_value_fields(paths):
+    write_main_config(paths, FAMILIES + "[type board]\nchipset: x\nfirmware: klipperr\n")
+    with pytest.raises(ConfigCorruptError) as exc:
+        typelist.load(paths)
+    assert exc.value.data["type"] == "board"
+    assert exc.value.data["value"] == "klipperr"
+    assert exc.value.data["missing"] == {"board": ["klipperr"]}
+
+
+def test_an_undeclared_family_beside_a_known_one_is_not_called_mixed_builders(paths):
+    """An unknown family has no builder (`read` records ""), which must not
+    count as a second tool - the real problem is the typo."""
+    write_main_config(paths, FAMILIES + "[type board]\nchipset: x\nfirmware: klipper, bogus\n")
+    with pytest.raises(ConfigCorruptError) as exc:
+        typelist.load(paths)
+    assert "not a known family" in str(exc.value)
+    assert "different tools" not in str(exc.value)
+    assert exc.value.data["missing"] == {"board": ["bogus"]}

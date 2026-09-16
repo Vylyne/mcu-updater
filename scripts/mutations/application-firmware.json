@@ -30,6 +30,13 @@
       "replace": "            if False:"
     },
     {
+      "_comment": "Raising on the first undeclared family made a config with two typos take two reloads to fix. validate collects every miss and raises once.",
+      "name": "every undeclared family is reported at once, not just the first",
+      "file": "src/mcu_updater/typelist.py",
+      "find": "                missing.setdefault(entry.name, []).append(fw)",
+      "replace": "                raise ConfigCorruptError(f\"{fw}\", path=path, type=entry.name, value=fw, missing={entry.name: [fw]})"
+    },
+    {
       "_comment": "load() now refuses a type with no firmware: key at all (step 11), so save() cannot leave it implicit even for the plain-klipper case any more - it is always written, never omitted as a restated default.",
       "name": "the declared firmware list is always written back on save",
       "find": "            doc.set(section, \"firmware\", \", \".join(mcu.firmwares))",

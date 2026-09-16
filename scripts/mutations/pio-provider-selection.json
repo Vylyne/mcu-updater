@@ -16,8 +16,15 @@
     {
       "name": "families built by different tools are refused",
       "file": "src/mcu_updater/typelist.py",
-      "find": "        if len(set(entry.builders)) > 1:",
+      "find": "        if len(builders) > 1:",
       "replace": "        if False:"
+    },
+    {
+      "_comment": "An undeclared family has no builder (\"\"); counting that as a second tool reports a typo as mixed builders, and pre-empts the list of every undeclared family.",
+      "name": "an undeclared family is not counted as a second builder",
+      "file": "src/mcu_updater/typelist.py",
+      "find": "        builders = {builder for builder in entry.builders if builder}",
+      "replace": "        builders = set(entry.builders)"
     },
     {
       "name": "a type built by a foreign builder is excluded from this registry",

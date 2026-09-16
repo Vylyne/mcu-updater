@@ -188,6 +188,9 @@ def validate(
 ) -> None:
     """Refuse what `read` let through."""
     known = firmware.names_of(families)
+    # Every undeclared family, not just the first: a config with two typos
+    # should not take two reloads to fix.
+    missing: dict[str, list[str]] = {}
     for entry in entries:
         refuse_renamed_keys(entry, path=path)
         if not entry.firmwares:
@@ -204,20 +207,16 @@ def validate(
             if fw not in known:
                 # A typo here would otherwise build and flash klipper at a
                 # board that runs something else.
-                raise ConfigCorruptError(
-                    f"{path}: '{entry.name}' declares firmware '{fw}', which is not "
-                    f"a known family. Known: {', '.join(known) or 'none'}. Fix the "
-                    f"spelling, or declare it. {firmware.missing_section_message(fw)}",
-                    path=path,
-                    type=entry.name,
-                    value=fw,
-                )
-        if len(set(entry.builders)) > 1:
+                missing.setdefault(entry.name, []).append(fw)
+        # An undeclared family has no builder ("" from `read`); that is the
+        # typo reported above, not a second tool.
+        builders = {builder for builder in entry.builders if builder}
+        if len(builders) > 1:
             # One builder per type until the build loop (plan 2) makes that
             # unnecessary.
             raise ConfigCorruptError(
                 f"{path}: '{entry.name}' declares firmware families built by "
-                f"different tools ({', '.join(sorted(set(entry.builders)))}): "
+                f"different tools ({', '.join(sorted(builders))}): "
                 f"{', '.join(entry.firmwares)}. A type is built by exactly one "
                 f"provider - split it into two types if it genuinely needs "
                 f"both.",
@@ -225,6 +224,21 @@ def validate(
                 type=entry.name,
                 value=list(entry.firmwares),
             )
+    if missing:
+        misses = [(name, fw) for name, fws in missing.items() for fw in fws]
+        first_type, first_fw = misses[0]
+        families_missing = list(dict.fromkeys(fw for _, fw in misses))
+        listed = "\n".join(f"  {name} -> {fw}" for name, fw in misses)
+        snippets = "\n".join(firmware.missing_section_message(fw) for fw in families_missing)
+        raise ConfigCorruptError(
+            f"{path}: firmware that is not a known family (known: "
+            f"{', '.join(known) or 'none'}):\n{listed}\n"
+            f"Fix the spelling, or declare it.\n{snippets}",
+            path=path,
+            type=first_type,
+            value=first_fw,
+            missing=missing,
+        )
 
 
 def load(paths: Paths) -> list[TypeEntry]:

@@ -210,7 +210,9 @@ def missing_section_message(fw: str) -> str:
     return (
         f"No [firmware {fw}] section is declared. Add one to mcu-updater.cfg:\n"
         f"{body}\n"
-        f"Re-running install.sh writes the klipper and katapult sections for you."
+        f"Re-running install.sh writes the klipper and katapult sections for you.\n"
+        f"Every section is shown, commented, in mcu-updater.cfg and README.md in the "
+        f"mcu-updater checkout."
     )
 
 

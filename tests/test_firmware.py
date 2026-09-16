@@ -54,6 +54,11 @@ def test_an_undeclared_family_is_refused_with_the_lines_to_add(paths):
     assert "source: ~/klipper" in message
     assert "flashers: flashtool" in message
     assert "install.sh" in message
+    # Points at worked examples of every section, not just the one missing.
+    assert (
+        "Every section is shown, commented, in mcu-updater.cfg and README.md "
+        "in the mcu-updater checkout." in message
+    )
 
 
 def test_a_missing_config_file_declares_nothing(paths):

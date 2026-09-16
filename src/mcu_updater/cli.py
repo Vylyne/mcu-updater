@@ -270,6 +270,19 @@ def remove_serial(args: argparse.Namespace) -> None:
         print(f"Serial {args.serial} isn't tracked under {args.type} - nothing to do.")
 
 
+def _device_label(state: str) -> str:
+    """How `status` describes one tracked board's inventory state."""
+    if state == inventory.STATE_UNKNOWN:
+        # Every CAN row: the inventory never guesses a CAN node's state, and
+        # status does not query tracked nodes - "online (unknown)" would claim
+        # something nothing looked at.
+        return "state unknown (CAN nodes are not queried)"
+    return {
+        STATE_KLIPPER: "online (klipper)",
+        STATE_KATAPULT: "online (katapult/bootloader)",
+    }.get(state, "offline" if state == STATE_OFFLINE else f"online ({state})")
+
+
 def status_cmd(args: argparse.Namespace) -> None:
     """Read-only overview. Promoted from menu-only to a real subcommand."""
     c = ctx()
@@ -345,11 +358,11 @@ def status_cmd(args: argparse.Namespace) -> None:
         for serial in entry.serials:
             row = rows.get((entry.name, inventory.SERIAL, serial))
             state = row.state if row is not None else STATE_OFFLINE
-            label = {
-                STATE_KLIPPER: "online (klipper)",
-                STATE_KATAPULT: "online (katapult/bootloader)",
-            }.get(state, "offline" if state == STATE_OFFLINE else f"online ({state})")
-            print(f"  - {serial}: {label}")
+            print(f"  - {serial}: {_device_label(state)}")
+        for uuid in entry.canbus_uuids:
+            row = rows.get((entry.name, inventory.CANBUS_UUID, uuid))
+            state = row.state if row is not None else STATE_OFFLINE
+            print(f"  - {uuid} (CAN): {_device_label(state)}")
 
     untracked = find_untracked(c.paths, {s for e in entries for s in e.serials})
     if untracked:

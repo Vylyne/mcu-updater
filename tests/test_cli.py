@@ -795,8 +795,10 @@ def test_status_says_a_type_with_no_devices_tracks_none(c, pio_type, capsys):
     assert "no tracked serials" not in out
 
 
-def test_status_does_not_call_a_can_only_type_untracked(c, capsys):
-    """A CAN board is tracked by uuid, not by a USB serial."""
+def test_status_lists_a_can_only_types_uuid(c, capsys):
+    """A CAN board is tracked by uuid, not by a USB serial - so it is listed,
+    and never called untracked. Its state is not guessed: the inventory never
+    infers a CAN node's state and status does not query tracked nodes."""
     reg = Registry.load(c.paths)
     reg.add_type("canboard", "stm32f072xb")
     save_registry(reg, c.paths)
@@ -807,7 +809,10 @@ def test_status_does_not_call_a_can_only_type_untracked(c, capsys):
     assert typelist.load(c.paths)[-1].canbus_uuids == ("0123456789ab",)
     cli.status_cmd(cli.build_parser().parse_args(["status"]))
     out = capsys.readouterr().out
-    assert "no tracked" not in "\n".join(_status_block(out, "canboard"))
+    block = _status_block(out, "canboard")
+    assert "no tracked" not in "\n".join(block)
+    assert "  - 0123456789ab (CAN): state unknown (CAN nodes are not queried)" in block
+    assert "online" not in "\n".join(block)
 
 
 def test_add_serial_tracks_a_board_under_a_cmake_type(c):

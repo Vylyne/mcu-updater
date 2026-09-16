@@ -47,6 +47,19 @@
       "file": "src/mcu_updater/cli.py",
       "find": "        if not entry.serials and not entry.canbus_uuids:",
       "replace": "        if not entry.serials:"
+    },
+    {
+      "name": "status lists each tracked CAN uuid",
+      "file": "src/mcu_updater/cli.py",
+      "find": "        for uuid in entry.canbus_uuids:",
+      "replace": "        for uuid in ():"
+    },
+    {
+      "_comment": "Every CAN row's state is STATE_UNKNOWN and status never queries tracked nodes, so the generic fallback would print online (unknown) for a board nothing looked at.",
+      "name": "status never calls an unqueried CAN node online",
+      "file": "src/mcu_updater/cli.py",
+      "find": "    if state == inventory.STATE_UNKNOWN:",
+      "replace": "    if False:"
     }
   ]
 }

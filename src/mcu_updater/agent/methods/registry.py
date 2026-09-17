@@ -16,7 +16,6 @@ from ...errors import (
     UnprovisionedSerialError,
     UuidTrackedElsewhereError,
 )
-from ...settings import save_settings
 from ..rpc import ERR_INVALID_PARAMS, RpcError
 from ._api import _Base
 
@@ -108,9 +107,11 @@ class RegistryMixin(_Base):
     def settings_set(self, args: dict) -> dict[str, Any]:
         """Change tool settings. Only the keys supplied are touched.
 
-        Writes through `save_settings`, which load-modify-writes the ``[updater]``
-        section via CfgDocument - so the ``[mcu ...]`` sections and every comment
-        in the shared file survive.
+        Every value is coerced before the lock is taken, so a refused value
+        never contends for it. The change is then applied inside
+        `settings.mutate`, to settings loaded under the lock - so a concurrent
+        ``fw.bus.ignore`` is kept - and written through CfgDocument, so the
+        ``[type ...]`` sections and every comment in the shared file survive.
         """
         patch = args.get("settings")
         if not isinstance(patch, dict) or not patch:
@@ -133,15 +134,13 @@ class RegistryMixin(_Base):
                 },
             )
 
-        current = self.settings()
+        values = {key: self._coerce_setting(key, raw) for key, raw in patch.items()}
         changed: dict[str, Any] = {}
-        for key, raw in patch.items():
-            value = self._coerce_setting(key, raw)
-            if value != getattr(current, key):
-                changed[key] = value
-            setattr(current, key, value)
-
-        save_settings(self.paths, current)
+        with settings_mod.mutate(self.paths, "set settings") as current:
+            for key, value in values.items():
+                if value != getattr(current, key):
+                    changed[key] = value
+                setattr(current, key, value)
 
         for key in self.LOUD_SETTINGS:
             if key in changed and self._log is not None:
@@ -543,40 +542,44 @@ class RegistryMixin(_Base):
         than only by hand-editing the cfg on the printer.
         """
         serial = self._require_str(args, "serial")
-        current = self.settings()
-        if serial not in current.ignored_serials:
-            current.ignored_serials.append(serial)
-            save_settings(self.paths, current)
+        with settings_mod.mutate(self.paths, f"ignore serial {serial}") as current:
+            added = serial not in current.ignored_serials
+            if added:
+                current.ignored_serials.append(serial)
+        if added:
             self._changed()
         return {"serial": serial, "ignored": True}
 
     def bus_unignore(self, args: dict) -> dict[str, Any]:
         """Reverse `bus_ignore`. Idempotent."""
         serial = self._require_str(args, "serial")
-        current = self.settings()
-        if serial in current.ignored_serials:
-            current.ignored_serials.remove(serial)
-            save_settings(self.paths, current)
+        with settings_mod.mutate(self.paths, f"unignore serial {serial}") as current:
+            removed = serial in current.ignored_serials
+            if removed:
+                current.ignored_serials.remove(serial)
+        if removed:
             self._changed()
         return {"serial": serial, "ignored": False}
 
     def canbus_ignore(self, args: dict) -> dict[str, Any]:
         """Hide every sighting of a CAN UUID from the new-board flow. Idempotent."""
         uuid = self._require_str(args, "uuid")
-        current = self.settings()
-        if uuid not in current.ignored_canbus_uuids:
-            current.ignored_canbus_uuids.append(uuid)
-            save_settings(self.paths, current)
+        with settings_mod.mutate(self.paths, f"ignore canbus uuid {uuid}") as current:
+            added = uuid not in current.ignored_canbus_uuids
+            if added:
+                current.ignored_canbus_uuids.append(uuid)
+        if added:
             self._changed()
         return {"uuid": uuid, "ignored": True}
 
     def canbus_unignore(self, args: dict) -> dict[str, Any]:
         """Reverse `canbus_ignore`. Idempotent."""
         uuid = self._require_str(args, "uuid")
-        current = self.settings()
-        if uuid in current.ignored_canbus_uuids:
-            current.ignored_canbus_uuids.remove(uuid)
-            save_settings(self.paths, current)
+        with settings_mod.mutate(self.paths, f"unignore canbus uuid {uuid}") as current:
+            removed = uuid in current.ignored_canbus_uuids
+            if removed:
+                current.ignored_canbus_uuids.remove(uuid)
+        if removed:
             self._changed()
         return {"uuid": uuid, "ignored": False}
 

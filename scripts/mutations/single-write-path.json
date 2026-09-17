@@ -1,5 +1,5 @@
 {
-  "_comment": "Every registry write is lock, re-read, change, save - Registry.mutate, directly or through tracking. The CLI's flash add-prompt, add-mcu's adoption and add-type each wrote a registry they had read before a prompt, with no lock: an edit the panel made while the prompt waited was erased by the save, and the prompt and adoption writes skipped tracking's refusals, so a board could end up tracked under two types or an unprovisioned Roadrunner's flash UID could be persisted. add_type refuses a name another builder declares, whatever overwrite says: the CLI passes overwrite=True with a kconfig-only pre-check, and _save would rewrite the other builder's section as a kconfig type with its serials emptied. save_settings rewrites the same file, so it takes the same lock: without it an agent settings write racing a CLI add-serial loses one of the two edits.",
+  "_comment": "Every registry write is lock, re-read, change, save - Registry.mutate, directly or through tracking. The CLI's flash add-prompt, add-mcu's adoption and add-type each wrote a registry they had read before a prompt, with no lock: an edit the panel made while the prompt waited was erased by the save, and the prompt and adoption writes skipped tracking's refusals, so a board could end up tracked under two types or an unprovisioned Roadrunner's flash UID could be persisted. add_type refuses a name another builder declares, whatever overwrite says: the CLI passes overwrite=True with a kconfig-only pre-check, and _save would rewrite the other builder's section as a kconfig type with its serials emptied. Settings live in the same file and go through settings.mutate the same way - lock, then load, change, write: without the lock an agent settings write racing a CLI add-serial loses one of the two edits, and with a load taken before the lock a fw.bus.ignore that finished while fw.settings.set waited is written back out of the ignore list.",
   "file": "src/mcu_updater/cli.py",
   "command": [
     "python",
@@ -8,6 +8,7 @@
     "tests/test_cli.py",
     "tests/test_config.py",
     "tests/test_settings.py",
+    "tests/test_agent_methods.py",
     "-q"
   ],
   "mutations": [
@@ -45,8 +46,14 @@
     {
       "name": "a settings write takes the registry lock",
       "file": "src/mcu_updater/settings.py",
-      "find": "    with ExclusiveLock(paths, path=paths.registry_lock_file).acquire(\"save settings\"):\n",
+      "find": "    with ExclusiveLock(paths, path=paths.registry_lock_file).acquire(label):\n",
       "replace": "    if True:\n"
+    },
+    {
+      "name": "settings are loaded under the lock, not before it",
+      "file": "src/mcu_updater/settings.py",
+      "find": "    with ExclusiveLock(paths, path=paths.registry_lock_file).acquire(label):\n        current = load_settings(paths.settings_file)\n",
+      "replace": "    current = load_settings(paths.settings_file)\n    with ExclusiveLock(paths, path=paths.registry_lock_file).acquire(label):\n"
     }
   ]
 }

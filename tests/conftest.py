@@ -112,6 +112,18 @@ def save_registry(reg, paths: Paths) -> None:
     reg._save(paths)
 
 
+def save_settings(paths: Paths, settings) -> None:
+    """Write a whole fixture `Settings` object to the fake install.
+
+    Production writes only through `settings.mutate`, which is why
+    `_write_settings` is private. The same exception as `save_registry`: a
+    fixture building its starting state has no lock to contend for.
+    """
+    from mcu_updater import settings as settings_mod
+
+    settings_mod._write_settings(paths.settings_file, settings)
+
+
 def write_main_config(paths: Paths, text: str) -> None:
     """Write `text` as the whole mcu-updater.cfg of the fake install."""
     os.makedirs(os.path.dirname(paths.main_config), exist_ok=True)

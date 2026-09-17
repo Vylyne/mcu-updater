@@ -545,7 +545,11 @@ Settings live in the same file as the `[type ...]` sections, so every settings
 write (`fw.settings.set` and the four ignore methods) takes the registry's own
 lock, as a type or serial edit does. The lock is held for milliseconds and is
 never waited on: a write that lands while another registry edit holds it fails
-with `busy`, and nothing is written, so the call can simply be retried.
+with `busy`, and nothing is written, so the call can simply be retried. The
+settings are read under that lock, so two overlapping writes - a
+`fw.settings.set` and a `fw.bus.ignore` from two tabs, say - both survive. An
+`[updater]` section that does not parse refuses the write with `config`, rather
+than the defaults `fw.settings.get` falls back to being written over it.
 
 `ui_accent_color` is the one `SETTABLE` key that isn't a behaviour preference
 at all - the agent never reads it, only stores and serves it back, so every

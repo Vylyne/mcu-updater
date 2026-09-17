@@ -1002,6 +1002,51 @@ def test_settings_set_reports_nothing_changed_when_the_value_matches(api):
     assert again["changed"] == []
 
 
+def test_an_ignore_that_lands_while_settings_set_waits_for_the_lock_survives(
+    api, paths, monkeypatch
+):
+    """Two panel tabs: one sets make_jobs, the other ignores a serial, and the
+    ignore finishes first. `fw.settings.set` writes every [updater] field, so it
+    must load them under the lock - settings read before the ignore would
+    write the old ignore list back over it."""
+    from mcu_updater.lock import ExclusiveLock
+
+    stale = api.settings()
+    real = ExclusiveLock.acquire
+    raced: list[str] = []
+
+    def acquire(self, label):
+        if self.path == paths.registry_lock_file and label == "set settings" and not raced:
+            raced.append(label)
+            api.dispatch("fw.bus.ignore", {"serial": "STRANGER"})
+        return real(self, label)
+
+    monkeypatch.setattr(ExclusiveLock, "acquire", acquire)
+
+    api.dispatch("fw.settings.set", {"settings": {"make_jobs": 4}})
+
+    final = api.settings()
+    assert raced == ["set settings"]
+    assert "STRANGER" not in stale.ignored_serials
+    assert final.ignored_serials == ["STRANGER"]
+    assert final.make_jobs == 4
+
+
+def test_a_settings_write_refuses_a_malformed_updater_section(api, paths):
+    """`fw.settings.get` falls back to defaults for display, but a write must not:
+    writing those defaults back would silently reset every other setting in the
+    section - `enable_flashing` included."""
+    with open(paths.main_config, "a", encoding="utf-8", newline="\n") as fh:
+        fh.write("\n[updater]\nenable_flashing: true\ndry_run: maybe\n")
+    before = read_main_config(paths)
+
+    with pytest.raises(RpcError) as exc:
+        api.dispatch("fw.bus.ignore", {"serial": "STRANGER"})
+
+    assert exc.value.data["code"] == "config"
+    assert read_main_config(paths) == before
+
+
 def test_settings_set_does_not_eat_the_registry_it_shares_a_file_with(api, paths):
     """Settings and the [type ...] sections live in one file, so a settings write
     that rewrote the file would take the whole registry with it."""

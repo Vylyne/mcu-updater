@@ -4,11 +4,12 @@ import sys
 
 import pytest
 
+from mcu_updater import settings as settings_mod
 from mcu_updater.config import Registry
 from mcu_updater.errors import ConfigError
-from mcu_updater.settings import Settings, load_settings, save_settings
+from mcu_updater.settings import Settings, load_settings
 
-from .conftest import save_registry
+from .conftest import save_registry, save_settings
 
 
 def test_missing_file_yields_defaults(paths):
@@ -137,7 +138,7 @@ def test_save_then_load_round_trips_ignored_serials(paths):
 
 def test_ignored_serials_is_stored_as_a_multi_line_block(paths):
     """Unlike `stop_services` (single-line CSV, joined by hand in
-    `save_settings`), `ignored_serials` goes through the generic per-field loop
+    `_write_settings`), `ignored_serials` goes through the generic per-field loop
     and so takes `CfgDocument.set`'s own default rendering for a list value - a
     multi-line block, one serial per line. Both forms round-trip identically
     through `get_csv`; this pins which one actually lands on disk."""
@@ -249,23 +250,78 @@ def test_saving_the_registry_keeps_the_settings(paths, live_registry_text):
     assert "NEWBOARD-if00" in Registry.load(paths).get("bttebb36").serials
 
 
-def test_a_settings_save_keeps_a_serial_tracked_after_the_settings_were_loaded(
+def test_a_settings_write_keeps_a_serial_tracked_while_settings_were_being_changed(
     paths, live_registry_text
 ):
-    """The agent loads settings, changes one, saves - and a CLI add-serial can
-    land in between. The save re-reads the file, so the serial survives."""
+    """The write re-reads the document, so a CLI add-serial that landed before
+    the settings change is not erased by it."""
     from mcu_updater import tracking
 
     with open(paths.main_config, "w", encoding="utf-8", newline="\n") as fh:
         fh.write(live_registry_text)
-    current = load_settings(paths.settings_file)
 
     tracking.add_serial(paths, "bttebb36", "LATECOMER-if00")
-    current.ignored_serials.append("KNOMI-if00")
-    save_settings(paths, current)
+    with settings_mod.mutate(paths, "ignore") as current:
+        current.ignored_serials.append("KNOMI-if00")
 
     assert "LATECOMER-if00" in Registry.load(paths).get("bttebb36").serials
     assert load_settings(paths.settings_file).ignored_serials == ["KNOMI-if00"]
+
+
+def test_a_settings_change_made_before_the_lock_was_taken_is_kept(
+    paths, live_registry_text, monkeypatch
+):
+    """Lock, *then* read. Another writer that finishes in the moment before this
+    one gets the lock must be read, not overwritten with what was on disk
+    before it - the write rewrites every [updater] field from the object."""
+    from mcu_updater.lock import ExclusiveLock
+
+    with open(paths.main_config, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(live_registry_text)
+    real = ExclusiveLock.acquire
+    raced: list[str] = []
+
+    def acquire(self, label):
+        if self.path == paths.registry_lock_file and not raced:
+            raced.append(label)
+            save_settings(paths, Settings(ignored_serials=["FIRST-if00"]))
+        return real(self, label)
+
+    monkeypatch.setattr(ExclusiveLock, "acquire", acquire)
+
+    with settings_mod.mutate(paths, "second") as current:
+        current.make_jobs = 4
+
+    final = load_settings(paths.settings_file)
+    assert raced == ["second"]
+    assert final.ignored_serials == ["FIRST-if00"]
+    assert final.make_jobs == 4
+
+
+def test_a_raising_body_writes_nothing(paths, live_registry_text):
+    with open(paths.main_config, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(live_registry_text)
+
+    with pytest.raises(RuntimeError):
+        with settings_mod.mutate(paths, "half a change") as current:
+            current.enable_flashing = True
+            raise RuntimeError("refused part-way")
+
+    with open(paths.main_config, encoding="utf-8") as fh:
+        assert fh.read() == live_registry_text
+
+
+def test_a_body_that_changes_nothing_writes_nothing(paths, live_registry_text):
+    """An idempotent unignore must not stamp a full [updater] section into a
+    file that had none."""
+    with open(paths.main_config, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(live_registry_text)
+
+    with settings_mod.mutate(paths, "no-op") as current:
+        assert "NOBODY-if00" not in current.ignored_serials
+
+    with open(paths.main_config, encoding="utf-8") as fh:
+        assert fh.read() == live_registry_text
 
 
 def _registry_lock_is_held(paths, monkeypatch) -> None:
@@ -284,7 +340,7 @@ def _registry_lock_is_held(paths, monkeypatch) -> None:
     monkeypatch.setattr(ExclusiveLock, "acquire", acquire)
 
 
-def test_a_settings_save_takes_the_registry_lock(paths, live_registry_text, monkeypatch):
+def test_a_settings_write_takes_the_registry_lock(paths, live_registry_text, monkeypatch):
     """Same file, same lock: a settings write landing between a registry edit's
     read and its write would otherwise be erased by it."""
     from mcu_updater.errors import BusyError
@@ -294,7 +350,8 @@ def test_a_settings_save_takes_the_registry_lock(paths, live_registry_text, monk
     _registry_lock_is_held(paths, monkeypatch)
 
     with pytest.raises(BusyError):
-        save_settings(paths, Settings(enable_flashing=True))
+        with settings_mod.mutate(paths, "enable flashing") as current:
+            current.enable_flashing = True
 
     with open(paths.main_config, encoding="utf-8") as fh:
         assert fh.read() == live_registry_text
@@ -304,7 +361,7 @@ def test_a_settings_save_takes_the_registry_lock(paths, live_registry_text, monk
     sys.platform == "win32",
     reason="flock is unavailable on Windows; the lock degrades to a no-op there",
 )
-def test_a_settings_save_is_refused_while_the_registry_lock_is_really_held(
+def test_a_settings_write_is_refused_while_the_registry_lock_is_really_held(
     paths, live_registry_text
 ):
     from mcu_updater.errors import BusyError
@@ -315,7 +372,8 @@ def test_a_settings_save_is_refused_while_the_registry_lock_is_really_held(
 
     with ExclusiveLock(paths, path=paths.registry_lock_file).acquire("the panel"):
         with pytest.raises(BusyError, match="the panel"):
-            save_settings(paths, Settings(enable_flashing=True))
+            with settings_mod.mutate(paths, "enable flashing") as current:
+                current.enable_flashing = True
 
     assert load_settings(paths.settings_file).enable_flashing is False
 
@@ -403,7 +461,7 @@ def test_every_settings_field_the_code_reads_actually_exists():
     import re
 
     # Three-argument getattr only: the trailing comma is the default. The
-    # two-argument form over dataclasses.fields() in save_settings is how that
+    # two-argument form over dataclasses.fields() in _write_settings is how that
     # function is meant to work.
     defensive = re.compile(r"""getattr\(\s*(?:self\.)?settings(?:\(\))?\s*,\s*["'][^"']+["']\s*,""")
 

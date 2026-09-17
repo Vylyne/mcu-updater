@@ -37,7 +37,7 @@
       "replace": "                raise ConfigCorruptError(f\"{fw}\", path=path, type=entry.name, value=fw, missing={entry.name: [fw]})"
     },
     {
-      "_comment": "load() now refuses a type with no firmware: key at all (step 11), so save() cannot leave it implicit even for the plain-klipper case any more - it is always written, never omitted as a restated default.",
+      "_comment": "load() now refuses a type with no firmware: key at all (step 11), so _save() cannot leave it implicit even for the plain-klipper case any more - it is always written, never omitted as a restated default.",
       "name": "the declared firmware list is always written back on save",
       "find": "            doc.set(section, \"firmware\", \", \".join(mcu.firmwares))",
       "replace": "            pass"
@@ -63,8 +63,8 @@
       "replace": "            if False:"
     },
     {
-      "_comment": "I2: type_update's katapult_installed branch set mcu.firmwares without checking the family was declared, saving a config the next Registry.load refused - taking every type down with it. save() now revalidates the document it is about to write with the same check load() applies, before any byte reaches disk.",
-      "name": "save() refuses a document typelist.validate would refuse",
+      "_comment": "I2: type_update's katapult_installed branch set mcu.firmwares without checking the family was declared, saving a config the next Registry.load refused - taking every type down with it. _save() now revalidates the document it is about to write with the same check load() applies, before any byte reaches disk.",
+      "name": "_save() refuses a document typelist.validate would refuse",
       "find": "        typelist.validate(\n            typelist.read(doc, families_map), families_map, path=paths.registry_file\n        )",
       "replace": "        pass"
     }

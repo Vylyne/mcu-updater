@@ -9893,10 +9893,12 @@ handed straight back, whichever slot you read it from.
 **Two.** In `#### Failures do not abandon the batch`, after *"`id` is the uniform slot: a board's serial, a screen's configured port."*, add:
 
 ```text
-For a screen that is deliberately the *port*, not the `id` its `targets[]` row
-reports: this half of the wire says what esptool actually wrote to, and a
-`device_id:` screen is addressed by an id and written to a tty. Its row's `path`
-carries that same tty, which is how the two are correlated.
+For a screen, that "configured port" is deliberately still the port, and from
+here on it can differ from the `id` the screen's `targets[]` row reports. This
+half of the wire says what esptool actually wrote to; a `device_id:` screen is
+addressed by an id and written to a tty. The row's `path` carries that same
+tty, which is how a caller correlates the two. A screen's flash *action* is the
+row's side of that line, not this one: it carries the identity, in `port`.
 ```
 
 **Three.** In `### Flashing a display`, change *"so the call is `{name, port?, force?}`"* to *"so the call is `{name, port?, id?, force?}` — either slot, spelled as the configured path or as the screen's own device id"*.

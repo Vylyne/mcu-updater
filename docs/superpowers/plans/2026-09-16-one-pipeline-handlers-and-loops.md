@@ -69,6 +69,8 @@ These are decided. The ones marked ★ change behaviour, wire or scope and the u
 
 **Out of scope:** removing the three builder views (`Registry.load`, `pio.load`, `cmake.load`); the mixed-builder refusal; a record-backed `ARTIFACT_CHANGED` for screens; config migrations; udev-driven presence. Also out of scope, and deliberately so: spec §3's *"presence is checked against the by-id sweep"* for PlatformIO screens. Plan 1's §4 inventory join does not claim it, and `inventory.index` is keyed off declared identities the type list never sees for a screen declared in `printer.cfg` — a `[knomi_serial ...]` section is not a `[type ...]` section. A screen's `present` keeps coming from the watcher's map (Task 10) and from `_pio_target`'s existing checks. Closing that gap needs the type list to learn about printer.cfg-declared devices, which is its own design.
 
+And out of scope: spec **§8 item 5**, *"Auto-provision (section 10) runs as a post-step where the helper has one."* Task 7 puts auto-provisioning on the `BusWatcher` thread and nowhere else (Ruling 14). In the agent that covers the flash case anyway — a board that comes back from a write reporting `RR-UNPROVISIONED-…` changes the bus fingerprint, so the very next poll picks it up, which is the mechanism §10 describes. In the CLI it is not covered, and the spec accepts that: §11 says *"The CLI has no watcher, so this is its only provisioning path."* A second trigger inside `write_all` would be the same decision made in two places, which is the shape this plan exists to remove.
+
 **Worktree setup:** already created.
 
 ```bash
@@ -8870,8 +8872,7 @@ rg -n "configured_path|read_device_map|device_map_path|addressed_by|allow_discov
 
 One hit, and it anchors a line this task rewrites:
 
-- `scripts/mutations/targets.json` mutation 11, *"a screen's flash is pinned to its own port"*, whose `find` is the flash-action params line in `_pio_target` -- the indented `{"name": name, "port": screen["configured_path"]},`.
-  Step 16 re-anchors it onto the new params line and renames it, in the same commit as the change.
+- `scripts/mutations/targets.json` mutation 11, *"a screen's flash is pinned to its own port"*, whose `find` is the flash-action params line in `_pio_target`. That line keeps its `port` key and changes only its value, so the `find` string still moves. Step 16 re-anchors it onto the new line in the same commit as the change; the mutation's intent is unchanged, so only its name is tightened.
 
 `display-flash.json` and `pio.json` both survive untouched: `display-flash.json`'s anchors are in `_pio_flash`'s refusal and in the esptool flasher, neither of which this task's edit reaches, and `pio.json`'s four per-mutation files are `discovery/knomi_serial/listen.py` and `watcher.py`, which keep every line they have — the handler *calls* them, it does not move them.
 
@@ -8888,7 +8889,7 @@ One hit, and it anchors a line this task rewrites:
   - `helpers.identifier(helper: Helper | None) -> Identifier | None`
   - `KnomiSerialHelper.identify` / `KnomiSerialHelper.remembered_at`
   - `StatusMixin._screen_id(screen: dict[str, Any]) -> str | None`
-  - a PlatformIO row's `devices[].id` is the `device_id` for a `device_id:` section and the configured path for a `serial:` section; that device's flash action params become `{"name", "id"}`
+  - a PlatformIO row's `devices[].id` is the `device_id` for a `device_id:` section and the configured path for a `serial:` section; that device's flash action **keeps its params `{"name", "port"}`** and carries the same declared identity in `port` that the row reports in `id`
   - `fw.flash` for a screen accepts `port` or `id`, spelled as either the configured path or the device id
   - `cli._pio_targets(c, name, only_id=None)` — `allow_discovery` is gone
   - `providers.pio` no longer re-exports `discover`, `read_device_map`, `device_map_path`, `WatcherDevice` or `DEVICE_MAP_VERSION`
@@ -8911,9 +8912,11 @@ One hit, and it anchors a line this task rewrites:
 
 7. **`FlashTarget.id` for a screen stays its port.** `flash_all`'s result `id` is what esptool wrote to, and `_pio_flash`'s `failures[].port` is projected from it. A `device_id:` screen therefore has one value in `targets[].devices[].id` (its burned-in id, how it is *addressed*) and another in the batch result (the tty, where it was *written*); the row's `path` carries the tty, so a caller can bridge them. Documented in Step 17 rather than papered over.
 
-8. **A device's flash action carries the same identity its row reports.** The params become `{"name", "id"}`, because `targets[].devices[].id` being handed straight back is the whole reason that slot is uniform. This goes one step past Ruling 18, which mandates only the row's `id` and `fw.flash` accepting either spelling.
+8. **A device's flash action carries the same identity its row reports — in the param it already had.** The value changes, the key does not: the params stay `{"name", "port"}` and `port` carries `_screen_id(screen)` instead of `screen["configured_path"]`. `targets[].devices[].id` being handed straight back is what makes that slot uniform, and renaming the param is not needed to get it.
 
-   What makes it safe rather than assumed safe: `_pio_flash` reads `args.get("port") or args.get("id")` and keeps doing so, and Step 7 *widens* what it matches rather than narrowing it — so a caller still sending `port` with a configured path is unaffected. That guarantee has to live in the method rather than in a survey of callers, because the standalone UI ships from outside this repository (`UI_PATH`, `~/mcu-updater-ui`) and its consumers cannot be grepped from here.
+   Spelling it `id` was the first draft, and the spec refuses it. §3's identity paragraph enumerates exactly what may change — *"The PlatformIO row's `id` becomes the declared identity… The resolved port stays in `path`"* — and then fences the rest: *"Flash parameter keys are unchanged."* A fencing sentence in the same breath as the permission is a constraint, not filler. Ruling 18 is the whole of what this task may do to the wire here: the row's `id`, and `fw.flash` accepting either spelling.
+
+   What makes the value change safe rather than assumed safe: `_pio_flash` reads `args.get("port") or args.get("id")` and keeps doing so, and Step 7 *widens* what it matches rather than narrowing it — so a caller sending `port` with a configured path is unaffected, and a caller replaying this action's `port` with a `device_id` in it now resolves too. That guarantee has to live in the method rather than in a survey of callers, because the standalone UI ships from outside this repository (`UI_PATH`, `~/mcu-updater-ui`) and its consumers cannot be grepped from here.
 
 9. **`entry: PioType` on a Protocol whose pitch is genericity.** The same argument as the return type. The only firmware whose hardware carries no name of its own is the PlatformIO-built one, so a `providers`-shaped parameter is the honest signature rather than an `Any` that documents nothing — and typing it is what lets `mypy` check the handler against `identify`'s two real call sites. A second identifier for some non-PlatformIO firmware is the moment to widen this to a union or a shared record, and it would be one signature change, because nothing compares a helper's name to decide what to pass it.
 
@@ -9260,18 +9263,21 @@ def test_a_screen_addressed_by_port_still_reports_its_port(api, paths, fake_root
 def test_a_screens_flash_action_carries_the_identity_its_row_reports(
     api, paths, fake_root
 ):
-    """`devices[].id` exists to be handed straight back. An action naming a
-    different slot than the row reports would defeat that for exactly the
-    sections whose path is the least trustworthy thing about them."""
+    """`devices[].id` exists to be handed straight back. An action carrying a
+    different value than the row reports would defeat that for exactly the
+    sections whose path is the least trustworthy thing about them.
+
+    The param keeps its name. Spec section 3: the row's `id` becomes the
+    declared identity, and "Flash parameter keys are unchanged."""
     write_settings(paths, enable_flashing="true")
     device_id, _port = _add_display_by_id(paths, fake_root, api)
     api = Api(paths, runner=_runner(), call=api._call)
 
     device = _targets(api, "platformio")[ENV]["devices"][0]
-    assert _action(device, "flash")["params"] == {"name": ENV, "id": device_id}
+    assert _action(device, "flash")["params"] == {"name": ENV, "port": device_id}
 ```
 
-and change `test_a_screen_carries_the_display_flash_call_pinned_to_its_port` to the new params slot, keeping its docstring — a port is still never inferred, it is just spelled `id` now:
+and rename `test_a_screen_carries_the_display_flash_call_pinned_to_its_port`, keeping its params assertion exactly as it is — a `serial:` screen's identity *is* its configured port, so this test's expectation does not move and is the guard that the key did not either:
 
 ```python
 def test_a_screen_carries_the_display_flash_call_pinned_to_its_identity(api, paths, fake_root):
@@ -9285,7 +9291,7 @@ def test_a_screen_carries_the_display_flash_call_pinned_to_its_identity(api, pat
     flash = _action(device, "flash")
 
     assert flash["method"] == "fw.flash"
-    assert flash["params"] == {"name": ENV, "id": port}
+    assert flash["params"] == {"name": ENV, "port": port}
 ```
 
 The file imports `os` already (it uses `os.path` in the artifact tests); add it to the import block if it does not.
@@ -9312,7 +9318,7 @@ def test_a_screen_can_be_flashed_by_its_device_id(api, paths, fake_root):
         )
     )
 
-    res = api.flash({"name": ENV, "id": "aaa111"})
+    res = api.flash({"name": ENV, "id": "aaa111"})  # the spelling a caller may pick
 
     assert [d["configured_path"] for d in res["displays"]] == [str(port)]
 ```
@@ -9325,7 +9331,9 @@ The module's `api` fixture already sets `enable_flashing`, `dry_run` and a `JobR
 python -m pytest tests/test_agent_targets.py tests/test_agent_display_jobs.py -q
 ```
 
-Expected: FAIL. `test_a_screen_addressed_by_id_reports_that_id` asserts `device["id"] == "aaa111"` and gets the discovered path; the two action tests get `{"name": ..., "port": ...}`; the `fw.flash` test refuses with `nothing_to_do`, because the filter only matches the configured path.
+Expected: FAIL, but read which. `test_a_screen_addressed_by_id_reports_that_id` asserts `device["id"] == "aaa111"` and gets the discovered path. `test_a_screens_flash_action_carries_the_identity_its_row_reports` gets `{"name": ..., "port": <the discovered path>}` and wanted the `device_id`. The `fw.flash` test refuses with `nothing_to_do`, because the filter only matches the configured path.
+
+The renamed `..._pinned_to_its_identity` test **passes already** and must: a `serial:` screen's declared identity is its configured port, so nothing about it changes. It is the fence that says the param key stayed `port` — Step 16's `targets.json` mutation is what proves it still bites.
 
 - [ ] **Step 7: Make a screen report how it is addressed**
 
@@ -9364,16 +9372,18 @@ and in `_pio_target`, replace the head of the per-screen loop:
                     "id": screen_id,
 ```
 
-and its flash action's params:
+and its flash action's value — the param keeps its name (Decision 8), and only what goes in it changes:
 
 ```python
                     "actions": self._device_actions(
                         allowed,
                         flash=(
                             "fw.flash",
-                            {"name": name, "id": screen_id},
+                            {"name": name, "port": screen_id},
                         ),
 ```
+
+`screen_id` is `str | None`, which is what went in here before: `screen["configured_path"]` is `live.get("port")` and has always been able to be `None`. The `device_id` branch cannot make it *newly* `None` — `device_list` sets `addressed_by = "device_id"` only when `configured_device_id` is truthy, and writes that same value into `screen["device_id"]` — so this needs no narrowing that `_device_actions` does not already do.
 
 In `src/mcu_updater/agent/methods/flash.py`, in `_pio_flash`, replace the target filter:
 
@@ -9759,7 +9769,7 @@ python scripts/check_line_endings.py
 
 Expected: all pass.
 
-`mypy` is the one that earns its keep here. `identify` and `remembered_at` are reached only through the `Identifier | None` the accessor returns, so every call site has to narrow — and `_screen_id` returns `str | None`, which is what `devices[].id` has always been for a screen whose path could not be resolved.
+`mypy` is the one that earns its keep here. `identify` and `remembered_at` are reached only through the `Identifier | None` the accessor returns, so every call site has to narrow — and `_screen_id` returns `str | None`, which is what `devices[].id` and the flash action's `port` have always been for a screen whose path could not be resolved — so no call site needs a narrowing it did not already have.
 
 - [ ] **Step 16: Re-anchor `targets.json` and add the identity spec**
 
@@ -9767,8 +9777,8 @@ In `scripts/mutations/targets.json`, mutation 11 becomes:
 
 ```json
     {
-      "name": "a screen's flash action carries the identity its row reports",
-      "find": "                            {\"name\": name, \"id\": screen_id},",
+      "name": "a screen's flash is pinned to the identity its row reports",
+      "find": "                            {\"name\": name, \"port\": screen_id},",
       "replace": "                            {\"name\": name, \"port\": screen[\"configured_path\"]},"
     },
 ```
@@ -9865,23 +9875,19 @@ Expected: every mutation caught. Note the first two share a `find` — the harne
 
 In `docs/agent-api.md`:
 
-**One.** In the `Target` section, replace *"`fw.flash` writes both kinds now — a board's action carries `serial`, a screen's carries `port` — so the reader never has to branch on which it is holding."* with:
+**One.** In the `Target` section, leave the *"a board's action carries `serial`, a screen's carries `port`"* sentence exactly as it is — the params did not change (Decision 8), so the only correction that sentence would have needed is one this task deliberately does not make. Add this after the paragraph it closes:
 
 ```text
-Devices carry `actions` too, because the reasons differ per device: one board of
-a type can be offline while its neighbour waits in Katapult. `fw.flash` writes
-both kinds now — a board's action carries `serial`, a screen's carries `id` —
-so the reader never has to branch on which it is holding.
-
 **A screen's `id` is how it is addressed, not where it was found.** A
 `[knomi_serial ...]` section says one of two things. `serial:` names a path
 and carries no id, so the path is the identity and `id` is that path.
 `device_id:` names the screen's own burned-in id and no path at all — the path
 is whatever Klipper's discovery found this boot — so `id` is that id, and the
 tty is reported as `path` beside it. Before this, a `device_id:` screen had
-`id: null` until discovery ran. `fw.flash` accepts either spelling in either
-`port` or `id`, so a value read off this row can always be handed straight
-back.
+`id: null` until discovery ran. The device's own flash action carries the same
+value, in the `port` param it has always used, and `fw.flash` accepts either
+spelling in either `port` or `id` — so a value read off this row can always be
+handed straight back, whichever slot you read it from.
 ```
 
 **Two.** In `#### Failures do not abandon the batch`, after *"`id` is the uniform slot: a board's serial, a screen's configured port."*, add:

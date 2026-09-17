@@ -115,7 +115,7 @@ application error (see `data.code`), `-32603` internal.
 | `fw.ping` | — | version/capability handshake |
 | `fw.status` | — | everything the panel needs, in one call |
 | `fw.type.list` | — | `{types: [TypeStatus]}` |
-| `fw.type.add` | `name`, `chipset` (required), `firmware?`, `<fw>_extra_args?`, `<fw>_extra_repos?`, `<fw>_makefile_patches?`, `katapult_extra_args?`, `katapult_installed?` | `{name, chipset, firmware, warnings?}` — declares a board model, no hardware required; `<fw>` is `klipper` or `katapult` |
+| `fw.type.add` | `name`, `chipset` (required), `firmware?`, `<fw>_extra_args?`, `<fw>_extra_repos?`, `<fw>_makefile_patches?`, `katapult_extra_args?`, `katapult_installed?` | `{name, chipset, firmware, warnings?}` — declares a board model, no hardware required; `<fw>` is `klipper` or `katapult`; a name another builder's type already declares is refused with `duplicate_type` |
 | `fw.type.update` | `name` (required), any of the `fw.type.add` fields | `{name, chipset, firmware, warnings}` — only the keys supplied are touched; `<fw>` ranges over the type's own `firmware:` list |
 | `fw.type.remove` | `name` (required), `force?` | `{name, removed_serials, kept_config_dir}` — refuses while boards are still tracked unless forced |
 | `fw.target.get` | `name`, `provider` (required) | `{provider, target}` — one `targets[]` entry's full detail |
@@ -540,6 +540,12 @@ for a different reason: they are device lists, not behaviour preferences, and go
 `fw.settings.set` would hit `_coerce_setting`'s int-fallthrough and refuse a
 JSON array as "must be a whole number". They are read and written through
 their dedicated `fw.bus.*` and `fw.canbus.*` ignore methods instead.
+
+Settings live in the same file as the `[type ...]` sections, so every settings
+write (`fw.settings.set` and the four ignore methods) takes the registry's own
+lock, as a type or serial edit does. The lock is held for milliseconds and is
+never waited on: a write that lands while another registry edit holds it fails
+with `busy`, and nothing is written, so the call can simply be retried.
 
 `ui_accent_color` is the one `SETTABLE` key that isn't a behaviour preference
 at all - the agent never reads it, only stores and serves it back, so every

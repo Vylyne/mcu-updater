@@ -43,7 +43,11 @@ These are decided. The ones marked ★ change behaviour, wire or scope and the u
 
 1. ★ **Every `[firmware]` section needs `flashers:`** (Task 1). A missing or empty list is refused with the line to add. Printers need a hand edit for every family install.sh did not seed (cartographer, knomi_serial, roadrunner on the bench). No migration.
 2. ★ **`helper:` is validated when the config loads**, like an unknown builder, and the message lists the known helpers. `_cmake_target`'s per-row catch stays as defence in depth.
-3. ★ **A `builder: platformio` family must name a `helper:`** (Task 1). Screens are read and identified through that helper from Task 2 on, so a platformio family with no helper is a family nothing can read; the old implicit coupling (every platformio family *was* a knomi screen) becomes a declared one. `knomi_serial` is the only helper that fits today, but the refusal is "name a helper", not "name this helper" — `typelist.validate` checks the key is present and known, not which one it is.
+3. **A `builder: platformio` family *may* name a `helper:`, and is not refused for having none.** The KNOMI v2 needs one because its CH340K reports no USB serial, so its identity lives in its firmware. That is the exception, not the rule for the builder: spec §3 opens with *"**By-id is the default for every provider**, PlatformIO included"* and calls firmware-provided identity the one special case (*"knomi_serial is the only one"*). An ESP32 that enumerates with a real serial — or one day answers over CAN — is an ordinary by-id device that happens to be built by PlatformIO, and a schema rule requiring a helper would make the KNOMI's missing serial a property of the builder.
+
+   Nothing needs the refusal. `helpers.for_name("")` returns `None`, every capability accessor returns `None` for it, `_watcher_map` reports no devices and `updated: null`, and `cli._pio_targets` refuses by name. A helperless platformio family therefore loads, builds, flashes through its `flashers:` list, and reads device info through `device_info.KLIPPER` (Ruling 6) — it just has no firmware-provided identity, which is correct, because it does not need one.
+
+   Task 1 still adds `helper: knomi_serial` to every platformio family in the repo's fixtures and example config. Those really are KNOMI screens; that is data, not compliance.
 4. **`firmware.FLASHERS` and `firmware.HELPERS` are static tuples**, held equal to the flasher and helper registries by tests, for the reason `firmware.BUILDERS` is: `typelist` must not import the implementations (import cycle, and the registries import hardware code).
 5. **Capabilities are separate `runtime_checkable` Protocols with accessor functions** (`helpers.bootsel_requester`, `device_info_reader`, `image_reporter`, `provisioner`, `identifier`). A helper that lacks one returns `None`; a misspelt helper name raises (Ruling 2). No caller compares a helper's `name`.
 6. **The Klipper device-info reader is built in**, not a helper. A family whose helper has no device-info capability (klipper, katapult, forks) reads through `device_info.KLIPPER`.
@@ -67,7 +71,7 @@ These are decided. The ones marked ★ change behaviour, wire or scope and the u
 20. **Registry mutation uses `paths.registry_lock_file`, not the op lock**, so provisioning under `exclusive()` and then calling `Registry.mutate` cannot deadlock.
 21. **`flash_state` takes `built_version=`** (Task 8), and `bulk.py`'s two callers pass it. The verdict needs the stamp the builder recorded, and the only place that knows it is the caller holding the build install; a `flash_state` that re-read it would be the second reader of the same fact this plan exists to remove.
 
-**Out of scope:** removing the three builder views (`Registry.load`, `pio.load`, `cmake.load`); the mixed-builder refusal; a record-backed `ARTIFACT_CHANGED` for screens; config migrations; udev-driven presence. Also out of scope, and deliberately so: spec §3's *"presence is checked against the by-id sweep"* for PlatformIO screens. Plan 1's §4 inventory join does not claim it, and `inventory.index` is keyed off declared identities the type list never sees for a screen declared in `printer.cfg` — a `[knomi_serial ...]` section is not a `[type ...]` section. A screen's `present` keeps coming from the watcher's map (Task 10) and from `_pio_target`'s existing checks. Closing that gap needs the type list to learn about printer.cfg-declared devices, which is its own design.
+**Out of scope:** removing the three builder views (`Registry.load`, `pio.load`, `cmake.load`); the mixed-builder refusal; a record-backed `ARTIFACT_CHANGED` for screens; config migrations; udev-driven presence. Also out of scope, and deliberately so: spec §3's *"presence is checked against the by-id sweep"* for PlatformIO screens. Plan 1's §4 inventory join does not claim it, and `inventory.index` is keyed off declared identities the type list never sees for a screen declared in `printer.cfg` — a `[knomi_serial ...]` section is not a `[type ...]` section. A screen's `present` keeps coming from the watcher's map (Task 10) and from `_pio_target`'s existing checks. Closing that gap needs the type list to learn about printer.cfg-declared devices, which is its own design. Nothing here forecloses it: a PlatformIO family may name no helper at all (Ruling 3), so the follow-up adds a device source for those families rather than unwinding a refusal.
 
 And out of scope: spec **§8 item 5**, *"Auto-provision (section 10) runs as a post-step where the helper has one."* Task 7 puts auto-provisioning on the `BusWatcher` thread and nowhere else (Ruling 14). In the agent that covers the flash case anyway — a board that comes back from a write reporting `RR-UNPROVISIONED-…` changes the bus fingerprint, so the very next poll picks it up, which is the mechanism §10 describes. In the CLI it is not covered, and the spec accepts that: §11 says *"The CLI has no watcher, so this is its only provisioning path."* A second trigger inside `write_all` would be the same decision made in two places, which is the shape this plan exists to remove.
 
@@ -86,7 +90,7 @@ Derived from the eleven Files blocks below; a task number here appears in that t
 | File | Status | Responsibility |
 | --- | --- | --- |
 | `src/mcu_updater/firmware.py` | modify (T1,2,7) | `flashers`, `auto_provision` fields; `FLASHERS`, `HELPERS`, `PROVISIONING_HELPERS` |
-| `src/mcu_updater/typelist.py` | modify (T1,7) | Refuse missing/unknown flashers, unknown helper, platformio without helper, auto_provision without provisioner |
+| `src/mcu_updater/typelist.py` | modify (T1,7) | Refuse missing/unknown flashers, unknown helper, auto_provision without provisioner |
 | `src/mcu_updater/helpers/spec.py` | modify (T1,2,6,10) | Capability Protocols: `Helper`, `BootselRequester`, `DeviceInfoReader`, `ImageReporter`, `Provisioner`, `Identifier` |
 | `src/mcu_updater/helpers/__init__.py` | modify (T1,2,6,10) | `for_name` and one accessor per capability |
 | `src/mcu_updater/helpers/registry.py` | modify (T1,2) | `HELPERS`, the hand-written tuple of every helper |
@@ -155,7 +159,7 @@ Spec §6-7: "A missing `flashers:` key is a config error naming the key", and a 
   - `helpers.for_name(name: str, *, family: str) -> Helper | None` (raises `ConfigCorruptError` naming the known helpers)
   - `helpers.bootsel_requester(helper: Helper | None) -> BootselRequester | None`
   - `helpers.knomi_serial.KnomiSerialHelper` (`name = "knomi_serial"`)
-  - `typelist.validate` refuses: a family with no `flashers:`; an unknown flasher name; an unknown `helper:`; a `platformio` family with no `helper:`
+  - `typelist.validate` refuses: a family with no `flashers:`; an unknown flasher name; an unknown `helper:`. It does **not** refuse a family for having no `helper:`, whatever its builder (Ruling 3)
 
 - [ ] **Step 1: Write the failing helper tests**
 
@@ -247,7 +251,15 @@ from __future__ import annotations
 
 
 class KnomiSerialHelper:
-    """The helper a `builder: platformio` family names for KNOMI screens."""
+    """Identity and firmware access for a BTT KNOMI v2 screen.
+
+    Named by a `[firmware ...]` section's `helper:`. The KNOMI needs one
+    because the CH340K in front of it reports no USB serial, so every unit
+    enumerates identically and the only stable name it has is one its own
+    firmware will state if asked. That is a property of this hardware, not
+    of `builder: platformio` - a PlatformIO board with a real serial is an
+    ordinary by-id device and names no helper at all.
+    """
 
     name: str = "knomi_serial"
 
@@ -417,7 +429,7 @@ Procedure, for `mcu-updater.cfg`, `tests/fixtures/registry.cfg`, `README.md` (ev
    - name `klipper` → `flashers: flashtool`; name `katapult` → `flashers: dfu_util, bootsel`
    - otherwise `bootloader: yes` → `flashers: dfu_util, bootsel`
    - otherwise `builder: cmake` → `flashers: bootsel`; `builder: platformio` → `flashers: esptool`; no builder or `kconfig_make` → `flashers: flashtool`
-2. For each `builder: platformio` section with no `helper:` line, add `helper: knomi_serial`.
+2. For each `builder: platformio` section with no `helper:` line, add `helper: knomi_serial`. Every one of them is a KNOMI screen, and Tasks 2 and 10 read and identify them through that helper. This is fixing the data, not satisfying a rule — nothing refuses a platformio family for having no helper (Ruling 3).
 3. In `mcu-updater.cfg`, also add `helper: roadrunner` to `[firmware roadrunner]` (README's own example already has it), and change the comment at lines 26-27 from "`flashers:` is the order flashers are tried in (not read yet)." to "`flashers:` is required: the flashers that may write the family, in the order they are tried."
 4. Leave `tests/conftest.py`'s `BASE_FIRMWARES` alone (it already has both lines), and leave sections a test deliberately writes malformed (search the test for `ConfigCorruptError` or `refus` before editing a literal inside it).
 5. Families built key-by-key through a `CfgDocument` have no `[firmware ...]` literal to find, so sweep them separately:
@@ -531,14 +543,19 @@ def test_an_unknown_helper_is_refused_when_the_config_loads(paths):
     assert error.data["helpers"] == {"rr": "roadruner"}
 
 
-def test_a_platformio_family_must_name_its_helper(paths):
-    error = _family_refusal(
+def test_a_platformio_family_needs_no_helper(paths):
+    """Spec section 3: by-id is the default for every provider, PlatformIO
+    included. The KNOMI names a helper because its CH340K reports no USB
+    serial - an exception belonging to that hardware, not to the builder. An
+    ESP32 that enumerates with a real serial is an ordinary by-id device, and
+    refusing it here would make the KNOMI's defect a schema rule."""
+    write_main_config(
         paths,
         "[firmware screen]\nsource: ~/s\nbuilder: platformio\nflashers: esptool\n\n"
         "[type knomi]\nchipset: esp32\nfirmware: screen\nplatformio_env: e\n",
     )
-    assert "[firmware screen] add: helper: knomi_serial" in str(error)
-    assert error.data["families"] == ["screen"]
+
+    assert [entry.name for entry in typelist.load(paths)] == ["knomi"]
 
 
 def test_a_family_with_both_keys_loads(paths):
@@ -636,22 +653,9 @@ def _refuse_family_keys(families: dict[str, firmware.FirmwareFamily], *, path: s
             value=unknown_helpers[first],
             helpers=unknown_helpers,
         )
-    no_helper = [
-        family.name
-        for family in families.values()
-        if family.builder == "platformio" and not family.helper
-    ]
-    if no_helper:
-        listed = "\n".join(f"  [firmware {name}] add: helper: knomi_serial" for name in no_helper)
-        raise ConfigCorruptError(
-            f"{path}: a platformio family names no helper:. Its screens are "
-            f"identified and read through one:\n{listed}",
-            path=path,
-            family=no_helper[0],
-            key="helper",
-            families=no_helper,
-        )
 ```
+
+There is deliberately no third check here. A family with no `helper:` at all is valid for every builder (Ruling 3): `helpers.for_name("")` returns `None` and every capability accessor answers `None` for it, so "this family has no helper" is already a representable, handled state. Refusing it would only encode the KNOMI's missing USB serial as a rule about `builder: platformio`.
 
 - [ ] **Step 10: Run the tests**
 
@@ -659,7 +663,7 @@ Run: `python -m pytest tests/test_typelist.py tests/test_helpers.py tests/test_f
 Expected: PASS.
 
 Run: `python -m pytest -q`
-Expected: all pass. A failure whose message contains `no flashers: list` or `names no helper:` is a fixture Step 6 missed: add the line there, in this commit.
+Expected: all pass. A failure whose message contains `no flashers: list` or `configures unknown helper` is a fixture Step 6 missed or misspelt: fix it there, in this commit.
 
 - [ ] **Step 11: Mutation spec**
 
@@ -667,7 +671,7 @@ Create `scripts/mutations/family-keys.json`:
 
 ```json
 {
-  "_comment": "A family names the flashers that may write it and the helper that reads it, and both are checked when the config loads. A family with no flashers is a board nothing can write, discovered at flash time; a misspelt helper silently took away a Roadrunner's BOOTSEL request; a screen family with no helper has nothing to identify its screens.",
+  "_comment": "A family names the flashers that may write it and the helper that reads it, and both are checked when the config loads. A family with no flashers is a board nothing can write, discovered at flash time; a misspelt helper silently took away a Roadrunner's BOOTSEL request. What is deliberately NOT guarded here is a family with no helper at all: that is valid for every builder, and the accessors answer None for it.",
   "file": "src/mcu_updater/typelist.py",
   "command": ["python", "-m", "pytest", "tests/test_typelist.py", "tests/test_helpers.py", "tests/test_firmware.py", "-q"],
   "mutations": [
@@ -684,11 +688,6 @@ Create `scripts/mutations/family-keys.json`:
     {
       "name": "an unknown helper is refused at load",
       "find": "        if family.helper and family.helper not in firmware.HELPERS",
-      "replace": "        if False"
-    },
-    {
-      "name": "a platformio family must name a helper",
-      "find": "        if family.builder == \"platformio\" and not family.helper",
       "replace": "        if False"
     },
     {
@@ -721,7 +720,7 @@ Expected: every mutant killed (anchors unchanged; re-anchor here if a find strin
 
 - [ ] **Step 12: Docs**
 
-- `src/mcu_updater/firmware.py` module docstring: replace the paragraph starting "`flashers:` is written for klipper and katapult by install.sh but not read yet" with: "`flashers:` is required on every section, and a `builder: platformio` section also names its `helper:`. `typelist.validate` refuses either missing, and a misspelt flasher or helper, with the line to fix."
+- `src/mcu_updater/firmware.py` module docstring: replace the paragraph starting "`flashers:` is written for klipper and katapult by install.sh but not read yet" with: "`flashers:` is required on every section. `helper:` is optional and, when present, must name a registered helper - a family whose hardware carries its own identity or needs firmware-specific access names one, and everything else does not. `typelist.validate` refuses a missing `flashers:` and a misspelt flasher or helper, with the line to fix."
 - `SEEDED_KEYS` comment: replace "Nothing reads `flashers:` yet - the flash loop does, in the next plan. Kept here so" with "`flashers:` is required on every section. Kept here so".
 - `README.md`, in the per-key list near the `helper` bullet (line ~301): add this bullet
 
@@ -731,7 +730,7 @@ Expected: every mutant killed (anchors unchanged; re-anchor here if a find strin
     section without one refuses the config with the line to add.
   ````
 
-  and extend the `helper` bullet: "A misspelt helper refuses the config when it loads. A `builder: platformio` family must name `helper: knomi_serial`."
+  and extend the `helper` bullet: "A misspelt helper refuses the config when it loads. The key is optional: a family names a helper when its hardware needs firmware-specific access or carries no identity of its own - a BTT KNOMI v2 names `helper: knomi_serial` because its CH340K reports no USB serial - and a board that enumerates by-id names none."
 - `docs/decisions.md`: add after "### Presence comes from the inventory":
 
 ```markdown
@@ -9673,8 +9672,9 @@ def _pio_targets(c: Context, name: str, only_id: str | None = None) -> list:
     if identify is None:
         raise UpdaterError(
             f"firmware family '{family.name}' names no helper that can identify "
-            f"its devices, so there is no way to tell which screen of '{name}' is "
-            f"which - and writing to a remembered path is what this refuses to do."
+            f"its devices, and a PlatformIO type is not yet joined against the "
+            f"by-id sweep - so there is no way to tell which device of '{name}' "
+            f"is which, and writing to a guessed port is what this refuses to do."
         )
 
     found = identify.identify(

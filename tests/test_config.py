@@ -828,6 +828,31 @@ def _cfg_with_a_cmake_type() -> str:
     )
 
 
+def test_a_loaded_type_carries_slots_only_for_the_families_it_declares(
+    paths, live_registry_text
+):
+    """Keys for a family the type does not declare - a cartographer type's
+    leftover `klipper_extra_args` - are not read into a slot. This is why
+    `fw_order()` and `families()` agree for every loaded type, and why
+    targets.json has no guard telling them apart; if this breaks, that guard
+    matters again."""
+    _write(
+        paths,
+        live_registry_text.replace(
+            "kconfig_make_profile: config.CartoV4USB",
+            "kconfig_make_profile: config.CartoV4USB\nklipper_extra_args: FOO=1",
+            1,
+        ),
+    )
+    registry = Registry.load(paths)
+
+    carto = registry.get("cartographer")
+    assert "klipper" not in carto.fws
+    for name in registry.names():
+        mcu = registry.get(name)
+        assert list(mcu.fws) == mcu.families() == mcu.fw_order()
+
+
 def test_a_type_built_by_a_third_builder_is_not_loaded_into_this_registry(paths):
     """Provider is derived from the declared family's builder. A cmake type
     belongs to providers/cmake.py, exactly as a platformio one belongs to

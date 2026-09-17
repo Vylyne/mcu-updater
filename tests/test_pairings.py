@@ -146,6 +146,46 @@ def test_an_already_tracked_board_is_untouched(api, paths, fake_root):
     assert tracked in Registry.load(paths).get("bttebb36").serials
 
 
+def test_a_board_tracked_under_another_type_is_not_adopted_by_a_matching_pairing(
+    api, paths, fake_root
+):
+    """The test above cannot reach the adoption at all: its serial has no DFU
+    derivation, so no pairing key matches it. This one's does. `Registry.add_serial`
+    does not refuse a serial tracked elsewhere, so the untracked filter is the only
+    thing keeping a matching pairing from tracking one board under two types."""
+    tracked = "8F1042000957465331323811"  # flylllplusbuffer's T0_buffer
+    key = dfu_serial_for(tracked)
+    assert key
+    Pairings(paths).record(key, "bttebb36")
+    _appear(fake_root, tracked, chipset="stm32f072xb")
+
+    assert api.adopt_paired() == []
+
+    reg = Registry.load(paths)
+    assert tracked not in reg.get("bttebb36").serials
+    assert tracked in reg.get("flylllplusbuffer").serials
+    # Not consumed: nothing was adopted, so the pairing has not acted.
+    assert Pairings(paths).type_for(key) == "bttebb36"
+
+
+def test_a_board_already_tracked_under_the_paired_type_leaves_the_pairing_unconsumed(
+    api, paths, fake_root
+):
+    """Consumed only by an adoption. A board already tracked under the type is
+    filtered out before any key is matched, so its pairing is left to expire
+    with its TTL rather than being spent on a board that needed nothing."""
+    tracked = "8F1042000957465331323811"
+    key = dfu_serial_for(tracked)
+    assert key
+    Pairings(paths).record(key, "flylllplusbuffer")
+    _appear(fake_root, tracked, chipset="stm32f072xb")
+
+    assert api.adopt_paired() == []
+
+    assert Registry.load(paths).get("flylllplusbuffer").serials.count(tracked) == 1
+    assert Pairings(paths).type_for(key) == "flylllplusbuffer"
+
+
 def test_a_board_running_its_own_firmware_is_still_adopted(api, paths, fake_root):
     """Found on hardware: a board that already carried a valid application
     chain-loads straight past Katapult on its first boot - the normal case for

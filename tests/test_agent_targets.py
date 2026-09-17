@@ -22,6 +22,7 @@ import pytest
 
 from mcu_updater import firmware, inventory
 from mcu_updater.agent.methods import Api
+from mcu_updater.agent.rpc import RpcError
 from mcu_updater.config import Registry
 from mcu_updater.states import (
     TONE_ATTENTION,
@@ -843,16 +844,20 @@ def test_an_undeclared_family_is_refused_rather_than_quietly_accepted(paths, liv
         fh.write(live_registry_text)
     api = Api(paths)
 
-    with pytest.raises(Exception) as exc:
+    with pytest.raises(RpcError) as exc:
         api.dispatch(
             "fw.type.add",
             {"name": "typo", "chipset": "stm32g431xx", "firmware": "cartographe"},
         )
 
-    assert "cartographe" in str(exc.value)
+    # The code and the list are what this check exists for: `add_type`'s own
+    # refusal would still stop the write, but as `config_corrupt` with neither.
+    assert exc.value.data["code"] == "unknown_firmware"
+    assert exc.value.data["data"]["firmware"] == "cartographe"
     # The known families are named, so the panel can offer them rather than
     # making the user guess what it wanted.
-    assert "klipper" in str(exc.value)
+    assert exc.value.data["data"]["known"] == list(firmware.names_of(firmware.load(paths)))
+    assert "cartographer" in exc.value.data["data"]["known"]
     assert "typo" not in api.registry().types
 
 

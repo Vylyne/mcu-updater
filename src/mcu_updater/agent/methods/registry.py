@@ -141,7 +141,7 @@ class RegistryMixin(_Base):
                 changed[key] = value
             setattr(current, key, value)
 
-        save_settings(self.paths.settings_file, current)
+        save_settings(self.paths, current)
 
         for key in self.LOUD_SETTINGS:
             if key in changed and self._log is not None:
@@ -546,7 +546,7 @@ class RegistryMixin(_Base):
         current = self.settings()
         if serial not in current.ignored_serials:
             current.ignored_serials.append(serial)
-            save_settings(self.paths.settings_file, current)
+            save_settings(self.paths, current)
             self._changed()
         return {"serial": serial, "ignored": True}
 
@@ -556,7 +556,7 @@ class RegistryMixin(_Base):
         current = self.settings()
         if serial in current.ignored_serials:
             current.ignored_serials.remove(serial)
-            save_settings(self.paths.settings_file, current)
+            save_settings(self.paths, current)
             self._changed()
         return {"serial": serial, "ignored": False}
 
@@ -566,7 +566,7 @@ class RegistryMixin(_Base):
         current = self.settings()
         if uuid not in current.ignored_canbus_uuids:
             current.ignored_canbus_uuids.append(uuid)
-            save_settings(self.paths.settings_file, current)
+            save_settings(self.paths, current)
             self._changed()
         return {"uuid": uuid, "ignored": True}
 
@@ -576,7 +576,7 @@ class RegistryMixin(_Base):
         current = self.settings()
         if uuid in current.ignored_canbus_uuids:
             current.ignored_canbus_uuids.remove(uuid)
-            save_settings(self.paths.settings_file, current)
+            save_settings(self.paths, current)
             self._changed()
         return {"uuid": uuid, "ignored": False}
 

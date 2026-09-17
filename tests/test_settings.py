@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import sys
+
 import pytest
 
 from mcu_updater.config import Registry
@@ -107,20 +109,20 @@ def test_no_section_yields_defaults(paths):
 
 def test_save_then_load_round_trips(paths):
     original = Settings(make_jobs=3, dry_run=True, stop_services=["klipper-2"], enable_flashing=True)
-    save_settings(paths.settings_file, original)
+    save_settings(paths, original)
     assert load_settings(paths.settings_file) == original
 
 
 def test_save_then_load_round_trips_an_absent_stop_services(paths):
     original = Settings(make_jobs=3)
     assert original.stop_services is None
-    save_settings(paths.settings_file, original)
+    save_settings(paths, original)
     assert load_settings(paths.settings_file) == original
 
 
 def test_save_then_load_round_trips_a_blank_stop_services(paths):
     original = Settings(stop_services=[])
-    save_settings(paths.settings_file, original)
+    save_settings(paths, original)
     assert load_settings(paths.settings_file).stop_services == []
 
 
@@ -129,7 +131,7 @@ def test_save_then_load_round_trips_ignored_serials(paths):
     would read as an inline comment) and no comma (which `get_csv` would split
     on)."""
     original = Settings(ignored_serials=["123456789012345678901-if00"])
-    save_settings(paths.settings_file, original)
+    save_settings(paths, original)
     assert load_settings(paths.settings_file) == original
 
 
@@ -139,7 +141,7 @@ def test_ignored_serials_is_stored_as_a_multi_line_block(paths):
     and so takes `CfgDocument.set`'s own default rendering for a list value - a
     multi-line block, one serial per line. Both forms round-trip identically
     through `get_csv`; this pins which one actually lands on disk."""
-    save_settings(paths.settings_file, Settings(ignored_serials=["AAAA-if00", "BBBB-if00"]))
+    save_settings(paths, Settings(ignored_serials=["AAAA-if00", "BBBB-if00"]))
     with open(paths.settings_file, encoding="utf-8") as fh:
         text = fh.read()
     assert "ignored_serials:\n    AAAA-if00\n    BBBB-if00\n" in text
@@ -148,13 +150,13 @@ def test_ignored_serials_is_stored_as_a_multi_line_block(paths):
 def test_save_then_load_round_trips_a_blank_ignored_serials(paths):
     original = Settings()
     assert original.ignored_serials == []
-    save_settings(paths.settings_file, original)
+    save_settings(paths, original)
     assert load_settings(paths.settings_file).ignored_serials == []
 
 
 def test_save_then_load_round_trips_ignored_canbus_uuids(paths):
     original = Settings(ignored_canbus_uuids=["bcb5346fc731"])
-    save_settings(paths.settings_file, original)
+    save_settings(paths, original)
 
     assert load_settings(paths.settings_file) == original
     with open(paths.settings_file, encoding="utf-8") as fh:
@@ -164,7 +166,7 @@ def test_save_then_load_round_trips_ignored_canbus_uuids(paths):
 
 def test_save_then_load_round_trips_an_accent_colour(paths):
     original = Settings(ui_accent_color="#2196f3")
-    save_settings(paths.settings_file, original)
+    save_settings(paths, original)
     assert load_settings(paths.settings_file) == original
 
 
@@ -174,15 +176,15 @@ def test_accent_colour_is_stored_on_disk_without_its_leading_hash(paths):
     ('#', ';')` per this module's docstring) - written as `#2196f3` it would
     come back as an empty string on the very next load. The wire/UI value
     keeps its '#'; only the on-disk encoding is bare hex."""
-    save_settings(paths.settings_file, Settings(ui_accent_color="#2196f3"))
+    save_settings(paths, Settings(ui_accent_color="#2196f3"))
     with open(paths.settings_file, encoding="utf-8") as fh:
         text = fh.read()
     assert "ui_accent_color: 2196f3" in text
 
 
 def test_save_then_load_round_trips_a_cleared_accent_colour(paths):
-    save_settings(paths.settings_file, Settings(ui_accent_color="#2196f3"))
-    save_settings(paths.settings_file, Settings(ui_accent_color=""))
+    save_settings(paths, Settings(ui_accent_color="#2196f3"))
+    save_settings(paths, Settings(ui_accent_color=""))
     assert load_settings(paths.settings_file).ui_accent_color == ""
 
 
@@ -191,7 +193,7 @@ def test_saving_never_leaves_the_legacy_service_key_behind(paths):
     written back out."""
     with open(paths.settings_file, "w", encoding="utf-8") as fh:
         fh.write("[updater]\nservice: klipper-1\n")
-    save_settings(paths.settings_file, Settings(stop_services=["klipper"]))
+    save_settings(paths, Settings(stop_services=["klipper"]))
     with open(paths.settings_file, encoding="utf-8") as fh:
         out = fh.read()
     assert "service:" not in out
@@ -213,7 +215,7 @@ def test_saving_settings_keeps_the_mcu_sections_and_the_comments(paths, live_reg
     with open(paths.main_config, "w", encoding="utf-8", newline="\n") as fh:
         fh.write(live_registry_text)
 
-    save_settings(paths.settings_file, Settings(enable_flashing=True, make_jobs=3))
+    save_settings(paths, Settings(enable_flashing=True, make_jobs=3))
 
     with open(paths.main_config, encoding="utf-8") as fh:
         out = fh.read()
@@ -237,7 +239,7 @@ def test_saving_the_registry_keeps_the_settings(paths, live_registry_text):
     """The inverse. The panel writes both, and neither write knows about the other."""
     with open(paths.main_config, "w", encoding="utf-8", newline="\n") as fh:
         fh.write(live_registry_text)
-    save_settings(paths.settings_file, Settings(enable_flashing=True))
+    save_settings(paths, Settings(enable_flashing=True))
 
     reg = Registry.load(paths)
     reg.add_serial("bttebb36", "NEWBOARD-if00")
@@ -245,6 +247,77 @@ def test_saving_the_registry_keeps_the_settings(paths, live_registry_text):
 
     assert load_settings(paths.settings_file).enable_flashing is True
     assert "NEWBOARD-if00" in Registry.load(paths).get("bttebb36").serials
+
+
+def test_a_settings_save_keeps_a_serial_tracked_after_the_settings_were_loaded(
+    paths, live_registry_text
+):
+    """The agent loads settings, changes one, saves - and a CLI add-serial can
+    land in between. The save re-reads the file, so the serial survives."""
+    from mcu_updater import tracking
+
+    with open(paths.main_config, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(live_registry_text)
+    current = load_settings(paths.settings_file)
+
+    tracking.add_serial(paths, "bttebb36", "LATECOMER-if00")
+    current.ignored_serials.append("KNOMI-if00")
+    save_settings(paths, current)
+
+    assert "LATECOMER-if00" in Registry.load(paths).get("bttebb36").serials
+    assert load_settings(paths.settings_file).ignored_serials == ["KNOMI-if00"]
+
+
+def _registry_lock_is_held(paths, monkeypatch) -> None:
+    """The registry lock refusing, on every platform - flock is a no-op on
+    Windows, so really holding it proves nothing there."""
+    from mcu_updater.errors import BusyError
+    from mcu_updater.lock import ExclusiveLock
+
+    real = ExclusiveLock.acquire
+
+    def acquire(self, label):
+        if self.path == paths.registry_lock_file:
+            raise BusyError("another firmware operation is already running (the panel).")
+        return real(self, label)
+
+    monkeypatch.setattr(ExclusiveLock, "acquire", acquire)
+
+
+def test_a_settings_save_takes_the_registry_lock(paths, live_registry_text, monkeypatch):
+    """Same file, same lock: a settings write landing between a registry edit's
+    read and its write would otherwise be erased by it."""
+    from mcu_updater.errors import BusyError
+
+    with open(paths.main_config, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(live_registry_text)
+    _registry_lock_is_held(paths, monkeypatch)
+
+    with pytest.raises(BusyError):
+        save_settings(paths, Settings(enable_flashing=True))
+
+    with open(paths.main_config, encoding="utf-8") as fh:
+        assert fh.read() == live_registry_text
+
+
+@pytest.mark.skipif(
+    sys.platform == "win32",
+    reason="flock is unavailable on Windows; the lock degrades to a no-op there",
+)
+def test_a_settings_save_is_refused_while_the_registry_lock_is_really_held(
+    paths, live_registry_text
+):
+    from mcu_updater.errors import BusyError
+    from mcu_updater.lock import ExclusiveLock
+
+    with open(paths.main_config, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(live_registry_text)
+
+    with ExclusiveLock(paths, path=paths.registry_lock_file).acquire("the panel"):
+        with pytest.raises(BusyError, match="the panel"):
+            save_settings(paths, Settings(enable_flashing=True))
+
+    assert load_settings(paths.settings_file).enable_flashing is False
 
 
 def test_a_registry_only_file_yields_default_settings(paths, live_registry_text):
@@ -258,7 +331,7 @@ def test_repeated_saves_do_not_grow_the_file(paths, live_registry_text):
     with open(paths.main_config, "w", encoding="utf-8", newline="\n") as fh:
         fh.write(live_registry_text)
     for jobs in range(4):
-        save_settings(paths.settings_file, Settings(make_jobs=jobs))
+        save_settings(paths, Settings(make_jobs=jobs))
     with open(paths.main_config, encoding="utf-8") as fh:
         out = fh.read()
     assert out.count("[updater]") == 1

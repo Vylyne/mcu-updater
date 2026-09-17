@@ -20,6 +20,7 @@ from typing import Any
 
 from .cfgdoc import CfgDocument, parse_bool
 from .errors import ConfigError
+from .paths import Paths
 
 SECTION = "updater"
 
@@ -225,12 +226,28 @@ def load_settings(path: str) -> Settings:
     return s
 
 
-def save_settings(path: str, settings: Settings) -> None:
+def save_settings(paths: Paths, settings: Settings) -> None:
     """Write the [updater] section, leaving the rest of the file alone.
 
-    Load-modify-write against what is on disk rather than a cached document, so
-    this cannot clobber [mcu ...] sections written in the meantime.
+    Lock, re-read, apply, write - on the registry's own lock, because this is
+    the registry's file (`settings_file` is `main_config`). Load-modify-write
+    against what is on disk rather than a cached document, so this cannot
+    clobber [type ...] sections written in the meantime; the lock is what makes
+    "in the meantime" impossible rather than unlikely, since a `Registry.mutate`
+    in another process could otherwise land between this read and this write.
+
+    Non-blocking like `Registry.mutate`: `BusyError` when the lock is held. Never
+    call this inside `Registry.mutate` - the same process would be refused.
     """
+    from .lock import ExclusiveLock
+
+    path = paths.settings_file
+    with ExclusiveLock(paths, path=paths.registry_lock_file).acquire("save settings"):
+        _write_settings(path, settings)
+
+
+def _write_settings(path: str, settings: Settings) -> None:
+    """The read-apply-write half of `save_settings`. Only ever under its lock."""
     doc = _read(path)
     for field in dataclasses.fields(settings):
         if field.name == "stop_services":

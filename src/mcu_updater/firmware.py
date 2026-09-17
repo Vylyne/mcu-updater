@@ -43,8 +43,13 @@ SECTION_PREFIX = "firmware"
 
 #: What builds a family unless its `[firmware ...]` section says otherwise.
 #: Klipper, Katapult and every fork of either use Kconfig + `make`; PlatformIO
-#: is the only other builder today and always names itself explicitly.
+#: and CMake families always name themselves explicitly.
 DEFAULT_BUILDER = "kconfig_make"
+
+#: Every `builder:` value a build provider implements - `providers.registry`'s
+#: names, spelled out here because that package imports this module. A test
+#: holds the two equal, so a new provider cannot be added without this line.
+BUILDERS: tuple[str, ...] = ("cmake", "kconfig_make", "platformio")
 
 #: Keys install.sh writes into the two sections it seeds, beside `source:`.
 #: Nothing reads `flashers:` yet - the flash loop does, in the next plan. Kept

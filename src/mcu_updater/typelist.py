@@ -187,6 +187,29 @@ def validate(
     path: str,
 ) -> None:
     """Refuse what `read` let through."""
+    # A `builder:` no provider implements left its types quietly unbuildable
+    # and unflashable - every loop skipped them and nothing named the typo.
+    # Every family is checked, used by a type or not, and all are reported at
+    # once.
+    unknown_builders = {
+        name: family.builder
+        for name, family in families.items()
+        if family.builder not in firmware.BUILDERS
+    }
+    if unknown_builders:
+        first_family, first_builder = next(iter(unknown_builders.items()))
+        listed = "\n".join(
+            f"  [firmware {name}] builder: {builder}" for name, builder in unknown_builders.items()
+        )
+        raise ConfigCorruptError(
+            f"{path}: a builder no build provider implements (known: "
+            f"{', '.join(firmware.BUILDERS)}):\n{listed}\nFix the spelling, or "
+            f"remove the builder: line to use {firmware.DEFAULT_BUILDER}.",
+            path=path,
+            family=first_family,
+            value=first_builder,
+            builders=unknown_builders,
+        )
     known = firmware.names_of(families)
     # Every undeclared family, not just the first: a config with two typos
     # should not take two reloads to fix.

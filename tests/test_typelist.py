@@ -239,3 +239,32 @@ def test_an_undeclared_family_beside_a_known_one_is_not_called_mixed_builders(pa
     assert "not a known family" in str(exc.value)
     assert "different tools" not in str(exc.value)
     assert exc.value.data["missing"] == {"board": ["bogus"]}
+
+
+def test_every_unknown_builder_is_refused_at_once(paths):
+    """A typo'd `builder:` used to load, and its types silently dropped out of
+    every build and flash loop. A family no type uses is refused too."""
+    write_main_config(
+        paths,
+        FAMILIES
+        + "[firmware odd]\nsource: ~/odd\nbuilder: cmkae\n\n"
+        + "[firmware unused]\nsource: ~/unused\nbuilder: bogus\n\n"
+        + "[type board]\nchipset: x\nfirmware: odd\n",
+    )
+    with pytest.raises(ConfigCorruptError) as exc:
+        typelist.load(paths)
+
+    message = str(exc.value)
+    assert "[firmware odd] builder: cmkae" in message
+    assert "[firmware unused] builder: bogus" in message
+    assert "known: cmake, kconfig_make, platformio" in message
+    assert exc.value.data["builders"] == {"odd": "cmkae", "unused": "bogus"}
+    assert exc.value.data["family"] == "odd"
+    assert exc.value.data["value"] == "cmkae"
+
+
+def test_the_builder_names_are_exactly_the_providers():
+    from mcu_updater import firmware
+    from mcu_updater.providers.registry import PROVIDERS
+
+    assert set(firmware.BUILDERS) == {p.name for p in PROVIDERS}

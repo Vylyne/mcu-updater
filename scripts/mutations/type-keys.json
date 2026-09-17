@@ -55,6 +55,11 @@
       "file": "src/mcu_updater/config.py",
       "find": "                doc.set(section, \"kconfig_make_profile\", mcu.profile.strip())",
       "replace": "                doc.set(section, \"profile\", mcu.profile.strip())"
+    },
+    {
+      "name": "a builder no provider implements is refused",
+      "find": "        if family.builder not in firmware.BUILDERS\n",
+      "replace": "        if False\n"
     }
   ]
 }

@@ -27,12 +27,9 @@ from .typelist import TypeEntry
 
 KCONFIG_BUILDER = "kconfig_make"
 
-#: Builders `build_fw_cmd` dispatches on: its platformio and cmake branches,
-#: then the kconfig registry.
-BUILD_BUILDERS = frozenset({KCONFIG_BUILDER, "cmake", "platformio"})
-
-#: Builders `flash_fw_cmd` dispatches on, through `providers.provider_of`.
-FLASH_BUILDERS = frozenset({KCONFIG_BUILDER, "cmake", "platformio"})
+# Build and flash offer every declared type: `build_fw_cmd` and `flash_fw_cmd`
+# dispatch on every builder, and config validation refuses a `builder:` no
+# provider implements, so no loaded type is one they refuse outright.
 
 #: Builders `flash_fw_cmd` flashes a whole type for. A CMake type is refused
 #: type-level ("Flash its boards individually") before anything is written.
@@ -51,12 +48,6 @@ FLASH_UNTRACKED_BUILDERS = frozenset({KCONFIG_BUILDER})
 #: What a picker says when types are declared but its handler accepts none.
 KCONFIG_ONLY_MENUCONFIG = "No kconfig types are declared - menuconfig works on kconfig types only."
 KCONFIG_ONLY_ADD_MCU = "No kconfig types are declared - add-mcu works on kconfig types only."
-NONE_BUILDABLE = (
-    "No buildable types are declared - build works on kconfig, cmake and platformio types only."
-)
-NONE_FLASHABLE = (
-    "No flashable types are declared - flash works on kconfig, cmake and platformio types only."
-)
 
 
 def every_type(entry: TypeEntry) -> bool:
@@ -65,14 +56,6 @@ def every_type(entry: TypeEntry) -> bool:
 
 def kconfig_type(entry: TypeEntry) -> bool:
     return entry.builder == KCONFIG_BUILDER
-
-
-def buildable_type(entry: TypeEntry) -> bool:
-    return entry.builder in BUILD_BUILDERS
-
-
-def flashable_type(entry: TypeEntry) -> bool:
-    return entry.builder in FLASH_BUILDERS
 
 
 #: Builders whose by-id name carries the chipset, so detected boards are
@@ -389,9 +372,7 @@ def menu_menuconfig() -> None:
 
 
 def menu_build() -> None:
-    mcu_type = pick_mcu_type(
-        allow_new=True, accepts=buildable_type, none_accepted=NONE_BUILDABLE
-    )
+    mcu_type = pick_mcu_type(allow_new=True, accepts=every_type)
     if mcu_type is None:
         return
     entry = next((e for e in _entries() if e.name == mcu_type), None)
@@ -407,9 +388,7 @@ def menu_build() -> None:
 
 def menu_flash() -> None:
     entries = _entries()
-    mcu_type = pick_mcu_type(
-        entries, allow_new=False, accepts=flashable_type, none_accepted=NONE_FLASHABLE
-    )
+    mcu_type = pick_mcu_type(entries, allow_new=False, accepts=every_type)
     if mcu_type is None:
         return
     entry = next(e for e in entries if e.name == mcu_type)

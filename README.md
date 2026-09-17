@@ -239,7 +239,8 @@ optional: no `source:` means `~/<name>`.
 
 `builder:` takes three values: `kconfig_make` (the default, above), `platformio`
 (see [ESP32 displays](#esp32-displays)) and `cmake` (see
-[RP2040 cmake trees](#rp2040-cmake-trees)). A cmake family also takes
+[RP2040 cmake trees](#rp2040-cmake-trees)); any other value refuses the config
+when it loads. A cmake family also takes
 `cmake_args:`, split shell-style and appended to the configure step - quoting
 groups words (`-DX="two words"` arrives as one argument) and is consumed, the
 same way a shell consumes it. `${git_describe}` is the one substitution it

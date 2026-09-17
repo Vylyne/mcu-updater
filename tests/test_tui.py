@@ -13,7 +13,6 @@ import pytest
 
 from mcu_updater import cli, firmware, tui, typelist
 from mcu_updater.config import Registry
-from mcu_updater.errors import UpdaterError
 from mcu_updater.settings import Settings
 
 from .conftest import make_device, save_registry, seed_base_firmwares
@@ -162,19 +161,9 @@ def _declare_platformio(paths, fake_root, extra: str = "") -> None:
     )
 
 
-def test_flash_offers_exactly_the_types_the_flash_handler_accepts(c, monkeypatch, capsys):
-    """A family whose `builder:` no provider knows passes config validation, and
-    `flash_fw_cmd` refuses its type (`provider_of`: "no type ... is configured").
-    The picker does not offer it."""
-    _append_config(
-        c.paths,
-        "\n[firmware oddfw]\nsource: ~/odd\nbuilder: bogus\n\n"
-        "[type oddtype]\nfirmware: oddfw\nserials: ODD-1\n",
-    )
-    assert "oddtype" in [e.name for e in typelist.load(c.paths)]
-    with pytest.raises(UpdaterError):
-        cli.flash_fw_cmd(argparse.Namespace(type="oddtype", serial=None, yes=True, force=False))
-
+def test_flash_offers_every_declared_type(c, monkeypatch, capsys):
+    """`flash_fw_cmd` dispatches on every builder, and a `builder:` no provider
+    implements is refused when the config loads - so the picker filters nothing."""
     answers(monkeypatch, "0")
     tui.menu_flash()
     options = _menu_lines(capsys.readouterr().out, "Select MCU type")

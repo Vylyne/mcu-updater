@@ -120,13 +120,13 @@ application error (see `data.code`), `-32603` internal.
 | `fw.type.remove` | `name` (required), `force?` | `{name, removed_serials, kept_config_dir}` — refuses while boards are still tracked unless forced |
 | `fw.target.get` | `name`, `provider` (required) | `{provider, target}` — one `targets[]` entry's full detail |
 | `fw.bus.scan` | `only_untracked?`, `chipset?` | `{devices: [BusDevice]}` |
-| `fw.bus.ignore` | `serial` (required) | `{serial, ignored: true}` — hide a bus device from the "new board?" flow; idempotent, flag not filter |
-| `fw.bus.unignore` | `serial` (required) | `{serial, ignored: false}` — reverse `fw.bus.ignore`; idempotent |
+| `fw.bus.ignore` | `serial` (required) | `{serial, ignored: true}` — hide a bus device from the "new board?" flow; idempotent, flag not filter; `busy` / `config` as for `fw.settings.set` |
+| `fw.bus.unignore` | `serial` (required) | `{serial, ignored: false}` — reverse `fw.bus.ignore`; idempotent; `busy` / `config` as for `fw.settings.set` |
 | `fw.dfu.scan` | — | `{devices, count, ready, reason, message}` — read-only |
 | `fw.bootsel.scan` | — | `{devices, count, mounts, mount_count, ready, reason, message}` — read-only |
 | `fw.canbus.scan` | — | `{interfaces, devices, failures, count, message}` — read-only, run only when called |
-| `fw.canbus.ignore` | `uuid` (required) | `{uuid, ignored: true}` — hide every sighting of a CAN UUID from the "new board?" flow; idempotent, flag not filter |
-| `fw.canbus.unignore` | `uuid` (required) | `{uuid, ignored: false}` — reverse `fw.canbus.ignore`; idempotent |
+| `fw.canbus.ignore` | `uuid` (required) | `{uuid, ignored: true}` — hide every sighting of a CAN UUID from the "new board?" flow; idempotent, flag not filter; `busy` / `config` as for `fw.settings.set` |
+| `fw.canbus.unignore` | `uuid` (required) | `{uuid, ignored: false}` — reverse `fw.canbus.ignore`; idempotent; `busy` / `config` as for `fw.settings.set` |
 | `fw.add_mcu.start` | `name`, `dfu_serial?` (STM32 only) | `{job_id, job, dfu_serial, bootsel_id}` — **off by default** |
 | `fw.roadrunner.provision` | `serial` (required) | `{serial, prior_serial, state: "provisioned"}` - explicit direct-USB provisioning of one confirmed, untracked Roadrunner — **off by default** |
 | `fw.roadrunner.clear` | `serial` (required) | `{serial, prior_serial, state: "unprovisioned"}` - explicit direct-USB identity clear of one confirmed, untracked Roadrunner — **off by default** |
@@ -544,10 +544,12 @@ their dedicated `fw.bus.*` and `fw.canbus.*` ignore methods instead.
 Settings live in the same file as the `[type ...]` sections, so every settings
 write (`fw.settings.set` and the four ignore methods) takes the registry's own
 lock, as a type or serial edit does. The lock is held for milliseconds and is
-never waited on: a write that lands while another registry edit holds it fails
+not queued for: a write that finds it held retries once after 50ms, then fails
 with `busy`, and nothing is written, so the call can simply be retried. The
-settings are read under that lock, so two overlapping writes - a
-`fw.settings.set` and a `fw.bus.ignore` from two tabs, say - both survive. An
+settings are read under that lock, so back-to-back writes - a
+`fw.settings.set` and a `fw.bus.ignore` from two tabs, say - both survive
+rather than the later one restoring what the earlier replaced; two whose lock
+windows truly collide get one `busy`. An
 `[updater]` section that does not parse refuses the write with `config`, rather
 than the defaults `fw.settings.get` falls back to being written over it.
 

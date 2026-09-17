@@ -241,7 +241,7 @@ def test_flash_offers_a_platformio_type_whole_type_scope_only(
     answers(monkeypatch, "3", "0")
     tui.menu_flash()
     scopes = _menu_lines(capsys.readouterr().out, "Flash scope for 'knomi'")
-    assert scopes == ["1. Flash every tracked serial under this type", "0. Cancel"]
+    assert scopes == ["1. Flash every board of this type", "0. Cancel"]
 
 
 def test_flash_does_not_offer_a_cmake_type_an_untracked_board(

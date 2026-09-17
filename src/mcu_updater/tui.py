@@ -411,7 +411,7 @@ def menu_flash() -> None:
     whole_type = flashes_whole_type(entry)
     scope_options = []
     if whole_type:
-        scope_options.append("Flash every tracked serial under this type")
+        scope_options.append("Flash every board of this type")
     if serials and flashes_one_device(entry):
         scope_options.append("Flash one specific device")
     if not scope_options:

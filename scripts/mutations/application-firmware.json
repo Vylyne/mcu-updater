@@ -9,6 +9,7 @@
     "tests/test_config.py",
     "tests/test_agent_methods.py",
     "tests/test_agent_targets.py",
+    "tests/test_typelist.py",
     "-q"
   ],
   "mutations": [
@@ -19,16 +20,24 @@
     },
     {
       "name": "the declared firmware list is kept, not discarded on load",
-      "find": "            mcu.firmwares = declared_fws",
+      "find": "            mcu.firmwares = list(entry.firmwares)",
       "replace": "            mcu.firmwares = [\"klipper\"]"
     },
     {
       "name": "a family nobody declared is refused rather than accepted",
-      "find": "                if fw not in fw_names:",
-      "replace": "                if False:"
+      "file": "src/mcu_updater/typelist.py",
+      "find": "            if fw not in known:",
+      "replace": "            if False:"
     },
     {
-      "_comment": "load() now refuses a type with no firmware: key at all (step 11), so save() cannot leave it implicit even for the plain-klipper case any more - it is always written, never omitted as a restated default.",
+      "_comment": "Raising on the first undeclared family made a config with two typos take two reloads to fix. validate collects every miss and raises once.",
+      "name": "every undeclared family is reported at once, not just the first",
+      "file": "src/mcu_updater/typelist.py",
+      "find": "                missing.setdefault(entry.name, []).append(fw)",
+      "replace": "                raise ConfigCorruptError(f\"{fw}\", path=path, type=entry.name, value=fw, missing={entry.name: [fw]})"
+    },
+    {
+      "_comment": "load() now refuses a type with no firmware: key at all (step 11), so _save() cannot leave it implicit even for the plain-klipper case any more - it is always written, never omitted as a restated default.",
       "name": "the declared firmware list is always written back on save",
       "find": "            doc.set(section, \"firmware\", \", \".join(mcu.firmwares))",
       "replace": "            pass"
@@ -42,6 +51,22 @@
       "name": "the bootloader is the first declared family that is one",
       "find": "        for fw in self.firmwares:\n            if _is_bootloader(fw, families):\n                return fw",
       "replace": "        for fw in self.firmwares:\n            if False:\n                return fw"
+    },
+    {
+      "name": "a type's families keep their declared order",
+      "find": "        declared = [fw for fw in self.firmwares if fw in self.fws]",
+      "replace": "        declared = sorted(fw for fw in self.firmwares if fw in self.fws)"
+    },
+    {
+      "name": "add_type refuses a family it assembled that nobody declared",
+      "find": "            if fw not in declared:",
+      "replace": "            if False:"
+    },
+    {
+      "_comment": "I2: type_update's katapult_installed branch set mcu.firmwares without checking the family was declared, saving a config the next Registry.load refused - taking every type down with it. _save() now revalidates the document it is about to write with the same check load() applies, before any byte reaches disk.",
+      "name": "_save() refuses a document typelist.validate would refuse",
+      "find": "        typelist.validate(\n            typelist.read(doc, families_map), families_map, path=paths.registry_file\n        )",
+      "replace": "        pass"
     }
   ]
 }

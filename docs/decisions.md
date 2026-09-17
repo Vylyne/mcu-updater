@@ -189,8 +189,9 @@ what `add_executable()` creates and what `make <target>` / `cmake --build
 --target <name>` address; an earlier draft called it `variant:`, which was
 wrong twice — it is not CMake's word, and CMake Tools already uses "variant"
 for the *build type* (Debug, Release, MinSizeRel), so a user would reasonably
-have put `Release` in it. `env:` for PlatformIO is the same rule, already
-applied: that is what `platformio.ini` calls the section.
+have put `Release` in it. `platformio_env:` follows the same rule: `env` is
+what `platformio.ini` calls the section, and the `platformio_` prefix says
+which module reads it.
 
 The user reading the key has the upstream tool's documentation open, not ours.
 A house synonym means they have to learn a mapping, and a synonym that
@@ -201,6 +202,15 @@ than `target:`, because `BuildTarget`, `FlashTarget` and the `targets[]` wire
 shape are three different things a bare `target:` would sit ambiguously
 beside. The prefix also says which vocabulary the word belongs to, which is
 the point.
+
+A key read by one seam module is spelled `<seam module>_<param>`:
+`platformio_env`, `cmake_target`, `kconfig_make_profile`,
+`knomi_serial_device_map`. The param keeps the upstream word; the prefix says
+which builder or helper reads it. Keys every type has (`firmware`, `chipset`,
+`serials`, `canbus_uuids`, `stop_services`) and keys every family can have
+(`source`, `builder`, `helper`, `flashers`, `submodules`) stay unprefixed, and
+per-family kconfig keys keep their family prefix (`klipper_extra_args`). An
+old spelling is refused with the new one named, never read under both.
 
 ### Do not spell the stop-list key `managed_services:`
 
@@ -285,3 +295,29 @@ this.
 The former fork and its release channel are retired. This historical decision
 is superseded; the supported client is the standalone UI documented in
 `docs/mainsail-fork.md`.
+
+### One walk over `[type]` sections
+
+`typelist.py` is the only code that decides which builder owns a `[type]`
+section. `Registry.load`, `pio.load` and `cmake.load` are views that filter its
+list by builder, until their callers read the list directly. Three private
+walks were how a Roadrunner type existed for the agent and not for the CLI. A
+new reader of type sections reads the list; it does not open the file.
+
+`Registry`'s `declared_*` methods (`declared_type_names`,
+`find_declared_types_for_serial`, and friends) still call `sections.read`
+directly - deliberately, since they answer "what's in the file, whoever builds
+it", the one place ownership does not apply. That walk names sections; it
+never decides who builds them.
+
+`typelist.read` never raises and `typelist.validate` is strict. Anything that
+answers a question about one name (`providers.selection`) uses the lenient
+half, so one malformed section cannot break another type.
+
+### Presence comes from the inventory
+
+`inventory.py` joins the declared identities from the one type list with one
+injected sweep. A status path, the CLI or anything else that asks "is this
+board plugged in" reads a row; it does not scan and match on its own. The rule
+is exact serial, exactly one sighting. The by-id chipset segment is not a
+filter: it is the firmware's choice of name, not the board's identity.

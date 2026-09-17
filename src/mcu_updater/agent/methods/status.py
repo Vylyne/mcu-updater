@@ -11,7 +11,8 @@ import time
 from collections.abc import Callable, Iterable
 from typing import Any
 
-from ... import API_VERSION, __version__, firmware, helpers, profiles, providers
+from ... import API_VERSION, __version__, firmware, helpers, profiles, providers, typelist
+from ... import inventory as inventory_mod
 from ... import uf2 as uf2_mod
 from ...build import read_sidecar
 from ...config import Registry
@@ -20,7 +21,6 @@ from ...devices import (
     STATE_KLIPPER,
     STATE_OFFLINE,
     BusDevice,
-    device_state,
     parse_entry,
     scan,
 )
@@ -255,9 +255,6 @@ class StatusMixin(_Base):
                     "bootloader": family.bootloader,
                     "present": os.path.isdir(source),
                     "configurable": configurable.get(name, False),
-                    # Neither can be removed by editing a config file, and the
-                    # picker should not offer to.
-                    "builtin": name in firmware.BUILTIN,
                 }
             )
         return out
@@ -345,6 +342,7 @@ class StatusMixin(_Base):
         name: str,
         versions: dict[str, dict[str, str]] | None = None,
         canbus: dict[str, dict[str, Any]] | None = None,
+        rows: dict[tuple[str, str, str], inventory_mod.Row] | None = None,
     ) -> dict[str, Any]:
         """One type's state, including what each of its boards is *running*.
 
@@ -357,6 +355,9 @@ class StatusMixin(_Base):
         compared against the tree its own firmware is built from - a board
         running cartographer measured against upstream klipper reads as behind
         forever.
+
+        `rows` is the indexed inventory; passed in by `status()` so one sweep
+        serves every type.
         """
         from ...build import git_head
 
@@ -380,9 +381,13 @@ class StatusMixin(_Base):
         artifact_sha = sidecar.get("bin_sha256")
         built_version = sidecar.get("version")
 
+        if rows is None:
+            rows = inventory_mod.index(self.inventory())
         serials = []
         for serial in mcu.serials:
-            state, path = device_state(self.paths, mcu.chipset, serial)
+            row = rows.get((name, inventory_mod.SERIAL, serial))
+            state = row.state if row is not None else STATE_OFFLINE
+            path = row.path if row is not None else None
             entry = {"serial": serial, "state": state, "path": path}
             entry.update(
                 self.flash_state(
@@ -452,6 +457,18 @@ class StatusMixin(_Base):
             out[fw] = block
         return out
 
+    def inventory(
+        self, canbus: dict[str, dict[str, Any]] | None = None
+    ) -> list[inventory_mod.Row]:
+        """Every declared identity joined with one by-id sweep.
+
+        Lenient about the type list: a config error is raised by the registry
+        load every status path already makes, not a second time here.
+        """
+        entries, _ = typelist.read_config(self.paths)
+        sweep = inventory_mod.Sweep(byid=tuple(scan(self.paths)), canbus=canbus or {})
+        return inventory_mod.build(entries, sweep)
+
     def bus(self, reg: Registry) -> list[dict[str, Any]]:
         bus_devices = scan(self.paths)
         owner = {
@@ -496,7 +513,8 @@ class StatusMixin(_Base):
         # the same things as these two in one shape; if it ever needs a fact
         # they do not carry, that is a missing key here, not there.
         canbus = self._latest_canbus_info
-        types = [self.type_status(reg, n, versions, canbus) for n in reg.names()]
+        rows = inventory_mod.index(self.inventory(canbus))
+        types = [self.type_status(reg, n, versions, canbus, rows) for n in reg.names()]
         displays = self.pio_status()
         return {
             "bus": self.bus(reg),
@@ -522,14 +540,14 @@ class StatusMixin(_Base):
             # types[] and displays[] said in one shape, so a panel can render
             # an MCU, a display and whatever comes next with a single
             # component. The two originals retired at API_VERSION 2.
-            "targets": self.targets(reg, types, displays),
+            "targets": self.targets(reg, types, displays, rows),
         }
 
     def pio_status(self) -> list[dict[str, Any]]:
-        """Configured display types, each with the screens Klipper expects.
+        """Configured PlatformIO types, each with the screens Klipper expects.
 
         Rolled into fw.status so the panel paints in one call, like everything
-        else. Cheap when unconfigured: no `[display]` sections means no work at
+        else. Cheap when unconfigured: no `[type]` sections means no work at
         all, not even the configfile query.
         """
         from ...providers import pio as pio_mod
@@ -575,7 +593,7 @@ class StatusMixin(_Base):
                         # file a record under, no record yet, or a record
                         # discarded because what the screen reports running no
                         # longer matches it.
-                        "confidence": self._screen_confidence(entry, flashlog),
+                        "confidence": self._platformio_confidence(entry, flashlog),
                     }
                 )
             out.append(
@@ -718,8 +736,11 @@ class StatusMixin(_Base):
         reg: Registry,
         types: list[dict[str, Any]],
         displays: list[dict[str, Any]],
+        rows: dict[tuple[str, str, str], inventory_mod.Row] | None = None,
     ) -> list[dict[str, Any]]:
         """`types[]` and `displays[]` in one shape."""
+        if rows is None:
+            rows = inventory_mod.index(self.inventory())
         allowed = set(self.available_methods())
         # Read once for the whole projection. Every type asks the same two
         # questions of it - can this tree be configured, and what does it ship -
@@ -733,7 +754,7 @@ class StatusMixin(_Base):
         ] + [
             self._pio_target(payload, allowed) for payload in displays
         ] + [
-            self._cmake_target(payload, allowed, families)
+            self._cmake_target(payload, allowed, families, rows)
             for payload in self.cmake_status()
         ]
 
@@ -1042,6 +1063,7 @@ class StatusMixin(_Base):
         payload: dict[str, Any],
         allowed: set[str],
         families: dict[str, firmware.FirmwareFamily],
+        rows: dict[tuple[str, str, str], inventory_mod.Row] | None = None,
     ) -> dict[str, Any]:
         """A cmake type in the shared `targets[]` shape.
 
@@ -1065,12 +1087,12 @@ class StatusMixin(_Base):
             helper_problem = str(exc)
         helper_configured = helper is not None
 
-        sightings = scan(self.paths)
+        if rows is None:
+            rows = inventory_mod.index(self.inventory())
         devices: list[dict[str, Any]] = []
         for serial in payload["serials"]:
-            matches = [device for device in sightings if device.serial == serial]
-            present = len(matches) == 1
-            match = matches[0] if present else None
+            device_row = rows.get((name, inventory_mod.SERIAL, serial))
+            present = device_row is not None and device_row.present
             device_status = DeviceStatus(UNKNOWN_VERSION if present else OFFLINE)
             device_actions = (
                 self._device_actions(
@@ -1109,8 +1131,8 @@ class StatusMixin(_Base):
                     "id": serial,
                     "name": None,
                     "present": present,
-                    "state": match.state if match is not None else STATE_OFFLINE,
-                    "path": match.path if match is not None else None,
+                    "state": device_row.state if device_row is not None else STATE_OFFLINE,
+                    "path": device_row.path if device_row is not None else None,
                     "version": None,
                     "confidence": None,
                     **self._device_json(device_status),
@@ -1177,7 +1199,7 @@ class StatusMixin(_Base):
 
         devices = []
         for screen in payload["screens"]:
-            device = self._screen_device_status(screen)
+            device = self._platformio_device_status(screen)
             devices.append(
                 {
                     "id": screen["configured_path"],
@@ -1185,7 +1207,7 @@ class StatusMixin(_Base):
                     # for their [mcu] section, and the same kind of fact.
                     "name": screen["section"],
                     "present": screen["present"],
-                    "state": self._screen_state(screen),
+                    "state": self._platformio_state(screen),
                     "path": screen.get("resolved_path"),
                     "version": screen.get("firmware_version"),
                     # Our record of how this screen was identified at write
@@ -1202,7 +1224,7 @@ class StatusMixin(_Base):
                         ),
                         present=screen["present"],
                         has_artifact=bool(payload["has_firmware"]),
-                        what="display firmware",
+                        what=f"{payload['firmware']} firmware",
                         label=screen["name"],
                     ),
                 }
@@ -1237,7 +1259,7 @@ class StatusMixin(_Base):
                 allowed=allowed,
                 has_artifact=bool(payload["has_firmware"]),
                 flashable=[d for d in devices if d["present"]],
-                what="display firmware",
+                what=f"{payload['firmware']} firmware",
                 flash_method="fw.flash",
                 update_method=None,
             )
@@ -1274,7 +1296,7 @@ class StatusMixin(_Base):
         }
 
     @staticmethod
-    def _screen_confidence(entry: dict[str, Any], flashlog: Any) -> str | None:
+    def _platformio_confidence(entry: dict[str, Any], flashlog: Any) -> str | None:
         """How this screen's identity was confirmed when we last wrote to it.
 
         The display counterpart of the lookup in `flash_state`, and it answers
@@ -1299,7 +1321,7 @@ class StatusMixin(_Base):
         return (record or {}).get("confidence")
 
     @staticmethod
-    def _screen_device_status(screen: dict[str, Any]) -> DeviceStatus:
+    def _platformio_device_status(screen: dict[str, Any]) -> DeviceStatus:
         """Does this screen want firmware, and why?
 
         A screen has two independent ways to want it: a protocol mismatch is the
@@ -1319,7 +1341,7 @@ class StatusMixin(_Base):
         return DeviceStatus(screen.get("reason"))
 
     @staticmethod
-    def _screen_state(screen: dict[str, Any]) -> str:
+    def _platformio_state(screen: dict[str, Any]) -> str:
         """The slot an MCU row fills with klipper/katapult/offline.
 
         Three states again, but the middle one is the point: a port that opens
@@ -1635,7 +1657,11 @@ class StatusMixin(_Base):
             )
             return out
 
-        flashtool = find_flashtool(self.paths, settings)
+        try:
+            flashtool = find_flashtool(self.paths, settings)
+        except ConfigCorruptError as exc:
+            out["message"] = str(exc)
+            return out
         if not os.path.exists(flashtool):
             out["message"] = f"flashtool.py not found at {flashtool}. Is katapult installed?"
             return out
@@ -2016,7 +2042,7 @@ class StatusMixin(_Base):
         """
         # Every configured type's section prefix, not just Knomi's - a second
         # display with its own klippy module declares a different one. Falls back
-        # to knomi_serial so this still answers before any [display] section
+        # to knomi_serial so this still answers before any [type] section
         # exists, which is how it gets used while setting one up.
         prefixes = {d.klipper_section for d in self.pio_types().values()}
         prefixes.discard("")
@@ -2184,7 +2210,7 @@ class StatusMixin(_Base):
     def _watcher_map(self) -> dict[str, Any]:
         """Each display family's watcher: is it running, and what has it found?
 
-        Keyed by display type, because the watcher is a property of the family
+        Keyed by PlatformIO type, because the watcher is a property of the family
         rather than of the host - a second display family brings its own.
 
         `active` is not decoration. The map carries no timestamps by design, so
@@ -2204,7 +2230,7 @@ class StatusMixin(_Base):
             # `fw.status`'s own MCU join, not here, and this map exists to
             # answer one question - is this display's own watcher up? - which
             # only the non-klipper units bear on.
-            resolved = stop_services.for_display(self.paths, display, settings)
+            resolved = stop_services.for_platformio(self.paths, display, settings)
             watcher = next((u for u in resolved if u != "klipper"), None)
             svc = (
                 make_controller(settings, call=self._call_for_service, name=watcher)
@@ -2227,7 +2253,7 @@ class StatusMixin(_Base):
         return out
 
     def pio_types(self) -> dict:
-        """Configured `[display <env>]` sections."""
+        """Configured `[type <env>]` sections."""
         from ...providers import pio as pio_mod
 
         return pio_mod.load(self.paths)

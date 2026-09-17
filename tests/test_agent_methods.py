@@ -13,13 +13,13 @@ import sys
 
 import pytest
 
-from mcu_updater import API_VERSION
+from mcu_updater import API_VERSION, typelist
 from mcu_updater.agent.methods import Api
 from mcu_updater.agent.rpc import ERR_INVALID_PARAMS, ERR_METHOD_NOT_FOUND, RpcError
 from mcu_updater.cfgdoc import CfgDocument
 from mcu_updater.settings import Settings
 
-from .conftest import make_device, write_settings
+from .conftest import make_device, read_main_config, save_registry, write_main_config, write_settings
 
 
 @pytest.fixture
@@ -130,7 +130,7 @@ def test_status_surfaces_extra_repos(api, paths):
 
     reg = Registry.load(paths)
     reg.get("flylllplusbuffer").fw("klipper").extra_repos = ["/home/pi/buffer_manager"]
-    reg.save(paths)
+    save_registry(reg, paths)
 
     types = {t["name"]: t for t in api.dispatch("fw.type.list")["types"]}
     assert types["flylllplusbuffer"]["klipper"]["extra_repos"] == ["/home/pi/buffer_manager"]
@@ -787,6 +787,27 @@ def test_type_update_can_clear_katapult_installed(api):
     assert api.registry().get("bttebb36").bootloader() == "katapult"
 
 
+def test_type_update_katapult_installed_refuses_an_undeclared_family(paths):
+    """The katapult_installed branch used to set `mcu.firmwares` without
+    checking the family was declared, so this saved a config the agent then
+    refused to load - every type vanishing from every surface on the next
+    read. Refused before the write now, the same way `Registry.load` would
+    refuse it on the way back in."""
+    write_main_config(
+        paths,
+        "[firmware klipper]\nsource: ~/klipper\n\n"
+        "[type bttebb36]\nchipset: stm32g0b1xx\nfirmware: klipper\n",
+    )
+    api = Api(paths)
+    before = read_main_config(paths)
+
+    with pytest.raises(RpcError) as exc:
+        api.dispatch("fw.type.update", {"name": "bttebb36", "katapult_installed": True})
+    assert exc.value.data["code"] == "config_corrupt"
+
+    assert read_main_config(paths) == before
+
+
 def test_type_update_warns_when_a_chipset_change_orphans_a_binary(api, paths):
     """Staleness compares the source commit and a hash of the .config - neither
     changes when the chipset does, so an old binary would keep reporting itself
@@ -949,6 +970,17 @@ def test_type_remove_refuses_an_unknown_type(api):
     assert exc.value.data["code"] == "unknown_type"
 
 
+def test_type_remove_removes_a_cmake_type(api, paths):
+    with open(paths.main_config, "a", encoding="utf-8", newline="\n") as fh:
+        fh.write(
+            "\n[firmware roadrunner]\nsource: ~/rr\nbuilder: cmake\n\n"
+            "[type rr]\nchipset: rp2040\nfirmware: roadrunner\ncmake_target: t\nserials:\n    RR-X\n"
+        )
+    res = api.dispatch("fw.type.remove", {"name": "rr", "force": True})
+    assert res["removed_serials"] == 1
+    assert "rr" not in {e.name for e in typelist.load(paths)}
+
+
 # --------------------------------------------------------------------------
 # fw.settings.set
 # --------------------------------------------------------------------------
@@ -968,6 +1000,51 @@ def test_settings_set_reports_nothing_changed_when_the_value_matches(api):
     api.dispatch("fw.settings.set", {"settings": {"make_jobs": 4}})
     again = api.dispatch("fw.settings.set", {"settings": {"make_jobs": 4}})
     assert again["changed"] == []
+
+
+def test_an_ignore_that_lands_while_settings_set_waits_for_the_lock_survives(
+    api, paths, monkeypatch
+):
+    """Two panel tabs: one sets make_jobs, the other ignores a serial, and the
+    ignore finishes first. `fw.settings.set` writes every [updater] field, so it
+    must load them under the lock - settings read before the ignore would
+    write the old ignore list back over it."""
+    from mcu_updater.lock import ExclusiveLock
+
+    stale = api.settings()
+    real = ExclusiveLock.acquire
+    raced: list[str] = []
+
+    def acquire(self, label):
+        if self.path == paths.registry_lock_file and label == "set settings" and not raced:
+            raced.append(label)
+            api.dispatch("fw.bus.ignore", {"serial": "STRANGER"})
+        return real(self, label)
+
+    monkeypatch.setattr(ExclusiveLock, "acquire", acquire)
+
+    api.dispatch("fw.settings.set", {"settings": {"make_jobs": 4}})
+
+    final = api.settings()
+    assert raced == ["set settings"]
+    assert "STRANGER" not in stale.ignored_serials
+    assert final.ignored_serials == ["STRANGER"]
+    assert final.make_jobs == 4
+
+
+def test_a_settings_write_refuses_a_malformed_updater_section(api, paths):
+    """`fw.settings.get` falls back to defaults for display, but a write must not:
+    writing those defaults back would silently reset every other setting in the
+    section - `enable_flashing` included."""
+    with open(paths.main_config, "a", encoding="utf-8", newline="\n") as fh:
+        fh.write("\n[updater]\nenable_flashing: true\ndry_run: maybe\n")
+    before = read_main_config(paths)
+
+    with pytest.raises(RpcError) as exc:
+        api.dispatch("fw.bus.ignore", {"serial": "STRANGER"})
+
+    assert exc.value.data["code"] == "config"
+    assert read_main_config(paths) == before
 
 
 def test_settings_set_does_not_eat_the_registry_it_shares_a_file_with(api, paths):
@@ -1771,7 +1848,7 @@ def test_a_flash_writes_a_record(paths, live_registry_text):
     # flash_katapult checks for flashtool.py before anything else, even in a dry
     # run - a rehearsal of a flash that could not happen is not a useful rehearsal.
     os.makedirs(os.path.join(paths.home, "katapult", "scripts"), exist_ok=True)
-    with open(paths.flashtool, "w", encoding="utf-8") as fh:
+    with open(os.path.join(paths.home, "katapult", "scripts", "flashtool.py"), "w", encoding="utf-8") as fh:
         fh.write("# stub\n")
 
     real = dataclasses.replace(Settings(), service_backend="null", clean_before_build=False)

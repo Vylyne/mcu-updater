@@ -74,7 +74,7 @@ class FlashTarget:
 
     A key plus an envelope. `type` and `id` are the two facts every caller needs
     and are the same two slots `targets[].devices[]` already uses - the board's
-    `[mcu]` name and its serial, the display's `[display]` name and its
+    `[type]` name and its serial, the display's `[type]` name and its
     configured port.
 
     `detail` is the owning flasher's private payload and nothing else reads it.
@@ -85,7 +85,7 @@ class FlashTarget:
 
     #: Key into `flashers.FLASHERS`.
     flasher: str
-    #: The `[mcu ...]` or `[display ...]` section name.
+    #: The `[type ...]` section name.
     type: str
     #: What identifies the device: a serial for a board, a configured port for a
     #: screen.

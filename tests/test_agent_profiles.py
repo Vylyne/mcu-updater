@@ -10,6 +10,7 @@ config nobody seeded is not overwritten unless asked twice.
 
 from __future__ import annotations
 
+import os
 import pathlib
 import shutil
 
@@ -23,7 +24,7 @@ from mcu_updater.jobs import JobRunner
 from mcu_updater.paths import Paths
 from mcu_updater.settings import Settings
 
-from .conftest import write_settings
+from .conftest import seed_base_firmwares, with_base_firmwares, write_settings
 from .test_profiles import PROFILE_TREE, SEEDS, make_tree
 
 
@@ -44,6 +45,7 @@ def api(tmp_path) -> Api:
     (tmp_path / "printer_data" / "config" / "mcu-updater").mkdir(parents=True)
     (tmp_path / "printer_data" / "mcu-updater").mkdir(parents=True)
     paths = Paths.from_env(env={"MCU_UPDATER_HOME": str(tmp_path)})
+    seed_base_firmwares(paths)
     with Registry.mutate(paths, "test setup") as reg:
         reg.add_type("carto_v4", "stm32g431xx")
     return _api_for(paths)
@@ -150,7 +152,7 @@ def test_the_intent_is_recorded_in_the_hand_edited_config(api):
     # ...and only for the application. Katapult's is always derived, so a second
     # key would restate that rather than record anything.
     text = pathlib.Path(api.paths.main_config).read_text(encoding="utf-8")
-    assert text.count("profile:") == 1
+    assert text.count("kconfig_make_profile:") == 1
 
 
 def test_deriving_can_be_declined(api):
@@ -297,7 +299,7 @@ def test_forgetting_detaches_without_touching_the_answers(api):
 
 def test_a_vendor_bump_shows_up_as_something_to_do(api):
     apply(api, name="carto_v4", profile="config.TestBoardUSB")
-    seed = pathlib.Path(api.paths.fw_dir("klipper")) / "config.TestBoardUSB"
+    seed = pathlib.Path(os.path.join(api.paths.home, "klipper")) / "config.TestBoardUSB"
     seed.write_text(seed.read_text(encoding="utf-8").replace("6.2.0", "6.3.0"), encoding="utf-8")
 
     verdict = api.artifact("carto_v4", "klipper")["profile"]
@@ -332,7 +334,7 @@ def _build(api: Api, **params):
 
 
 def _bump(api: Api, name: str = "config.TestBoardUSB") -> None:
-    seed = pathlib.Path(api.paths.fw_dir("klipper")) / name
+    seed = pathlib.Path(os.path.join(api.paths.home, "klipper")) / name
     seed.write_text(seed.read_text(encoding="utf-8").replace("6.2.0", "6.3.0"), encoding="utf-8")
 
 
@@ -524,12 +526,14 @@ def test_seeding_a_cartographer_fork_through_the_agent(tmp_path):
     (tmp_path / "printer_data" / "mcu-updater").mkdir(parents=True)
     paths = Paths.from_env(env={"MCU_UPDATER_HOME": str(tmp_path)})
     pathlib.Path(paths.main_config).write_text(
-        "[firmware cartographer]\n"
-        "source: ~/MCU-Firmware---Based-on-Klipper\n"
-        "artifact: klipper\n\n"
-        "[type carto_v4]\n"
-        "chipset: stm32g431xx\n"
-        "firmware: cartographer, katapult\n",
+        with_base_firmwares(
+            "[firmware cartographer]\n"
+            "source: ~/MCU-Firmware---Based-on-Klipper\n"
+            "artifact: klipper\n\n"
+            "[type carto_v4]\n"
+            "chipset: stm32g431xx\n"
+            "firmware: cartographer, katapult\n"
+        ),
         encoding="utf-8",
     )
     api = _api_for(paths)
@@ -557,13 +561,13 @@ def test_seeding_a_cartographer_fork_through_the_agent(tmp_path):
 
 def test_a_tree_that_ships_no_profiles_lists_none_rather_than_failing(api):
     for seed in SEEDS:
-        (pathlib.Path(api.paths.fw_dir("klipper")) / seed).unlink()
+        (pathlib.Path(os.path.join(api.paths.home, "klipper")) / seed).unlink()
     out = api.dispatch("fw.profile.list", {"name": "carto_v4"})
     assert out["available"] == []
 
 
 def test_a_missing_tree_does_not_break_the_listing(api):
-    shutil.rmtree(api.paths.fw_dir("klipper"))
+    shutil.rmtree(os.path.join(api.paths.home, "klipper"))
     out = api.dispatch("fw.profile.list", {"name": "carto_v4"})
     assert out["available"] == []
 

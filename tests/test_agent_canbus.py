@@ -33,9 +33,14 @@ def _make_can_interface(fake_root, name: str) -> str:
     return str(net_root)
 
 
+def _flashtool_path(paths) -> str:
+    return os.path.join(paths.home, "katapult", "scripts", "flashtool.py")
+
+
 def _make_flashtool(paths) -> None:
-    os.makedirs(os.path.dirname(paths.flashtool), exist_ok=True)
-    with open(paths.flashtool, "w", encoding="utf-8") as fh:
+    flashtool = _flashtool_path(paths)
+    os.makedirs(os.path.dirname(flashtool), exist_ok=True)
+    with open(flashtool, "w", encoding="utf-8") as fh:
         fh.write("# fake flashtool.py, never actually executed\n")
 
 
@@ -206,6 +211,19 @@ def test_nothing_unclaimed_answering_is_reported_not_raised(api, fake_root, monk
     assert res["count"] == 0
     assert res["devices"] == []
     assert "no unclaimed" in (res["message"] or "").lower()
+
+
+def test_an_undeclared_katapult_is_reported_not_raised(paths, fake_root):
+    with open(paths.registry_file, "w", encoding="utf-8") as fh:
+        fh.write("[firmware klipper]\nsource: ~/klipper\n")
+    api = Api(paths)
+    api.paths = dataclasses.replace(
+        api.paths, can_sysfs_net=_make_can_interface(fake_root, "can0")
+    )
+
+    res = api.dispatch("fw.canbus.scan")
+    assert res["devices"] == []
+    assert "[firmware katapult]" in (res["message"] or "")
 
 
 def test_a_tracked_uuid_is_named(api, fake_root, monkeypatch):

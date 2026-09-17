@@ -17,6 +17,8 @@ from mcu_updater.config import Registry
 from mcu_updater.errors import ConfigCorruptError
 from mcu_updater.providers import pio
 
+from .conftest import save_registry, seed_base_firmwares, with_base_firmwares
+
 # --------------------------------------------------------------------------
 # reading
 # --------------------------------------------------------------------------
@@ -47,8 +49,6 @@ def test_firmware_sections_are_a_different_axis():
     each has to ignore the other's sections."""
     doc = CfgDocument("[firmware cartographer]\nsource: ~/carto\n[type board]\n")
     assert [d.name for d in sections.read(doc)] == ["board"]
-    assert not sections.is_type_section("firmware cartographer")
-    assert not sections.is_type_section("updater")
 
 
 # --------------------------------------------------------------------------
@@ -73,20 +73,25 @@ def test_a_name_this_document_has_never_seen_gets_a_fresh_section():
 
 def test_a_registry_round_trips_without_changing_the_file(paths):
     with open(paths.registry_file, "w", encoding="utf-8") as fh:
-        fh.write("[type board]\nchipset: stm32f072xb\nfirmware: klipper\nserials:\n")
+        fh.write(
+            with_base_firmwares(
+                "[type board]\nchipset: stm32f072xb\nfirmware: klipper\nserials:\n"
+            )
+        )
 
     reg = Registry.load(paths)
     assert "board" in reg.names()
-    reg.save(paths)
+    save_registry(reg, paths)
 
     text = open(paths.registry_file, encoding="utf-8").read()
     assert "[type board]" in text
 
 
 def test_a_new_type_is_written_as_type(paths):
+    seed_base_firmwares(paths)
     reg = Registry.load(paths)
     reg.add_type("carto_v4", "stm32g431xx")
-    reg.save(paths)
+    save_registry(reg, paths)
 
     assert "[type carto_v4]" in open(paths.registry_file, encoding="utf-8").read()
 
@@ -95,7 +100,7 @@ def test_a_platformio_type_is_recognised_by_its_declared_firmware(paths):
     with open(paths.main_config, "w", encoding="utf-8") as fh:
         fh.write(
             "[firmware knomi_serial]\nsource: ~/knomi-serial\nbuilder: platformio\n\n"
-            "[type knomi_toolchanger]\nfirmware: knomi_serial\nenv: knomi_toolchanger\n"
+            "[type knomi_toolchanger]\nfirmware: knomi_serial\nplatformio_env: knomi_toolchanger\n"
         )
 
     found = pio.load(paths)
@@ -107,9 +112,11 @@ def test_a_pio_type_is_not_picked_up_by_the_mcu_registry(paths):
     the only thing keeping one reader out of the other's sections."""
     with open(paths.registry_file, "w", encoding="utf-8") as fh:
         fh.write(
-            "[firmware knomi_serial]\nsource: ~/knomi-serial\nbuilder: platformio\n\n"
-            "[type board]\nchipset: stm32f072xb\nfirmware: klipper\n"
-            "[type knomi]\nfirmware: knomi_serial\nenv: knomi\n"
+            with_base_firmwares(
+                "[firmware knomi_serial]\nsource: ~/knomi-serial\nbuilder: platformio\n\n"
+                "[type board]\nchipset: stm32f072xb\nfirmware: klipper\n"
+                "[type knomi]\nfirmware: knomi_serial\nplatformio_env: knomi\n"
+            )
         )
 
     assert Registry.load(paths).names() == ["board"]
@@ -124,7 +131,7 @@ def test_a_type_predating_firmware_is_refused_not_defaulted(paths):
     it (its own firmware:-required check predates this one, from step 7),
     so only the MCU registry's refusal is new here."""
     with open(paths.main_config, "w", encoding="utf-8") as fh:
-        fh.write("[type knomi]\nprovider: platformio\nenv: knomi\n")
+        fh.write("[type knomi]\nprovider: platformio\nplatformio_env: knomi\n")
 
     assert pio.load(paths) == {}
     with pytest.raises(ConfigCorruptError) as exc:

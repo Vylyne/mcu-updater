@@ -17,16 +17,16 @@ So both become overridable::
     source: ~/MCU-Firmware---Based-on-Klipper
     artifact: klipper
 
-**Every key is optional and the section itself is optional.** With no
-``[firmware]`` section anywhere, every family resolves to exactly the
-conventions above, which is why this can land without touching a single
-existing install. `resolve()` always returns a family rather than None for the
-same reason - callers never have to branch on "was it configured".
+**Every family is declared**, klipper and katapult included. `resolve()`
+refuses a name with no section, with the lines to add, rather than inventing
+the ``~/<name>`` convention for it - inventing is how a misspelt family used to
+build from a directory nobody meant. Within a section every key is optional: a
+section with no ``source:`` still means ``~/<name>``. install.sh writes the
+klipper and katapult sections with the paths it finds.
 
-Deliberately not here: which flasher a family uses. That is chosen by chipset
-rather than by firmware - one family can need dfu-util on an STM32 board and
-BOOTSEL on an RP2040 one - so a `flasher:` key here would let a user pick a
-combination that cannot work.
+`flashers:` is written for klipper and katapult by install.sh but not read yet:
+until the flash loop reads each family's list, the flasher is still chosen by
+chipset and state.
 """
 
 from __future__ import annotations
@@ -36,20 +36,28 @@ import os
 from typing import Any
 
 from .cfgdoc import CfgDocument, parse_bool
-from .paths import FW_TARGETS, Paths
+from .errors import ConfigCorruptError
+from .paths import Paths
 
 SECTION_PREFIX = "firmware"
 
-#: Always present, in this order. klipper is what a board runs and katapult is
-#: what puts it there; enough of this tool is about that specific pair - the
-#: bootloader request, the version join - that neither can be removed by
-#: editing a config file. Declaring a family adds to these.
-BUILTIN = FW_TARGETS
-
 #: What builds a family unless its `[firmware ...]` section says otherwise.
 #: Klipper, Katapult and every fork of either use Kconfig + `make`; PlatformIO
-#: is the only other builder today and always names itself explicitly.
+#: and CMake families always name themselves explicitly.
 DEFAULT_BUILDER = "kconfig_make"
+
+#: Every `builder:` value a build provider implements - `providers.registry`'s
+#: names, spelled out here because that package imports this module. A test
+#: holds the two equal, so a new provider cannot be added without this line.
+BUILDERS: tuple[str, ...] = ("cmake", "kconfig_make", "platformio")
+
+#: Keys install.sh writes into the two sections it seeds, beside `source:`.
+#: Nothing reads `flashers:` yet - the flash loop does, in the next plan. Kept
+#: here so the lines a refusal tells a user to add match what install.sh writes.
+SEEDED_KEYS: dict[str, tuple[tuple[str, str], ...]] = {
+    "klipper": (("flashers", "flashtool"),),
+    "katapult": (("flashers", "dfu_util, bootsel"),),
+}
 
 
 def expand_home(path: str, home: str) -> str:
@@ -101,7 +109,7 @@ class FirmwareFamily:
     #: are the pair the flash-time offset checks compare.
     bootloader: bool = False
     #: Units to stop before a write of this family, overriding `[updater]`
-    #: and overridden by a `[type ...]`/`[display ...]` that names its own.
+    #: and overridden by a `[type ...]` that names its own.
     #: `None` means this family said nothing - inherit the next level out.
     #: See `stop_services.py`.
     stop_services: list[str] | None = None
@@ -119,7 +127,7 @@ class FirmwareFamily:
         """
         if self.source:
             return expand_home(self.source, paths.home)
-        return paths.fw_dir(self.name)
+        return os.path.join(paths.home, self.name)
 
     def artifact_name(self) -> str:
         return self.artifact or self.name
@@ -186,13 +194,9 @@ def load(paths: Paths) -> dict[str, FirmwareFamily]:
 
 
 def names(paths: Paths, families: dict[str, FirmwareFamily] | None = None) -> tuple[str, ...]:
-    """Every firmware family this install knows about.
-
-    Built-ins first and in their own order - `klipper` before `katapult`, which
-    is the order the CLI has always listed and the artifacts payload has always
-    carried - then anything declared in config, sorted so the answer does not
-    depend on where in the file somebody added a section.
-    """
+    """Every declared family, sorted so the answer does not depend on where in
+    the file somebody added a section. Nothing is built in: a config that
+    declares nothing knows no families."""
     if families is None:
         families = load(paths)
     return names_of(families)
@@ -200,17 +204,35 @@ def names(paths: Paths, families: dict[str, FirmwareFamily] | None = None) -> tu
 
 def names_of(families: dict[str, FirmwareFamily]) -> tuple[str, ...]:
     """`names()` for a caller that already has the parsed sections."""
-    return BUILTIN + tuple(sorted(n for n in families if n not in BUILTIN))
+    return tuple(sorted(families))
+
+
+#: Where to look next, whichever families are missing - said once per message.
+MISSING_SECTION_TRAILER = (
+    "Re-running install.sh writes the klipper and katapult sections for you.\n"
+    "Every section is shown, commented, in mcu-updater.cfg and README.md in the "
+    "mcu-updater checkout."
+)
+
+
+def missing_section_snippet(fw: str) -> str:
+    """The section one undeclared family needs, without the shared trailer."""
+    lines = [f"[firmware {fw}]", f"source: ~/{fw}"]
+    lines += [f"{key}: {value}" for key, value in SEEDED_KEYS.get(fw, ())]
+    body = "\n".join(f"    {line}" for line in lines)
+    return f"No [firmware {fw}] section is declared. Add one to mcu-updater.cfg:\n{body}"
+
+
+def missing_section_message(fw: str) -> str:
+    """How to fix an undeclared family: the lines to paste, then where to look."""
+    return f"{missing_section_snippet(fw)}\n{MISSING_SECTION_TRAILER}"
 
 
 def resolve(
     paths: Paths, fw: str, families: dict[str, FirmwareFamily] | None = None
 ) -> FirmwareFamily:
-    """The family for `fw`, configured or conventional.
-
-    Never returns None. A family with no section behaves exactly as it did
-    before this module existed, so every call site can use the result
-    unconditionally instead of re-implementing the fallback.
+    """The declared family for `fw`. Refuses a name with no ``[firmware <fw>]``
+    section.
 
     `families` is accepted so a caller already holding the parsed sections does
     not re-read the file per firmware - the agent answers `fw.status` for every
@@ -218,4 +240,7 @@ def resolve(
     """
     if families is None:
         families = load(paths)
-    return families.get(fw) or FirmwareFamily(name=fw, bootloader=(fw == "katapult"))
+    family = families.get(fw)
+    if family is None:
+        raise ConfigCorruptError(missing_section_message(fw), path=paths.main_config, value=fw)
+    return family

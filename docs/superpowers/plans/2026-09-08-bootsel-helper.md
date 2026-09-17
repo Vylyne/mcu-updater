@@ -1,5 +1,10 @@
 # Closed-loop BOOTSEL helper Implementation Plan
 
+> **Superseded** by `docs/superpowers/specs/2026-09-14-one-pipeline-design.md`.
+> The helper-driven BOOTSEL write shipped and works on the bench. That spec
+> folds `helper_bootsel` into `bootsel`, with the helper steps run by the
+> flash loop. Kept as the record of what shipped; do not execute it again.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Flash a configured Roadrunner CMake UF2 through `fw.flash` by requesting BOOTSEL from its confirmed application USB device and writing only the topology-matched BOOTSEL volume.

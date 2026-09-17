@@ -1,5 +1,11 @@
 # CMake types join the provenance axis
 
+> **Superseded in part** by `2026-09-14-one-pipeline-design.md`. The rules
+> here about the digest and the verdict still stand, and that spec cites them.
+> Replaced: "What changes, in dependency order", "What this spec does not
+> settle", and version-reading as a standalone `VersionReader`, which becomes
+> part of each firmware's device-info handler.
+
 ## The principle this spec answers to
 
 > the seams in the backend are supposed to be more like building blocks that

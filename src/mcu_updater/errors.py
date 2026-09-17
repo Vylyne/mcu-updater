@@ -81,6 +81,22 @@ class SerialTrackedElsewhereError(ConfigError):
     code = "serial_tracked_elsewhere"
 
 
+class UnprovisionedSerialError(ConfigError):
+    """A Roadrunner's diagnostic identity, not a stable serial.
+
+    `RR-UNPROVISIONED-<flash-uid>`'s trailing 16 hex characters ARE the RP2040
+    flash UID, which this plan's constraints forbid ever persisting - so
+    `tracking.add_serial` refuses it, rather than only the agent's live-scan
+    guard. That is the one serial-tracking path shared by the agent's
+    `fw.serial.add` and the CLI's `add-serial`, flash prompt and `add-mcu`
+    adoption. It is not every registry write: the agent's pairing-key adoption
+    in `agent/methods/flash.py` calls `Registry.add_serial` directly, and only
+    ever sees kconfig types.
+    """
+
+    code = "roadrunner_unprovisioned"
+
+
 class UuidTrackedElsewhereError(ConfigError):
     """A CAN uuid already tracked under a different type.
 

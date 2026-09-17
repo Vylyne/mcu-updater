@@ -3,7 +3,7 @@
 Different enough from an MCU to live apart. There is no Kconfig, no Katapult, no
 chipset to reason about - a PlatformIO env already names the board, the partition
 table and the build flags, so the env *is* the type. Adding the second display
-is another `[display <env>]` section and nothing structural.
+is another `[type <name>]` section and nothing structural.
 
 The device list is not here either: `[knomi_serial T0_knomi]` in Klipper's config
 already names how to find its port - directly with `serial:`, or by chip identity
@@ -36,9 +36,8 @@ import shutil
 import threading
 import time
 
-from .. import firmware, sections
+from .. import firmware, typelist
 from ..build import Reporter, null_reporter, run_streamed, sha256_file
-from ..cfgdoc import CfgDocument
 from ..discovery.knomi_serial import DEVICE_MAP_VERSION as DEVICE_MAP_VERSION
 from ..discovery.knomi_serial import WatcherDevice as WatcherDevice
 from ..discovery.knomi_serial import device_map_path as device_map_path
@@ -95,8 +94,9 @@ class PioType:
     #: the `fw` axis providers.select() filters on.
     firmware: str = ""
     #: The Klipper section prefix whose entries are displays of this type.
-    #: `[knomi_serial T0_knomi]` -> `knomi_serial`. A second display with its own
-    #: klippy module would set this differently; one sharing the module leaves it.
+    #: `[knomi_serial T0_knomi]` -> `knomi_serial`. Fixed, not read from config:
+    #: the klippy module a firmware registers is a property of that module, not
+    #: a per-type choice - see `typelist.REMOVED_KEYS`.
     klipper_section: str = "knomi_serial"
     #: Units to stop before a write to this type, overriding `[firmware ...]`
     #: and `[updater]`. `None` means this type said nothing at the new key -
@@ -137,42 +137,33 @@ class PioType:
 
 
 def load(paths: Paths) -> dict[str, PioType]:
-    """Read this provider's type sections from the shared config file.
+    """The PlatformIO types: the one type list, filtered by builder.
 
-    A type is ours if the family it declares (`firmware:`) is built by
-    `platformio` - the same "provider is derived from the family's builder"
-    rule `config.py` applies. A type predating that key is no longer
-    recognised at all.
+    A view over :mod:`..typelist`, kept until its callers read the list
+    directly. Lenient about other sections, like the list's own `read`; an
+    ill-formed PlatformIO section is still refused here.
     """
-    try:
-        with open(paths.main_config, encoding="utf-8") as fh:
-            doc = CfgDocument(fh.read())
-    except OSError:
-        return {}
-
-    families_map = firmware.load_from_doc(doc)
+    entries, families_map = typelist.read_config(paths)
 
     out: dict[str, PioType] = {}
-    for declared in sections.read(doc):
-        name, section = declared.name, declared.section
-        declared_fws = doc.get_csv(section, "firmware") or []
-        if not declared_fws:
+    for entry in entries:
+        if entry.builder != "platformio":
             continue
-        first_fw = declared_fws[0]
+        name, block = entry.name, entry.block
+        typelist.refuse_renamed_keys(entry, path=paths.main_config)
+        first_fw = entry.firmwares[0]
         family = firmware.resolve(paths, first_fw, families_map)
-        if family.builder != "platformio":
-            continue
         source = family.source_dir(paths)
 
-        env = (doc.get(section, "env") or "").strip()
+        env = (block.get("platformio_env") or "").strip()
         if not env:
             raise ConfigError(
-                f"'{name}' is a PlatformIO type but names no env: - the "
+                f"'{name}' is a PlatformIO type but names no platformio_env: - the "
                 f"PlatformIO environment to build is not optional.",
                 type=name,
             )
 
-        stop_services = doc.get_csv(section, "stop_services")
+        stop_services = block.get_csv("stop_services")
         if stop_services is None:
             # Legacy `service:` key. Its meaning does not carry over
             # mechanically: today it means "pause this *in addition to*
@@ -182,19 +173,18 @@ def load(paths: Paths) -> dict[str, PioType]:
             # not `["knomi_serial"]`. Absent takes the default watcher, same
             # as it always did; present-but-blank means no watcher at all,
             # which is still just klipper.
-            legacy = doc.get(section, "service")
+            legacy = block.get("service")
             if legacy is None:
                 stop_services = None  # no key at all: inherit the next level
             else:
                 unit = legacy.strip()
                 stop_services = ["klipper", unit] if unit else ["klipper"]
-        device_map = doc.get(section, "device_map")
+        device_map = block.get("knomi_serial_device_map")
         out[name] = PioType(
             name=name,
             env=env,
             source=source,
             firmware=first_fw,
-            klipper_section=(doc.get(section, "klipper_section") or "knomi_serial").strip(),
             stop_services=stop_services,
             device_map=(
                 "knomi/devices.json" if device_map is None else device_map
@@ -381,7 +371,7 @@ def record_build(paths: Paths, display: PioType, state: SourceState) -> None:
         "bin_size": stat.st_size,
         "bin_mtime": stat.st_mtime,
     }
-    sidecar = paths.display_sidecar(display.env)
+    sidecar = paths.platformio_sidecar(display.env)
     os.makedirs(os.path.dirname(sidecar), exist_ok=True)
     tmp = sidecar + ".tmp"
     with open(tmp, "w", encoding="utf-8") as fh:
@@ -434,7 +424,7 @@ def read_sidecar(paths: Paths, display: PioType) -> dict | None:
     "no provenance", and telling them apart would not change any answer.
     """
     try:
-        with open(paths.display_sidecar(display.env), encoding="utf-8") as fh:
+        with open(paths.platformio_sidecar(display.env), encoding="utf-8") as fh:
             record = json.load(fh)
     except (OSError, ValueError):
         return None

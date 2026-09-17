@@ -477,7 +477,7 @@ class FlashMixin(_Base):
         # watcher pause, the discovery, the writes - is the same machinery a
         # fleet flash uses, because there was never anything display-shaped
         # about it beyond the two steps the esptool flasher now owns.
-        units = stop_services.for_display(self.paths, display, settings)
+        units = stop_services.for_platformio(self.paths, display, settings)
         screens = [
             flashers.esptool.target_for(display, s, stop_services=units) for s in targets
         ]

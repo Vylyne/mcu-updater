@@ -18,7 +18,7 @@ from mcu_updater.errors import ServiceControlError
 from mcu_updater.jobs import JobRunner
 from mcu_updater.service import Journal, NullService, services_stopped
 
-from .conftest import make_device, write_settings
+from .conftest import make_device, with_base_firmwares, write_settings
 
 TRACKED_SERIAL = "123456789012345678901"
 TRACKED_TYPE = "bttebb36"
@@ -80,17 +80,19 @@ def cmake_flash_factory(paths, fake_root, tmp_path):
         helper_line = f"helper: {helper}\n" if helper is not None else ""
         with open(paths.main_config, "w", encoding="utf-8", newline="\n") as fh:
             fh.write(
-                "[firmware roadrunner]\n"
-                f"source: {source}\n"
-                "builder: cmake\n"
-                f"{helper_line}\n"
-                "[type roadrunner]\n"
-                "chipset: rp2040\n"
-                "firmware: roadrunner\n"
-                "cmake_target: roadrunner_v1_i2c_rgb\n"
-                "serials:\n"
-                f"    {serial}\n"
-                f"{extra_types}"
+                with_base_firmwares(
+                    "[firmware roadrunner]\n"
+                    f"source: {source}\n"
+                    "builder: cmake\n"
+                    f"{helper_line}\n"
+                    "[type roadrunner]\n"
+                    "chipset: rp2040\n"
+                    "firmware: roadrunner\n"
+                    "cmake_target: roadrunner_v1_i2c_rgb\n"
+                    "serials:\n"
+                    f"    {serial}\n"
+                    f"{extra_types}"
+                )
             )
         write_settings(
             paths,

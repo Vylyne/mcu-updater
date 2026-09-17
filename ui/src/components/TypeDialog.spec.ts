@@ -14,7 +14,6 @@ const families: Family[] = [
     bootloader: false,
     present: true,
     configurable: true,
-    builtin: true,
   },
   {
     name: "katapult",
@@ -25,7 +24,6 @@ const families: Family[] = [
     bootloader: true,
     present: true,
     configurable: true,
-    builtin: true,
   },
 ];
 

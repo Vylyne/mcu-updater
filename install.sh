@@ -181,15 +181,60 @@ function check_paths {
     if [ ! -d "${KLIPPER_PATH}" ]; then
         warn "${KLIPPER_PATH} not found - klipper firmware cannot be built"
     fi
-    if [ ! -f "${KATAPULT_PATH}/scripts/flashtool.py" ]; then
-        warn "${KATAPULT_PATH}/scripts/flashtool.py not found - flashing unavailable"
-    fi
     if [ ! -f "${KLIPPER_PATH}/lib/kconfiglib/kconfiglib.py" ]; then
         warn "vendored kconfiglib not found - the web config editor is unavailable"
     fi
     if [ ! -S "${PRINTER_DATA}/comms/moonraker.sock" ]; then
         warn "${PRINTER_DATA}/comms/moonraker.sock not present yet"
         note "The agent retries on a loop, so this resolves itself once Moonraker is up."
+    fi
+}
+
+# Every firmware family is declared now, klipper and katapult included, with
+# the source paths this host actually has rather than assumed ones. Sections
+# that already exist are left alone - they may point at a fork.
+function seed_firmware_sections {
+    local klipper="${KLIPPER_PATH}" katapult="${KATAPULT_PATH}" answer="" output="" line=""
+    if [ ! -d "${klipper}" ]; then
+        warn "${klipper} not found"
+        read -r -p "  ?     Path to your Klipper checkout [${klipper}]: " answer || answer=""
+        if [ -n "${answer}" ]; then
+            klipper="${answer/#\~/${HOME}}"
+        fi
+    fi
+    if [ ! -d "${katapult}" ]; then
+        if ask "Katapult not found at ${katapult}. Clone it (single branch)?" n; then
+            if git clone --single-branch https://github.com/Arksine/katapult "${katapult}"; then
+                ok "cloned katapult into ${katapult}"
+            else
+                err "git clone failed"
+            fi
+        fi
+        if [ ! -d "${katapult}" ]; then
+            answer=""
+            read -r -p "  ?     Path to an existing Katapult checkout or fork [${katapult}]: " answer || answer=""
+            if [ -n "${answer}" ]; then
+                katapult="${answer/#\~/${HOME}}"
+            fi
+        fi
+    fi
+    if [ ! -f "${katapult}/scripts/flashtool.py" ]; then
+        warn "${katapult}/scripts/flashtool.py not found - flashing unavailable"
+    fi
+    if output="$(PYTHONPATH="${INSTALL_PATH}/src" "${PYTHON_BIN}" -m mcu_updater.seed \
+        --klipper "${klipper}" --katapult "${katapult}" 2>&1)"; then
+        while IFS= read -r line; do
+            if [ -n "${line}" ]; then
+                ok "${line}"
+            fi
+        done <<< "${output}"
+    else
+        while IFS= read -r line; do
+            if [ -n "${line}" ]; then
+                err "${line}"
+            fi
+        done <<< "${output}"
+        exit 1
     fi
 }
 
@@ -478,6 +523,8 @@ function check_config {
         note "    mv ${CONFIG_PATH}/mcus.cfg ${MAIN_CONFIG}"
         exit 1
     fi
+
+    seed_firmware_sections
 
     # A broken registry is surfaced here, loudly, rather than by the agent
     # reporting it as an error to the UI after the fact.

@@ -20,7 +20,10 @@ import os
 
 import pytest
 
+from mcu_updater import firmware, inventory
 from mcu_updater.agent.methods import Api
+from mcu_updater.agent.rpc import RpcError
+from mcu_updater.config import Registry
 from mcu_updater.states import (
     TONE_ATTENTION,
     TONE_UNKNOWN,
@@ -55,7 +58,7 @@ def _add_display(paths, fake_root, api):
     port = fake_root / "knomi_t0"
     port.write_text("", encoding="utf-8")
     with open(paths.main_config, "a", encoding="utf-8") as fh:
-        fh.write(f"\n[type {ENV}]\nchipset: esp32\nfirmware: knomi_serial\nenv: {ENV}\n")
+        fh.write(f"\n[type {ENV}]\nchipset: esp32\nfirmware: knomi_serial\nplatformio_env: {ENV}\n")
     api._call = serve_klipper(
         display_objects({"knomi_serial t0_knomi": {"serial": str(port)}}),
         reachable=True,
@@ -131,7 +134,7 @@ def test_a_display_build_is_blocked_by_a_missing_source_tree(api, paths, fake_ro
     with open(paths.main_config, "a", encoding="utf-8") as fh:
         fh.write(
             "\n[firmware knomi_missing]\nsource: /nope/not/here\nbuilder: platformio\n\n"
-            f"[type {ENV}]\nchipset: esp32\nfirmware: knomi_missing\nenv: {ENV}\n"
+            f"[type {ENV}]\nchipset: esp32\nfirmware: knomi_missing\nplatformio_env: {ENV}\n"
         )
     api = Api(
         paths,
@@ -267,7 +270,7 @@ def test_a_screen_that_cannot_be_reached_is_offline_not_current(api, paths, fake
     """A port that does not resolve says nothing about the firmware on the far
     end, and the klippy module swallows the failure entirely."""
     with open(paths.main_config, "a", encoding="utf-8") as fh:
-        fh.write(f"\n[type {ENV}]\nchipset: esp32\nfirmware: knomi_serial\nenv: {ENV}\n")
+        fh.write(f"\n[type {ENV}]\nchipset: esp32\nfirmware: knomi_serial\nplatformio_env: {ENV}\n")
     api._call = serve_klipper(
         display_objects({"knomi_serial t0_knomi": {"serial": str(fake_root / "gone")}}),
         reachable=True,
@@ -287,7 +290,7 @@ def test_a_protocol_mismatch_outranks_the_version_comparison(api, paths, fake_ro
     port = fake_root / "knomi_t0"
     port.write_text("", encoding="utf-8")
     with open(paths.main_config, "a", encoding="utf-8") as fh:
-        fh.write(f"\n[type {ENV}]\nchipset: esp32\nfirmware: knomi_serial\nenv: {ENV}\n")
+        fh.write(f"\n[type {ENV}]\nchipset: esp32\nfirmware: knomi_serial\nplatformio_env: {ENV}\n")
     api._call = serve_klipper(
         display_objects(
             {"knomi_serial t0_knomi": {"serial": str(port)}},
@@ -489,7 +492,7 @@ def test_build_is_blocked_without_saved_menuconfig_answers(paths, live_registry_
 def _ships_seeds(paths, *names: str) -> None:
     """Give the klipper tree vendor answer files, as a fork's root has."""
     for name in names or ("config.BoardUSB", "config.BoardCAN"):
-        with open(os.path.join(paths.fw_dir("klipper"), name), "w", encoding="utf-8") as fh:
+        with open(os.path.join(paths.home, "klipper", name), "w", encoding="utf-8") as fh:
             fh.write("CONFIG_MACH_STM32=y\n")
             fh.write(f'CONFIG_BOARD_NAME="{name}"\n')
 
@@ -709,8 +712,6 @@ def test_firmware_families_says_what_exists_not_just_what_parses(api, paths):
     assert set(families) == {"klipper", "katapult", "cartographer", "knomi_serial"}
     assert families["cartographer"]["present"] is False
     assert families["cartographer"]["configurable"] is False
-    assert families["cartographer"]["builtin"] is False
-    assert families["klipper"]["builtin"] is True
 
 
 def test_firmware_families_carries_builder_and_bootloader(api):
@@ -746,10 +747,12 @@ def test_firmware_families_carries_cmake_args(paths):
     )
 
 
-def test_firmware_families_keeps_the_builtins_first(api):
-    """Same order the CLI has always listed and the artifacts payload carries."""
+def test_firmware_families_are_listed_in_sorted_order(api):
+    """Nothing is built in any more, so there is no fixed "klipper, katapult
+    first" order to keep - the payload lists every declared family sorted by
+    name, same as `firmware.names()`."""
     names = [f["name"] for f in api.dispatch("fw.status")["firmware_families"]]
-    assert names[:2] == ["klipper", "katapult"]
+    assert names == sorted(names)
 
 
 def test_a_type_says_which_family_it_runs(api):
@@ -834,22 +837,27 @@ def test_a_type_can_name_the_firmware_it_runs_when_it_is_created(paths, live_reg
 
 
 def test_an_undeclared_family_is_refused_rather_than_quietly_accepted(paths, live_registry_text):
-    """An unknown family resolves to the conventional ~/<name>, so a typo would
-    produce a type that builds nothing and reports "never built" for good."""
+    """Without the agent's check, `Registry.add_type` would still refuse the
+    typo - as config_corrupt with `missing_section_message` and no known list.
+    The agent's refusal is `unknown_firmware` with `data.known`, naming them."""
     with open(paths.registry_file, "w", encoding="utf-8") as fh:
         fh.write(live_registry_text)
     api = Api(paths)
 
-    with pytest.raises(Exception) as exc:
+    with pytest.raises(RpcError) as exc:
         api.dispatch(
             "fw.type.add",
             {"name": "typo", "chipset": "stm32g431xx", "firmware": "cartographe"},
         )
 
-    assert "cartographe" in str(exc.value)
+    # The code and the list are what this check exists for: `add_type`'s own
+    # refusal would still stop the write, but as `config_corrupt` with neither.
+    assert exc.value.data["code"] == "unknown_firmware"
+    assert exc.value.data["data"]["firmware"] == "cartographe"
     # The known families are named, so the panel can offer them rather than
     # making the user guess what it wanted.
-    assert "klipper" in str(exc.value)
+    assert exc.value.data["data"]["known"] == list(firmware.names_of(firmware.load(paths)))
+    assert "cartographer" in exc.value.data["data"]["known"]
     assert "typo" not in api.registry().types
 
 
@@ -1114,3 +1122,37 @@ def test_the_status_poll_never_shells_out_for_a_cmake_type(paths, tmp_path, monk
     Api(paths, runner=_runner()).dispatch("fw.status")
 
     assert calls == []
+
+
+def test_a_cmake_row_takes_presence_from_the_inventory_it_is_given(paths, tmp_path):
+    _cmake_config(paths, tmp_path, serial="RR-INJECTED")
+    api = Api(paths, runner=_runner())
+    payload = next(p for p in api.cmake_status() if p["serials"] == ["RR-INJECTED"])
+    row = inventory.Row(
+        type=payload["name"],
+        builder="cmake",
+        kind=inventory.SERIAL,
+        id="RR-INJECTED",
+        present=True,
+        state="klipper",
+        path="/dev/injected",
+    )
+    target = api._cmake_target(
+        payload, set(api.available_methods()), firmware.load(paths), inventory.index([row])
+    )
+    device = target["devices"][0]
+    assert device["present"] is True
+    assert device["path"] == "/dev/injected"
+
+
+def test_type_status_takes_board_state_from_the_inventory(paths, fake_root, live_registry_text):
+    """The by-id chipset segment no longer hides a board (plan ruling 8)."""
+    with open(paths.registry_file, "w", encoding="utf-8") as fh:
+        fh.write(live_registry_text)
+    reg = Registry.load(paths)
+    name = next(n for n in reg.names() if reg.get(n).serials)
+    serial = reg.get(name).serials[0]
+    make_device(fake_root / "bus", "Klipper", "notthechipset", serial)
+
+    out = Api(paths).type_status(reg, name, versions={}, canbus={})
+    assert out["serials"][0]["state"] == "klipper"

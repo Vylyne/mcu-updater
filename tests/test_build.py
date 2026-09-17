@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import os
 
 import pytest
 
@@ -13,13 +14,14 @@ from mcu_updater.errors import (
     SourceTreeMissingError,
 )
 
-from .conftest import cmd_tokens
+from .conftest import cmd_tokens, save_registry, seed_base_firmwares
 
 
 def _registry(paths) -> Registry:
+    seed_base_firmwares(paths)
     reg = Registry.load(paths)
     reg.add_type("board", "stm32f072xb")
-    reg.save(paths)
+    save_registry(reg, paths)
     return reg
 
 
@@ -181,7 +183,7 @@ def test_artifact_status_detects_a_changed_extra_repo(paths, settings):
     _write_config(paths)
     build(paths, reg, settings, "board", "klipper")
 
-    extra_repo = paths.fw_dir("klipper")
+    extra_repo = os.path.join(paths.home, "klipper")
     side_path = paths.sidecar_file("board", "klipper")
     side = json.load(open(side_path, encoding="utf-8"))
     side.setdefault("extra_repo_shas", {})[extra_repo] = "deadbee"
@@ -204,7 +206,7 @@ def test_an_extra_repo_absent_from_the_sidecar_does_not_false_flag(paths, settin
     build(paths, reg, settings, "board", "klipper")
 
     status = artifact_status(
-        paths, "board", "klipper", extra_repos=[paths.fw_dir("klipper")]
+        paths, "board", "klipper", extra_repos=[os.path.join(paths.home, "klipper")]
     )
     assert status.is_current
 
@@ -212,7 +214,7 @@ def test_an_extra_repo_absent_from_the_sidecar_does_not_false_flag(paths, settin
 def _has_git(paths) -> bool:
     from mcu_updater.build import git_head
 
-    return git_head(paths.fw_dir("klipper")) is not None
+    return git_head(os.path.join(paths.home, "klipper")) is not None
 
 
 def test_missing_sidecar_means_no_provenance(paths, settings):
@@ -236,7 +238,7 @@ def test_extra_args_are_split_shell_style(paths, settings):
     settings.dry_run = True
     reg = _registry(paths)
     reg.get("board").fw("klipper").extra_args = 'FOO=bar BAZ="a b"'
-    reg.save(paths)
+    save_registry(reg, paths)
     _write_config(paths)
 
     cmds: list[str] = []

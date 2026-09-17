@@ -19,7 +19,6 @@ export interface Family {
   bootloader: boolean;
   present: boolean;
   configurable: boolean;
-  builtin: boolean;
 }
 
 /** One `<fw>_makefile_patches` entry - the shape `MakefilePatch.to_json()`

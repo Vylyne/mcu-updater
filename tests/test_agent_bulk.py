@@ -156,7 +156,7 @@ def _declare_display(paths, name="knomi_toolchanger") -> str:
     tree = os.path.join(paths.home, "knomi_serial")
     os.makedirs(os.path.join(tree, ".pio", "build", name), exist_ok=True)
     with open(paths.main_config, "a", encoding="utf-8") as fh:
-        fh.write(f"\n[type {name}]\nchipset: esp32\nfirmware: knomi_serial\nenv: {name}\n")
+        fh.write(f"\n[type {name}]\nchipset: esp32\nfirmware: knomi_serial\nplatformio_env: {name}\n")
     return tree
 
 
@@ -381,7 +381,7 @@ def test_a_display_with_no_source_tree_is_skipped_but_never_silently(bulk, paths
         fh.write(
             "\n[firmware knomi_missing]\nsource: /nope/not/here\nbuilder: platformio\n\n"
             "[type knomi_toolchanger]\nchipset: esp32\nfirmware: knomi_missing\n"
-            "env: knomi_toolchanger\n"
+            "platformio_env: knomi_toolchanger\n"
         )
 
     selection = bulk._build_targets(bulk._install(), "all")
@@ -835,7 +835,7 @@ def monkey_head(api, paths):
     """
     import mcu_updater.build as build_mod
 
-    build_mod._head_cache[os.path.abspath(paths.fw_dir("klipper"))] = (
+    build_mod._head_cache[os.path.abspath(os.path.join(paths.home, "klipper"))] = (
         float("inf"),
         HEAD,
     )

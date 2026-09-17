@@ -1,18 +1,20 @@
 """Which sections declare a type: naming, and nothing else.
 
 ``[mcu carto_v4]`` and ``[display knomi_toolchanger]`` were two spellings of one
-idea, aliased here so :mod:`~mcu_updater.config` and
-:mod:`~mcu_updater.providers.pio` could each read their own kind without
-learning there was more than one way to spell one. The ``provider:`` key that
+thing; both are now ``[type ...]``. They were once aliased here so
+:mod:`~mcu_updater.config` and :mod:`~mcu_updater.providers.pio` could each
+read their own kind without learning there was more than one way to spell
+one. The ``provider:`` key that
 came after them was the same idea moved into the file: which build system a
 type belongs to, decided by a key on the type rather than by which class of
 tree it happens to be.
 
 Both are gone. A type's provider is derived from its declared firmware's
-builder (see :mod:`~mcu_updater.firmware`, :mod:`~mcu_updater.config`'s
-``_is_foreign_builder``, and ``providers/pio.py``'s ``load()``) - a fact about
-the ``[firmware ...]`` section it names, not about how its own section is
-spelled or what key it carries. This module now only knows one spelling,
+builder (see :mod:`~mcu_updater.firmware` and :mod:`~mcu_updater.typelist`).
+Which builder owns a section is the type list's question (typelist.py), not
+this module's - a fact about the ``[firmware ...]`` section it names, not
+about how its own section is spelled or what key it carries. This module now
+only knows one spelling,
 ``[type <name>]``, and only answers "which sections declare a type" - naming
 and validation, not which of them build with what.
 """
@@ -32,7 +34,7 @@ class TypeSection:
     """One declared type: what it is called, where it is written.
 
     ``section`` is the header as it appears in the file, not one derived from
-    ``name`` - `save()` writes back to whatever section a type already has
+    ``name`` - `Registry._save()` writes back to whatever section a type already has
     rather than rebuilding the header, so an untouched config never diffs.
     """
 
@@ -59,21 +61,9 @@ def section_for(doc: CfgDocument, name: str) -> str:
     return f"{PREFIX} {name}"
 
 
-def is_type_section(section: str) -> bool:
-    """Does this header declare a type?
-
-    For the save path, which removes sections whose type is gone. It must not
-    match `[firmware ...]` or `[updater]`, which are different axes that happen
-    to live in the same file.
-    """
-    head = section.split(maxsplit=1)[0] if section.split() else ""
-    return head == PREFIX
-
-
 __all__ = [
     "PREFIX",
     "TypeSection",
-    "is_type_section",
     "read",
     "section_for",
 ]

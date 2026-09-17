@@ -1,0 +1,59 @@
+{
+  "_comment": "Every registry write is lock, re-read, change, save - Registry.mutate, directly or through tracking. The CLI's flash add-prompt, add-mcu's adoption and add-type each wrote a registry they had read before a prompt, with no lock: an edit the panel made while the prompt waited was erased by the save, and the prompt and adoption writes skipped tracking's refusals, so a board could end up tracked under two types or an unprovisioned Roadrunner's flash UID could be persisted. add_type refuses a name another builder declares, whatever overwrite says: the CLI passes overwrite=True with a kconfig-only pre-check, and _save would rewrite the other builder's section as a kconfig type with its serials emptied. Settings live in the same file and go through settings.mutate the same way - lock, then load, change, write: without the lock an agent settings write racing a CLI add-serial loses one of the two edits, and with a load taken before the lock a fw.bus.ignore that finished while fw.settings.set waited is written back out of the ignore list.",
+  "file": "src/mcu_updater/cli.py",
+  "command": [
+    "python",
+    "-m",
+    "pytest",
+    "tests/test_cli.py",
+    "tests/test_config.py",
+    "tests/test_settings.py",
+    "tests/test_agent_methods.py",
+    "-q"
+  ],
+  "mutations": [
+    {
+      "name": "the flash add-prompt tracks through tracking, not an unlocked direct write",
+      "find": "            added, _ = tracking.add_serial(c.paths, args.type, args.serial)\n",
+      "replace": "            added = reg.add_declared_serial(args.type, args.serial)\n            reg._save(c.paths)\n"
+    },
+    {
+      "name": "add-mcu adoption tracks through tracking, so a board tracked elsewhere is refused",
+      "find": "                added, _ = tracking.add_serial(c.paths, args.type, dev.serial)\n",
+      "replace": "                with Registry.mutate(c.paths, \"adopt\") as writable:\n                    added = writable.add_declared_serial(args.type, dev.serial)\n"
+    },
+    {
+      "name": "add-mcu reports a refused candidate and still offers the rest",
+      "find": "            except UpdaterError as exc:\n                print(f\"ERROR: {exc}\", file=sys.stderr)\n                refused = True\n                continue\n",
+      "replace": "            except UpdaterError:\n                raise\n"
+    },
+    {
+      "name": "add-type writes under the registry lock",
+      "find": "    with Registry.mutate(c.paths, f\"add type {args.type}\") as writable:\n        writable.add_type(\n            args.type,\n            args.chipset,\n            klipper_args=args.klipper_args,\n            katapult_args=args.katapult_args,\n            katapult_installed=not args.no_katapult,\n            overwrite=True,\n        )\n",
+      "replace": "    if True:\n        writable = reg\n        writable.add_type(\n            args.type,\n            args.chipset,\n            klipper_args=args.klipper_args,\n            katapult_args=args.katapult_args,\n            katapult_installed=not args.no_katapult,\n            overwrite=True,\n        )\n        writable._save(c.paths)\n"
+    },
+    {
+      "name": "the flash add-prompt does not claim to have added a serial that was already tracked",
+      "find": "            if added:\n                print(f\"Added serial {args.serial} to {args.type}\")\n",
+      "replace": "            if True:\n                print(f\"Added serial {args.serial} to {args.type}\")\n"
+    },
+    {
+      "name": "add_type refuses a name another builder declares",
+      "file": "src/mcu_updater/config.py",
+      "find": "        if name not in self.types and name in self.declared_type_names():\n",
+      "replace": "        if False:\n"
+    },
+    {
+      "name": "a settings write takes the registry lock",
+      "file": "src/mcu_updater/settings.py",
+      "find": "    with ExclusiveLock(paths, path=paths.registry_lock_file).acquire(label):\n",
+      "replace": "    if True:\n"
+    },
+    {
+      "name": "settings are loaded under the lock, not before it",
+      "file": "src/mcu_updater/settings.py",
+      "find": "    with ExclusiveLock(paths, path=paths.registry_lock_file).acquire(label):\n        current = load_settings(paths.settings_file)\n",
+      "replace": "    current = load_settings(paths.settings_file)\n    with ExclusiveLock(paths, path=paths.registry_lock_file).acquire(label):\n"
+    }
+  ]
+}

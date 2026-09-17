@@ -64,7 +64,7 @@ def _declare_display(paths: Paths, name: str = "knomi_toolchanger") -> None:
     os.makedirs(os.path.join(tree, ".pio", "build", name), exist_ok=True)
     _append(
         paths,
-        f"\n[type {name}]\nchipset: esp32\nfirmware: knomi_serial\nenv: {name}\n",
+        f"\n[type {name}]\nchipset: esp32\nfirmware: knomi_serial\nplatformio_env: {name}\n",
     )
 
 

@@ -14,12 +14,16 @@ Everything has a default, so the section is optional and may be partial.
 
 from __future__ import annotations
 
+import contextlib
+import copy
 import dataclasses
 import os
+from collections.abc import Iterator
 from typing import Any
 
 from .cfgdoc import CfgDocument, parse_bool
 from .errors import ConfigError
+from .paths import Paths
 
 SECTION = "updater"
 
@@ -75,9 +79,9 @@ class Settings:
     #: ~/.platformio/penv/bin/pio will not find it.
     platformio_bin: str = ""
 
-    #: Katapult's flashtool.py, if it is not at the ~/katapult/scripts/flashtool.py
-    #: convention - a fork checked out elsewhere, say. `~` expands against this
-    #: printer's home the same way a [firmware] source: does.
+    #: Katapult's flashtool.py, if it is not under the declared katapult family's
+    #: source tree's scripts/ directory - a fork checked out elsewhere, say. `~`
+    #: expands against this printer's home the same way a [firmware] source: does.
     flashtool_path: str = ""
 
     #: A UI-only cosmetic preference, not a behaviour one - the agent never reads
@@ -225,11 +229,46 @@ def load_settings(path: str) -> Settings:
     return s
 
 
-def save_settings(path: str, settings: Settings) -> None:
+@contextlib.contextmanager
+def mutate(paths: Paths, label: str) -> Iterator[Settings]:
+    """Load, change and save the settings as one atomic unit.
+
+    ``with settings.mutate(paths, "ignore serial X") as current: current.x = ...``
+
+    The only way settings reach disk, and the same shape as `Registry.mutate`:
+    lock, read, apply the change, write, release. On the registry's own lock,
+    because this is the registry's file (`settings_file` is `main_config`).
+
+    The load happens *inside* the lock, deliberately. The write rewrites every
+    ``[updater]`` field from the object it is given, so saving settings read
+    before someone else's change would erase that change - an agent
+    ``fw.bus.ignore`` landing between a ``fw.settings.set``'s read and its write,
+    say. The write also re-reads the document itself, so the ``[type ...]``
+    sections a `Registry.mutate` wrote are kept.
+
+    Non-blocking like `Registry.mutate`: `BusyError` when the lock is held. Never
+    enter this inside `Registry.mutate` - the same process would be refused.
+
+    A malformed ``[updater]`` section raises here, as `load_settings` does,
+    rather than being replaced by defaults. Nothing is written if the body
+    raises, or if it changed nothing - an idempotent ignore must not stamp a
+    full ``[updater]`` section into a file that had none.
+    """
+    from .lock import ExclusiveLock
+
+    with ExclusiveLock(paths, path=paths.registry_lock_file).acquire(label):
+        current = load_settings(paths.settings_file)
+        before = copy.deepcopy(current)
+        yield current
+        if current != before:
+            _write_settings(paths.settings_file, current)
+
+
+def _write_settings(path: str, settings: Settings) -> None:
     """Write the [updater] section, leaving the rest of the file alone.
 
-    Load-modify-write against what is on disk rather than a cached document, so
-    this cannot clobber [mcu ...] sections written in the meantime.
+    Unlocked: production reaches this only through `mutate`. Load-modify-write
+    against the document on disk, so every other section and comment survives.
     """
     doc = _read(path)
     for field in dataclasses.fields(settings):

@@ -140,7 +140,7 @@ def test_a_display_declaring_firmware_carries_that_family(paths, settings, tmp_p
     with open(paths.main_config, "a", encoding="utf-8") as fh:
         fh.write(
             f"[firmware knomi_serial]\nsource: {tree}\nbuilder: platformio\n\n"
-            "[type knomi]\nchipset: esp32\nfirmware: knomi_serial\nenv: knomi\n"
+            "[type knomi]\nchipset: esp32\nfirmware: knomi_serial\nplatformio_env: knomi\n"
         )
 
     install = Install.load(paths, settings)
@@ -158,9 +158,9 @@ def test_a_source_less_family_still_falls_back_to_its_own_name(paths, settings):
     with open(paths.main_config, "a", encoding="utf-8") as fh:
         fh.write(
             "[firmware no_source_fw]\nbuilder: platformio\n\n"
-            "[type no_source]\nfirmware: no_source_fw\nenv: no_source\n\n"
+            "[type no_source]\nfirmware: no_source_fw\nplatformio_env: no_source\n\n"
             "[firmware bad_source_fw]\nsource: /nope/not/here\nbuilder: platformio\n\n"
-            "[type bad_source]\nfirmware: bad_source_fw\nenv: bad_source\n"
+            "[type bad_source]\nfirmware: bad_source_fw\nplatformio_env: bad_source\n"
         )
 
     install = Install.load(paths, settings)
@@ -169,7 +169,7 @@ def test_a_source_less_family_still_falls_back_to_its_own_name(paths, settings):
     }
 
     assert "not found" in reasons["no_source"]
-    assert paths.fw_dir("no_source_fw") in reasons["no_source"]
+    assert os.path.join(paths.home, "no_source_fw") in reasons["no_source"]
     assert "not found" in reasons["bad_source"]
     assert "/nope/not/here" in reasons["bad_source"]
 
@@ -183,7 +183,7 @@ def test_pio_source_is_not_yet_applied_to_a_family_with_no_source(paths, setting
     `source:` of its own falls back to `~/<family name>`, the same as any
     other firmware family, not to `pio_source`.
 
-    This is a deliberate, temporary gap: the old `[display ...]` fallback was
+    This is a deliberate, temporary gap: the old display-section fallback was
     retired earlier than planned, which left `pio_source` disconnected ahead of
     the rest of the legacy purge. Reconnecting it - or retiring the setting -
     belongs with `default_source`'s own removal, still outstanding.
@@ -192,8 +192,8 @@ def test_pio_source_is_not_yet_applied_to_a_family_with_no_source(paths, setting
     tree.mkdir()
     settings.pio_source = str(tree)
     with open(paths.main_config, "a", encoding="utf-8") as fh:
-        fh.write("[firmware knomi_serial]\nbuilder: platformio\n\n[type knomi]\nfirmware: knomi_serial\nenv: knomi\n")
+        fh.write("[firmware knomi_serial]\nbuilder: platformio\n\n[type knomi]\nfirmware: knomi_serial\nplatformio_env: knomi\n")
 
     install = Install.load(paths, settings)
-    assert install.displays["knomi"].source != str(tree)
-    assert install.displays["knomi"].source == str(paths.fw_dir("knomi_serial"))
+    assert install.platformio["knomi"].source != str(tree)
+    assert install.platformio["knomi"].source == str(os.path.join(paths.home, "knomi_serial"))

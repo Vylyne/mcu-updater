@@ -46,7 +46,7 @@ def _board_target(board: dict) -> flashers.FlashTarget:
     return flashers.flashtool.target_for(board, stop_services=stop_services)
 
 
-def _screen_json(target: flashers.FlashTarget) -> dict[str, Any]:
+def _platformio_json(target: flashers.FlashTarget) -> dict[str, Any]:
     """A selected screen, for a caller naming what is about to happen.
 
     The uniform slots plus the two facts a confirmation actually reads out: the
@@ -304,11 +304,11 @@ class BulkMixin(_Base):
             # wire projection and reversing it is the thing this codebase keeps
             # deciding not to do.
             display = known[payload["name"]]
-            units = stop_services.for_display(self.paths, display, settings)
+            units = stop_services.for_platformio(self.paths, display, settings)
             for screen in payload["screens"]:
                 if not screen["present"]:
                     continue
-                status = self._screen_device_status(screen)
+                status = self._platformio_device_status(screen)
                 if scope != "all" and status.needs_flash is not True:
                     continue
                 target = flashers.esptool.target_for(display, screen, stop_services=units)
@@ -579,7 +579,7 @@ class BulkMixin(_Base):
             # answer with different facts - a board has a chipset and a serial,
             # a screen has a port and a section - and flattening them would
             # invent nulls for half of each.
-            "displays": [_screen_json(t) for t in screens],
+            "displays": [_platformio_json(t) for t in screens],
         }
 
     def update_all(self, args: dict) -> dict[str, Any]:

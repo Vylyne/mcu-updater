@@ -58,6 +58,7 @@ Firmware and boards:
 - [x] A first, unsaved menuconfig session pre-set from the type's own recorded chipset
 - [x] Flash-time bootloader offset check
 - [x] Board tracking by `/dev/serial/by-id` serial
+- [x] The CLI's `status`, `add-serial`, `remove-serial` and `remove-type` cover every type, whatever builds it
 - [x] Displays re-identified at flash time, once the ports are free
 - [x] Discovery surface - one vocabulary for where a device is and how sure we are
 - [x] CAN device discovery and tracking by `canbus_uuid`
@@ -77,17 +78,18 @@ Interfaces:
 [docs/decisions.md](docs/decisions.md) for the standing decisions that came out
 of it. What is still open:
 
-- [ ] **NEEDS DESIGN + PLAN** Declare every firmware in config, and retire "undefined equals klipper". `firmware.py` holds that *"every key is optional and the section itself is optional"*, `BUILTIN = FW_TARGETS` makes klipper and katapult unremovable by editing config, and `resolve()` never returns None - it invents a conventional family (`~/<fw>`, `out/<fw>.bin`) for any name it is handed. That legacy exists because of where the project started and a fear of breaking existing installs, not because it is right. Klipper and katapult should be declared like any other family, which is also how source paths stop being conventions - closing the old "allow non-default klipper and katapult paths" item. More config keys, possibly all of them, become mandatory; an empty or absent key should resolve to None or a safe default rather than silently meaning klipper.
-  Open before this can be planned: what reads `FW_TARGETS`/`BUILTIN` directly rather than through `resolve()`; what `paths.py` derives from the `~/<fw>` and `out/<fw>.bin` conventions and what it answers when they are absent; and what a fresh install does - whether `install.sh` writes the klipper and katapult sections or first run fails without them. That last one decides whether this is one commit or a phased migration.
+- [ ] **IN PROGRESS** One pipeline: one type list, one inventory, one flash loop, one verdict. Design: [docs/superpowers/specs/2026-09-14-one-pipeline-design.md](docs/superpowers/specs/2026-09-14-one-pipeline-design.md). This covers declaring every firmware in config (install.sh seeds klipper and katapult), moving firmware-specific code behind helper capabilities, per-firmware `flashers:` lists, Roadrunner auto-provisioning, and the rest of the CMake provenance work. It also fixes the Roadrunner board that is tracked in the UI but not the CLI. Plan 1 (config and inventory) has landed; plan 2 is device-info handlers, flasher lists and the loops.
 - [ ] **TEST ERROR** Reproduce and fix the flaky teardown `RuntimeError` in `test_an_unknown_inbound_method_gets_an_error_not_silence`.
-- [ ] **NEEDS DESIGN + PLAN** Move firmware-specific code behind the helper seam (`src/mcu_updater/helpers/`). Vendor knowledge is currently spread across `discovery/knomi_serial/`, `discovery/roadrunner.py`, `helpers/roadrunner.py`, `scripts/roadrunner_usb.py`, and Cartographer's version special-cases in the build and status paths. Now that a helper seam exists, that is where it belongs: the framework should assemble a board from config-declared building blocks and know nothing about which vendor made it. Evaluate scope first - `helpers/spec.py` today answers a narrower question than discovery and version-reporting need, so the seam likely has to widen before anything moves.
+- [ ] **NEEDS DESIGN** Run config migrations as the first step of agent startup, so that restarting the service migrates an existing install. First check the restrictions the service runs under.
 
 ## Requirements
 
 - Klipper checked out at `~/klipper`
-- [Katapult](https://github.com/Arksine/katapult) at `~/katapult` (for the
-  `flashtool.py` used to flash over USB/CAN) - override with `flashtool_path`
-  in `[updater]` if it lives somewhere else, e.g. a fork
+- Katapult: install.sh writes `[firmware katapult]` with the tree it finds at
+  `~/katapult`, offers a single-branch clone if there is none, or takes a path
+  to an existing checkout or fork. `flashtool.py` is found under the declared
+  `[firmware katapult]` `source:` (`<source>/scripts/flashtool.py`), or at
+  `flashtool_path` in `[updater]` if that is set
 - An ARM toolchain and `make`, i.e. whatever already builds Klipper for you
 - `python3-serial`- Katapult's `flashtool.py` imports it. `install.sh` offers to apt-install it. It is also the only system package the Roadrunner direct-USB provision/clear helper needs - no separate dependency to install for that feature.
 - `dfu-util`, only for installing Katapult onto a brand-new STM32 board
@@ -230,17 +232,15 @@ klipper_extra_repos:
     ~/buffer_manager
 ```
 
-`[firmware ...]` names a build system's own tree - `builder:` lives there, not
-on the type, because how a tree compiles is a property of the tree, not of a
-board that happens to use it. `[type ...]` names a board model and lists
-which families it runs. A section for `klipper` or `katapult` is only needed
-to override their defaults; every type that lists them resolves the plain
-`~/<name>` / `kconfig_make` / `out/<name>.bin` convention with no section at
-all.
+Every family a type names is declared, `klipper` and `katapult` included.
+install.sh writes those two with the source paths it finds. A config missing
+one is refused with the exact lines to add. Within a section every key is
+optional: no `source:` means `~/<name>`.
 
 `builder:` takes three values: `kconfig_make` (the default, above), `platformio`
 (see [ESP32 displays](#esp32-displays)) and `cmake` (see
-[RP2040 cmake trees](#rp2040-cmake-trees)). A cmake family also takes
+[RP2040 cmake trees](#rp2040-cmake-trees)); any other value refuses the config
+when it loads. A cmake family also takes
 `cmake_args:`, split shell-style and appended to the configure step - quoting
 groups words (`-DX="two words"` arrives as one argument) and is consumed, the
 same way a shell consumes it. `${git_describe}` is the one substitution it
@@ -283,7 +283,7 @@ Per-type keys:
 - **`firmware`** - a **list** of the families this board actually runs, e.g.
   `cartographer, katapult` (comma- or space-separated). A type that uses no
   bootloader simply omits it. See [Firmware families](#firmware-families).
-- **`profile`** - the vendor answer file this type's config is seeded from, e.g.
+- **`kconfig_make_profile`** - the vendor answer file this type's config is seeded from, e.g.
   `config.CartoV4USB`. Names a file in that firmware's *own source tree*, not
   one shipped here. See [Profiles](#profiles).
 - **`<fw>_extra_args`** - appended to the `make` command line. `<fw>` is any
@@ -404,10 +404,10 @@ project does not edit another project's allowlist on your behalf.
 
 ### Firmware families
 
-Every type builds klipper and katapult by convention: source at `~/<name>`,
-output at `out/<name>.bin`. A vendor fork breaks both. Cartographer's firmware
-is a Klipper fork that lives in `~/MCU-Firmware---Based-on-Klipper` and, being
-a Klipper fork, still drops `out/klipper.bin`. Declare the mismatch once:
+A declared family with no `source:` builds from `~/<name>` and leaves
+`out/<artifact>.bin`. A vendor fork breaks both. Cartographer's firmware is a
+Klipper fork that lives in `~/MCU-Firmware---Based-on-Klipper` and, being a
+Klipper fork, still drops `out/klipper.bin`. Declare the mismatch once:
 
 ```ini
 [firmware cartographer]
@@ -533,25 +533,24 @@ builder: platformio
 [type knomi_toolchanger]
 chipset: esp32
 firmware: knomi_serial
-env: knomi_toolchanger      ; REQUIRED - no default, unlike everything else here
+platformio_env: knomi_toolchanger      ; REQUIRED - no default, unlike everything else here
 ```
 
-`env:` is required and never defaulted, deliberately: the type name is often
-wrong for it (`knomi_serial` itself ships a `knomi_i2cscan` diagnostic env
-beside the firmware one) and `platformio.ini`'s `default_envs` names what
+`platformio_env:` is required and never defaulted, deliberately: the type name
+is often wrong for it (`knomi_serial` itself ships a `knomi_i2cscan` diagnostic
+env beside the firmware one) and `platformio.ini`'s `default_envs` names what
 builds by default, not a canonical choice - so guessing either would build the
 wrong thing silently. `platformio_bin` in `[updater]` points at `pio` if
 neither the `PATH` nor `~/.platformio/penv/bin/pio` finds it.
 
 | Key | Meaning |
 | --- | --- |
-| `env` | The PlatformIO env to build. **Required, no default.** |
+| `platformio_env` | The PlatformIO env to build. **Required, no default.** |
 | `source` | This display's own source tree, overriding the firmware family's |
-| `klipper_section` | The `printer.cfg` prefix its displays are declared under. Default `knomi_serial` |
 | `stop_services` | Units stopped before flashing this display, overriding `[firmware ...]`/`[updater]`. Default `klipper, knomi_serial`. See [Which services stop before a write](#which-services-stop-before-a-write) |
-| `device_map` | Where that watcher writes its id → port map, relative to `printer_data`. Default `knomi/devices.json` |
+| `knomi_serial_device_map` | Where that watcher writes its id → port map, relative to `printer_data`. Default `knomi/devices.json` |
 
-Every key but `env` defaults to what a Knomi needs - the three that usually
+Every key but `platformio_env` defaults to what a Knomi needs - the three that usually
 change are for a second display family with its own klippy module and port
 watcher.
 

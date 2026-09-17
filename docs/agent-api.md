@@ -115,18 +115,18 @@ application error (see `data.code`), `-32603` internal.
 | `fw.ping` | — | version/capability handshake |
 | `fw.status` | — | everything the panel needs, in one call |
 | `fw.type.list` | — | `{types: [TypeStatus]}` |
-| `fw.type.add` | `name`, `chipset` (required), `firmware?`, `<fw>_extra_args?`, `<fw>_extra_repos?`, `<fw>_makefile_patches?`, `katapult_extra_args?`, `katapult_installed?` | `{name, chipset, firmware, warnings?}` — declares a board model, no hardware required; `<fw>` is `klipper` or `katapult` |
+| `fw.type.add` | `name`, `chipset` (required), `firmware?`, `<fw>_extra_args?`, `<fw>_extra_repos?`, `<fw>_makefile_patches?`, `katapult_extra_args?`, `katapult_installed?` | `{name, chipset, firmware, warnings?}` — declares a board model, no hardware required; `<fw>` is `klipper` or `katapult`; a name another builder's type already declares is refused with `duplicate_type` |
 | `fw.type.update` | `name` (required), any of the `fw.type.add` fields | `{name, chipset, firmware, warnings}` — only the keys supplied are touched; `<fw>` ranges over the type's own `firmware:` list |
 | `fw.type.remove` | `name` (required), `force?` | `{name, removed_serials, kept_config_dir}` — refuses while boards are still tracked unless forced |
 | `fw.target.get` | `name`, `provider` (required) | `{provider, target}` — one `targets[]` entry's full detail |
 | `fw.bus.scan` | `only_untracked?`, `chipset?` | `{devices: [BusDevice]}` |
-| `fw.bus.ignore` | `serial` (required) | `{serial, ignored: true}` — hide a bus device from the "new board?" flow; idempotent, flag not filter |
-| `fw.bus.unignore` | `serial` (required) | `{serial, ignored: false}` — reverse `fw.bus.ignore`; idempotent |
+| `fw.bus.ignore` | `serial` (required) | `{serial, ignored: true}` — hide a bus device from the "new board?" flow; idempotent, flag not filter; `busy` / `config` as for `fw.settings.set` |
+| `fw.bus.unignore` | `serial` (required) | `{serial, ignored: false}` — reverse `fw.bus.ignore`; idempotent; `busy` / `config` as for `fw.settings.set` |
 | `fw.dfu.scan` | — | `{devices, count, ready, reason, message}` — read-only |
 | `fw.bootsel.scan` | — | `{devices, count, mounts, mount_count, ready, reason, message}` — read-only |
 | `fw.canbus.scan` | — | `{interfaces, devices, failures, count, message}` — read-only, run only when called |
-| `fw.canbus.ignore` | `uuid` (required) | `{uuid, ignored: true}` — hide every sighting of a CAN UUID from the "new board?" flow; idempotent, flag not filter |
-| `fw.canbus.unignore` | `uuid` (required) | `{uuid, ignored: false}` — reverse `fw.canbus.ignore`; idempotent |
+| `fw.canbus.ignore` | `uuid` (required) | `{uuid, ignored: true}` — hide every sighting of a CAN UUID from the "new board?" flow; idempotent, flag not filter; `busy` / `config` as for `fw.settings.set` |
+| `fw.canbus.unignore` | `uuid` (required) | `{uuid, ignored: false}` — reverse `fw.canbus.ignore`; idempotent; `busy` / `config` as for `fw.settings.set` |
 | `fw.add_mcu.start` | `name`, `dfu_serial?` (STM32 only) | `{job_id, job, dfu_serial, bootsel_id}` — **off by default** |
 | `fw.roadrunner.provision` | `serial` (required) | `{serial, prior_serial, state: "provisioned"}` - explicit direct-USB provisioning of one confirmed, untracked Roadrunner — **off by default** |
 | `fw.roadrunner.clear` | `serial` (required) | `{serial, prior_serial, state: "unprovisioned"}` - explicit direct-USB identity clear of one confirmed, untracked Roadrunner — **off by default** |
@@ -541,6 +541,18 @@ for a different reason: they are device lists, not behaviour preferences, and go
 JSON array as "must be a whole number". They are read and written through
 their dedicated `fw.bus.*` and `fw.canbus.*` ignore methods instead.
 
+Settings live in the same file as the `[type ...]` sections, so every settings
+write (`fw.settings.set` and the four ignore methods) takes the registry's own
+lock, as a type or serial edit does. The lock is held for milliseconds and is
+not queued for: a write that finds it held retries once after 50ms, then fails
+with `busy`, and nothing is written, so the call can simply be retried. The
+settings are read under that lock, so back-to-back writes - a
+`fw.settings.set` and a `fw.bus.ignore` from two tabs, say - both survive
+rather than the later one restoring what the earlier replaced; two whose lock
+windows truly collide get one `busy`. An
+`[updater]` section that does not parse refuses the write with `config`, rather
+than the defaults `fw.settings.get` falls back to being written over it.
+
 `ui_accent_color` is the one `SETTABLE` key that isn't a behaviour preference
 at all - the agent never reads it, only stores and serves it back, so every
 browser pointed at this printer agrees on the same accent colour rather than
@@ -562,15 +574,14 @@ should say so rather than hand over a button that fails.
 ```json
 {"name": "cartographer", "source": "/home/biqu/MCU-Firmware---Based-on-Klipper",
  "artifact": "klipper", "builder": "kconfig_make", "cmake_args": "",
- "bootloader": false, "present": true, "configurable": true, "builtin": false}
+ "bootloader": false, "present": true, "configurable": true}
 ```
 
 Every firmware family this install knows about, for a picker to offer. `present`
 and `configurable` are separate answers: a declared family whose tree has not
 been cloned yet is a real state — it is what every install looks like between
 adding the section and running `git clone` — and it wants "check out the source",
-not "unknown family". `builtin` marks `klipper` and `katapult`, which cannot be
-removed by editing a config file.
+not "unknown family".
 
 `builder` is `[firmware ...]`'s own `builder:` key (default `kconfig_make`) —
 how a tree compiles is a property of the tree, not of a type that happens to
@@ -1284,9 +1295,8 @@ builder: platformio
 [type knomi_toolchanger]
 chipset: esp32
 firmware: knomi_serial
-env: knomi_toolchanger            # REQUIRED - no default
+platformio_env: knomi_toolchanger  # REQUIRED - no default
 # source: ~/knomi_serial          defaults to the firmware family's source
-# klipper_section: knomi_serial   which [<prefix> X] sections are this type's
 # service: knomi_serial           port watcher to pause while flashing
 ```
 

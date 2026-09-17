@@ -68,7 +68,7 @@ class Install:
     #: Types this host builds with kconfig and make.
     registry: Registry
     #: Types this host builds with PlatformIO.
-    displays: dict[str, pio_mod.PioType]
+    platformio: dict[str, pio_mod.PioType]
     #: Types this host builds with cmake.
     cmake: dict[str, CmakeType] = dataclasses.field(default_factory=dict)
 
@@ -80,7 +80,7 @@ class Install:
             paths=paths,
             settings=settings,
             registry=Registry.load(paths),
-            displays=pio_mod.load(paths),
+            platformio=pio_mod.load(paths),
             cmake=cmake_mod.load(paths),
         )
 
@@ -97,7 +97,7 @@ class BuildTarget:
 
     #: Which provider owns it - the key into `providers.PROVIDERS`.
     provider: str
-    #: The `[mcu <name>]` or `[display <name>]` section name.
+    #: The `[type <name>]` section name.
     name: str
     #: The firmware family. Every target carries one: a kconfig_make pair
     #: names the family it builds; a PlatformIO type names its declared

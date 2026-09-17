@@ -26,6 +26,8 @@ from mcu_updater.errors import (
 from mcu_updater.flashers import flash as flash_mod
 from mcu_updater.flashers.flash import flash_katapult_can
 
+from .conftest import seed_base_firmwares
+
 UUID = "bcb5346fc731"
 
 
@@ -53,6 +55,7 @@ def _with_interfaces(paths, fake_root, names):
 def ready(paths, settings, fake_root):
     """A staged firmware binary, an installed flashtool.py, and a real write
     (not dry-run) - the interface trial loop only matters once dry_run is off."""
+    seed_base_firmwares(paths)
     settings.dry_run = False
     (fake_root / "katapult" / "scripts").mkdir(parents=True, exist_ok=True)
     (fake_root / "katapult" / "scripts" / "flashtool.py").write_text("", encoding="utf-8")
@@ -87,12 +90,14 @@ def _script_run_streamed(monkeypatch, script: dict):
 
 
 def test_missing_flashtool_raises(paths, settings, fake_root):
+    seed_base_firmwares(paths)
     _stage_bin(paths)
     with pytest.raises(ToolMissingError):
         flash_katapult_can(paths, settings, "board", UUID)
 
 
 def test_missing_firmware_binary_raises(paths, settings, fake_root):
+    seed_base_firmwares(paths)
     (fake_root / "katapult" / "scripts").mkdir(parents=True)
     (fake_root / "katapult" / "scripts" / "flashtool.py").write_text("", encoding="utf-8")
     with pytest.raises(FlashError):

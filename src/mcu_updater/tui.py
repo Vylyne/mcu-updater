@@ -10,14 +10,88 @@ from __future__ import annotations
 import argparse
 from collections.abc import Callable
 
-from . import cli
-from .config import Registry
-from .devices import find_untracked
+from . import cli, typelist
+from .devices import BusDevice, find_untracked
 from .errors import UpdaterError
+from .typelist import TypeEntry
+
+# --------------------------------------------------------------------------
+# which types each menu offers
+#
+# Exactly the types the CLI handler behind a menu accepts - read from cli.py,
+# not assumed - in one place, so widening a handler is one edit here. Status,
+# add/remove serial and remove type go through `tracking`, which covers every
+# declared type. Menuconfig and add-mcu are kconfig operations
+# (`registry().get`). Build and flash dispatch on the provider owning the name.
+# --------------------------------------------------------------------------
+
+KCONFIG_BUILDER = "kconfig_make"
+
+# Build and flash offer every declared type: `build_fw_cmd` and `flash_fw_cmd`
+# dispatch on every builder, and config validation refuses a `builder:` no
+# provider implements, so no loaded type is one they refuse outright.
+
+#: Builders `flash_fw_cmd` flashes a whole type for. A CMake type is refused
+#: type-level ("Flash its boards individually") before anything is written.
+FLASH_TYPE_LEVEL_BUILDERS = frozenset({KCONFIG_BUILDER, "platformio"})
+
+#: Builders `flash_fw_cmd` flashes one tracked serial for. Not platformio: its
+#: `-s` is matched against a device's port or device_id (`_pio_targets`), never
+#: a by-id serial, so a serial picked here would match no device.
+FLASH_SINGLE_DEVICE_BUILDERS = frozenset({KCONFIG_BUILDER, "cmake"})
+
+#: Builders whose flash device picker also offers untracked boards and manual
+#: entry - `flash -s` then offers to track it. Anything else picks from its
+#: tracked serials only: tracking a new board is add-serial's job.
+FLASH_UNTRACKED_BUILDERS = frozenset({KCONFIG_BUILDER})
+
+#: What a picker says when types are declared but its handler accepts none.
+KCONFIG_ONLY_MENUCONFIG = "No kconfig types are declared - menuconfig works on kconfig types only."
+KCONFIG_ONLY_ADD_MCU = "No kconfig types are declared - add-mcu works on kconfig types only."
 
 
-def _registry() -> Registry:
-    return cli.ctx().registry()
+def every_type(entry: TypeEntry) -> bool:
+    return True
+
+
+def kconfig_type(entry: TypeEntry) -> bool:
+    return entry.builder == KCONFIG_BUILDER
+
+
+#: Builders whose by-id name carries the chipset, so detected boards are
+#: narrowed to the type's own. A Katapult or Klipper name does; a Roadrunner's
+#: (`usb-Vylyne_Roadrunner_<serial>`) does not, so every other builder lists
+#: every untracked board, the way `status` does.
+CHIPSET_FILTERED_BUILDERS = frozenset({KCONFIG_BUILDER})
+
+#: Builders whose `build_fw_cmd` path reads `-f`. Its cmake and platformio
+#: branches ignore it, so the menu does not ask.
+BUILD_FW_BUILDERS = frozenset({KCONFIG_BUILDER})
+
+
+def filters_by_chipset(entry: TypeEntry) -> bool:
+    return entry.builder in CHIPSET_FILTERED_BUILDERS
+
+
+def build_asks_fw(entry: TypeEntry) -> bool:
+    return entry.builder in BUILD_FW_BUILDERS
+
+
+def flashes_whole_type(entry: TypeEntry) -> bool:
+    return entry.builder in FLASH_TYPE_LEVEL_BUILDERS
+
+
+def flashes_one_device(entry: TypeEntry) -> bool:
+    return entry.builder in FLASH_SINGLE_DEVICE_BUILDERS
+
+
+def flash_offers_untracked(entry: TypeEntry) -> bool:
+    return entry.builder in FLASH_UNTRACKED_BUILDERS
+
+
+def _entries() -> list[TypeEntry]:
+    """Every declared type, whatever builds it. Always a fresh read."""
+    return typelist.load(cli.ctx().paths)
 
 
 # --------------------------------------------------------------------------
@@ -68,15 +142,31 @@ def prompt_nonempty(prompt: str) -> str:
 # --------------------------------------------------------------------------
 
 
-def pick_mcu_type(reg: Registry, allow_new: bool = True) -> str | None:
-    """Picker over existing types.
+def pick_mcu_type(
+    entries: list[TypeEntry] | None = None,
+    allow_new: bool = True,
+    accepts: Callable[[TypeEntry], bool] = every_type,
+    none_accepted: str = "",
+) -> str | None:
+    """Picker over the declared types `accepts` lets through.
 
-    With allow_new, appends an "Add a new MCU type" entry that runs the add-type
-    flow inline and returns the new name - so a flow that needs a type never
-    dead-ends just because none exist yet.
+    `entries` defaults to a fresh `typelist.load`. With allow_new, appends an
+    "Add a new MCU type" entry that runs the add-type flow inline and returns
+    the new name - so a flow that needs a type never dead-ends just because none
+    exist yet. That flow declares a kconfig type, which every menu offering it
+    accepts.
+
+    `none_accepted` is said when types are declared but `accepts` refuses them
+    all - "no types configured" would be untrue then.
     """
-    types = reg.names()
-    if not types:
+    if entries is None:
+        entries = _entries()
+    types = [entry for entry in entries if accepts(entry)]
+    if not types and entries:
+        print(none_accepted or "None of the declared MCU types can be used here.")
+        if not allow_new:
+            return None
+    elif not types:
         if not allow_new:
             print("No MCU types configured yet.")
             return None
@@ -84,8 +174,8 @@ def pick_mcu_type(reg: Registry, allow_new: bool = True) -> str | None:
         return menu_add_mcu_type()
 
     options = [
-        f"{t}  (chipset={reg.get(t).chipset or '?'}, {len(reg.get(t).serials)} serial(s))"
-        for t in types
+        f"{entry.name}  (chipset={entry.chipset or '?'}, {len(entry.serials)} serial(s))"
+        for entry in types
     ]
     if allow_new:
         options.append("+ Add a new MCU type")
@@ -94,7 +184,7 @@ def pick_mcu_type(reg: Registry, allow_new: bool = True) -> str | None:
         return None
     if allow_new and idx == len(types):
         return menu_add_mcu_type()
-    return types[idx]
+    return types[idx].name
 
 
 def pick_fw_target() -> str | None:
@@ -108,18 +198,35 @@ def pick_fw_target() -> str | None:
     return targets[idx]
 
 
-def pick_serial_for_type(mcu_type: str, reg: Registry) -> str | None:
-    """Tracked serials, plus untracked devices detected on the bus, plus manual
-    entry. Used by Flash, where either is a valid target."""
-    mcu = reg.get(mcu_type)
-    tracked = list(mcu.serials)
-    untracked = find_untracked(cli.ctx().paths, reg.all_serials(), chipset=mcu.chipset)
+def _untracked_for(entry: TypeEntry, entries: list[TypeEntry]) -> list[BusDevice]:
+    """Boards on the bus that no declared type tracks.
+
+    The discovery `status` uses - `find_untracked` against every declared
+    type's serials, whatever builds it - so a board tracked under a CMake type
+    is never offered for adoption somewhere else. Narrowed to this type's
+    chipset only where the by-id name carries one (`filters_by_chipset`).
+    """
+    known = {serial for e in entries for serial in e.serials}
+    chipset = (entry.chipset or None) if filters_by_chipset(entry) else None
+    return find_untracked(cli.ctx().paths, known, chipset=chipset)
+
+
+def pick_serial_for_type(entry: TypeEntry, entries: list[TypeEntry]) -> str | None:
+    """Tracked serials, plus - where `flash_offers_untracked` - untracked
+    devices detected on the bus and manual entry. Used by Flash.
+
+    Not `canbus_uuids`: `flash -s` resolves against `serials:` only, and would
+    offer to add a uuid there."""
+    tracked = list(entry.serials)
+    offers_untracked = flash_offers_untracked(entry)
+    untracked = _untracked_for(entry, entries) if offers_untracked else []
 
     options = [f"{s} (tracked)" for s in tracked]
     options += [f"{d.serial} (untracked, detected on bus)" for d in untracked]
-    options.append("Enter serial manually")
+    if offers_untracked:
+        options.append("Enter serial manually")
 
-    idx = prompt_choice(f"Select a device under '{mcu_type}'", options)
+    idx = prompt_choice(f"Select a device under '{entry.name}'", options)
     if idx is None:
         return None
     if idx < len(tracked):
@@ -129,13 +236,14 @@ def pick_serial_for_type(mcu_type: str, reg: Registry) -> str | None:
     return prompt_nonempty("Serial string")
 
 
-def pick_tracked_serial(mcu_type: str, reg: Registry) -> str | None:
-    """Only already-tracked serials - used by Remove-serial."""
-    tracked = list(reg.get(mcu_type).serials)
+def pick_tracked_serial(entry: TypeEntry) -> str | None:
+    """Only already-tracked serials - used by Remove-serial, which removes from
+    `serials:` and never from `canbus_uuids:`."""
+    tracked = list(entry.serials)
     if not tracked:
-        print(f"No serials tracked under '{mcu_type}'.")
+        print(f"No serials tracked under '{entry.name}'.")
         return None
-    idx = prompt_choice(f"Select a serial to remove from '{mcu_type}'", tracked)
+    idx = prompt_choice(f"Select a serial to remove from '{entry.name}'", tracked)
     if idx is None:
         return None
     return tracked[idx]
@@ -146,23 +254,28 @@ def pick_tracked_serial(mcu_type: str, reg: Registry) -> str | None:
 # --------------------------------------------------------------------------
 
 
-def call_action(func: Callable[[argparse.Namespace], None], ns: argparse.Namespace) -> None:
+def call_action(func: Callable[[argparse.Namespace], None], ns: argparse.Namespace) -> bool:
     """Invoke a CLI handler from the menu.
 
     Catches SystemExit and UpdaterError so a failed sub-action returns control to
     the menu loop instead of ending the session - the handler's own output has
     already explained what happened. KeyboardInterrupt is deliberately not caught
     here; it propagates to run_menu() and ends the session, per ^C convention.
+
+    Returns whether the action completed, for a menu that goes on to use its result.
     """
     try:
         func(ns)
     except UpdaterError as exc:
         print(f"ERROR: {exc}")
         print("(action did not complete successfully - see messages above)")
+        return False
     except SystemExit as exc:
         code = exc.code if isinstance(exc.code, int) else 1
         if code not in (0, None):
             print("(action did not complete successfully - see messages above)")
+            return False
+    return True
 
 
 # --------------------------------------------------------------------------
@@ -174,13 +287,16 @@ def menu_status() -> None:
     call_action(cli.status_cmd, argparse.Namespace())
 
 
-def menu_add_mcu_type() -> str:
+def menu_add_mcu_type() -> str | None:
+    """Declare a kconfig type. None when it was not added, so a picker that
+    offered "+ Add a new MCU type" does not carry on with a name the handler
+    refused - one another builder's type already declares, say."""
     type_name = prompt_nonempty("MCU type name (e.g. bttebb36)")
     chipset = prompt_nonempty("Chipset (e.g. stm32g0b1xx)")
     klipper_args = input("Extra klipper make args (blank for none): ").strip()
     katapult_args = input("Extra katapult make args (blank for none): ").strip()
     no_katapult = prompt_yn("Skip katapult (no bootloader)?", default=False)
-    call_action(
+    added = call_action(
         cli.add_mcu_type,
         argparse.Namespace(
             type=type_name,
@@ -191,25 +307,25 @@ def menu_add_mcu_type() -> str:
             force=False,
         ),
     )
-    return type_name
+    return type_name if added else None
 
 
 def menu_remove_mcu_type() -> None:
-    mcu_type = pick_mcu_type(_registry(), allow_new=False)
+    mcu_type = pick_mcu_type(allow_new=False, accepts=every_type)
     if mcu_type is None:
         return
     call_action(cli.remove_mcu_type, argparse.Namespace(type=mcu_type, force=False))
 
 
 def menu_add_serial() -> None:
-    mcu_type = pick_mcu_type(_registry(), allow_new=True)
+    mcu_type = pick_mcu_type(allow_new=True, accepts=every_type)
     if mcu_type is None:
         return
-    reg = _registry()  # refresh - pick_mcu_type may have just created this type
-    if mcu_type not in reg:
+    entries = _entries()  # refresh - pick_mcu_type may have just created this type
+    entry = next((e for e in entries if e.name == mcu_type), None)
+    if entry is None:
         return
-    chipset = reg.get(mcu_type).chipset
-    untracked = find_untracked(cli.ctx().paths, reg.all_serials(), chipset=chipset)
+    untracked = _untracked_for(entry, entries)
 
     options = [f"{d.serial} (detected on bus)" for d in untracked]
     options.append("Enter serial manually")
@@ -221,25 +337,30 @@ def menu_add_serial() -> None:
 
 
 def menu_remove_serial() -> None:
-    reg = _registry()
-    mcu_type = pick_mcu_type(reg, allow_new=False)
+    entries = _entries()
+    mcu_type = pick_mcu_type(entries, allow_new=False, accepts=every_type)
     if mcu_type is None:
         return
-    serial = pick_tracked_serial(mcu_type, reg)
+    entry = next(e for e in entries if e.name == mcu_type)
+    serial = pick_tracked_serial(entry)
     if serial is None:
         return
     call_action(cli.remove_serial, argparse.Namespace(type=mcu_type, serial=serial))
 
 
 def menu_add_mcu() -> None:
-    mcu_type = pick_mcu_type(_registry(), allow_new=True)
+    mcu_type = pick_mcu_type(
+        allow_new=True, accepts=kconfig_type, none_accepted=KCONFIG_ONLY_ADD_MCU
+    )
     if mcu_type is None:
         return
     call_action(cli.add_mcu, argparse.Namespace(type=mcu_type))
 
 
 def menu_menuconfig() -> None:
-    mcu_type = pick_mcu_type(_registry(), allow_new=True)
+    mcu_type = pick_mcu_type(
+        allow_new=True, accepts=kconfig_type, none_accepted=KCONFIG_ONLY_MENUCONFIG
+    )
     if mcu_type is None:
         return
     fw = pick_fw_target()
@@ -251,36 +372,49 @@ def menu_menuconfig() -> None:
 
 
 def menu_build() -> None:
-    mcu_type = pick_mcu_type(_registry(), allow_new=True)
+    mcu_type = pick_mcu_type(allow_new=True, accepts=every_type)
     if mcu_type is None:
         return
-    fw = pick_fw_target()
-    if fw is None:
+    entry = next((e for e in _entries() if e.name == mcu_type), None)
+    if entry is None:
         return
+    fw: str | None = None
+    if build_asks_fw(entry):
+        fw = pick_fw_target()
+        if fw is None:
+            return
     call_action(cli.build_fw_cmd, argparse.Namespace(type=mcu_type, fw=fw, jobs=None))
 
 
 def menu_flash() -> None:
-    reg = _registry()
-    mcu_type = pick_mcu_type(reg, allow_new=False)
+    entries = _entries()
+    mcu_type = pick_mcu_type(entries, allow_new=False, accepts=every_type)
     if mcu_type is None:
         return
-    serials = list(reg.get(mcu_type).serials)
+    entry = next(e for e in entries if e.name == mcu_type)
+    serials = list(entry.serials)
 
-    scope_options = ["Flash every tracked serial under this type"]
-    if serials:
+    # Only the scopes `flash_fw_cmd` accepts for this type's builder.
+    whole_type = flashes_whole_type(entry)
+    scope_options = []
+    if whole_type:
+        scope_options.append("Flash every board of this type")
+    if serials and flashes_one_device(entry):
         scope_options.append("Flash one specific device")
+    if not scope_options:
+        print(f"No serials tracked under '{mcu_type}'.")
+        return
     idx = prompt_choice(f"Flash scope for '{mcu_type}'", scope_options)
     if idx is None:
         return
 
-    if idx == 0:
-        ns = argparse.Namespace(type=mcu_type, serial=None, yes=False)
+    if whole_type and idx == 0:
+        ns = argparse.Namespace(type=mcu_type, serial=None, yes=False, force=False)
     else:
-        serial = pick_serial_for_type(mcu_type, reg)
+        serial = pick_serial_for_type(entry, entries)
         if serial is None:
             return
-        ns = argparse.Namespace(type=mcu_type, serial=serial, yes=False)
+        ns = argparse.Namespace(type=mcu_type, serial=serial, yes=False, force=False)
     call_action(cli.flash_fw_cmd, ns)
 
 

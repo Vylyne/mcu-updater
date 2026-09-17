@@ -125,8 +125,11 @@ def add_mcu_type(args: argparse.Namespace) -> None:
             return
 
     # The prompt above read without the lock, and must: a prompt must not hold
-    # the registry. The write re-reads under it, so an edit made while the
-    # prompt waited is kept rather than overwritten by that earlier read.
+    # the registry. The write re-reads under it, so an edit made to any other
+    # type while the prompt waited is kept. `overwrite` still replaces this
+    # type's own declaration, its serials included. The pre-check above sees
+    # only kconfig types; a name another builder declares is refused by
+    # `add_type` itself, under the lock.
     with Registry.mutate(c.paths, f"add type {args.type}") as writable:
         writable.add_type(
             args.type,

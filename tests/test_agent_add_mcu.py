@@ -124,14 +124,17 @@ def test_a_type_with_no_katapult_build_is_refused_with_the_reason(adder, monkeyp
 
 def test_an_unrelated_chipset_is_refused_precisely(adder, paths, monkeypatch):
     """Neither DFU nor BOOTSEL applies to an ESP32 - say so precisely rather
-    than failing inside the job with something about dfu-util or a mount."""
-    adder.dispatch("fw.type.add", {"name": "knomi", "chipset": "esp32"})
-    assert "knomi" in Registry.load(paths).names()
-    _stage_katapult(paths, "knomi")
+    than failing inside the job with something about dfu-util or a mount.
+
+    Not named `knomi`: the fixture config already declares that as a
+    platformio type, and `add_type` refuses another builder's name."""
+    adder.dispatch("fw.type.add", {"name": "espboard", "chipset": "esp32"})
+    assert "espboard" in Registry.load(paths).names()
+    _stage_katapult(paths, "espboard")
     patch_dfu(monkeypatch, stdout=ONE_BOARD)
 
     with pytest.raises(RpcError) as exc:
-        adder.dispatch("fw.add_mcu.start", {"name": "knomi"})
+        adder.dispatch("fw.add_mcu.start", {"name": "espboard"})
     assert exc.value.data["code"] == "unsupported_chipset"
     assert exc.value.data["data"]["chipset"] == "esp32"
 

@@ -1044,6 +1044,24 @@ def test_add_type_writes_when_the_lock_is_free(c, fake_root, monkeypatch):
     assert Registry.load(c.paths).get("newboard").chipset == "rp2040"
 
 
+def test_add_type_refuses_the_name_of_a_type_another_builder_declares(
+    c, fake_root, monkeypatch, capsys
+):
+    """The prompt's pre-check sees only kconfig types, so no prompt appears -
+    and the write passes `overwrite=True`. The refusal has to come from
+    `add_type` under the lock, or the cmake section is rewritten as a kconfig
+    one with its serials emptied."""
+    _declare_roadrunner(c.paths, "RR-ONE")
+    before = open(c.paths.main_config, encoding="utf-8").read()
+
+    code = _main(fake_root, monkeypatch, ["add-type", "-t", "roadrunner", "-c", "rp2040"])
+
+    err = capsys.readouterr().err
+    assert code == 1
+    assert "'cmake'" in err and "remove that type first" in err
+    assert open(c.paths.main_config, encoding="utf-8").read() == before
+
+
 def test_add_type_keeps_an_edit_made_while_the_overwrite_prompt_waited(
     c, fake_root, monkeypatch
 ):

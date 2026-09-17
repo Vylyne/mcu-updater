@@ -709,6 +709,23 @@ class Registry:
         add.
         """
         validate_type_name(name)
+        # Whatever `overwrite` says. This registry holds only kconfig_make types,
+        # so a name another builder declares is absent from `self.types` - and
+        # `_save` would write this type into that section, emptying its serials
+        # and replacing its `firmware:` while leaving the other builder's keys
+        # behind. Overwriting is for replacing one of this registry's own types.
+        if name not in self.types and name in self.declared_type_names():
+            families_map = firmware.load_from_doc(self._doc)
+            owner = next(
+                (e.builder for e in typelist.read(self._doc, families_map) if e.name == name),
+                "",
+            )
+            raise DuplicateTypeError(
+                f"MCU type '{name}' already exists, built by "
+                f"{repr(owner) if owner else 'another builder'} - remove that type "
+                f"first to declare a new one under this name.",
+                type=name,
+            )
         if name in self.types and not overwrite:
             raise DuplicateTypeError(f"MCU type '{name}' already exists.", type=name)
         firmwares = [application]

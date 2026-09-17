@@ -842,12 +842,11 @@ def test_a_type_built_by_a_third_builder_is_not_loaded_into_this_registry(paths)
 def test_saving_does_not_delete_a_type_this_registry_does_not_own(paths):
     """The data-loss guard.
 
-    `_save()` removes any declared type absent from `self.types`, so a type
-    excluded by `load()` is one `_save()` would delete - silently, from a
-    hand-edited file in printer_data/config. The platformio exclusion has
-    always been paired with a matching save-time skip; a third builder needs
-    the same, and gets it by inverting both checks rather than adding a second
-    special case.
+    `load()` excludes another builder's type from `self.types`. `_save()`
+    writes only the types this registry holds and deletes nothing, so that
+    excluded type survives a save untouched - rather than vanishing, silently,
+    from a hand-edited file in printer_data/config. Sections are removed only
+    by `remove_type` / `remove_declared_type`.
     """
     with open(paths.registry_file, "w", encoding="utf-8") as fh:
         fh.write(_cfg_with_a_cmake_type())
@@ -859,6 +858,22 @@ def test_saving_does_not_delete_a_type_this_registry_does_not_own(paths):
     assert "cmake_target: roadrunner_v1_i2c_rgb" in text
     assert "RR-ABCDEFGHIJKLMNOPQRSTUVWXYZ" in text
     assert "[type bttebb36]" in text
+
+
+@pytest.mark.parametrize("overwrite", [False, True])
+def test_add_type_refuses_a_name_another_builder_declares(paths, overwrite):
+    """`_save` would write a kconfig type into the cmake type's section:
+    serials emptied, `firmware:` replaced, `cmake_target:` left behind.
+    `overwrite` is for replacing this registry's own types, so it does not
+    lift the refusal."""
+    with open(paths.registry_file, "w", encoding="utf-8") as fh:
+        fh.write(_cfg_with_a_cmake_type())
+    registry = Registry.load(paths)
+
+    with pytest.raises(DuplicateTypeError, match="'cmake'.*remove that type first"):
+        registry.add_type("roadrunner", "rp2040", overwrite=overwrite)
+
+    assert "roadrunner" not in registry.types
 
 
 def test_declared_identity_mutations_preserve_a_foreign_type(paths):

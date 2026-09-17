@@ -1,11 +1,12 @@
 {
-  "_comment": "Every registry write is lock, re-read, change, save - Registry.mutate, directly or through tracking. The CLI's flash add-prompt, add-mcu's adoption and add-type each wrote a registry they had read before a prompt, with no lock: an edit the panel made while the prompt waited was erased by the save, and the prompt and adoption writes skipped tracking's refusals, so a board could end up tracked under two types or an unprovisioned Roadrunner's flash UID could be persisted.",
+  "_comment": "Every registry write is lock, re-read, change, save - Registry.mutate, directly or through tracking. The CLI's flash add-prompt, add-mcu's adoption and add-type each wrote a registry they had read before a prompt, with no lock: an edit the panel made while the prompt waited was erased by the save, and the prompt and adoption writes skipped tracking's refusals, so a board could end up tracked under two types or an unprovisioned Roadrunner's flash UID could be persisted. add_type refuses a name another builder declares, whatever overwrite says: the CLI passes overwrite=True with a kconfig-only pre-check, and _save would rewrite the other builder's section as a kconfig type with its serials emptied.",
   "file": "src/mcu_updater/cli.py",
   "command": [
     "python",
     "-m",
     "pytest",
     "tests/test_cli.py",
+    "tests/test_config.py",
     "-q"
   ],
   "mutations": [
@@ -33,6 +34,12 @@
       "name": "the flash add-prompt does not claim to have added a serial that was already tracked",
       "find": "            if added:\n                print(f\"Added serial {args.serial} to {args.type}\")\n",
       "replace": "            if True:\n                print(f\"Added serial {args.serial} to {args.type}\")\n"
+    },
+    {
+      "name": "add_type refuses a name another builder declares",
+      "file": "src/mcu_updater/config.py",
+      "find": "        if name not in self.types and name in self.declared_type_names():\n",
+      "replace": "        if False:\n"
     }
   ]
 }

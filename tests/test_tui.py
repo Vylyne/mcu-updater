@@ -322,3 +322,14 @@ def test_a_refused_add_prints_the_error_and_returns_to_the_menu(c, monkeypatch, 
     assert "ERROR: serial 'AAAA-if00' is already tracked under 'board'" in out
     assert "(action did not complete successfully" in out
     assert Registry.load(c.paths).declared_serials("roadrunner") == [RR_SERIAL]
+
+
+def test_a_refused_new_type_does_not_carry_on_into_the_picked_menu(c, monkeypatch, capsys):
+    # `roadrunner` is a cmake type, so declaring a kconfig type by that name is
+    # refused - and add-serial must stop there, not offer roadrunner's boards.
+    answers(monkeypatch, "3", "roadrunner", "rp2040", "", "", "n")
+    tui.menu_add_serial()
+    out = capsys.readouterr().out
+    assert "ERROR:" in out
+    assert "Select a serial to add" not in out
+    assert Registry.load(c.paths).declared_serials("roadrunner") == [RR_SERIAL]

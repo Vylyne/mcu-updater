@@ -271,23 +271,28 @@ def pick_tracked_serial(entry: TypeEntry) -> str | None:
 # --------------------------------------------------------------------------
 
 
-def call_action(func: Callable[[argparse.Namespace], None], ns: argparse.Namespace) -> None:
+def call_action(func: Callable[[argparse.Namespace], None], ns: argparse.Namespace) -> bool:
     """Invoke a CLI handler from the menu.
 
     Catches SystemExit and UpdaterError so a failed sub-action returns control to
     the menu loop instead of ending the session - the handler's own output has
     already explained what happened. KeyboardInterrupt is deliberately not caught
     here; it propagates to run_menu() and ends the session, per ^C convention.
+
+    Returns whether the action completed, for a menu that goes on to use its result.
     """
     try:
         func(ns)
     except UpdaterError as exc:
         print(f"ERROR: {exc}")
         print("(action did not complete successfully - see messages above)")
+        return False
     except SystemExit as exc:
         code = exc.code if isinstance(exc.code, int) else 1
         if code not in (0, None):
             print("(action did not complete successfully - see messages above)")
+            return False
+    return True
 
 
 # --------------------------------------------------------------------------
@@ -299,13 +304,16 @@ def menu_status() -> None:
     call_action(cli.status_cmd, argparse.Namespace())
 
 
-def menu_add_mcu_type() -> str:
+def menu_add_mcu_type() -> str | None:
+    """Declare a kconfig type. None when it was not added, so a picker that
+    offered "+ Add a new MCU type" does not carry on with a name the handler
+    refused - one another builder's type already declares, say."""
     type_name = prompt_nonempty("MCU type name (e.g. bttebb36)")
     chipset = prompt_nonempty("Chipset (e.g. stm32g0b1xx)")
     klipper_args = input("Extra klipper make args (blank for none): ").strip()
     katapult_args = input("Extra katapult make args (blank for none): ").strip()
     no_katapult = prompt_yn("Skip katapult (no bootloader)?", default=False)
-    call_action(
+    added = call_action(
         cli.add_mcu_type,
         argparse.Namespace(
             type=type_name,
@@ -316,7 +324,7 @@ def menu_add_mcu_type() -> str:
             force=False,
         ),
     )
-    return type_name
+    return type_name if added else None
 
 
 def menu_remove_mcu_type() -> None:

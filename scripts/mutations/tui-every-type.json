@@ -1,5 +1,5 @@
 {
-  "_comment": "The TUI's pickers read the kconfig-only Registry, so a Roadrunner, CMake or PlatformIO type the CLI tracks did not exist in the menu. The type list is what every picker reads; menuconfig still offers kconfig types only; add-serial reaches the CLI handler for a non-kconfig type. Build asks for a firmware target only for types whose handler reads -f.",
+  "_comment": "The TUI's pickers read the kconfig-only Registry, so a Roadrunner, CMake or PlatformIO type the CLI tracks did not exist in the menu. The type list is what every picker reads; menuconfig still offers kconfig types only; add-serial reaches the CLI handler for a non-kconfig type. Build asks for a firmware target only for types whose handler reads -f. A new type the handler refused is not carried on into the menu that offered it.",
   "file": "src/mcu_updater/tui.py",
   "command": [
     "python",
@@ -33,6 +33,11 @@
       "name": "build asks for a firmware target only where the handler reads one",
       "find": "    if build_asks_fw(entry):\n",
       "replace": "    if True:\n"
+    },
+    {
+      "name": "a refused new type is not carried on into the picked menu",
+      "find": "    return type_name if added else None\n",
+      "replace": "    return type_name\n"
     }
   ]
 }

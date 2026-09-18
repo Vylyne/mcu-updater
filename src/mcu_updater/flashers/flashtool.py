@@ -13,7 +13,15 @@ from typing import TYPE_CHECKING, Any
 
 from ..devices import STATE_KATAPULT, STATE_KLIPPER
 from ..paths import REENUMERATE_TIMEOUT
-from .spec import KIND_CANBUS, KIND_SERIAL, Bench, Device, FlashTarget, chipset_matches
+from .spec import (
+    KIND_CANBUS,
+    KIND_SERIAL,
+    Bench,
+    Device,
+    FlashRecord,
+    FlashTarget,
+    chipset_matches,
+)
 
 if TYPE_CHECKING:
     from ..helpers.spec import Helper
@@ -73,7 +81,7 @@ class Flashtool:
         from .flash import flash_katapult, flash_katapult_can
 
         if "uuid" in target.detail:
-            flash_katapult_can(
+            confidence = flash_katapult_can(
                 bench.paths,
                 bench.settings,
                 target.type,
@@ -84,9 +92,9 @@ class Flashtool:
                 bridge=target.detail.get("bridge"),
                 interface=target.detail.get("interface"),
             )
-            return {"uuid": target.id}
+            return {"uuid": target.id, "confidence": confidence}
 
-        flash_katapult(
+        confidence = flash_katapult(
             bench.paths,
             bench.settings,
             target.type,
@@ -101,7 +109,26 @@ class Flashtool:
         # `serial` as well as the uniform `id`, because that is what a board's
         # id has always been called on this wire and in the CLI. Same reason
         # `targets[].devices[]` carries both an `id` and a `name`.
-        return {"serial": target.id}
+        return {"serial": target.id, "confidence": confidence}
+
+    def record(self, bench: Bench, target: FlashTarget) -> FlashRecord | None:
+        from .. import firmware
+        from ..build import git_head, read_sidecar
+
+        fw = target.detail.get("fw") or "klipper"
+        side = read_sidecar(bench.paths, target.type, fw) or {}
+        return FlashRecord(
+            key=target.id,
+            mcu_type=target.type,
+            fw=fw,
+            bin_sha256=side.get("bin_sha256"),
+            # A sidecar from before the field existed, or a build this tool did
+            # not perform: the tree's head is the same answer one step less
+            # directly, and is what this path has always fallen back on.
+            fw_sha=side.get("fw_sha")
+            or git_head(firmware.resolve(bench.paths, fw).source_dir(bench.paths)),
+            version=side.get("version"),
+        )
 
     def settled(self, bench: Bench, target: FlashTarget, ctx: Any) -> None:
         """Wait for the board to come back as a Klipper device.

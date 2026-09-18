@@ -80,12 +80,19 @@ def write_all(
     half an image on a board, so the check is at the top of each iteration and
     never inside one.
 
+    **The ledger is written here and nowhere else** (Ruling 12). Right after
+    the write returns and before `settled`, the service restart, or any later
+    device's failure - all three can fail after the image is already on the
+    board, and a completed write with no record is what makes an operator
+    flash an already-correct board a second time.
+
     `refused` is what selection could not give a flasher (`select_each`). Each
     entry is warned and listed first in `failures`, so a batch never drops a
     device without saying why. `errors`, when given, collects each write's
     exception as raised: a single-device job re-raises it with its own code,
     which a `failures` string has lost.
     """
+    from ..build import FlashLog
     from ..service import services_stopped
 
     stopped, free = group_by_stop(targets)
@@ -121,6 +128,21 @@ def write_all(
                         if errors is not None:
                             errors.append(exc)
                         continue
+                    # Off the result and onto the ledger: see `Flasher.write`.
+                    extra = dict(extra)
+                    confidence = extra.pop("confidence", None)
+                    if not bench.settings.dry_run:
+                        record = flasher.record(bench, target)
+                        if record is not None:
+                            FlashLog(bench.paths).record(
+                                record.key,
+                                mcu_type=record.mcu_type,
+                                fw=record.fw,
+                                bin_sha256=record.bin_sha256,
+                                fw_sha=record.fw_sha,
+                                confidence=confidence,
+                                version=record.version,
+                            )
                     flashed.append({**target.to_json(), **extra})
                     # After the write and after it is recorded: a device that
                     # came back slowly is still flashed. Its own handler, and

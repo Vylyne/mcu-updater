@@ -348,16 +348,11 @@ def test_a_known_native_node_never_writes_after_every_probe_fails(
 # --------------------------------------------------------------------------
 
 
-def test_a_real_flash_records_canbus_uuid_confidence(paths, ready, fake_root, monkeypatch):
-    from mcu_updater.build import FlashLog
-
+def test_a_real_can_flash_reports_canbus_uuid_confidence(paths, ready, fake_root, monkeypatch):
     ready_paths = _with_interfaces(paths, fake_root, ["can0"])
     _script_run_streamed(monkeypatch, {("can0", "write"): (0, [])})
 
-    flash_katapult_can(ready_paths, ready, "board", UUID)
-
-    record = FlashLog(paths).all()[UUID]
-    assert record["confidence"] == "canbus_uuid"
+    assert flash_katapult_can(ready_paths, ready, "board", UUID) == "canbus_uuid"
 
 
 # --------------------------------------------------------------------------
@@ -387,7 +382,7 @@ def test_flashtool_writes_a_can_target_and_returns_its_uuid(paths, ready, fake_r
     result = flashers.Flashtool().write(
         bench, None, target, flashers.PlainContext(lambda *a: None)
     )
-    assert result == {"uuid": UUID}
+    assert result == {"uuid": UUID, "confidence": "canbus_uuid"}
 
 
 def test_flashtool_settles_a_can_target_as_a_harmless_no_op(paths, settings):

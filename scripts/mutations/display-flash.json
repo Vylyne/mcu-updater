@@ -8,6 +8,7 @@
     "tests/test_agent_display_jobs.py",
     "tests/test_agent_displays.py",
     "tests/test_agent_targets.py",
+    "tests/test_flashlog_loop.py",
     "-q"
   ],
   "mutations": [
@@ -60,26 +61,26 @@
     {
       "name": "a confirmed write records how the screen was identified",
       "file": "src/mcu_updater/flashers/esptool.py",
-      "find": "        _record(bench, display, screen, confidence)\n",
-      "replace": ""
+      "find": "            \"confidence\": confidence.reason if confidence is not None else None,",
+      "replace": "            \"confidence\": None,"
     },
     {
       "name": "a dry run records nothing",
-      "file": "src/mcu_updater/flashers/esptool.py",
-      "find": "    if bench.settings.dry_run:\n        return\n\n    ident =",
-      "replace": "    if False:\n        return\n\n    ident ="
+      "file": "src/mcu_updater/flashers/batch.py",
+      "find": "                    if not bench.settings.dry_run:\n                        record = flasher.record(bench, target)",
+      "replace": "                    if True:\n                        record = flasher.record(bench, target)"
     },
     {
       "name": "a screen with no hardware id is recorded nowhere",
       "file": "src/mcu_updater/flashers/esptool.py",
-      "find": "    ident = (screen.get(\"device_id\") or screen.get(\"reported_id\") or \"\").lower()\n    if not ident:\n        return",
-      "replace": "    ident = (screen.get(\"device_id\") or screen.get(\"reported_id\") or \"\").lower()\n    if False:\n        return"
+      "find": "        ident = (screen.get(\"device_id\") or screen.get(\"reported_id\") or \"\").lower()\n        if not ident:\n            return None",
+      "replace": "        ident = (screen.get(\"device_id\") or screen.get(\"reported_id\") or \"\").lower()\n        if False:\n            return None"
     },
     {
       "name": "an unconfirmed write is not recorded as confirmed",
       "file": "src/mcu_updater/flashers/esptool.py",
-      "find": "        confidence=confidence.reason if confidence is not None else None,",
-      "replace": "        confidence=\"answered\","
+      "find": "            \"confidence\": confidence.reason if confidence is not None else None,",
+      "replace": "            \"confidence\": \"answered\","
     },
     {
       "name": "a record the screen disagrees with is discarded",

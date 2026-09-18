@@ -413,6 +413,8 @@ def test_a_single_cmake_batch_failure_fails_the_flash_job(
 def test_a_successful_cmake_write_records_build_sidecar_provenance(
     cmake_flash_factory, monkeypatch
 ):
+    """The ledger is `write_all`'s now (Ruling 12), so a faked batch writes
+    none - see `test_flashlog_loop.py`."""
     api = cmake_flash_factory(dry_run="false")
     sidecar = {
         "provider": "cmake",
@@ -450,14 +452,6 @@ def test_a_successful_cmake_write_records_build_sidecar_provenance(
     assert job.state == "succeeded", job.error
     assert captured["target"].flasher == "bootsel"
 
-    record = FlashLog(api.paths).all()[ROADRUNNER_SERIAL]
-    assert record["type"] == "roadrunner"
-    assert record["fw"] == "roadrunner"
-    assert record["fw_sha"] == "built-subtree-sha"
-    assert record["bin_sha256"] == "built-uf2-sha256"
-    assert record["version"] == "v1.2.3-4-gabcdef0"
-    assert record["confidence"] is None
-
 
 def test_a_cmake_family_that_cannot_write_the_board_refuses_before_a_job(
     cmake_flash_factory, monkeypatch
@@ -472,56 +466,6 @@ def test_a_cmake_family_that_cannot_write_the_board_refuses_before_a_job(
 
     assert exc.value.data["code"] == "no_flasher"
     assert api.runner.current() is None
-
-
-def test_a_completed_cmake_copy_records_provenance_whatever_follows_it(
-    cmake_flash_factory, monkeypatch
-):
-    """A written board is a written board.
-
-    The readiness wait after the copy is non-fatal, but nothing downstream of
-    the copy may take the ledger entry with it either: an operator told "failed"
-    with no `flash.json` record has every reason to flash the same image again.
-    """
-    api = cmake_flash_factory(dry_run="false")
-    os.makedirs(api.paths.artifact_dir("roadrunner"), exist_ok=True)
-    with open(
-        api.paths.sidecar_file("roadrunner", "roadrunner"), "w", encoding="utf-8"
-    ) as fh:
-        json.dump(
-            {
-                "provider": "cmake",
-                "sha": "built-subtree-sha",
-                "version": "v1.2.3-4-gabcdef0",
-                "dirty": False,
-                "cmake_target": "roadrunner_v1_i2c_rgb",
-                "bin_sha256": "built-uf2-sha256",
-                "bin_size": 15,
-                "bin_mtime": 123.0,
-            },
-            fh,
-        )
-
-    def wrote_then_stumbled(bench, targets, ctx, *, on_ready=None):
-        return {
-            "flashed": [targets[0].to_json()],
-            "failures": [
-                {**targets[0].to_json(), "error": "something after the copy"}
-            ],
-        }
-
-    monkeypatch.setattr("mcu_updater.flashers.write_all", wrote_then_stumbled)
-
-    response = api.dispatch(
-        "fw.flash", {"name": "roadrunner", "serial": ROADRUNNER_SERIAL}
-    )
-    assert api.runner.wait(timeout=30)
-    job = api.runner.get(response["job_id"])
-    assert job.state == "failed"
-
-    record = FlashLog(api.paths).all()[ROADRUNNER_SERIAL]
-    assert record["type"] == "roadrunner"
-    assert record["bin_sha256"] == "built-uf2-sha256"
 
 
 def test_flashing_without_a_built_artifact_is_refused(flashable, paths):

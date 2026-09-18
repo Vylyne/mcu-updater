@@ -696,12 +696,12 @@ after that is a warning, not a failure. Only then does the job wait for the same
 serial and Roadrunner INFO response before stopped services restart. That wait is non-fatal in every outcome: once
 the UF2 has been copied the job reports success, and a slow return, an
 unanswered probe, an identity that came back wrong, or two devices answering to
-one serial are all reported as a readiness warning on the job's log. A copy
-that completed is recorded in `flash.json` before any failure is reported,
-unless restarting stopped services itself fails: that restart failure
-propagates before the record is written, so a completed copy can go
-unrecorded. Short of that, a warning never looks like a board that still
-needs flashing. Every refusal above is pre-copy.
+one serial are all reported as a readiness warning on the job's log.
+A copy that completed is recorded in `flash.json` the moment the write returns
+— before the readiness wait, before stopped services are restarted, and before
+any later failure is reported. A completed copy is never unrecorded.
+Short of that, a warning never looks like a board that still needs flashing.
+Every refusal above is pre-copy.
 The closed loop is host-test-only so far, not an end-to-end hardware-verified
 claim.
 

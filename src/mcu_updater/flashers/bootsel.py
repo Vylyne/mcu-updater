@@ -36,7 +36,7 @@ from ..errors import (
     OperationCancelled,
     UpdaterError,
 )
-from .spec import KIND_SERIAL, Bench, Device, FlashTarget, chipset_matches
+from .spec import KIND_SERIAL, Bench, Device, FlashRecord, FlashTarget, chipset_matches
 
 if TYPE_CHECKING:
     from ..helpers.spec import BootselRequester, Helper
@@ -339,6 +339,30 @@ class Bootsel:
             mount = mount_for_topology(bench.paths, handoff.topology)
         copy_uf2(uf2, mount, ctx)
         return {"mount": mount}
+
+    def record(self, bench: Bench, target: FlashTarget) -> FlashRecord | None:
+        """The CMake image this board now holds.
+
+        `None` for anything that is not a configured CMake type: first install
+        writes a bootloader to a bare board whose `type` is a chipset string
+        and whose id may be empty, and there is no tracked device to file that
+        under.
+        """
+        from ..providers import cmake as cmake_mod
+
+        target_type = cmake_mod.load(bench.paths).get(target.type)
+        if target_type is None:
+            return None
+        side = cmake_mod.read_sidecar(bench.paths, target_type) or {}
+        return FlashRecord(
+            key=target.id,
+            mcu_type=target.type,
+            fw=target_type.firmware,
+            bin_sha256=side.get("bin_sha256"),
+            # `sha`, not `fw_sha`: the CMake sidecar's own spelling.
+            fw_sha=side.get("sha"),
+            version=side.get("version"),
+        )
 
     def settled(self, bench: Bench, target: FlashTarget, ctx: Any) -> None:
         """Wait for a helper-requested board to confirm its identity.

@@ -8,6 +8,7 @@ tmp_path stands in for a whole printer host - no mocks, no monkeypatching of
 
 from __future__ import annotations
 
+import json
 import os
 import pathlib
 import re
@@ -73,6 +74,40 @@ def paths(fake_root: pathlib.Path) -> Paths:
 def settings() -> Settings:
     """Defaults, but never touching a real service."""
     return Settings(service_backend="null", clean_before_build=False)
+
+
+@pytest.fixture
+def cmake_type(paths):
+    """A configured CMake type with a built sidecar, for the record paths."""
+    with open(paths.main_config, "a", encoding="utf-8") as fh:
+        fh.write(
+            "\n[firmware roadrunner]\n"
+            "source: ~/roadrunner\n"
+            "builder: cmake\n"
+            "flashers: bootsel\n"
+            "helper: roadrunner\n"
+            "\n[type roadrunner]\n"
+            "firmware: roadrunner\n"
+            "cmake_target: roadrunner_v1_i2c_rgb\n"
+            "chipset: rp2040\n"
+            "serials: RR-1\n"
+        )
+    os.makedirs(paths.artifact_dir("roadrunner"), exist_ok=True)
+    with open(paths.sidecar_file("roadrunner", "roadrunner"), "w", encoding="utf-8") as fh:
+        json.dump(
+            {
+                "provider": "cmake",
+                "sha": "built-subtree-sha",
+                "version": "v1.2.3-4-gabcdef0",
+                "dirty": False,
+                "cmake_target": "roadrunner_v1_i2c_rgb",
+                "bin_sha256": "built-uf2-sha256",
+                "bin_size": 15,
+                "bin_mtime": 123.0,
+            },
+            fh,
+        )
+    return "roadrunner"
 
 
 @pytest.fixture

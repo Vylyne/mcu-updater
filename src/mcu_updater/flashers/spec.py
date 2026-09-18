@@ -149,6 +149,28 @@ class FlashTarget:
         return {"type": self.type, "id": self.id, "flasher": self.flasher}
 
 
+@dataclasses.dataclass(frozen=True)
+class FlashRecord:
+    """What a completed write is worth remembering, in `FlashLog`'s vocabulary.
+
+    A flasher describes; `write_all` files. The three decisions a record used
+    to carry with it at four separate call sites - whether this run was a
+    rehearsal, where the ledger lives, and whether a lost write is worth
+    failing a good flash over - are the batch's, and there is one of each now.
+
+    `key` is what the entry is filed under and is *not* always `target.id`: a
+    screen's id is a port, which is not durable, so it files under
+    `build.display_key` of its hardware id instead.
+    """
+
+    key: str
+    mcu_type: str
+    fw: str
+    bin_sha256: str | None
+    fw_sha: str | None
+    version: str | None = None
+
+
 class Flasher(Protocol):
     """A way of getting an image onto a device."""
 
@@ -233,6 +255,26 @@ class Flasher(Protocol):
 
         Returns whatever is worth recording beside the uniform result - the chip
         esptool reported, a board's serial under the name it has always had.
+
+        A `"confidence"` key is special: `write_all` takes it off the result
+        and passes it to the ledger, so it never reaches the wire. How a board
+        was identified is known inside the write and nowhere else - the batch
+        cannot re-derive it afterwards, because the ports are no longer free.
+        """
+        ...
+
+    def record(self, bench: Bench, target: FlashTarget) -> FlashRecord | None:
+        """What was just written to this target, for the ledger.
+
+        Called only after a successful `write`, and never on a dry run - the
+        batch owns both of those conditions. `None` means there is nothing
+        durable to file this under: a bare board with no tracked serial, a
+        screen that would not say which one it is.
+
+        Reads the build record its own builder wrote. The two sidecar schemas
+        in this tree name the tree commit differently (`fw_sha` for kconfig,
+        `sha` for cmake), and the flasher that wrote the image is the one side
+        that knows which it is looking at.
         """
         ...
 
@@ -251,4 +293,4 @@ def chipset_matches(flasher: Flasher, chipset: str) -> bool:
     return any(chipset.startswith(prefix) for prefix in flasher.chipsets)
 
 
-__all__ = ["KIND_BARE", "KIND_CANBUS", "KIND_SCREEN", "KIND_SERIAL", "Bench", "Device", "FlashTarget", "Flasher", "chipset_matches"]
+__all__ = ["KIND_BARE", "KIND_CANBUS", "KIND_SCREEN", "KIND_SERIAL", "Bench", "Device", "FlashRecord", "FlashTarget", "Flasher", "chipset_matches"]

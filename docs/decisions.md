@@ -353,6 +353,21 @@ value wins over its flasher's. Do not turn it back into a class-only
 attribute: a board already in BOOTSEL would then stop Klipper for nothing, or a
 helper-requested one would write under a running Klipper.
 
+### The batch loop is the only writer of the flash ledger
+
+Ruling 12. `Flasher.record` describes what was written; `flashers.batch.
+write_all` files it, right after the write and before `settled`, the service
+restart, or a later device's failure. Four writers each carried their own
+dry-run guard and their own idea of which sidecar schema to read, and the
+CMake one filed after the batch returned — so a failed service restart lost
+the record of a copy that had already landed.
+
+A flasher still reads its own builder's sidecar, because the two schemas in
+this tree spell the tree commit differently (`fw_sha`, `sha`) and the flasher
+that wrote the image is the one side that knows which it is reading. What a
+flasher no longer decides is whether the run was a rehearsal, where the ledger
+lives, or whether losing it is worth failing a good write over.
+
 ### A device nothing can write is a failure, not an abort
 
 Spec §8 step 1. `flashers.select_each` turns a `NoFlasherError` into a

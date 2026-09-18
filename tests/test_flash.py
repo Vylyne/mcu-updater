@@ -482,13 +482,10 @@ def test_a_refusal_after_a_reboot_says_where_the_board_is(
     )
 
 
-def test_a_real_flash_records_unique_bus_id_confidence(paths, ready, fake_root, monkeypatch):
-    """The confirmed-at-write-time ledger a board gets: a by-id
-    sighting is die-derived, not remembered, so the FlashLog record for a real
-    write carries `unique_bus_id` - the board-side counterpart to a display's
-    `answered` after a listen pass."""
-    from mcu_updater.build import FlashLog
-
+def test_a_real_flash_reports_unique_bus_id_confidence(paths, ready, fake_root, monkeypatch):
+    """A by-id sighting is die-derived, not remembered, so a real write
+    *reports* `unique_bus_id` for the loop to file - the board-side counterpart
+    to a display's `answered` after a listen pass."""
     ready.dry_run = False
     make_device(fake_root / "bus", "katapult", "chipA", "S1")
     _write_sidecar(paths, "board", "klipper", app_address=0x08004000)
@@ -498,33 +495,7 @@ def test_a_real_flash_records_unique_bus_id_confidence(paths, ready, fake_root, 
         write=(0, ["Application Start: 0x8004000"]),
     )
 
-    flash_katapult(paths, ready, "board", "chipA", "S1")
-
-    record = FlashLog(paths).all()["S1"]
-    assert record["confidence"] == "unique_bus_id"
-
-
-def test_a_real_flash_records_the_sidecars_stamped_version(paths, ready, fake_root, monkeypatch):
-    """Cartographer's CONFIG_VERSION carries no commit, so this is what
-    `FlashLog.entry_for` has to fall back on for a board like this - see the
-    discard test in test_build.py's counterpart."""
-    from mcu_updater.build import FlashLog
-
-    ready.dry_run = False
-    make_device(fake_root / "bus", "katapult", "chipA", "S1")
-    _write_sidecar(
-        paths, "board", "klipper", app_address=0x08004000, version="CARTOGRAPHER 6.2.0"
-    )
-    _fake_run_streamed_by_call(
-        monkeypatch,
-        probe=(0, ["Application Start: 0x8004000"]),
-        write=(0, ["Application Start: 0x8004000"]),
-    )
-
-    flash_katapult(paths, ready, "board", "chipA", "S1")
-
-    record = FlashLog(paths).all()["S1"]
-    assert record["version"] == "CARTOGRAPHER 6.2.0"
+    assert flash_katapult(paths, ready, "board", "chipA", "S1") == "unique_bus_id"
 
 
 def test_a_version_only_record_is_discarded_when_the_stamp_disagrees(paths):
@@ -1051,9 +1022,9 @@ def test_a_volume_that_vanishes_after_the_last_byte_is_a_successful_write(
 def test_a_vanished_volume_reaches_flashed_so_provenance_can_record(
     paths, settings, tmp_path, monkeypatch
 ):
-    """`_cmake_flash` records the `FlashLog` off `result["flashed"]`, so the
-    batch has to count this write as one - a failure row would silence the
-    ledger for the most common successful ending there is."""
+    """`write_all` records the `FlashLog` off a successful write, so the batch
+    has to count this one as one - a failure row would silence the ledger for
+    the most common successful ending there is."""
     root, vol = mounted_bootsel_volume(tmp_path)
     rp_paths = dataclasses.replace(paths, bootsel_root=str(root))
     uf2 = tmp_path / "katapult.uf2"
@@ -1927,6 +1898,9 @@ def test_a_failed_settle_is_never_counted_as_both_flashed_and_failed(
 
         def write(self, bench, session, target, ctx):
             return {"mount": "/media/x"}
+
+        def record(self, bench, target):
+            return None
 
         def settled(self, bench, target, ctx):
             raise FlashError("the board came back slowly")

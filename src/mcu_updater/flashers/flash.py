@@ -146,7 +146,7 @@ def flash_katapult(
     reporter: Reporter = null_reporter,
     timeout: float = REENUMERATE_TIMEOUT,
     force: bool = False,
-) -> None:
+) -> str | None:
     """Flash one board through katapult's flashtool.py.
 
     ``-f`` performs the transition from a running application into Katapult
@@ -155,7 +155,9 @@ def flash_katapult(
     `force` overrides the offset checks below (downgrading a refusal to a
     logged warning) for the case where the operator genuinely knows better.
 
-    Raises on any failure; returns None on success.
+    Raises on any failure. Returns how the board was identified - a
+    `discovery.spec.Confidence.reason`, or None when the sighting was a
+    remembered one - for `write_all` to put in the ledger.
     """
     flashtool = find_flashtool(paths, settings)
     if not os.path.exists(flashtool):
@@ -199,7 +201,7 @@ def flash_katapult(
     assert dev is not None  # device_for: reason is None iff dev is not None
     side: dict = {}
     if not settings.dry_run:
-        from ..build import FlashLog, git_head, read_sidecar
+        from ..build import read_sidecar
 
         side = read_sidecar(paths, mcu_type, fw) or {}
         # The probe can move the board: it returns the device to write to,
@@ -235,28 +237,11 @@ def flash_katapult(
             returncode=rc,
         )
 
-    # Note which binary this board now holds. A board only ever reports its
-    # application commit, so without this record two builds from the same commit -
-    # a changed .config, an edited makefile-patch source - are indistinguishable,
-    # and "flash only the stale ones" would skip exactly the boards a patch
-    # change affected.
     if not settings.dry_run:
-        # side and the FlashLog/git_head imports came from the pre-write block
-        # above, which runs under the same `not settings.dry_run` condition.
-        FlashLog(paths).record(
-            serial,
-            mcu_type=mcu_type,
-            fw=fw,
-            bin_sha256=side.get("bin_sha256"),
-            fw_sha=side.get("fw_sha")
-            or git_head(firmware.resolve(paths, fw).source_dir(paths)),
-            confidence=confidence.reason if confidence is not None else None,
-            version=side.get("version"),
-        )
-
         _report_offset_mismatch(reporter, serial, mcu_type, fw, side, transcript)
 
     reporter("info", f"Flashed {serial} successfully.")
+    return confidence.reason if confidence is not None else None
 
 
 #: Katapult's own words, from flashtool.py's handshake with the bootloader:
@@ -467,7 +452,7 @@ def flash_katapult_can(
     force: bool = False,
     bridge: bool | None = None,
     interface: str | None = None,
-) -> None:
+) -> str | None:
     """Flash one CAN-addressed board through katapult's flashtool.py.
 
     `flash_katapult`'s CAN counterpart, mirrored as closely as the identity
@@ -507,7 +492,9 @@ def flash_katapult_can(
     - not a gap for a native node, which keeps the full pre-write guard - and
     is recorded here and in `docs/decisions.md` rather than silently dropped.
 
-    Raises on any failure; returns None on success.
+    Raises on any failure. Returns how the board was identified - a
+    `discovery.spec.Confidence.reason`, or None when the sighting was a
+    remembered one - for `write_all` to put in the ledger.
     """
     from ..discovery.canbus import list_can_interfaces
 
@@ -543,7 +530,7 @@ def flash_katapult_can(
     side: dict = {}
     app_address = None
     if not settings.dry_run:
-        from ..build import FlashLog, git_head, read_sidecar
+        from ..build import read_sidecar
 
         side = read_sidecar(paths, mcu_type, fw) or {}
         app_address = side.get("app_address")
@@ -673,25 +660,13 @@ def flash_katapult_can(
         )
 
     if not settings.dry_run:
-        # side/FlashLog/git_head came from the pre-write block above, which
-        # runs under the same `not settings.dry_run` condition.
-        FlashLog(paths).record(
-            uuid,
-            mcu_type=mcu_type,
-            fw=fw,
-            bin_sha256=side.get("bin_sha256"),
-            fw_sha=side.get("fw_sha")
-            or git_head(firmware.resolve(paths, fw).source_dir(paths)),
-            # Finding a uuid answer on the bus at all - probe or write - is
-            # itself the confirmation; there is no separate by-id sighting to
-            # carry a `Confidence.reason` the way a serial's does.
-            confidence="canbus_uuid",
-            version=side.get("version"),
-        )
-
         _report_offset_mismatch(reporter, uuid, mcu_type, fw, side, transcript)
 
     reporter("info", f"Flashed {uuid} successfully.")
+    # Finding a uuid answer on the bus at all - probe or write - is itself the
+    # confirmation; there is no separate by-id sighting to carry a
+    # `Confidence.reason` the way a serial's does.
+    return "canbus_uuid"
 
 
 def _report_offset_mismatch(

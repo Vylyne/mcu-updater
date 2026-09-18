@@ -32,7 +32,7 @@ from typing import TYPE_CHECKING, Any
 
 from ..devices import STATE_ESP_ROM
 from ..errors import FlashError, UpdaterError
-from .spec import KIND_SCREEN, Bench, Device, FlashTarget
+from .spec import KIND_SCREEN, Bench, Device, FlashRecord, FlashTarget
 
 if TYPE_CHECKING:
     # Annotation only. `discovery.spec` imports from this package, so a runtime
@@ -135,64 +135,47 @@ class Esptool:
             bench.paths, bench.settings, display, port, reporter=ctx.reporter
         )
 
-        _record(bench, display, screen, confidence)
+        return {
+            "name": screen["name"],
+            "port": port,
+            # Taken back off by `write_all` - the ports are free exactly once,
+            # inside this batch's stop, and this is the only moment the answer
+            # exists.
+            "confidence": confidence.reason if confidence is not None else None,
+            **result,
+        }
 
-        return {"name": screen["name"], "port": port, **result}
+    def record(self, bench: Bench, target: FlashTarget) -> FlashRecord | None:
+        """The image this screen now holds, filed under its hardware id.
+
+        `None` for a screen with no hardware id: the port it answered on is not
+        a durable name for it - see `build.display_key`.
+        """
+        from ..build import display_key
+        from ..providers import pio as pio_mod
+
+        display = target.detail["display"]
+        screen = target.detail["screen"]
+        ident = (screen.get("device_id") or screen.get("reported_id") or "").lower()
+        if not ident:
+            return None
+        # The build already hashed the image and noted its commit; re-deriving
+        # them here would be a second answer to a question with a recorded one.
+        side = pio_mod.read_sidecar(bench.paths, display) or {}
+        return FlashRecord(
+            key=display_key(ident),
+            mcu_type=display.name,
+            fw=display.env,
+            bin_sha256=side.get("bin_sha256"),
+            # The display sidecar calls the tree commit `sha`; the flash log
+            # calls it `fw_sha`. One rename at the boundary.
+            fw_sha=side.get("sha"),
+        )
 
     def settled(self, bench: Bench, target: FlashTarget, ctx: Any) -> None:
         """Nothing to wait for. A screen is not on the Klipper bus, so there is
         no device node whose absence would bring Klipper up in an error state -
         which is the only thing the MCU wait is protecting against."""
-
-
-def _record(
-    bench: Bench, display: Any, screen: dict, confidence: Confidence | None
-) -> None:
-    """Note which image this screen now holds, and how it was identified.
-
-    The display half of the ledger `flash.flash_katapult` has always kept for a
-    board. Without it a screen's `confidence` on the wire is a literal null, so
-    the strongest identification this tool performs - asking the screen itself,
-    with the ports free - leaves no trace and reads as "we cannot vouch for
-    this".
-
-    Three ways to record nothing, all of them correct:
-
-    * **A dry run.** Nothing was written, so nothing is true afterwards. Same
-      guard, for the same reason, as the board path's.
-    * **A screen with no hardware id.** There is no durable name to file it
-      under, and the port is not one - see `build.display_key`.
-    * **An unwritable log.** `FlashLog.record` swallows it: a lost record is not
-      worth failing a flash that already succeeded.
-
-    `confidence` is passed through rather than assumed. It is None whenever the
-    port was a remembered one, and recording `answered` for a write we could not
-    confirm would be the one lie this whole field exists to prevent.
-    """
-    if bench.settings.dry_run:
-        return
-
-    ident = (screen.get("device_id") or screen.get("reported_id") or "").lower()
-    if not ident:
-        return
-
-    from ..build import FlashLog, display_key
-    from ..providers import pio as pio_mod
-
-    # The build already hashed the image and noted its commit; re-deriving them
-    # here would be a second answer to a question with a recorded one.
-    side = pio_mod.read_sidecar(bench.paths, display) or {}
-    FlashLog(bench.paths).record(
-        display_key(ident),
-        mcu_type=display.name,
-        fw=display.env,
-        bin_sha256=side.get("bin_sha256"),
-        # The display sidecar calls the tree commit `sha`; the flash log calls
-        # it `fw_sha`. One rename at the boundary, rather than teaching either
-        # side the other's vocabulary.
-        fw_sha=side.get("sha"),
-        confidence=confidence.reason if confidence is not None else None,
-    )
 
 
 @dataclasses.dataclass(frozen=True)

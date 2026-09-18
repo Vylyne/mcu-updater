@@ -42,6 +42,7 @@ from .spec import (
     Bench,
     Device,
     Flasher,
+    FlashRecord,
     FlashTarget,
 )
 
@@ -56,6 +57,7 @@ __all__ = [
     "Device",
     "DfuUtil",
     "Esptool",
+    "FlashRecord",
     "FlashTarget",
     "Flasher",
     "Flashtool",

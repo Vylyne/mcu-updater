@@ -895,6 +895,11 @@ class FlashLog:
         """Note a completed flash. Never raises - a lost record is not worth
         failing a flash that already succeeded.
 
+        Written from exactly one place: `flashers.batch.write_all`, right after
+        a write returns (Ruling 12). A flasher describes the record and the
+        loop files it, so the dry-run guard and the "never raise" rule exist
+        once each rather than once per write path.
+
         `confidence` is a `discovery.spec.Confidence.reason` string - how the
         board's identity was confirmed at write time (e.g. `"unique_bus_id"`),
         not the `Confidence` object itself, keeping this sidecar to plain

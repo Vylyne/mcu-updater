@@ -18,7 +18,7 @@ from collections.abc import Iterator
 from typing import TYPE_CHECKING, Any
 
 from ..devices import STATE_DFU
-from .spec import KIND_BARE, Bench, Device, FlashTarget, chipset_matches
+from .spec import KIND_BARE, Bench, Device, FlashRecord, FlashTarget, chipset_matches
 
 if TYPE_CHECKING:
     from ..helpers.spec import Helper
@@ -85,6 +85,12 @@ class DfuUtil:
             target_serial=target.detail.get("dfu_serial"),
         )
         return {"dfu_serial": target.detail.get("dfu_serial")}
+
+    def record(self, bench: Bench, target: FlashTarget) -> FlashRecord | None:
+        """Nothing to file. dfu-util only ever writes a bootloader to a bare
+        board here, before it has the durable identity a record is filed
+        under."""
+        return None
 
     def settled(self, bench: Bench, target: FlashTarget, ctx: Any) -> None:
         """Nothing to wait *for* here, and deliberately so.

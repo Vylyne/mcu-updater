@@ -671,7 +671,7 @@ def test_firmware_helper_wait_ready_stops_waiting_on_ambiguity(
 ):
     """Two devices answering to one serial is not a slow return, so the wait
     ends at once. Post-copy it is still only a warning - see
-    `test_helper_bootsel_settled_warns_on_non_timeout_roadrunner_errors`."""
+    `test_bootsel_handoff_settled_warns_on_non_timeout_roadrunner_errors`."""
     error = roadrunner._error("roadrunner_ambiguous", "Roadrunner readiness failed")
     attempts: list[str] = []
 

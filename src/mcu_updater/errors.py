@@ -161,6 +161,16 @@ class DeviceNotFoundError(FlashError):
     code = "device_not_found"
 
 
+class NoFlasherError(FlashError):
+    """No flasher in a family's `flashers:` list can write this device.
+
+    A config fact, not a hardware one: the fix is the family's list, and the
+    message names it.
+    """
+
+    code = "no_flasher"
+
+
 class BootloaderTimeoutError(FlashError):
     code = "bootloader_timeout"
 

@@ -340,6 +340,19 @@ is required of every section, so a config missing it cannot flash anything,
 while `helper:` is optional and a typo in it should cost one family rather
 than every row in the panel.
 
+### A family's list picks the flasher
+
+`flashers.select` walks the family's `flashers:` list and takes the first
+flasher whose `supports(device, helper)` says yes. There is no global
+chipset-and-state table: `select_for` made an RP2040 reach exactly one flasher
+whatever it ran. `helper_bootsel` is folded into `bootsel` because a flasher
+describes a mechanism, and "ask the firmware to enter BOOTSEL first" is a step
+of that mechanism the helper supplies, not a second product-named flasher.
+`needs_services_stopped` can therefore differ per target, and a target's own
+value wins over its flasher's. Do not turn it back into a class-only
+attribute: a board already in BOOTSEL would then stop Klipper for nothing, or a
+helper-requested one would write under a running Klipper.
+
 ### Device info is read through the family's helper
 
 What a board is running - its commit, whether it was dirty, its image digest -

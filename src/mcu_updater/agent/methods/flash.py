@@ -203,12 +203,7 @@ class FlashMixin(_Base):
         target_type = cmake_mod.load(self.paths)[mcu_type]
         families = firmware.load(self.paths)
         family = firmware.resolve(self.paths, target_type.firmware, families)
-        helper = helpers.bootsel_requester(helpers.for_name(family.helper, family=family.name))
-        if helper is None:
-            raise FlashError(
-                f"CMake type '{mcu_type}' has no firmware helper configured.",
-                type=mcu_type,
-            )
+        helper = helpers.for_name(family.helper, family=family.name)
 
         fw_bin = self.paths.uf2_file(mcu_type, target_type.firmware)
         if not os.path.exists(fw_bin):
@@ -227,7 +222,8 @@ class FlashMixin(_Base):
         # after services release the port.
         from ...devices import find_device
 
-        if find_device(self.paths, "", serial) is None:
+        present = find_device(self.paths, "", serial)
+        if present is None:
             raise RpcError(
                 f"{serial} is not attached. Is it plugged in and powered?",
                 data={
@@ -237,6 +233,24 @@ class FlashMixin(_Base):
                 },
             )
 
+        units = stop_services.for_cmake(self.paths, target_type, settings, families)
+        # The family decides who writes this board. A family whose list or
+        # helper cannot is a NoFlasherError here, before a job exists.
+        target = flashers.select(
+            self.paths,
+            family,
+            flashers.Device(
+                type=mcu_type,
+                id=serial,
+                chipset=target_type.chipset,
+                state=present.state,
+                fw=family.name,
+                detail={"uf2_file": fw_bin},
+            ),
+            helper,
+            stop_services=units,
+        )
+
         from ...service import assert_printer_idle
 
         assert_printer_idle(
@@ -244,16 +258,6 @@ class FlashMixin(_Base):
             activity=self._printer_activity,
             force=force,
             reporter=self._log_reporter,
-        )
-
-        units = stop_services.for_cmake(self.paths, target_type, settings, families)
-        target = flashers.helper_bootsel.target_for(
-            fw_bin,
-            type_name=mcu_type,
-            serial=serial,
-            chipset=target_type.chipset,
-            helper=helper,
-            stop_services=units,
         )
 
         def run(ctx) -> dict[str, Any]:

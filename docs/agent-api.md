@@ -85,7 +85,7 @@ API; the prose is not. Most come from `errors.py`: `config_corrupt`,
 `unknown_type`, `invalid_type_name`, `duplicate_type`, `unknown_serial`,
 `ambiguous_serial`, `serial_tracked_elsewhere`, `source_missing`,
 `no_saved_config`, `build_failed`, `tty_required`, `flash_failed`,
-`device_not_found`, `bootloader_timeout`, `ambiguous_dfu`,
+`device_not_found`, `no_flasher`, `bootloader_timeout`, `ambiguous_dfu`,
 `dfu_permission_denied`, `bootsel_not_mounted`, `tool_missing`,
 `unsupported_chipset`, `service_control`, `flashing_disabled`, `busy`,
 `print_in_progress`, `cancelled`, `profile`, `profile_not_found`,
@@ -671,13 +671,15 @@ real explanation instead of a job that dies a second later. In order:
 | printer idle | `print_in_progress` (bypass with `force: true`) |
 
 For a `builder: cmake` type, the same `fw.flash {name?, serial, force?}` method
-uses the type's declared serial identity and the firmware family's configured
-helper instead of the legacy chipset/state flasher selection. Resolution spans
-all configured providers: an unknown serial, a duplicate declaration, or a
-`name` that points at a different owner fails as
-`unknown_serial`/`ambiguous_serial`/`serial_tracked_elsewhere` before a job is
-created. The named type must have a staged UF2 and a registered helper; the only
-currently registered helper is selected with `helper: roadrunner`.
+uses the type's declared serial identity, and the firmware family's
+`flashers:` list picks the writer. Resolution spans all configured providers:
+an unknown serial, a duplicate declaration, or a `name` that points at a
+different owner fails as `unknown_serial`/`ambiguous_serial`/
+`serial_tracked_elsewhere` before a job is created. The named type must have a
+staged UF2, and a family whose flashers cannot write the board (for Roadrunner,
+`flashers: bootsel` with `helper: roadrunner`) fails with `no_flasher`, whose
+`data` carries `family`, `flashers`, `type`, `id`, `chipset` and `state`. The
+write reports `"flasher": "bootsel"`.
 
 That helper confirms the exact Roadrunner protocol identity, captures the full
 USB serial topology before requesting BOOTSEL, and writes only when exactly one

@@ -294,9 +294,11 @@ def test_a_helper_backed_cmake_uf2_routes_through_a_normal_flash_job(
     assert FlashLog(api.paths).all() == {}, "dry runs must not claim a write"
 
 
-def test_a_cmake_type_without_a_helper_is_refused_before_a_job(
+def test_a_cmake_type_without_a_helper_names_its_flashers(
     cmake_flash_factory,
 ):
+    """A family whose helper cannot request BOOTSEL leaves `bootsel` nothing to
+    write a running board with, and the refusal names the list to fix."""
     api = cmake_flash_factory(helper=None)
 
     with pytest.raises(RpcError) as exc:
@@ -304,7 +306,8 @@ def test_a_cmake_type_without_a_helper_is_refused_before_a_job(
             "fw.flash", {"name": "roadrunner", "serial": ROADRUNNER_SERIAL}
         )
 
-    assert exc.value.data["code"] == "flash_failed"
+    assert exc.value.data["code"] == "no_flasher"
+    assert "flashers: bootsel" in str(exc.value)
     assert api.runner.current() is None
 
 
@@ -445,7 +448,7 @@ def test_a_successful_cmake_write_records_build_sidecar_provenance(
     assert api.runner.wait(timeout=30)
     job = api.runner.get(response["job_id"])
     assert job.state == "succeeded", job.error
-    assert captured["target"].flasher == "helper_bootsel"
+    assert captured["target"].flasher == "bootsel"
 
     record = FlashLog(api.paths).all()[ROADRUNNER_SERIAL]
     assert record["type"] == "roadrunner"
@@ -454,6 +457,21 @@ def test_a_successful_cmake_write_records_build_sidecar_provenance(
     assert record["bin_sha256"] == "built-uf2-sha256"
     assert record["version"] == "v1.2.3-4-gabcdef0"
     assert record["confidence"] is None
+
+
+def test_a_cmake_family_that_cannot_write_the_board_refuses_before_a_job(
+    cmake_flash_factory, monkeypatch
+):
+    api = cmake_flash_factory(dry_run="false")
+    monkeypatch.setattr(
+        "mcu_updater.flashers.registry.resolve", lambda family, device, helper: None
+    )
+
+    with pytest.raises(RpcError) as exc:
+        api.dispatch("fw.flash", {"name": "roadrunner", "serial": ROADRUNNER_SERIAL})
+
+    assert exc.value.data["code"] == "no_flasher"
+    assert api.runner.current() is None
 
 
 def test_a_completed_cmake_copy_records_provenance_whatever_follows_it(

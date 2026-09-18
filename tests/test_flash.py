@@ -1250,7 +1250,7 @@ def test_a_copy_that_dies_mid_write_is_a_structured_flash_failure(
     Unplugged mid-write, a full FAT volume, an I/O error on a board that reset
     early - all `OSError`. Raw, it escapes `write_all` entirely, past the
     Klipper readiness gate `on_ready` runs; the operator gets a traceback-shaped
-    failure instead of a `flash_failed` one, and for `HelperBootsel` that
+    failure instead of a `flash_failed` one, and for a helper-requested BOOTSEL that
     happens with Klipper's services still down.
     """
     root, vol = mounted_bootsel_volume(tmp_path)
@@ -1420,7 +1420,7 @@ def test_bootsel_refuses_more_than_one_mounted_volume(paths, settings, tmp_path,
     assert len(exc.value.data["mounts"]) == 2
 
 
-def test_helper_bootsel_requests_handoff_then_copies_only_to_matching_mount(
+def test_bootsel_handoff_requests_handoff_then_copies_only_to_matching_mount(
     paths, settings, tmp_path
 ):
     root = tmp_path / "bootsel_root"
@@ -1445,7 +1445,7 @@ def test_helper_bootsel_requests_handoff_then_copies_only_to_matching_mount(
     bench = flashers.Bench(
         paths=rp_paths, settings=settings, controller=lambda name=None: None
     )
-    target = flashers.helper_bootsel.target_for(
+    target = flashers.bootsel.target_for(
         str(uf2),
         type_name="roadrunner",
         serial="RR-0123456789ABCDEFGHJKMNPQRS",
@@ -1454,7 +1454,7 @@ def test_helper_bootsel_requests_handoff_then_copies_only_to_matching_mount(
         stop_services=("klipper",),
     )
 
-    result = flashers.HelperBootsel().write(
+    result = flashers.Bootsel().write(
         bench, None, target, flashers.PlainContext(lambda *a: None)
     )
 
@@ -1633,7 +1633,7 @@ def test_a_late_error_with_the_volume_still_there_warns_after_the_short_wait(
     )
 
 
-def test_helper_bootsel_waits_for_its_own_volume_not_a_bystander(
+def test_bootsel_handoff_waits_for_its_own_volume_not_a_bystander(
     paths, settings, tmp_path, monkeypatch
 ):
     root = tmp_path / "bootsel_root"
@@ -1658,7 +1658,7 @@ def test_helper_bootsel_waits_for_its_own_volume_not_a_bystander(
         settings=settings,
         controller=lambda name=None: None,
     )
-    target = flashers.helper_bootsel.target_for(
+    target = flashers.bootsel.target_for(
         str(uf2),
         type_name="roadrunner",
         serial="RR-0123456789ABCDEFGHJKMNPQRS",
@@ -1667,7 +1667,7 @@ def test_helper_bootsel_waits_for_its_own_volume_not_a_bystander(
     )
     events: list[tuple[str, str]] = []
 
-    flashers.HelperBootsel().write(
+    flashers.Bootsel().write(
         bench, None, target, flashers.PlainContext(lambda *a: events.append(a))
     )
 
@@ -1675,11 +1675,26 @@ def test_helper_bootsel_waits_for_its_own_volume_not_a_bystander(
     assert not any(level == "warn" for level, _text in events)
 
 
-def test_helper_bootsel_requires_services_stopped():
-    assert flashers.HelperBootsel.needs_services_stopped is True
+def test_bootsel_handoff_targets_require_services_stopped(tmp_path):
+    class Helper:
+        name = "test"
+
+    handoff = flashers.bootsel.target_for(
+        str(tmp_path / "rr.uf2"),
+        type_name="roadrunner",
+        serial="RR-0123456789ABCDEFGHJKMNPQRS",
+        chipset="rp2040",
+        helper=Helper(),
+        stop_services=("klipper",),
+    )
+    bare = flashers.bootsel.target_for(str(tmp_path / "k.uf2"), chipset="rp2040")
+
+    assert flashers.Bootsel.needs_services_stopped is False
+    assert flashers.needs_services_stopped(handoff) is True
+    assert flashers.needs_services_stopped(bare) is False
 
 
-def test_helper_bootsel_waits_for_helper_before_service_restart(
+def test_bootsel_handoff_waits_for_helper_before_service_restart(
     paths, settings, tmp_path
 ):
     root = tmp_path / "bootsel_root"
@@ -1715,7 +1730,7 @@ def test_helper_bootsel_waits_for_helper_before_service_restart(
     bench = flashers.Bench(
         paths=rp_paths, settings=settings, controller=lambda _name=None: service
     )
-    target = flashers.helper_bootsel.target_for(
+    target = flashers.bootsel.target_for(
         str(uf2),
         type_name="roadrunner",
         serial="RR-0123456789ABCDEFGHJKMNPQRS",
@@ -1736,7 +1751,7 @@ def test_helper_bootsel_waits_for_helper_before_service_restart(
 def test_a_whole_batch_still_succeeds_when_post_copy_readiness_fails(
     paths, settings, tmp_path
 ):
-    """The end-to-end shape of the ruling: real HelperBootsel, real write_all,
+    """The end-to-end shape of the ruling: real Bootsel handoff, real write_all,
     a helper whose readiness wait raises. A completed copy is reported as
     flashed, nothing lands in failures, and the operator gets a warning."""
     root = tmp_path / "bootsel_root"
@@ -1764,7 +1779,7 @@ def test_a_whole_batch_still_succeeds_when_post_copy_readiness_fails(
     bench = flashers.Bench(
         paths=rp_paths, settings=settings, controller=lambda _name=None: NullService()
     )
-    target = flashers.helper_bootsel.target_for(
+    target = flashers.bootsel.target_for(
         str(uf2),
         type_name="roadrunner",
         serial="RR-0123456789ABCDEFGHJKMNPQRS",
@@ -1785,7 +1800,7 @@ def test_a_whole_batch_still_succeeds_when_post_copy_readiness_fails(
     assert ("warn", "More than one Roadrunner matched that serial") in events
 
 
-def test_helper_bootsel_settled_warns_when_helper_readiness_times_out(
+def test_bootsel_handoff_settled_warns_when_helper_readiness_times_out(
     paths, settings
 ):
     class Helper:
@@ -1797,7 +1812,7 @@ def test_helper_bootsel_settled_warns_when_helper_readiness_times_out(
         def wait_ready(self, *_args, **_kwargs):
             raise BootloaderTimeoutError("Roadrunner did not become ready")
 
-    target = flashers.helper_bootsel.target_for(
+    target = flashers.bootsel.target_for(
         "roadrunner.uf2",
         type_name="roadrunner",
         serial="RR-0123456789ABCDEFGHJKMNPQRS",
@@ -1809,7 +1824,7 @@ def test_helper_bootsel_settled_warns_when_helper_readiness_times_out(
         paths=paths, settings=settings, controller=lambda _name=None: None
     )
 
-    flashers.HelperBootsel().settled(
+    flashers.Bootsel().settled(
         bench,
         target,
         flashers.PlainContext(lambda *event: events.append(event)),
@@ -1826,7 +1841,7 @@ def test_helper_bootsel_settled_warns_when_helper_readiness_times_out(
         FlashError("could not read serial by-path topology"),
     ],
 )
-def test_helper_bootsel_settled_warns_on_non_timeout_roadrunner_errors(
+def test_bootsel_handoff_settled_warns_on_non_timeout_roadrunner_errors(
     paths, settings, error
 ):
     """The UF2 is already on the board by the time `settled` runs.
@@ -1846,7 +1861,7 @@ def test_helper_bootsel_settled_warns_on_non_timeout_roadrunner_errors(
         def wait_ready(self, *_args, **_kwargs):
             raise error
 
-    target = flashers.helper_bootsel.target_for(
+    target = flashers.bootsel.target_for(
         "roadrunner.uf2",
         type_name="roadrunner",
         serial="RR-0123456789ABCDEFGHJKMNPQRS",
@@ -1858,14 +1873,14 @@ def test_helper_bootsel_settled_warns_on_non_timeout_roadrunner_errors(
         paths=paths, settings=settings, controller=lambda _name=None: None
     )
 
-    flashers.HelperBootsel().settled(
+    flashers.Bootsel().settled(
         bench, target, flashers.PlainContext(lambda *event: events.append(event))
     )
 
     assert events == [("warn", str(error))]
 
 
-def test_helper_bootsel_settled_still_honours_cancellation(paths, settings):
+def test_bootsel_handoff_settled_still_honours_cancellation(paths, settings):
     """Non-fatal covers readiness, not a cancelled job."""
 
     class Helper:
@@ -1877,7 +1892,7 @@ def test_helper_bootsel_settled_still_honours_cancellation(paths, settings):
         def wait_ready(self, *_args, **_kwargs):
             raise OperationCancelled("job cancelled")
 
-    target = flashers.helper_bootsel.target_for(
+    target = flashers.bootsel.target_for(
         "roadrunner.uf2",
         type_name="roadrunner",
         serial="RR-0123456789ABCDEFGHJKMNPQRS",
@@ -1889,7 +1904,7 @@ def test_helper_bootsel_settled_still_honours_cancellation(paths, settings):
     )
 
     with pytest.raises(OperationCancelled):
-        flashers.HelperBootsel().settled(
+        flashers.Bootsel().settled(
             bench, target, flashers.PlainContext(lambda *a: None)
         )
 
@@ -1940,7 +1955,7 @@ def test_a_failed_settle_is_never_counted_as_both_flashed_and_failed(
     assert ("warn", "board-1: the board came back slowly") in events
 
 
-def test_helper_bootsel_settled_skips_helper_readiness_in_dry_run(paths, settings):
+def test_bootsel_handoff_settled_skips_helper_readiness_in_dry_run(paths, settings):
     settings.dry_run = True
     waits: list[object] = []
 
@@ -1953,7 +1968,7 @@ def test_helper_bootsel_settled_skips_helper_readiness_in_dry_run(paths, setting
         def wait_ready(self, *_args, **_kwargs):
             waits.append(True)
 
-    target = flashers.helper_bootsel.target_for(
+    target = flashers.bootsel.target_for(
         "roadrunner.uf2",
         type_name="roadrunner",
         serial="RR-0123456789ABCDEFGHJKMNPQRS",
@@ -1964,14 +1979,14 @@ def test_helper_bootsel_settled_skips_helper_readiness_in_dry_run(paths, setting
         paths=paths, settings=settings, controller=lambda _name=None: None
     )
 
-    flashers.HelperBootsel().settled(
+    flashers.Bootsel().settled(
         bench, target, flashers.PlainContext(lambda *a: None)
     )
 
     assert waits == []
 
 
-def test_helper_bootsel_dry_run_does_not_request_or_copy(
+def test_bootsel_handoff_dry_run_does_not_request_or_copy(
     paths, settings, tmp_path
 ):
     settings.dry_run = True
@@ -1986,7 +2001,7 @@ def test_helper_bootsel_dry_run_does_not_request_or_copy(
             requested.append(True)
             raise AssertionError("dry run must not reboot hardware")
 
-    target = flashers.helper_bootsel.target_for(
+    target = flashers.bootsel.target_for(
         str(uf2),
         type_name="roadrunner",
         serial="RR-0123456789ABCDEFGHJKMNPQRS",
@@ -1998,7 +2013,7 @@ def test_helper_bootsel_dry_run_does_not_request_or_copy(
         paths=paths, settings=settings, controller=lambda name=None: None
     )
 
-    result = flashers.HelperBootsel().write(
+    result = flashers.Bootsel().write(
         bench, None, target, flashers.PlainContext(lambda *event: events.append(event))
     )
 
@@ -2007,7 +2022,7 @@ def test_helper_bootsel_dry_run_does_not_request_or_copy(
     assert any("dry-run" in line for _level, line in events)
 
 
-def test_helper_bootsel_refuses_a_missing_uf2_before_requesting_bootsel(
+def test_bootsel_handoff_refuses_a_missing_uf2_before_requesting_bootsel(
     paths, settings, tmp_path
 ):
     requested: list[object] = []
@@ -2019,7 +2034,7 @@ def test_helper_bootsel_refuses_a_missing_uf2_before_requesting_bootsel(
             requested.append(True)
             raise AssertionError("a missing artifact must fail before BOOTSEL")
 
-    target = flashers.helper_bootsel.target_for(
+    target = flashers.bootsel.target_for(
         str(tmp_path / "missing.uf2"),
         type_name="roadrunner",
         serial="RR-0123456789ABCDEFGHJKMNPQRS",
@@ -2031,7 +2046,7 @@ def test_helper_bootsel_refuses_a_missing_uf2_before_requesting_bootsel(
     )
 
     with pytest.raises(FlashError, match="firmware image not found"):
-        flashers.HelperBootsel().write(
+        flashers.Bootsel().write(
             bench, None, target, flashers.PlainContext(lambda *a: None)
         )
 

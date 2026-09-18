@@ -9,11 +9,15 @@ from __future__ import annotations
 
 import contextlib
 from collections.abc import Iterator
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from ..devices import STATE_KATAPULT, STATE_KLIPPER
 from ..paths import REENUMERATE_TIMEOUT
-from .spec import Bench, FlashTarget
+from .spec import KIND_CANBUS, KIND_SERIAL, Bench, Device, FlashTarget, chipset_matches
+
+if TYPE_CHECKING:
+    from ..helpers.spec import Helper
+    from ..paths import Paths
 
 
 class Flashtool:
@@ -24,13 +28,37 @@ class Flashtool:
     #: Both states a board on the Klipper bus can be in - the write itself
     #: reboots it from one into the other, so this flasher owns both rather
     #: than needing to be told which it is starting from.
-    chipsets: tuple[str, ...] = ("stm32", "rp2040")
+    #: lpc176x boards run Katapult too (profiles.py), and flash-all has always
+    #: written them.
+    chipsets: tuple[str, ...] = ("stm32", "rp2040", "lpc176")
     states: tuple[str, ...] = (STATE_KLIPPER, STATE_KATAPULT)
     #: Not because the write needs it - by then the board is in Katapult and
     #: Klipper has long since let go. Because *getting* it there does: the
     #: reboot-into-bootloader request is sent over the serial port Klipper is
     #: holding open, and it goes nowhere while Klipper has it.
     needs_services_stopped = True
+
+    def supports(self, device: Device, helper: Helper | None) -> bool:
+        """A serial or CAN board whose chipset Katapult runs on.
+
+        Not narrowed by state. A board that is absent right now is still
+        flashtool's to write, and the write says `device_not_found`, which
+        names the fix; a CAN board's liveness is often unknown and has always
+        been written anyway.
+        """
+        return device.kind in (KIND_SERIAL, KIND_CANBUS) and chipset_matches(
+            self, device.chipset
+        )
+
+    def target(
+        self,
+        paths: Paths,
+        device: Device,
+        helper: Helper | None,
+        *,
+        stop_services: tuple[str, ...],
+    ) -> FlashTarget:
+        return target_for(dict(device.detail), stop_services=stop_services)
 
     @contextlib.contextmanager
     def prepared(

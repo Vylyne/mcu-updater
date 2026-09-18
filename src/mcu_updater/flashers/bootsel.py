@@ -9,9 +9,13 @@ write through: it mounts as mass storage
 or not), and the "write" is a plain file copy - a `.uf2` dropped on the volume
 is what makes the board flash itself and reboot.
 
-`needs_services_stopped = False`, same reasoning as `DfuUtil`: by the time this
-runs the board is already in BOOTSEL, which means either it was never on the
-Klipper bus or whatever put it there already dealt with Klipper.
+It writes a board two ways. A board already in BOOTSEL is copied to the one
+mounted volume. A running board whose family's helper can request BOOTSEL
+(`helpers.BootselRequester`) is asked to enter it first, the copy goes to the
+volume matching the USB topology the helper captured, and `settled` waits for
+the helper to confirm the board came back as itself. The second way goes over
+a port Klipper may hold, so its targets carry `needs_services_stopped=True`;
+the first stops nothing.
 """
 
 from __future__ import annotations
@@ -20,11 +24,23 @@ import contextlib
 import os
 import time
 from collections.abc import Iterator
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
+from .. import helpers
 from ..devices import STATE_BOOTSEL, bootsel_devices, bootsel_id_for, bootsel_scan
-from ..errors import BootselNotMountedError, DeviceNotFoundError, FlashError
-from .spec import Bench, FlashTarget
+from ..discovery.bootsel import mount_for_topology
+from ..errors import (
+    BootselNotMountedError,
+    DeviceNotFoundError,
+    FlashError,
+    OperationCancelled,
+    UpdaterError,
+)
+from .spec import KIND_BARE, Bench, Device, FlashTarget, chipset_matches
+
+if TYPE_CHECKING:
+    from ..helpers.spec import BootselRequester, Helper
+    from ..paths import Paths
 
 
 def ensure_uf2(uf2: str) -> None:
@@ -176,7 +192,7 @@ def copy_uf2(uf2: str, mount: str, ctx: Any) -> None:
     Bytes still outstanding when the error arrives are the other case, and stay
     a `FlashError`: a board unplugged mid-write, a full or erroring FAT volume.
     Raw, that `OSError` would leave `write_all` altogether - past the Klipper
-    readiness gate it runs after the batch, which for `HelperBootsel` is
+    readiness gate it runs after the batch, which for a helper-requested BOOTSEL is
     exactly when Klipper's units have just been restarted underneath a board in
     an unknown state.
 
@@ -241,24 +257,55 @@ def copy_uf2(uf2: str, mount: str, ctx: Any) -> None:
 
 
 class Bootsel:
-    """Writes an RP2040 sitting in its BOOTSEL mass-storage bootloader."""
+    """Writes an RP2040 through its BOOTSEL mass-storage bootloader."""
 
     name = "bootsel"
     label = "BOOTSEL (mass storage)"
     chipsets: tuple[str, ...] = ("rp2040",)
     states: tuple[str, ...] = (STATE_BOOTSEL,)
-    #: False, for the same reason `DfuUtil.needs_services_stopped` is. The
-    #: board is already in BOOTSEL by the time this is called - today that
-    #: means the user held the button and replugged. The moment this tool
-    #: routes a board into BOOTSEL itself, over a port Klipper may be
-    #: holding, this flips.
+    #: False for a board already in BOOTSEL: nothing holds its port. A target
+    #: that asks a helper for BOOTSEL overrides this with True (see
+    #: `target_for`), because that request goes over a port Klipper may hold.
     needs_services_stopped = False
+
+    def supports(self, device: Device, helper: Helper | None) -> bool:
+        """A board in BOOTSEL, or a running board its helper can put there.
+
+        The helper path does not match on chipset: a CMake `[type]` may leave
+        `chipset:` empty, and the helper confirms its own board's protocol
+        identity before anything is written. A board already in BOOTSEL has
+        nothing to vouch for it but its chipset.
+        """
+        if device.state in self.states:
+            return chipset_matches(self, device.chipset)
+        return device.kind != KIND_BARE and helpers.bootsel_requester(helper) is not None
+
+    def target(
+        self,
+        paths: Paths,
+        device: Device,
+        helper: Helper | None,
+        *,
+        stop_services: tuple[str, ...],
+    ) -> FlashTarget:
+        uf2 = device.detail["uf2_file"]
+        requester = helpers.bootsel_requester(helper)
+        if device.state in self.states or requester is None:
+            return target_for(uf2, chipset=device.chipset, paths=paths)
+        return target_for(
+            uf2,
+            chipset=device.chipset,
+            type_name=device.type,
+            serial=device.id,
+            helper=requester,
+            stop_services=stop_services,
+        )
 
     @contextlib.contextmanager
     def prepared(
         self, bench: Bench, targets: list[FlashTarget], ctx: Any
     ) -> Iterator[None]:
-        """Nothing to set up. The board is already where it needs to be."""
+        """Nothing to set up for the batch."""
         yield None
 
     def write(
@@ -266,23 +313,62 @@ class Bootsel:
     ) -> dict[str, Any]:
         uf2 = target.detail["uf2_file"]
         ensure_uf2(uf2)
+        requester: BootselRequester | None = target.detail.get("helper")
 
         if bench.settings.dry_run:
-            ctx.reporter(
-                "info", f"[dry-run] would copy {uf2} to the mounted RPI-RP2 volume"
-            )
+            if requester is None:
+                ctx.reporter(
+                    "info", f"[dry-run] would copy {uf2} to the mounted RPI-RP2 volume"
+                )
+            else:
+                ctx.reporter(
+                    "info",
+                    f"[dry-run] would request BOOTSEL then copy {uf2} to its matched volume",
+                )
             return {"mount": None}
 
-        mount = _find_mount(bench.paths)
+        if requester is None:
+            mount = _find_mount(bench.paths)
+        else:
+            handoff = requester.request_bootsel(
+                bench,
+                serial=target.id,
+                chipset=target.detail["chipset"],
+                ctx=ctx,
+            )
+            mount = mount_for_topology(bench.paths, handoff.topology)
         copy_uf2(uf2, mount, ctx)
         return {"mount": mount}
 
     def settled(self, bench: Bench, target: FlashTarget, ctx: Any) -> None:
-        """Nothing to wait *for* here, and deliberately so - same reasoning as
-        `DfuUtil.settled`. The board reboots as Katapult, under a serial it has
-        never had before; waiting for that is adoption, which this could not do
-        because it cannot name the device it is waiting for. Waiting for the
-        board to take the image already happened inside `write`."""
+        """Wait for a helper-requested board to confirm its identity.
+
+        A board that was already in BOOTSEL reboots as Katapult under a serial
+        it has never had; waiting for that is adoption, which this cannot do
+        because it cannot name the device. Waiting for the board to take the
+        image already happened inside `write`.
+        """
+        requester: BootselRequester | None = target.detail.get("helper")
+        if requester is None or bench.settings.dry_run:
+            return
+        try:
+            requester.wait_ready(
+                bench,
+                serial=target.id,
+                chipset=target.detail["chipset"],
+                ctx=ctx,
+            )
+        except OperationCancelled:
+            raise
+        except UpdaterError as exc:
+            # The UF2 copy already completed. Every boundary the spec enumerates
+            # is pre-copy or at-copy; there is no post-write one, and step 4 of
+            # the flow waits for the device "non-fatally" without qualification.
+            # So *any* readiness outcome - a slow return, a probe that would not
+            # answer, an identity that came back wrong, two devices answering to
+            # one serial - is a warning here. Rewriting a completed write as a
+            # failure would invite a re-flash of a board that is already correct.
+            ctx.reporter("warn", str(exc))
 
 
 def _find_mount(paths: Any) -> str:
@@ -329,26 +415,46 @@ def _find_mount(paths: Any) -> str:
     return mounts[0]
 
 
-def target_for(uf2_file: str, *, chipset: str, paths: Any = None) -> FlashTarget:
-    """A bare RP2040, as a target.
+def target_for(
+    uf2_file: str,
+    *,
+    chipset: str,
+    paths: Paths | None = None,
+    type_name: str = "",
+    serial: str = "",
+    helper: BootselRequester | None = None,
+    stop_services: tuple[str, ...] = (),
+) -> FlashTarget:
+    """An RP2040 to write, as a target.
 
-    BOOTSEL has no protocol to address a specific board through - unlike DFU,
-    the write cannot be aimed at one device among several. The boot ROM does
-    publish the flash chip's id as a USB mass-storage serial, and it is
-    recorded here, but **it is not an identity**: two boards from one batch
-    have been observed on hardware reporting the same
-    `pico_get_unique_board_id()`. It is a label on the flash, nothing more,
-    and nothing downstream keys on it - `Bootsel.write` and `Bootsel.settled`
-    never read `target.id`, and the add-mcu pairing key is looked up
-    separately in `agent.methods.flash`.
+    **With a helper**, a running board of a configured type: `serial` is its
+    durable identity, the helper asks it to enter BOOTSEL, and the target
+    stops `stop_services` because that request goes over a port Klipper may
+    hold.
 
-    Correlating a board across the BOOTSEL reboot needs the USB topology path
-    instead; see docs/bootsel-mountpoint-design.md.
+    **Without one**, a board already in BOOTSEL. The boot ROM publishes the
+    flash chip's id as a USB mass-storage serial, and it is recorded here, but
+    **it is not an identity**: two boards from one batch have been observed on
+    hardware reporting the same `pico_get_unique_board_id()`. It is a label on
+    the flash, nothing more, and nothing downstream keys on it - `write` and
+    `settled` never read `target.id` on this path, and the add-mcu pairing key
+    is looked up separately in `agent.methods.flash`. Correlating a board
+    across the BOOTSEL reboot needs the USB topology path instead; see
+    docs/bootsel-mountpoint-design.md.
 
-    `paths` is optional and only used for that lookup (via `bootsel_devices`);
-    callers that omit it, or that hit zero or more than one device, get
-    `id=""` - the multi-volume case is still refused in `write`.
+    `paths` is only used for that lookup (via `bootsel_devices`); callers that
+    omit it, or that hit zero or more than one device, get `id=""` - the
+    multi-volume case is still refused in `write`.
     """
+    if helper is not None:
+        return FlashTarget(
+            flasher=Bootsel.name,
+            type=type_name,
+            id=serial,
+            stop_services=stop_services,
+            detail={"uf2_file": uf2_file, "chipset": chipset, "helper": helper},
+            needs_services_stopped=True,
+        )
     device_id = ""
     if paths is not None:
         present = bootsel_devices(paths)

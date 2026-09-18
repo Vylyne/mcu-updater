@@ -27,8 +27,7 @@ def test_the_helper_names_are_exactly_the_registry():
 def test_the_flasher_names_are_exactly_the_registry():
     from mcu_updater.flashers.registry import FLASHERS
 
-    # helper_bootsel is folded into bootsel by Task 3, which drops this exclusion.
-    assert set(firmware.FLASHERS) == {f.name for f in FLASHERS} - {"helper_bootsel"}
+    assert set(firmware.FLASHERS) == {f.name for f in FLASHERS}
 
 
 def test_no_helper_configured_is_none():

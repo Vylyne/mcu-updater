@@ -32,7 +32,7 @@ from typing import TYPE_CHECKING, Any
 
 from ..devices import STATE_ESP_ROM
 from ..errors import FlashError, UpdaterError
-from .spec import Bench, FlashTarget
+from .spec import KIND_SCREEN, Bench, Device, FlashTarget
 
 if TYPE_CHECKING:
     # Annotation only. `discovery.spec` imports from this package, so a runtime
@@ -41,6 +41,8 @@ if TYPE_CHECKING:
     # is already imported lazily inside `_sightings_by_family` for the same
     # reason.
     from ..discovery.spec import Confidence
+    from ..helpers.spec import Helper
+    from ..paths import Paths
 
 
 class Esptool:
@@ -55,6 +57,30 @@ class Esptool:
     #: take. Unlike flashtool, this one is about the write and not about
     #: getting somewhere first.
     needs_services_stopped = True
+
+    def supports(self, device: Device, helper: Helper | None) -> bool:
+        """A PlatformIO device reached through its configured port. Its
+        identity is confirmed at write time, in `prepared`."""
+        return device.kind == KIND_SCREEN
+
+    def target(
+        self,
+        paths: Paths,
+        device: Device,
+        helper: Helper | None,
+        *,
+        stop_services: tuple[str, ...],
+    ) -> FlashTarget:
+        target = target_for(
+            device.detail["display"],
+            device.detail["screen"],
+            stop_services=stop_services,
+        )
+        # Anything else the caller put in `detail` (bulk's `reason`) rides
+        # along; the screen's own keys win.
+        return dataclasses.replace(
+            target, detail={**device.detail, **target.detail}
+        )
 
     @contextlib.contextmanager
     def prepared(

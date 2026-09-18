@@ -36,6 +36,7 @@ from .devices import (
     STATE_KATAPULT,
     STATE_KLIPPER,
     STATE_OFFLINE,
+    find_device,
     find_untracked,
     scan,
 )
@@ -596,18 +597,21 @@ def _cmake_targets(c: Context, mcu_type: str, serial: str) -> list:
     """One CMake-built board, as a thing the batch can write.
 
     The same selection the agent's `_cmake_flash` makes: the type's declared
-    firmware family names the helper that puts the board into BOOTSEL, and the
-    UF2 the build staged is what gets copied onto it. Both refusals here are
-    setup the operator has to fix before any write is possible, so they are said
-    plainly rather than discovered as a missing-file error two layers down.
+    firmware family names the flashers that may write it, and the UF2 the
+    build staged is what gets copied onto it. The missing-artifact refusal here
+    is setup the operator has to fix before any write is possible, so it is
+    said plainly rather than discovered as a missing-file error two layers
+    down.
 
     `stop_services.for_cmake` is the only resolver that applies: `for_platformio`
     indexes the PlatformIO map - which is the `KeyError: 'roadrunner'` this
     whole change exists to remove - and `for_mcu` wants a kconfig `McuType`.
 
     No `FlashLog` record and no attachment check, matching the CLI's other flash
-    paths: provenance is recorded inside the flashers, and the helper performs
-    its own protocol confirmation once the services have released the port.
+    paths: the family's `flashers:` list picks the writer (`flashers.select`),
+    and a family that cannot write the board refuses with `NoFlasherError`. The
+    helper performs its own protocol confirmation once the services have
+    released the port.
     """
     from . import helpers
     from .providers import cmake as cmake_mod
@@ -620,24 +624,26 @@ def _cmake_targets(c: Context, mcu_type: str, serial: str) -> list:
         raise UpdaterError(f"CMake type '{mcu_type}' is no longer configured.")
     families = firmware.load(c.paths)
     family = firmware.resolve(c.paths, target_type.firmware, families)
-    helper = helpers.bootsel_requester(helpers.for_name(family.helper, family=family.name))
-    if helper is None:
-        raise UpdaterError(
-            f"CMake type '{mcu_type}' has no firmware helper configured, so "
-            f"nothing here can put the board into BOOTSEL mode."
-        )
+    helper = helpers.for_name(family.helper, family=family.name)
 
     fw_bin = c.paths.uf2_file(mcu_type, target_type.firmware)
     if not os.path.exists(fw_bin):
         raise UpdaterError(f"no built firmware for {mcu_type} at {fw_bin}. Build it first.")
 
+    present = find_device(c.paths, "", serial)
     return [
-        flashers.helper_bootsel.target_for(
-            fw_bin,
-            type_name=mcu_type,
-            serial=serial,
-            chipset=target_type.chipset,
-            helper=helper,
+        flashers.select(
+            c.paths,
+            family,
+            flashers.Device(
+                type=mcu_type,
+                id=serial,
+                chipset=target_type.chipset,
+                state=present.state if present is not None else STATE_OFFLINE,
+                fw=family.name,
+                detail={"uf2_file": fw_bin},
+            ),
+            helper,
             stop_services=stop_services.for_cmake(
                 c.paths, target_type, c.settings, families
             ),

@@ -1,0 +1,101 @@
+{
+  "_comment": "Selection through a family's flashers: list. Each supports() is the only thing keeping a flasher off a device it cannot write, resolve() must keep the family's order, and the per-target stop flag is what keeps Klipper up for a board already in BOOTSEL and down for a helper-requested one.",
+  "file": "src/mcu_updater/flashers/registry.py",
+  "command": [
+    "python",
+    "-m",
+    "pytest",
+    "tests/test_flasher_select.py",
+    "tests/test_flash.py",
+    "-q"
+  ],
+  "mutations": [
+    {
+      "name": "resolve walks the family's list in order",
+      "find": "    for name in family.flashers:",
+      "replace": "    for name in reversed(family.flashers):"
+    },
+    {
+      "name": "select refuses when nothing supports the device",
+      "find": "    if flasher is None:\n        listed = ",
+      "replace": "    if False:\n        listed = "
+    },
+    {
+      "name": "the target's own stop flag wins",
+      "find": "    if target.needs_services_stopped is not None:",
+      "replace": "    if False:"
+    },
+    {
+      "name": "chipsets match by prefix",
+      "file": "src/mcu_updater/flashers/spec.py",
+      "find": "    return any(chipset.startswith(prefix) for prefix in flasher.chipsets)",
+      "replace": "    return chipset in flasher.chipsets"
+    },
+    {
+      "name": "flashtool writes serial and CAN boards only",
+      "file": "src/mcu_updater/flashers/flashtool.py",
+      "find": "        return device.kind in (KIND_SERIAL, KIND_CANBUS) and chipset_matches(",
+      "replace": "        return True and chipset_matches("
+    },
+    {
+      "name": "flashtool writes lpc176x boards",
+      "file": "src/mcu_updater/flashers/flashtool.py",
+      "find": "(\"stm32\", \"rp2040\", \"lpc176\")",
+      "replace": "(\"stm32\", \"rp2040\")"
+    },
+    {
+      "name": "esptool writes screens only",
+      "file": "src/mcu_updater/flashers/esptool.py",
+      "find": "        return device.kind == KIND_SCREEN",
+      "replace": "        return True"
+    },
+    {
+      "name": "dfu_util writes bare boards only",
+      "file": "src/mcu_updater/flashers/dfu_util.py",
+      "find": "            device.kind == KIND_BARE\n",
+      "replace": "            True\n"
+    },
+    {
+      "name": "dfu_util writes a board in DFU only",
+      "file": "src/mcu_updater/flashers/dfu_util.py",
+      "find": "            and device.state in self.states\n",
+      "replace": "\n"
+    },
+    {
+      "name": "a board in BOOTSEL still needs an rp2040 chipset",
+      "file": "src/mcu_updater/flashers/bootsel.py",
+      "find": "            return chipset_matches(self, device.chipset)",
+      "replace": "            return True"
+    },
+    {
+      "name": "the handoff path needs a requester",
+      "file": "src/mcu_updater/flashers/bootsel.py",
+      "find": "        return device.kind != KIND_BARE and helpers.bootsel_requester(helper) is not None",
+      "replace": "        return device.kind != KIND_BARE"
+    },
+    {
+      "name": "a bare board is never a handoff",
+      "file": "src/mcu_updater/flashers/bootsel.py",
+      "find": "        return device.kind != KIND_BARE and helpers.bootsel_requester(helper) is not None",
+      "replace": "        return helpers.bootsel_requester(helper) is not None"
+    },
+    {
+      "name": "a handoff target stops services",
+      "file": "src/mcu_updater/flashers/bootsel.py",
+      "find": "            needs_services_stopped=True,",
+      "replace": "            needs_services_stopped=None,"
+    },
+    {
+      "name": "a board already in BOOTSEL gets the plain target",
+      "file": "src/mcu_updater/flashers/bootsel.py",
+      "find": "        if device.state in self.states or requester is None:",
+      "replace": "        if requester is None:"
+    },
+    {
+      "name": "settled waits for a handoff board",
+      "file": "src/mcu_updater/flashers/bootsel.py",
+      "find": "        if requester is None or bench.settings.dry_run:\n            return\n",
+      "replace": "        return\n"
+    }
+  ]
+}

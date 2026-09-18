@@ -27,6 +27,7 @@ from mcu_updater.config import Registry
 from mcu_updater.discovery import canbus
 from mcu_updater.errors import (
     BusyError,
+    NoFlasherError,
     SerialTrackedElsewhereError,
     UnprovisionedSerialError,
     UpdaterError,
@@ -568,7 +569,7 @@ def test_flashing_a_cmake_serial_alone_routes_to_the_helper(
 
     assert exc.value.code == 0
     assert len(captured) == 1
-    assert [t.flasher for t in captured[0]] == ["helper_bootsel"]
+    assert [t.flasher for t in captured[0]] == ["bootsel"]
     assert [t.id for t in captured[0]] == [RR_SERIAL]
     assert captured[0][0].type == "roadrunner"
 
@@ -588,7 +589,7 @@ def test_flashing_a_cmake_serial_with_its_type_routes_the_same_way(
         )
 
     assert exc.value.code == 0
-    assert [t.flasher for t in captured[0]] == ["helper_bootsel"]
+    assert [t.flasher for t in captured[0]] == ["bootsel"]
 
 
 def test_the_cmake_target_carries_the_staged_uf2_and_its_stop_services(
@@ -627,18 +628,19 @@ def test_flashing_a_cmake_type_by_name_alone_is_refused(
     assert captured == []
 
 
-def test_a_cmake_type_with_no_helper_says_so(c, fake_root, captured, monkeypatch):
-    """A family that configures no helper cannot put the board into BOOTSEL, and
-    nothing below that point can compensate for it."""
+def test_a_cmake_type_with_no_helper_names_its_flashers(c, fake_root, captured, monkeypatch):
+    """A family whose helper cannot request BOOTSEL leaves `bootsel` nothing to
+    write a running board with, and the refusal names the list to fix."""
     _cmake_flashable(c, fake_root, helper=False)
     monkeypatch.setattr(cli, "_confirm", lambda prompt: True)
 
-    with pytest.raises(UpdaterError) as exc:
+    with pytest.raises(NoFlasherError) as exc:
         cli.flash_fw_cmd(
             argparse.Namespace(type=None, serial=RR_SERIAL, yes=True, force=False)
         )
 
-    assert "no firmware helper" in str(exc.value)
+    assert "[firmware roadrunner]" in str(exc.value)
+    assert "flashers: bootsel" in str(exc.value)
     assert captured == []
 
 

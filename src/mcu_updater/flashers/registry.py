@@ -1,4 +1,4 @@
-"""Which flashers exist, which chipset/state pairs each can write, and how a
+"""Which flashers exist, which one a family picks for a device, and how a
 batch splits around the Klipper stop.
 
 **Static, and not discovered** - for the same reason the provider registry is.
@@ -9,13 +9,19 @@ has NOPASSWD `systemctl` for Klipper. The tuple is the seam.
 
 from __future__ import annotations
 
-from ..errors import UnsupportedChipsetError
+from typing import TYPE_CHECKING
+
+from ..errors import NoFlasherError, UnsupportedChipsetError
 from .bootsel import Bootsel
 from .dfu_util import DfuUtil
 from .esptool import Esptool
 from .flashtool import Flashtool
-from .helper_bootsel import HelperBootsel
-from .spec import Flasher, FlashTarget
+from .spec import Device, Flasher, FlashTarget
+
+if TYPE_CHECKING:
+    from ..firmware import FirmwareFamily
+    from ..helpers.spec import Helper
+    from ..paths import Paths
 
 #: Every flasher. Order is not a batch order - a batch keeps the order its
 #: selection produced - so this is just the set.
@@ -25,7 +31,6 @@ FLASHERS: tuple[Flasher, ...] = (
     Esptool(),
     DfuUtil(),
     Bootsel(),
-    HelperBootsel(),
 )
 
 _BY_NAME: dict[str, Flasher] = {f.name: f for f in FLASHERS}
@@ -36,6 +41,13 @@ def by_name(name: str) -> Flasher:
     if flasher is None:
         raise KeyError(f"no flasher {name!r}; known: {sorted(_BY_NAME)}")
     return flasher
+
+
+def needs_services_stopped(target: FlashTarget) -> bool:
+    """The target's own answer when it has one, else its flasher's."""
+    if target.needs_services_stopped is not None:
+        return target.needs_services_stopped
+    return by_name(target.flasher).needs_services_stopped
 
 
 def group_by_stop(
@@ -51,9 +63,7 @@ def group_by_stop(
     stopped: list[FlashTarget] = []
     free: list[FlashTarget] = []
     for target in targets:
-        (stopped if by_name(target.flasher).needs_services_stopped else free).append(
-            target
-        )
+        (stopped if needs_services_stopped(target) else free).append(target)
     return stopped, free
 
 
@@ -92,8 +102,58 @@ def by_flasher(targets: list[FlashTarget]) -> list[tuple[Flasher, list[FlashTarg
 
 
 # --------------------------------------------------------------------------
-# selection: which flasher writes a chipset while it's in a given state
+# selection: the family's list, in order
 # --------------------------------------------------------------------------
+
+
+def resolve(
+    family: FirmwareFamily, device: Device, helper: Helper | None
+) -> Flasher | None:
+    """The first flasher in `family.flashers` that supports `device`, or None.
+
+    The family's order, not the registry's: the same RP2040 is flashtool's in
+    `[firmware klipper]` and bootsel's in `[firmware roadrunner]`, and a global
+    first match could only ever reach one of them.
+    """
+    for name in family.flashers:
+        flasher = by_name(name)
+        if flasher.supports(device, helper):
+            return flasher
+    return None
+
+
+def select(
+    paths: Paths,
+    family: FirmwareFamily,
+    device: Device,
+    helper: Helper | None,
+    *,
+    stop_services: tuple[str, ...],
+) -> FlashTarget:
+    """The target that writes `device`, chosen by its family.
+
+    `stop_services` is required so no caller can forget it: a flasher that
+    needs Klipper down and gets an empty list stops nothing.
+
+    Raises `NoFlasherError` naming the family and its list when nothing in it
+    supports the device. A batch reports that as the device's failure; a
+    single-device call raises it.
+    """
+    flasher = resolve(family, device, helper)
+    if flasher is None:
+        listed = ", ".join(family.flashers) or "(none)"
+        raise NoFlasherError(
+            f"nothing in [firmware {family.name}] (flashers: {listed}) can write "
+            f"{device.type} {device.id or device.chipset} while it is "
+            f"{device.state}.",
+            family=family.name,
+            flashers=list(family.flashers),
+            type=device.type,
+            id=device.id,
+            chipset=device.chipset,
+            state=device.state,
+        )
+    return flasher.target(paths, device, helper, stop_services=stop_services)
 
 
 def select_for(chipset: str, state: str) -> Flasher:

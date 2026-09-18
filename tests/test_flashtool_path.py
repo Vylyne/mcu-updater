@@ -36,6 +36,6 @@ def test_the_declared_katapult_source_is_used(paths, settings):
 
 
 def test_an_undeclared_katapult_is_refused_naming_the_section(paths, settings):
-    write_main_config(paths, "[firmware klipper]\nsource: ~/klipper\n")
+    write_main_config(paths, "[firmware klipper]\nsource: ~/klipper\nflashers: flashtool\n")
     with pytest.raises(ConfigCorruptError, match=r"\[firmware katapult\]"):
         find_flashtool(paths, settings)

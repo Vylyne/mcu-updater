@@ -429,7 +429,7 @@ def test_adoptable_excludes_a_serial_tracked_by_a_cmake_type(paths, fake_root, l
     with open(paths.registry_file, "w", encoding="utf-8") as fh:
         fh.write(
             live_registry_text
-            + "\n[firmware roadrunner]\nsource: ~/roadrunner/rp2040\nbuilder: cmake\n"
+            + "\n[firmware roadrunner]\nsource: ~/roadrunner/rp2040\nbuilder: cmake\nflashers: bootsel\n"
             + "\n[type roadrunner]\nchipset: rp2040\nfirmware: roadrunner\n"
             + "serials:\n    RR-TRACKED\n"
         )
@@ -588,7 +588,7 @@ def test_serial_adoption_supports_a_declared_cmake_type(paths, live_registry_tex
     with open(paths.registry_file, "w", encoding="utf-8") as fh:
         fh.write(
             live_registry_text
-            + "\n[firmware roadrunner]\nsource: ~/roadrunner/rp2040\nbuilder: cmake\n"
+            + "\n[firmware roadrunner]\nsource: ~/roadrunner/rp2040\nbuilder: cmake\nflashers: bootsel\n"
             + "\n[type roadrunner]\nchipset: rp2040\nfirmware: roadrunner\n"
             + "cmake_target: roadrunner_v1_i2c_rgb\nserials:\n"
         )
@@ -610,7 +610,7 @@ def test_serial_adoption_refuses_foreign_to_owned_duplicate(paths, live_registry
     with open(paths.registry_file, "w", encoding="utf-8") as fh:
         fh.write(
             live_registry_text
-            + "\n[firmware roadrunner]\nsource: ~/roadrunner/rp2040\nbuilder: cmake\n"
+            + "\n[firmware roadrunner]\nsource: ~/roadrunner/rp2040\nbuilder: cmake\nflashers: bootsel\n"
             + "\n[type roadrunner]\nchipset: rp2040\nfirmware: roadrunner\nserials:\n"
             + "    RR-SHARED\n"
         )
@@ -626,7 +626,7 @@ def test_serial_adoption_refuses_foreign_to_foreign_duplicate(paths, live_regist
     with open(paths.registry_file, "w", encoding="utf-8") as fh:
         fh.write(
             live_registry_text
-            + "\n[firmware roadrunner]\nsource: ~/roadrunner/rp2040\nbuilder: cmake\n"
+            + "\n[firmware roadrunner]\nsource: ~/roadrunner/rp2040\nbuilder: cmake\nflashers: bootsel\n"
             + "\n[type roadrunner-a]\nchipset: rp2040\nfirmware: roadrunner\nserials:\n"
             + "    RR-SHARED\n"
             + "\n[type roadrunner-b]\nchipset: rp2040\nfirmware: roadrunner\nserials:\n"
@@ -664,7 +664,7 @@ def test_canbus_adoption_and_removal_support_a_declared_cmake_type(paths, live_r
     with open(paths.registry_file, "w", encoding="utf-8") as fh:
         fh.write(
             live_registry_text
-            + "\n[firmware roadrunner]\nsource: ~/roadrunner/rp2040\nbuilder: cmake\n"
+            + "\n[firmware roadrunner]\nsource: ~/roadrunner/rp2040\nbuilder: cmake\nflashers: bootsel\n"
             + "\n[type roadrunner]\nchipset: rp2040\nfirmware: roadrunner\n"
             + "cmake_target: roadrunner_v1_i2c_rgb\nserials:\n"
         )
@@ -795,7 +795,7 @@ def test_type_update_katapult_installed_refuses_an_undeclared_family(paths):
     refuse it on the way back in."""
     write_main_config(
         paths,
-        "[firmware klipper]\nsource: ~/klipper\n\n"
+        "[firmware klipper]\nsource: ~/klipper\nflashers: flashtool\n\n"
         "[type bttebb36]\nchipset: stm32g0b1xx\nfirmware: klipper\n",
     )
     api = Api(paths)
@@ -973,7 +973,7 @@ def test_type_remove_refuses_an_unknown_type(api):
 def test_type_remove_removes_a_cmake_type(api, paths):
     with open(paths.main_config, "a", encoding="utf-8", newline="\n") as fh:
         fh.write(
-            "\n[firmware roadrunner]\nsource: ~/rr\nbuilder: cmake\n\n"
+            "\n[firmware roadrunner]\nsource: ~/rr\nbuilder: cmake\nflashers: bootsel\n\n"
             "[type rr]\nchipset: rp2040\nfirmware: roadrunner\ncmake_target: t\nserials:\n    RR-X\n"
         )
     res = api.dispatch("fw.type.remove", {"name": "rr", "force": True})

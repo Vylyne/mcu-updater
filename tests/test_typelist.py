@@ -20,10 +20,11 @@ from mcu_updater.providers import pio as pio_mod
 from .conftest import read_main_config, save_registry, write_main_config
 
 FAMILIES = (
-    "[firmware klipper]\nsource: ~/klipper\n\n"
-    "[firmware katapult]\nsource: ~/katapult\n\n"
-    "[firmware knomi_serial]\nsource: ~/knomi_serial\nbuilder: platformio\n\n"
-    "[firmware roadrunner]\nsource: ~/rr\nbuilder: cmake\n\n"
+    "[firmware klipper]\nsource: ~/klipper\nflashers: flashtool\n\n"
+    "[firmware katapult]\nsource: ~/katapult\nflashers: dfu_util, bootsel\n\n"
+    "[firmware knomi_serial]\nsource: ~/knomi_serial\nbuilder: platformio\n"
+    "helper: knomi_serial\nflashers: esptool\n\n"
+    "[firmware roadrunner]\nsource: ~/rr\nbuilder: cmake\nflashers: bootsel\n\n"
 )
 
 EXAMPLE_ORDER = [

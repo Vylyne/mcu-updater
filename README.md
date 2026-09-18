@@ -214,10 +214,12 @@ ui_accent_color: 2196f3    ; standalone UI's accent colour, no '#' - see below
 source: ~/klipper                 ; default: ~/<name>
 builder: kconfig_make             ; default: kconfig_make
 artifact: klipper                 ; default: <name>
+flashers: flashtool
 
 [firmware katapult]
 source: ~/katapult
 bootloader: true                  ; a bootloader, not an application
+flashers: dfu_util, bootsel
 
 # Toolhead boards. The buffer patch is specific to this batch.
 [type flylllplusbuffer]
@@ -256,6 +258,7 @@ builder: cmake
 cmake_args: -DROADRUNNER_FIRMWARE_VERSION=${git_describe}
 submodules: yes
 helper: roadrunner
+flashers: bootsel
 ```
 
 `submodules:` runs `git submodule update --init --recursive` in the source tree
@@ -339,6 +342,7 @@ stop_services: klipper
 
 [firmware knomi_serial]
 stop_services: klipper, knomi_serial     ; OVERRIDE - replaces, never merges
+flashers: esptool
 
 [type bttebb36]
 stop_services: klipper                   ; OVERRIDE - only the last tier applies
@@ -413,6 +417,7 @@ Klipper fork, still drops `out/klipper.bin`. Declare the mismatch once:
 [firmware cartographer]
 source: ~/MCU-Firmware---Based-on-Klipper
 artifact: klipper           ; what the build actually leaves in out/
+flashers: flashtool
 ```
 
 then point a type at it:
@@ -529,6 +534,8 @@ from, which is why `chipset` still has to be given by hand (`esp32`):
 [firmware knomi_serial]
 source: ~/knomi_serial      ; one repo, shared by every env
 builder: platformio
+helper: knomi_serial
+flashers: esptool
 
 [type knomi_toolchanger]
 chipset: esp32
@@ -604,6 +611,7 @@ builder: cmake
 cmake_args: -DROADRUNNER_FIRMWARE_VERSION=${git_describe}
 submodules: yes                 ; the tree vendors its SDK as a submodule
 helper: roadrunner              ; reviewed firmware-specific BOOTSEL requester
+flashers: bootsel
 
 [type roadrunner]
 chipset: rp2040

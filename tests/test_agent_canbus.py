@@ -101,7 +101,7 @@ def test_canbus_scan_marks_a_foreign_provider_identity(paths, fake_root, monkeyp
     with open(paths.registry_file, "w", encoding="utf-8") as fh:
         fh.write(
             live_registry_text
-            + "\n[firmware roadrunner]\nsource: ~/roadrunner/rp2040\nbuilder: cmake\n"
+            + "\n[firmware roadrunner]\nsource: ~/roadrunner/rp2040\nbuilder: cmake\nflashers: bootsel\n"
             + "\n[type roadrunner]\nchipset: rp2040\nfirmware: roadrunner\n"
             + "canbus_uuids:\n    abcdef012345\n"
         )
@@ -215,7 +215,7 @@ def test_nothing_unclaimed_answering_is_reported_not_raised(api, fake_root, monk
 
 def test_an_undeclared_katapult_is_reported_not_raised(paths, fake_root):
     with open(paths.registry_file, "w", encoding="utf-8") as fh:
-        fh.write("[firmware klipper]\nsource: ~/klipper\n")
+        fh.write("[firmware klipper]\nsource: ~/klipper\nflashers: flashtool\n")
     api = Api(paths)
     api.paths = dataclasses.replace(
         api.paths, can_sysfs_net=_make_can_interface(fake_root, "can0")

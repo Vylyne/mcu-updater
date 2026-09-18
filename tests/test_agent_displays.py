@@ -274,7 +274,8 @@ def test_a_screen_carries_no_identity_history(api, paths, fake_root):
     port.write_text("", encoding="utf-8")
     with open(paths.main_config, "a", encoding="utf-8") as fh:
         fh.write(
-            f"\n[firmware knomi_serial]\nsource: {fake_root}\nbuilder: platformio\n\n"
+            f"\n[firmware knomi_serial]\nsource: {fake_root}\nbuilder: platformio\n"
+            "helper: knomi_serial\nflashers: esptool\n\n"
             f"[type knomi_toolchanger]\nfirmware: knomi_serial\nplatformio_env: knomi_toolchanger\n"
         )
 
@@ -401,7 +402,8 @@ def _with_display_type(api, paths, fake_root):
     """pio_status short-circuits with no PlatformIO type - add one."""
     with open(paths.registry_file, "a", encoding="utf-8") as fh:
         fh.write(
-            f"\n[firmware knomi_serial]\nsource: {fake_root}\nbuilder: platformio\n\n"
+            f"\n[firmware knomi_serial]\nsource: {fake_root}\nbuilder: platformio\n"
+            "helper: knomi_serial\nflashers: esptool\n\n"
             f"[type knomi_toolchanger]\nfirmware: knomi_serial\nplatformio_env: knomi_toolchanger\n"
         )
 
@@ -642,6 +644,8 @@ def _declare_display(paths, env="knomi_toolchanger"):
         doc = CfgDocument(fh.read())
     doc.set("firmware knomi_serial", "source", "/nowhere")
     doc.set("firmware knomi_serial", "builder", "platformio")
+    doc.set("firmware knomi_serial", "flashers", "esptool")
+    doc.set("firmware knomi_serial", "helper", "knomi_serial")
     doc.set(f"type {env}", "firmware", "knomi_serial")
     doc.set(f"type {env}", "platformio_env", env)
     with open(paths.main_config, "w", encoding="utf-8", newline="\n") as fh:

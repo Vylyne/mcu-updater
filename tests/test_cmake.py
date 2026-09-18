@@ -36,6 +36,7 @@ ROADRUNNER_CFG = """
 source: {source}
 builder: cmake
 cmake_args: -DROADRUNNER_FIRMWARE_VERSION=${{git_describe}}
+flashers: bootsel
 
 [type roadrunner]
 chipset: rp2040
@@ -104,7 +105,7 @@ def test_a_cmake_type_with_no_target_is_refused(paths, tmp_path):
     default would mean guessing which of six images belongs on the board."""
     write_config(
         paths,
-        f"[firmware roadrunner]\nsource: {tmp_path}\nbuilder: cmake\n\n"
+        f"[firmware roadrunner]\nsource: {tmp_path}\nbuilder: cmake\nflashers: bootsel\n\n"
         "[type roadrunner]\nchipset: rp2040\nfirmware: roadrunner\nserials:\n",
     )
     with pytest.raises(ConfigError) as exc:

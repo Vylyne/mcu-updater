@@ -14,7 +14,7 @@ from .conftest import BASE_FIRMWARES
 
 TEXT = (
     BASE_FIRMWARES
-    + "[firmware roadrunner]\nsource: ~/rr\nbuilder: cmake\n\n"
+    + "[firmware roadrunner]\nsource: ~/rr\nbuilder: cmake\nflashers: bootsel\n\n"
     + "[type board]\nchipset: stm32f072xb\nfirmware: klipper, katapult\n"
     + "serials:\n    AAAA\ncanbus_uuids:\n    0123456789AB\n\n"
     + "[type roadrunner]\nchipset: rp2040\nfirmware: roadrunner\n"

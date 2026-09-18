@@ -134,7 +134,7 @@ def _declare_cmake(paths, fake_root, name="roadrunner") -> str:
         fh.write("project(roadrunner)\n")
     with open(paths.main_config, "a", encoding="utf-8") as fh:
         fh.write(
-            f"\n[firmware roadrunner]\nsource: {tree}\nbuilder: cmake\n\n"
+            f"\n[firmware roadrunner]\nsource: {tree}\nbuilder: cmake\nflashers: bootsel\n\n"
             f"[type {name}]\nchipset: rp2040\nfirmware: roadrunner\n"
             f"cmake_target: roadrunner_v1_i2c_rgb\n"
         )
@@ -379,7 +379,8 @@ def test_a_display_with_no_source_tree_is_skipped_but_never_silently(bulk, paths
     _save_config(paths, EBB)
     with open(paths.main_config, "a", encoding="utf-8") as fh:
         fh.write(
-            "\n[firmware knomi_missing]\nsource: /nope/not/here\nbuilder: platformio\n\n"
+            "\n[firmware knomi_missing]\nsource: /nope/not/here\nbuilder: platformio\n"
+            "helper: knomi_serial\nflashers: esptool\n\n"
             "[type knomi_toolchanger]\nchipset: esp32\nfirmware: knomi_missing\n"
             "platformio_env: knomi_toolchanger\n"
         )

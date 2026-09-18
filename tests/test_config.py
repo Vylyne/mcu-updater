@@ -425,7 +425,8 @@ def test_families_built_by_different_tools_are_refused(paths):
     compiles half a type with make and half with pio."""
     _write(
         paths,
-        "[firmware knomi_serial]\nsource: ~/knomi_serial\nbuilder: platformio\n\n"
+        "[firmware knomi_serial]\nsource: ~/knomi_serial\nbuilder: platformio\n"
+        "helper: knomi_serial\nflashers: esptool\n\n"
         "[type odd]\nchipset: x\nfirmware: klipper, knomi_serial\nserials:\n",
     )
     with pytest.raises(ConfigCorruptError) as exc:
@@ -473,7 +474,7 @@ def test_add_type_refuses_an_undeclared_katapult(paths):
     """The same refusal for the other half of `firmwares`: a config that only
     declares `klipper` still requires `katapult` be declared before a
     katapult-installed type can name it."""
-    write_main_config(paths, "[firmware klipper]\nsource: ~/klipper\n")
+    write_main_config(paths, "[firmware klipper]\nsource: ~/klipper\nflashers: flashtool\n")
     reg = Registry.load(paths)
 
     with pytest.raises(ConfigCorruptError) as exc:
@@ -812,6 +813,7 @@ def _cfg_with_a_cmake_type() -> str:
         "[firmware roadrunner]\n"
         "source: ~/roadrunner/rp2040\n"
         "builder: cmake\n"
+        "flashers: bootsel\n"
         "\n"
         "[type bttebb36]\n"
         "chipset: stm32g0b1xx\n"

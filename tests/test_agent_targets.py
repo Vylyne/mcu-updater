@@ -133,7 +133,8 @@ def test_a_display_build_is_blocked_by_a_missing_source_tree(api, paths, fake_ro
     port.write_text("", encoding="utf-8")
     with open(paths.main_config, "a", encoding="utf-8") as fh:
         fh.write(
-            "\n[firmware knomi_missing]\nsource: /nope/not/here\nbuilder: platformio\n\n"
+            "\n[firmware knomi_missing]\nsource: /nope/not/here\nbuilder: platformio\n"
+            "helper: knomi_serial\nflashers: esptool\n\n"
             f"[type {ENV}]\nchipset: esp32\nfirmware: knomi_missing\nplatformio_env: {ENV}\n"
         )
     api = Api(
@@ -731,6 +732,7 @@ def test_firmware_families_carries_cmake_args(paths):
     doc = CfgDocument("")
     doc.set("firmware roadrunner", "source", "/nowhere")
     doc.set("firmware roadrunner", "builder", "cmake")
+    doc.set("firmware roadrunner", "flashers", "bootsel")
     doc.set(
         "firmware roadrunner",
         "cmake_args",
@@ -904,6 +906,7 @@ def _cmake_config(paths, tmp_path, *, helper=False, serial=None):
     doc = CfgDocument("")
     doc.set("firmware roadrunner", "source", str(source))
     doc.set("firmware roadrunner", "builder", "cmake")
+    doc.set("firmware roadrunner", "flashers", "bootsel")
     if helper:
         doc.set(
             "firmware roadrunner",

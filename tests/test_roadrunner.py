@@ -821,7 +821,7 @@ def test_agent_clear_returns_to_unprovisioned_without_tracking(paths, monkeypatc
 def test_agent_refuses_maintenance_for_a_cmake_tracked_roadrunner(paths):
     with open(paths.registry_file, "w", encoding="utf-8") as fh:
         fh.write(
-            "[firmware roadrunner]\nsource: ~/roadrunner/rp2040\nbuilder: cmake\n"
+            "[firmware roadrunner]\nsource: ~/roadrunner/rp2040\nbuilder: cmake\nflashers: bootsel\n"
             "\n[type roadrunner]\nchipset: rp2040\nfirmware: roadrunner\n"
             f"serials:\n    {PROVISIONED}\n"
         )

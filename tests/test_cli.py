@@ -71,7 +71,8 @@ def pio_type(c, fake_root):
     (tree / "platformio.ini").write_text(f"[env:{ENV}]\n", encoding="utf-8")
     with open(c.paths.main_config, "a", encoding="utf-8") as fh:
         fh.write(
-            f"\n[firmware knomi_serial]\nsource: {tree}\nbuilder: platformio\n\n"
+            f"\n[firmware knomi_serial]\nsource: {tree}\nbuilder: platformio\n"
+            "helper: knomi_serial\nflashers: esptool\n\n"
             f"[type {ENV}]\nfirmware: knomi_serial\nplatformio_env: {ENV}\nservice:\n"
         )
     return tree
@@ -186,7 +187,8 @@ def test_update_all_names_what_it_skipped_rather_than_dropping_it(
     for: the fleet reports success and a board sits a month behind."""
     with open(c.paths.main_config, "a", encoding="utf-8") as fh:
         fh.write(
-            "\n[firmware no_tree_fw]\nbuilder: platformio\n\n"
+            "\n[firmware no_tree_fw]\nbuilder: platformio\n"
+            "helper: knomi_serial\nflashers: esptool\n\n"
             "[type no_tree]\nfirmware: no_tree_fw\nplatformio_env: no_tree\n"
         )
 
@@ -320,7 +322,8 @@ def test_building_a_platformio_type_with_no_tree_refuses_before_the_lock(
     rather than "not configured" the way a genuinely empty key once did."""
     with open(c.paths.main_config, "a", encoding="utf-8") as fh:
         fh.write(
-            "\n[firmware no_tree_fw]\nbuilder: platformio\n\n"
+            "\n[firmware no_tree_fw]\nbuilder: platformio\n"
+            "helper: knomi_serial\nflashers: esptool\n\n"
             "[type no_tree]\nfirmware: no_tree_fw\nplatformio_env: no_tree\n"
         )
 
@@ -348,7 +351,7 @@ def cmake_type(c, fake_root):
     (tree / "CMakeLists.txt").write_text("project(roadrunner)\n", encoding="utf-8")
     with open(c.paths.main_config, "a", encoding="utf-8") as fh:
         fh.write(
-            f"\n[firmware roadrunner]\nsource: {tree}\nbuilder: cmake\n\n"
+            f"\n[firmware roadrunner]\nsource: {tree}\nbuilder: cmake\nflashers: bootsel\n\n"
             f"[type roadrunner]\nchipset: rp2040\nfirmware: roadrunner\n"
             f"cmake_target: roadrunner_v1_i2c_rgb\n"
         )
@@ -444,7 +447,7 @@ def test_building_a_cmake_type_with_no_tree_refuses_before_the_lock(
     with open(c.paths.main_config, "a", encoding="utf-8") as fh:
         fh.write(
             f"\n[firmware rr_no_tree]\nsource: {fake_root / 'nowhere'}\n"
-            f"builder: cmake\n\n[type rr_no_tree]\nchipset: rp2040\n"
+            f"builder: cmake\nflashers: bootsel\n\n[type rr_no_tree]\nchipset: rp2040\n"
             f"firmware: rr_no_tree\ncmake_target: t\n"
         )
 
@@ -536,6 +539,7 @@ def _cmake_flashable(c, fake_root, *, helper: bool = True, staged: bool = True):
     with open(c.paths.main_config, "a", encoding="utf-8", newline="\n") as fh:
         fh.write(
             f"\n[firmware roadrunner]\nsource: {tree}\nbuilder: cmake\n{helper_line}"
+            "flashers: bootsel\n"
             f"\n[type roadrunner]\nchipset: rp2040\nfirmware: roadrunner\n"
             f"cmake_target: roadrunner_v1_i2c_rgb\nserials: {RR_SERIAL}\n"
         )
@@ -752,7 +756,7 @@ def test_an_ambiguous_serial_still_asks_for_a_type(c, cmake_flashable, monkeypat
 def _declare_roadrunner(paths, serial: str) -> None:
     with open(paths.main_config, "a", encoding="utf-8", newline="\n") as fh:
         fh.write(
-            "\n[firmware roadrunner]\nsource: ~/roadrunner/rp2040\nbuilder: cmake\n\n"
+            "\n[firmware roadrunner]\nsource: ~/roadrunner/rp2040\nbuilder: cmake\nflashers: bootsel\n\n"
             "[type roadrunner]\nchipset: rp2040\nfirmware: roadrunner\n"
             f"cmake_target: roadrunner_v1_usbserial\nserials:\n    {serial}\n"
         )

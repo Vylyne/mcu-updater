@@ -36,7 +36,8 @@ def c(paths, monkeypatch):
 
     with open(paths.main_config, "a", encoding="utf-8", newline="\n") as fh:
         fh.write(
-            "\n[firmware roadrunner]\nsource: ~/roadrunner/rp2040\nbuilder: cmake\n\n"
+            "\n[firmware roadrunner]\nsource: ~/roadrunner/rp2040\nbuilder: cmake\n"
+            "flashers: bootsel\n\n"
             "[type roadrunner]\nchipset: rp2040\nfirmware: roadrunner\n"
             f"cmake_target: roadrunner_v1_usbserial\nserials:\n    {RR_SERIAL}\n"
         )
@@ -156,7 +157,8 @@ def _declare_platformio(paths, fake_root, extra: str = "") -> None:
     (tree / "platformio.ini").write_text("[env:knomi]\n", encoding="utf-8")
     _append_config(
         paths,
-        f"\n[firmware knomi_serial]\nsource: {tree}\nbuilder: platformio\n\n"
+        f"\n[firmware knomi_serial]\nsource: {tree}\nbuilder: platformio\n"
+        "helper: knomi_serial\nflashers: esptool\n\n"
         f"[type knomi]\nfirmware: knomi_serial\nplatformio_env: knomi\n{extra}",
     )
 
@@ -269,7 +271,8 @@ def test_menuconfig_with_only_a_cmake_type_says_why_none_is_offered(
     )
     _append_config(
         paths,
-        "\n[firmware roadrunner]\nsource: ~/roadrunner/rp2040\nbuilder: cmake\n\n"
+        "\n[firmware roadrunner]\nsource: ~/roadrunner/rp2040\nbuilder: cmake\n"
+        "flashers: bootsel\n\n"
         "[type roadrunner]\nchipset: rp2040\nfirmware: roadrunner\n"
         "cmake_target: roadrunner_v1_usbserial\n",
     )

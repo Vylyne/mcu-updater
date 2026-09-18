@@ -489,6 +489,7 @@ def test_cmake_args_is_read_from_the_section(paths):
             "source: ~/roadrunner/rp2040\n"
             "builder: cmake\n"
             "cmake_args: -DROADRUNNER_FIRMWARE_VERSION=${git_describe}\n"
+            "flashers: bootsel\n"
         )
     family = firmware.load(paths)["roadrunner"]
     assert family.builder == "cmake"
@@ -499,8 +500,8 @@ def test_cmake_args_defaults_to_empty_for_every_declared_family(paths):
     """Optional, so a section that says nothing about it changes nothing."""
     with open(paths.main_config, "w", encoding="utf-8") as fh:
         fh.write(
-            "[firmware cartographer]\nsource: ~/cartographer-klipper\n\n"
-            "[firmware klipper]\nsource: ~/klipper\n"
+            "[firmware cartographer]\nsource: ~/cartographer-klipper\nflashers: flashtool\n\n"
+            "[firmware klipper]\nsource: ~/klipper\nflashers: flashtool\n"
         )
     assert firmware.load(paths)["cartographer"].cmake_args == ""
     assert firmware.resolve(paths, "klipper").cmake_args == ""

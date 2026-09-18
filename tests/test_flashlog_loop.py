@@ -16,7 +16,7 @@ import pytest
 
 from mcu_updater import flashers, helpers
 from mcu_updater.build import FlashLog
-from mcu_updater.errors import FlashError
+from mcu_updater.errors import FlashError, UpdaterError
 from mcu_updater.settings import Settings
 
 
@@ -29,9 +29,12 @@ class _Fake:
     states: tuple[str, ...] = ()
     needs_services_stopped = False
 
-    def __init__(self, record=None, *, fails=(), settled_raises=False, extra=None):
+    def __init__(
+        self, record=None, *, fails=(), record_fails=(), settled_raises=False, extra=None
+    ):
         self.record_value = record
         self.fails = set(fails)
+        self.record_fails = set(record_fails)
         self.settled_raises = settled_raises
         self.extra = extra or {}
         self.written: list[str] = []
@@ -57,6 +60,8 @@ class _Fake:
         return dict(self.extra)
 
     def record(self, bench, target):
+        if target.id in self.record_fails:
+            raise UpdaterError("the ledger entry could not be built")
         if self.record_value is None:
             return None
         return dataclasses.replace(self.record_value, key=target.id)
@@ -170,6 +175,48 @@ def test_a_board_that_never_came_back_is_still_recorded(bench, monkeypatch):
     assert "S1" in FlashLog(bench.paths).all()
 
 
+def test_nothing_after_the_copy_can_lose_its_record(bench, monkeypatch):
+    """Nothing which happens after the copy can lose the record, which pins the
+    ordering promised by the agent API."""
+    flasher = _Fake(RECORD)
+    monkeypatch.setitem(flashers.registry._BY_NAME, flasher.name, flasher)
+
+    with pytest.raises(UpdaterError, match="readiness failed"):
+        flashers.write_all(
+            bench,
+            [_target(flasher, "S1")],
+            flashers.PlainContext(lambda *a: None),
+            on_ready=lambda reporter: (_ for _ in ()).throw(
+                UpdaterError("readiness failed")
+            ),
+        )
+
+    assert "S1" in FlashLog(bench.paths).all()
+
+
+def test_a_record_failure_does_not_abort_the_batch(bench, monkeypatch):
+    flasher = _Fake(RECORD, record_fails={"S1"})
+    monkeypatch.setitem(flashers.registry._BY_NAME, flasher.name, flasher)
+    reports: list[tuple[str, str]] = []
+
+    result = flashers.write_all(
+        bench,
+        [_target(flasher, "S1"), _target(flasher, "S2")],
+        flashers.PlainContext(lambda level, message: reports.append((level, message))),
+    )
+
+    assert [item["id"] for item in result["flashed"]] == ["S1", "S2"]
+    assert result["failures"] == []
+    assert reports == [
+        (
+            "warn",
+            "S1: flashed, but its ledger record could not be filed: "
+            "the ledger entry could not be built",
+        )
+    ]
+    assert sorted(FlashLog(bench.paths).all()) == ["S2"]
+
+
 # --- what each flasher describes ----------------------------------------------
 
 
@@ -222,7 +269,7 @@ def test_bootsel_describes_the_cmake_sidecar(bench, paths, cmake_type, tmp_path)
     assert record.bin_sha256 == "built-uf2-sha256"
 
 
-def test_bootsel_has_nothing_to_file_for_a_bare_board(bench, tmp_path):
+def test_bootsel_has_nothing_to_file_for_a_bare_board(bench, cmake_type, tmp_path):
     """First install: the `type` is a chipset string and there may be no serial
     at all, so there is no tracked device to file this under."""
     uf2 = tmp_path / "katapult.uf2"

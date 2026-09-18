@@ -131,18 +131,27 @@ def write_all(
                     # Off the result and onto the ledger: see `Flasher.write`.
                     extra = dict(extra)
                     confidence = extra.pop("confidence", None)
-                    if not bench.settings.dry_run:
-                        record = flasher.record(bench, target)
-                        if record is not None:
-                            FlashLog(bench.paths).record(
-                                record.key,
-                                mcu_type=record.mcu_type,
-                                fw=record.fw,
-                                bin_sha256=record.bin_sha256,
-                                fw_sha=record.fw_sha,
-                                confidence=confidence,
-                                version=record.version,
-                            )
+                    try:
+                        if not bench.settings.dry_run:
+                            record = flasher.record(bench, target)
+                            if record is not None:
+                                FlashLog(bench.paths).record(
+                                    record.key,
+                                    mcu_type=record.mcu_type,
+                                    fw=record.fw,
+                                    bin_sha256=record.bin_sha256,
+                                    fw_sha=record.fw_sha,
+                                    confidence=confidence,
+                                    version=record.version,
+                                )
+                    except OperationCancelled:
+                        raise
+                    except UpdaterError as exc:
+                        ctx.reporter(
+                            "warn",
+                            f"{target.id}: flashed, but its ledger record could not "
+                            f"be filed: {exc}",
+                        )
                     flashed.append({**target.to_json(), **extra})
                     # After the write and after it is recorded: a device that
                     # came back slowly is still flashed. Its own handler, and

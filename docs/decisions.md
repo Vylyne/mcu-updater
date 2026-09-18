@@ -353,6 +353,16 @@ value wins over its flasher's. Do not turn it back into a class-only
 attribute: a board already in BOOTSEL would then stop Klipper for nothing, or a
 helper-requested one would write under a running Klipper.
 
+### A device nothing can write is a failure, not an abort
+
+Spec §8 step 1. `flashers.select_each` turns a `NoFlasherError` into a
+`failures[]` entry with `"flasher": null`, and `write_all` reports it with the
+writes that failed. A single-device RPC raises instead, before a job exists.
+First install asks `[firmware katapult]` the same question and keeps its
+`unsupported_chipset` refusal. The serial `fw.flash` job collects its write's
+exception (`write_all(errors=...)`) and re-raises it, because the job's error
+code was already on the wire.
+
 ### The batch loop is the only writer of the flash ledger
 
 Ruling 12. `Flasher.record` describes what was written; `flashers.batch.
@@ -367,16 +377,6 @@ this tree spell the tree commit differently (`fw_sha`, `sha`) and the flasher
 that wrote the image is the one side that knows which it is reading. What a
 flasher no longer decides is whether the run was a rehearsal, where the ledger
 lives, or whether losing it is worth failing a good write over.
-
-### A device nothing can write is a failure, not an abort
-
-Spec §8 step 1. `flashers.select_each` turns a `NoFlasherError` into a
-`failures[]` entry with `"flasher": null`, and `write_all` reports it with the
-writes that failed. A single-device RPC raises instead, before a job exists.
-First install asks `[firmware katapult]` the same question and keeps its
-`unsupported_chipset` refusal. The serial `fw.flash` job collects its write's
-exception (`write_all(errors=...)`) and re-raises it, because the job's error
-code was already on the wire.
 
 ### Device info is read through the family's helper
 

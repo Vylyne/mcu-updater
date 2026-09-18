@@ -699,9 +699,13 @@ unanswered probe, an identity that came back wrong, or two devices answering to
 one serial are all reported as a readiness warning on the job's log.
 A copy that completed is recorded in `flash.json` the moment the write returns
 — before the readiness wait, before stopped services are restarted, and before
-any later failure is reported. A completed copy is never unrecorded.
-Short of that, a warning never looks like a board that still needs flashing.
-Every refusal above is pre-copy.
+any later failure is reported. Nothing that happens after the copy can lose
+that record. If the record cannot be built because its configuration became
+unreadable between the copy and the ledger entry, the flash still succeeds and
+the job logs a warning. If `flash.json` itself cannot be written, the entry is
+lost silently rather than failing a successful flash. Every refusal above is
+pre-copy; after a copy, readiness problems are warnings and never make the board
+look like it still needs flashing.
 The closed loop is host-test-only so far, not an end-to-end hardware-verified
 claim.
 

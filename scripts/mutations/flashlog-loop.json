@@ -14,13 +14,13 @@
   "mutations": [
     {
       "name": "the loop files what the flasher describes",
-      "find": "                        if record is not None:",
-      "replace": "                        if False:"
+      "find": "                            if record is not None:",
+      "replace": "                            if False:"
     },
     {
       "name": "a rehearsal records nothing",
-      "find": "                    if not bench.settings.dry_run:\n                        record = flasher.record(bench, target)",
-      "replace": "                    if True:\n                        record = flasher.record(bench, target)"
+      "find": "                        if not bench.settings.dry_run:\n                            record = flasher.record(bench, target)",
+      "replace": "                        if True:\n                            record = flasher.record(bench, target)"
     },
     {
       "name": "confidence comes off the result and onto the ledger",

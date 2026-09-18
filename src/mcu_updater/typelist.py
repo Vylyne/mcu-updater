@@ -180,6 +180,61 @@ def read_config(
     return read(doc, families), families
 
 
+def _refuse_family_keys(families: dict[str, firmware.FirmwareFamily], *, path: str) -> None:
+    """Refuse a family with no flashers, or a flasher nothing implements.
+
+    Every family, used by a type or not, and every offender of a kind at once -
+    the rule the builder check follows. A family with no flashers cannot be
+    written by anything, so both are checked here, on the `typelist.load` path
+    every reader shares.
+
+    A misspelt `helper:` is deliberately not checked here. `helpers.for_name`
+    already raises for one, at the point a capability is actually asked for -
+    and a status read reaching that point for one family must still report
+    every other row, not blank the whole panel for a typo on a family it may
+    not even use. There is also deliberately no check for a *missing*
+    `helper:` at all: a family with none is valid for every builder, including
+    `platformio` - `helpers.for_name("")` returns `None`, and every capability
+    accessor answers `None` for it, so "this family has no helper" is already
+    a representable, handled state.
+    """
+    known_flashers = ", ".join(firmware.FLASHERS)
+    no_flashers = [family for family in families.values() if not family.flashers]
+    if no_flashers:
+        listed = "\n".join(
+            f"  [firmware {family.name}] add: flashers: {firmware.suggested_flashers(family)}"
+            for family in no_flashers
+        )
+        raise ConfigCorruptError(
+            f"{path}: a firmware family with no flashers: list. It names the "
+            f"flashers that may write the family, in the order they are tried "
+            f"(known: {known_flashers}):\n{listed}",
+            path=path,
+            family=no_flashers[0].name,
+            key="flashers",
+            families=[family.name for family in no_flashers],
+        )
+    unknown_flashers = {
+        family.name: [name for name in family.flashers if name not in firmware.FLASHERS]
+        for family in families.values()
+    }
+    unknown_flashers = {name: bad for name, bad in unknown_flashers.items() if bad}
+    if unknown_flashers:
+        first = next(iter(unknown_flashers))
+        listed = "\n".join(
+            f"  [firmware {name}] flashers: {', '.join(bad)}"
+            for name, bad in unknown_flashers.items()
+        )
+        raise ConfigCorruptError(
+            f"{path}: a flasher that does not exist (known: {known_flashers}):\n"
+            f"{listed}\nFix the spelling.",
+            path=path,
+            family=first,
+            value=unknown_flashers[first][0],
+            flashers=unknown_flashers,
+        )
+
+
 def validate(
     entries: list[TypeEntry],
     families: dict[str, firmware.FirmwareFamily],
@@ -210,6 +265,7 @@ def validate(
             value=first_builder,
             builders=unknown_builders,
         )
+    _refuse_family_keys(families, path=path)
     known = firmware.names_of(families)
     # Every undeclared family, not just the first: a config with two typos
     # should not take two reloads to fix.

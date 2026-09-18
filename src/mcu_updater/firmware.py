@@ -24,9 +24,12 @@ build from a directory nobody meant. Within a section every key is optional: a
 section with no ``source:`` still means ``~/<name>``. install.sh writes the
 klipper and katapult sections with the paths it finds.
 
-`flashers:` is written for klipper and katapult by install.sh but not read yet:
-until the flash loop reads each family's list, the flasher is still chosen by
-chipset and state.
+`flashers:` is required on every section, and `typelist.validate` refuses a
+missing or misspelt one with the line to fix. `helper:` is optional and, when
+present, must name a registered helper - a family whose hardware carries its
+own identity or needs firmware-specific access names one, and everything else
+does not. An unknown name raises from `helpers.for_name` where a capability is
+asked for, so one typo costs that family rather than the whole config.
 """
 
 from __future__ import annotations
@@ -69,8 +72,8 @@ _SUGGESTED_FLASHERS: dict[str, str] = {
 }
 
 #: Keys install.sh writes into the two sections it seeds, beside `source:`.
-#: Nothing reads `flashers:` yet - the flash loop does, in the next plan. Kept
-#: here so the lines a refusal tells a user to add match what install.sh writes.
+#: `flashers:` is required on every section. Kept here so the lines a refusal
+#: tells a user to add match what install.sh writes.
 SEEDED_KEYS: dict[str, tuple[tuple[str, str], ...]] = {
     "klipper": (("flashers", "flashtool"),),
     "katapult": (("flashers", "dfu_util, bootsel"),),

@@ -301,11 +301,18 @@ Per-type keys:
   names it - not a short form, since expanding one would mean knowing a
   naming convention that belongs to one vendor's `CMakeLists.txt`. A mixed
   RGB/GRB fleet needs two `[type]` sections, since `cmake_target:` is per-type.
+- **`flashers`** - required on every `[firmware ...]`. The flashers that may write
+  this family, tried in order: `flashtool`, `esptool`, `dfu_util`, `bootsel`. A
+  section without one refuses the config with the line to add.
 - **`helper`** - optional on `[firmware ...]`. Names a reviewed, statically
   registered firmware helper; it is not a module path and configuration cannot
   import arbitrary Python. A helper-backed CMake family can use its running
   firmware to enter BOOTSEL and complete a normal `fw.flash`. Roadrunner uses
-  `helper: roadrunner`.
+  `helper: roadrunner`. A misspelt helper raises where a capability is asked
+  for, naming the registered helpers. The key is optional: a family names a
+  helper when its hardware needs firmware-specific access or carries no
+  identity of its own - a BTT KNOMI v2 names `helper: knomi_serial` because its
+  CH340K reports no USB serial - and a board that enumerates by-id names none.
 - **`<fw>_extra_repos`** - one directory per line. Secondary source trees whose
   git SHA is tracked alongside the main tree, so a type is reported stale if
   *either* the main source or one of these has moved - e.g. `flylllplusbuffer`

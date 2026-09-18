@@ -321,3 +321,21 @@ injected sweep. A status path, the CLI or anything else that asks "is this
 board plugged in" reads a row; it does not scan and match on its own. The rule
 is exact serial, exactly one sighting. The by-id chipset segment is not a
 filter: it is the firmware's choice of name, not the board's identity.
+
+### A family declares its flashers and its helper
+
+`flashers:` is required on every `[firmware ...]` section. Neither it nor
+`helper:` is inferred: an inferred flasher list is the chipset-and-state guess
+the one-pipeline design removes. The known names are static tuples in
+`firmware.py` held equal to the registries by tests, so `typelist` never
+imports hardware code.
+
+The two keys are refused in different places, on purpose. A missing or
+misspelt `flashers:` is refused when the config loads, which `fw.status`
+reaches too - so a printer upgrading past this shows a config error naming the
+line to edit instead of a panel, and the hand edit is the migration. A
+misspelt `helper:` raises from `helpers.for_name`, where a capability is
+actually asked for. That difference is the asymmetry it looks like: `flashers:`
+is required of every section, so a config missing it cannot flash anything,
+while `helper:` is optional and a typo in it should cost one family rather
+than every row in the panel.

@@ -309,7 +309,7 @@ def test_declared_families_are_ordered_independently_of_the_file(paths):
 
 
 def test_a_types_families_keep_their_declared_order(paths):
-    _write_firmware(paths, "cartographer", artifact="klipper")
+    _write_firmware(paths, "cartographer", artifact="klipper", flashers="flashtool")
     seed_base_firmwares(paths)
     with open(paths.main_config, "a", encoding="utf-8", newline="\n") as fh:
         fh.write("\n[type probe]\nchipset: stm32g431xx\nfirmware: katapult, cartographer\n")
@@ -320,7 +320,7 @@ def test_a_declared_family_gets_its_own_per_type_keys(paths):
     """`<fw>_extra_args` is derived from the family name, so a new family has
     to be known - and declared on the type - before the registry round-trips
     its keys. A family a type does not declare is not read back on load."""
-    _write_firmware(paths, "cartographer", artifact="klipper")
+    _write_firmware(paths, "cartographer", artifact="klipper", flashers="flashtool")
     seed_base_firmwares(paths)
 
     reg = Registry.load(paths)
@@ -335,7 +335,7 @@ def test_a_declared_family_gets_its_own_per_type_keys(paths):
 
 
 def test_a_declared_family_appears_in_a_types_own_ordering(paths):
-    _write_firmware(paths, "cartographer")
+    _write_firmware(paths, "cartographer", flashers="flashtool")
     seed_base_firmwares(paths)
     reg = Registry.load(paths)
     reg.add_type("carto_v4", "stm32g431xx")
@@ -355,6 +355,7 @@ def test_a_declared_family_builds_from_its_own_tree(paths, settings, fake_root):
         "cartographer",
         source=str(fake_root / "MCU-Firmware---Based-on-Klipper"),
         artifact="klipper",
+        flashers="flashtool",
     )
     seed_base_firmwares(paths)
     reg = Registry.load(paths)
@@ -427,7 +428,7 @@ def test_a_bootloader_is_recorded_explicitly_now(paths):
 
 
 def test_a_declared_application_round_trips(paths):
-    _write_firmware(paths, "cartographer", artifact="klipper")
+    _write_firmware(paths, "cartographer", artifact="klipper", flashers="flashtool")
     seed_base_firmwares(paths)
     reg = Registry.load(paths)
     reg.add_type("carto_v4", "stm32g431xx")
@@ -457,7 +458,7 @@ def test_a_misspelt_family_is_refused_rather_than_defaulted(paths):
 
 
 def test_a_type_lists_only_the_families_it_uses(paths):
-    _write_firmware(paths, "cartographer", artifact="klipper")
+    _write_firmware(paths, "cartographer", artifact="klipper", flashers="flashtool")
     seed_base_firmwares(paths)
     reg = Registry.load(paths)
     reg.add_type("carto_v4", "stm32g431xx")

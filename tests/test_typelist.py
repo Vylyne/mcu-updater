@@ -269,3 +269,79 @@ def test_the_builder_names_are_exactly_the_providers():
     from mcu_updater.providers.registry import PROVIDERS
 
     assert set(firmware.BUILDERS) == {p.name for p in PROVIDERS}
+
+
+def _family_refusal(paths, text: str) -> ConfigCorruptError:
+    write_main_config(paths, text)
+    with pytest.raises(ConfigCorruptError) as exc:
+        typelist.load(paths)
+    return exc.value
+
+
+def test_every_family_without_flashers_is_refused_with_the_line_to_add(paths):
+    """Spec §7: a missing `flashers:` key is a config error naming the key."""
+    error = _family_refusal(
+        paths,
+        "[firmware klipper]\nsource: ~/klipper\n\n"
+        "[firmware katapult]\nsource: ~/katapult\n\n"
+        "[firmware fork]\nsource: ~/fork\n\n"
+        "[firmware boot]\nsource: ~/boot\nbootloader: yes\n\n"
+        "[firmware rr]\nsource: ~/rr\nbuilder: cmake\nflashers:\n\n"
+        "[firmware screen]\nsource: ~/s\nbuilder: platformio\nhelper: knomi_serial\n\n"
+        "[type board]\nchipset: stm32f4\nfirmware: klipper, katapult\n",
+    )
+    message = str(error)
+    assert "no flashers: list" in message
+    assert "[firmware klipper] add: flashers: flashtool" in message
+    assert "[firmware katapult] add: flashers: dfu_util, bootsel" in message
+    assert "[firmware fork] add: flashers: flashtool" in message
+    assert "[firmware boot] add: flashers: dfu_util, bootsel" in message
+    # A bare `flashers:` is explicitly nothing, which cannot write anything.
+    assert "[firmware rr] add: flashers: bootsel" in message
+    assert "[firmware screen] add: flashers: esptool" in message
+    assert error.data["key"] == "flashers"
+    assert error.data["families"] == ["klipper", "katapult", "fork", "boot", "rr", "screen"]
+
+
+def test_an_unknown_flasher_is_refused(paths):
+    error = _family_refusal(
+        paths,
+        "[firmware klipper]\nsource: ~/klipper\nflashers: flashtoool, esptool\n\n"
+        "[type board]\nchipset: stm32f4\nfirmware: klipper\n",
+    )
+    message = str(error)
+    assert "[firmware klipper] flashers: flashtoool" in message
+    assert "known: bootsel, dfu_util, esptool, flashtool" in message
+    assert error.data["flashers"] == {"klipper": ["flashtoool"]}
+
+
+def test_a_platformio_family_needs_no_helper(paths):
+    """Spec section 3: by-id is the default for every provider, PlatformIO
+    included. The KNOMI names a helper because its CH340K reports no USB
+    serial - an exception belonging to that hardware, not to the builder. An
+    ESP32 that enumerates with a real serial is an ordinary by-id device, and
+    refusing it here would make the KNOMI's defect a schema rule."""
+    write_main_config(
+        paths,
+        "[firmware screen]\nsource: ~/s\nbuilder: platformio\nflashers: esptool\n\n"
+        "[type knomi]\nchipset: esp32\nfirmware: screen\nplatformio_env: e\n",
+    )
+
+    assert [entry.name for entry in typelist.load(paths)] == ["knomi"]
+
+
+def test_a_family_with_both_keys_loads(paths):
+    write_main_config(
+        paths,
+        "[firmware klipper]\nsource: ~/klipper\nflashers: flashtool\n\n"
+        "[firmware screen]\nsource: ~/s\nbuilder: platformio\nflashers: esptool\nhelper: knomi_serial\n\n"
+        "[type board]\nchipset: stm32f4\nfirmware: klipper\n",
+    )
+    assert [entry.name for entry in typelist.load(paths)] == ["board"]
+
+
+def test_flashers_keep_their_declared_order(paths):
+    from mcu_updater import firmware
+
+    write_main_config(paths, "[firmware katapult]\nsource: ~/k\nflashers: bootsel dfu_util\n")
+    assert firmware.load(paths)["katapult"].flashers == ("bootsel", "dfu_util")

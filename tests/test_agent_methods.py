@@ -574,7 +574,7 @@ def test_serial_add_reports_the_serial_it_actually_tracked(api, monkeypatch):
     monkeypatch.setattr(
         tracking_mod,
         "add_serial",
-        lambda paths, name, serial: tracking_mod.Tracked(
+        lambda paths, name, serial, *, may_provision=True: tracking_mod.Tracked(
             added=True, chipset="rp2040", serial="RR-NEW", provisioned_from=serial
         ),
     )
@@ -594,7 +594,7 @@ def test_serial_add_omits_prior_serial_when_nothing_moved(api, monkeypatch):
     monkeypatch.setattr(
         tracking_mod,
         "add_serial",
-        lambda paths, name, serial: tracking_mod.Tracked(
+        lambda paths, name, serial, *, may_provision=True: tracking_mod.Tracked(
             added=True, chipset="stm32g0b1xx", serial=serial
         ),
     )
@@ -602,6 +602,57 @@ def test_serial_add_omits_prior_serial_when_nothing_moved(api, monkeypatch):
     result = api.dispatch("fw.serial.add", {"name": "board", "serial": "AAAA-if00"})
 
     assert "prior_serial" not in result
+
+
+def test_serial_add_withholds_provisioning_from_a_runner_less_agent(api, monkeypatch):
+    """Fix 2 / the coordinator's ruling: `fw.serial.add` performs the same
+    irreversible hardware write `fw.roadrunner.provision` does, so a
+    deployment `available_methods` already withholds that method from must
+    not still reach the write through ordinary tracking. This `api` fixture
+    has no job runner - the same state
+    `test_a_runnerless_agent_does_not_advertise_job_methods` pins - so the
+    write is refused even though a real provisioner exists for the type."""
+    from mcu_updater.helpers import registry as helpers_registry
+
+    class _FakeRoadrunner:
+        name = "roadrunner"
+        label = "Roadrunner"
+
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        def is_unprovisioned(self, serial: str) -> bool:
+            return serial.startswith("RR-UNPROVISIONED-")
+
+        def provision(self, paths, serial: str) -> str:
+            self.calls.append(serial)
+            return "RR-SHOULD-NEVER-HAPPEN"
+
+    helper = _FakeRoadrunner()
+    monkeypatch.setitem(helpers_registry._BY_NAME, "roadrunner", helper)
+    with open(api.paths.main_config, "a", encoding="utf-8") as fh:
+        fh.write(
+            "\n[firmware roadrunner]\n"
+            "source: ~/roadrunner\n"
+            "builder: cmake\n"
+            "flashers: bootsel\n"
+            "helper: roadrunner\n"
+            "\n[type roadrunner]\n"
+            "firmware: roadrunner\n"
+            "cmake_target: roadrunner_v1_i2c_rgb\n"
+            "chipset: rp2040\n"
+        )
+
+    assert api.runner is None  # the precondition this test pins
+
+    with pytest.raises(RpcError) as exc:
+        api.dispatch(
+            "fw.serial.add",
+            {"name": "roadrunner", "serial": "RR-UNPROVISIONED-50543165187A4D1C"},
+        )
+
+    assert exc.value.data["code"] == "roadrunner_unprovisioned"
+    assert helper.calls == [], "withheld, not attempted and then queued"
 
 
 def test_serial_add_refuses_a_serial_tracked_under_another_type(api, fake_root):

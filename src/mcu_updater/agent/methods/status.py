@@ -1915,17 +1915,31 @@ class StatusMixin(_Base):
         "fw.roadrunner.clear",
     )
 
+    def _hardware_writes_allowed(self) -> bool:
+        """Whether this deployment may perform an irreversible write to a board.
+
+        The exact test `available_methods` applies to decide whether
+        `HARDWARE_METHODS` is advertised - shared here, rather than
+        re-derived, so `fw.serial.add`'s provisioning branch (Task 6; the same
+        write, reached from ordinary tracking instead of a dedicated
+        maintenance call) cannot drift from what the capabilities list
+        already promises a read-only or flashing-disabled deployment.
+        """
+        return self.runner is not None and self.settings().enable_flashing
+
     def available_methods(self) -> dict[str, str]:
         out = dict(self.METHODS)
         if self.runner is None:
             for name in self.JOB_METHODS:
                 out.pop(name, None)
-            for name in self.HARDWARE_METHODS:
-                out.pop(name, None)
+            if not self._hardware_writes_allowed():
+                for name in self.HARDWARE_METHODS:
+                    out.pop(name, None)
             return out
         if not self.settings().enable_flashing:
             for name in self.FLASH_METHODS:
                 out.pop(name, None)
+        if not self._hardware_writes_allowed():
             for name in self.HARDWARE_METHODS:
                 out.pop(name, None)
         return out

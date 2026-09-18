@@ -233,6 +233,15 @@ class RegistryMixin(_Base):
         firmware family can recognise as an unprovisioned board's diagnostic
         identity is provisioned first, and the resulting serial is what gets
         tracked. That does touch the board. `prior_serial` says so.
+
+        That write is gated the same way `fw.roadrunner.provision` is
+        (`_hardware_writes_allowed`) even though this method itself sits in
+        the ungated `METHODS` table: a read-only or flashing-disabled
+        deployment must not perform an irreversible hardware write just
+        because it arrived through ordinary tracking instead of the
+        dedicated maintenance call. Withheld, it refuses with the same
+        `UnprovisionedSerialError` / `roadrunner_unprovisioned` a family with
+        no provisioner at all would raise - not a new code.
         """
         name = self._require_str(args, "name")
         serial = self._require_str(args, "serial")
@@ -257,7 +266,9 @@ class RegistryMixin(_Base):
             )
 
         try:
-            tracked = tracking.add_serial(self.paths, name, serial)
+            tracked = tracking.add_serial(
+                self.paths, name, serial, may_provision=self._hardware_writes_allowed()
+            )
         except UnprovisionedSerialError as exc:
             # Same code and message shape this raised before the refusal moved
             # into `tracking.add_serial` so the CLI could share it - the wire

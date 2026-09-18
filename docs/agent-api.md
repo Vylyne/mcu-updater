@@ -133,7 +133,7 @@ application error (see `data.code`), `-32603` internal.
 | `fw.artifacts` | `name` (required) | `{<fw>: Artifact, ...}`, one key per family the type declares |
 | `fw.settings.get` | — | `{settings: Settings}` |
 | `fw.settings.set` | `settings` (required, non-empty) | `{settings: Settings, changed: [key]}` — only the `SETTABLE` keys |
-| `fw.serial.add` | `name`, `serial` (required) | `{name, serial, added, chipset, prior_serial?}` — track a bus device under any declared type; its provider still owns builds |
+| `fw.serial.add` | `name`, `serial` (required) | `{name, serial, added, chipset, prior_serial?}` — track a bus device under any declared type; its provider still owns builds. Always dispatched, but its provisioning branch (see `fw.roadrunner.provision` below) is gated exactly like that call, even though this method itself is not **off by default** |
 | `fw.serial.remove` | `name`, `serial` (required) | `{name, serial, removed}` — untrack a serial from a type; non-destructive, keeps its firmware and saved config |
 | `fw.canbus.add` | `name`, `uuid` (required) | `{name, uuid, added, chipset}` — track a CAN-addressed board under any declared type; parallel to `fw.serial.add`, not an overload of it |
 | `fw.canbus.remove` | `name`, `uuid` (required) | `{name, uuid, removed}` — untrack a CAN uuid from a type; non-destructive, same as `fw.serial.remove` |
@@ -186,7 +186,11 @@ or a different device now sitting on that port - and its `data` carries
 was ever seen again.
 
 A related code, `roadrunner_unprovisioned`, is not raised by either of these
-two methods. `fw.serial.add` (see the "Methods" table above) provisions an
+two methods. `fw.serial.add` (see the "Methods" table above) can also raise
+`config_corrupt`: a `helper:` name declared in `[firmware ...]` but not
+registered is refused loudly, by name, rather than silently treated as "no
+provisioning capability" - the same misconfiguration `fw.type.add`/`update`
+already refuse with that code elsewhere. `fw.serial.add` provisions an
 `RR-UNPROVISIONED-<flash-id>` serial itself when the requested type's firmware
 family can - the same op-locked write as `fw.roadrunner.provision`, reached
 from ordinary tracking instead of a separate maintenance call - and tracks the
@@ -208,7 +212,19 @@ Provisioning holds the operation lock. A lock held elsewhere refuses with
 writes to hardware. A family with no provisioning capability still refuses an
 unprovisioned serial with `roadrunner_unprovisioned`.
 
-Neither call is ever triggered automatically - `fw.bus.scan`/`fw.status`
+Because that write is irreversible in exactly the same way
+`fw.roadrunner.provision` is, `fw.serial.add` withholds it under the same
+gate: a read-only agent (no job runner) or one with `enable_flashing` off
+refuses with `roadrunner_unprovisioned` rather than performing it, even
+though `fw.serial.add` itself is not **off by default** and stays dispatched
+for every other request. If tracking then fails *after* a successful
+provision - a config write racing the lock, for instance - the raised error
+keeps its own type and code but has its `message` rewritten to name the new
+serial, and carries it again under `data.provisioned_serial`, so a caller
+does not lose track of a board that already changed identity.
+
+Neither `fw.roadrunner.provision` nor `fw.roadrunner.clear` is ever triggered
+automatically - `fw.bus.scan`/`fw.status`
 identify a Roadrunner from its ordinary `BusDevice` fields alone (its
 `usb-Vylyne_Roadrunner_...-if00` descriptor gives `fw: "Vylyne"`,
 `chipset: "Roadrunner"`, and its serial already carries the

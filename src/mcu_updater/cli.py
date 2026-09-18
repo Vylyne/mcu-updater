@@ -925,11 +925,18 @@ def flash_fw_cmd(args: argparse.Namespace) -> None:
             # registry claiming its build. The flash below reads the registry
             # afresh, so the stale `reg` is not consulted again.
             tracked = tracking.add_serial(c.paths, args.type, args.serial)
+            if tracked.provisioned_from is not None:
+                print(f"Provisioned {tracked.provisioned_from} as {tracked.serial}")
             if tracked.added:
                 print(f"Added serial {tracked.serial} to {args.type}")
             else:
                 print(f"Serial {tracked.serial} is already tracked under {args.type}")
             mcu_type = args.type
+            # Provisioning renames the board (its diagnostic identity is never
+            # tracked - see `tracking.add_serial`), so every use of the serial
+            # below - the flash targets and the lock label - must follow that
+            # rename rather than keep flashing a serial the board no longer has.
+            args.serial = tracked.serial
     else:
         mcu_type = reg.resolve_declared_serial(args.serial)
         owner = providers.provider_of(c.paths, mcu_type)
@@ -1107,6 +1114,8 @@ def add_mcu(args: argparse.Namespace) -> None:
                 print(f"ERROR: {exc}", file=sys.stderr)
                 refused = True
                 continue
+            if tracked.provisioned_from is not None:
+                print(f"Provisioned {tracked.provisioned_from} as {tracked.serial}")
             if tracked.added:
                 print(f"Added serial {tracked.serial} to {args.type}")
     if refused:

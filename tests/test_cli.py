@@ -29,6 +29,7 @@ from mcu_updater.errors import (
     BusyError,
     NoFlasherError,
     SerialTrackedElsewhereError,
+    UnprovisionedSerialError,
     UpdaterError,
 )
 from mcu_updater.lock import ExclusiveLock
@@ -883,6 +884,21 @@ def test_add_serial_provisions_an_unprovisioned_roadrunner_then_tracks_it(
     assert "Added serial RR-NEW to roadrunner" in out
 
 
+def test_add_serial_refuses_an_unprovisioned_serial_with_no_provisioner(c):
+    """Review finding I3: the old refusal, unmocked. `_declare_roadrunner`
+    writes no `helper:` line at all, so `tracking.add_serial` has nothing
+    that can provision - "provision it first" is still the only useful
+    thing to say, and nothing about the CLI path changes that."""
+    _declare_roadrunner(c.paths, "RR-ONE")
+
+    with pytest.raises(UnprovisionedSerialError):
+        cli.add_serial(
+            argparse.Namespace(type="roadrunner", serial="RR-UNPROVISIONED-50543165187A4D1C")
+        )
+
+    assert Registry.load(c.paths).declared_serials("roadrunner") == ["RR-ONE"]
+
+
 def test_remove_serial_untracks_a_board_under_a_cmake_type(c):
     _declare_roadrunner(c.paths, "RR-ONE")
     cli.remove_serial(argparse.Namespace(type="roadrunner", serial="RR-ONE"))
@@ -980,10 +996,22 @@ def test_flash_refuses_a_serial_tracked_elsewhere_with_a_message(
 
 
 def test_the_flash_prompt_refuses_an_unprovisioned_roadrunner_serial(
-    c, fake_root, cmake_flashable, captured, monkeypatch, capsys
+    c, fake_root, captured, monkeypatch, capsys
 ):
     """`add_declared_serial` has no idea what an unprovisioned serial is, so
-    answering "y" persisted the RP2040's flash UID."""
+    answering "y" persisted the RP2040's flash UID.
+
+    Built with `helper=False` directly, not the `cmake_flashable` fixture
+    (which defaults to a real helper): with a provisioner in play this would
+    have exercised the tripwire this test is meant to catch - a fake config
+    with no `helper:` line reaches `tracking.add_serial`'s "no provisioner"
+    branch, which is what "provision it first" tests here. The message
+    check is narrowed to a substring unique to that refusal:
+    "unprovisioned Roadrunner" alone is also present in
+    `find_untracked`'s "no confirmed unprovisioned Roadrunner matched that
+    serial", so it could pass while `add_declared_serial` had already been
+    called."""
+    _cmake_flashable(c, fake_root, helper=False)
     monkeypatch.setattr(cli, "_confirm", lambda prompt: True)
 
     code = _main(
@@ -992,9 +1020,64 @@ def test_the_flash_prompt_refuses_an_unprovisioned_roadrunner_serial(
 
     err = capsys.readouterr().err
     assert code == 1
-    assert err.startswith("ERROR: ") and "unprovisioned Roadrunner" in err
+    assert err.startswith("ERROR: ") and "provision it first" in err
     assert UNPROVISIONED not in Registry.load(c.paths).declared_serials("roadrunner")
     assert captured == []
+
+
+def test_the_flash_prompt_provisions_an_unprovisioned_roadrunner_then_flashes_it(
+    c, fake_root, monkeypatch, capsys
+):
+    """Fix 3: with a real provisioner in play, the flash prompt provisions the
+    board, tracks the serial provisioning returned (not the diagnostic
+    identity it was asked about), and flashes *that* serial - not the stale
+    one it started with.
+
+    `_cmake_targets` is spied on rather than driven to a real write: routing
+    a fake helper through the bootsel flasher's own device-presence check is
+    a different test than this one, which is only about which serial reaches
+    the targets call.
+    """
+    from mcu_updater.helpers import registry as helpers_registry
+
+    class _FakeRoadrunner:
+        name = "roadrunner"
+        label = "Roadrunner"
+
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        def is_unprovisioned(self, serial: str) -> bool:
+            return serial.startswith("RR-UNPROVISIONED-")
+
+        def provision(self, paths, serial: str) -> str:
+            self.calls.append(serial)
+            return RR_SERIAL
+
+    helper = _FakeRoadrunner()
+    monkeypatch.setitem(helpers_registry._BY_NAME, "roadrunner", helper)
+    _cmake_flashable(c, fake_root, helper=True, staged=True)
+    # `_cmake_flashable` already tracks `RR_SERIAL`; provisioning must not be
+    # refused as "tracked elsewhere" by the serial it is about to become.
+    monkeypatch.setattr(cli, "_confirm", lambda prompt: True)
+
+    targeted: list[str] = []
+
+    def spy_cmake_targets(c, mcu_type, serial):
+        targeted.append(serial)
+        return []
+
+    monkeypatch.setattr(cli, "_cmake_targets", spy_cmake_targets)
+
+    code = _main(
+        fake_root, monkeypatch, ["flash", "-t", "roadrunner", "-s", UNPROVISIONED, "-y"]
+    )
+
+    captured_io = capsys.readouterr()
+    assert helper.calls == [UNPROVISIONED]
+    assert f"Provisioned {UNPROVISIONED} as {RR_SERIAL}" in captured_io.out
+    assert targeted == [RR_SERIAL], "targeted the tracked serial, not the stale one"
+    assert code == 0, f"STDOUT={captured_io.out!r} STDERR={captured_io.err!r}"
 
 
 def _adopting(monkeypatch, *serials: str) -> None:

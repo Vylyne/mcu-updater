@@ -404,3 +404,30 @@ The old refusal is kept for a family with no provisioner, because there
 "provision it first" is still the only useful thing to say. A held lock
 refuses rather than waits: the write is irreversible, and a caller queued
 behind a flash would perform it at a moment nobody chose.
+
+### The provisioning gate lives on the branch, not the method
+
+`fw.serial.add` performs the same irreversible hardware write
+`fw.roadrunner.provision` does whenever the type it is asked to track under
+has an unprovisioned board and a family that can provision it - reached from
+ordinary tracking rather than the dedicated maintenance call. Left alone,
+that write would sit in the ungated `METHODS` table: a read-only agent, or
+one with `enable_flashing` off, already cannot reach `fw.roadrunner.provision`
+for exactly this reason, and would otherwise reach the identical write through
+`fw.serial.add` regardless.
+
+`fw.serial.add` is not moved into `HARDWARE_METHODS`, and is not itself
+withheld: every other outcome it can produce - tracking a serial that needs no
+provisioning, refusing one already tracked elsewhere - has nothing to do with
+hardware and must keep working under any deployment. Instead
+`tracking.add_serial` takes a `may_provision` keyword the caller answers for
+itself, and the agent passes `_hardware_writes_allowed()` - the same
+expression `available_methods` already uses to decide whether
+`HARDWARE_METHODS` is advertised, shared rather than re-derived so the two
+cannot drift. Withheld, the write refuses with the pre-Task-6 code,
+`roadrunner_unprovisioned`, exactly as a family with no provisioner would -
+not a new code for what is, from the caller's side, the same "I can't do
+that here" answer. The CLI passes no such gate and provisions unconditionally
+by default: `enable_flashing` is documented as an agent-only safety gate the
+CLI has always ignored (`Settings.enable_flashing`), and grepping `cli.py`
+confirms it never consults it anywhere today.

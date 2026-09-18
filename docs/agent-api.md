@@ -668,6 +668,7 @@ real explanation instead of a job that dies a second later. In order:
 | serial resolves to a type | `unknown_serial` / `ambiguous_serial` / `serial_tracked_elsewhere` |
 | firmware has been built | `no_artifact` |
 | board is on the bus | `device_not_found` |
+| the family's `flashers:` can write it | `no_flasher` |
 | printer idle | `print_in_progress` (bypass with `force: true`) |
 
 A failed write fails the job with the write's own error (`offset_mismatch`,

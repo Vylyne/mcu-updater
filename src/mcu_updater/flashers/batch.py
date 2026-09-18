@@ -148,9 +148,10 @@ def write_all(
     ctx.step(f"Flashed {len(flashed)} of {total}", total, total)
 
     if on_ready is not None and targets:
-        # Nothing written means nothing was stopped; otherwise services_stopped
-        # has started every unit again by now; confirm klipper
-        # really came back, which is the release gate for every flashing path.
+        # Skip readiness only when no target was attempted; attempted targets may
+        # still have stopped nothing when every target was in the free group.
+        # Confirm Klipper really came back, which is the release gate for every
+        # flashing path.
         ctx.reporter("info", "Waiting for Klipper to be ready...")
         on_ready(ctx.reporter)
     return {"flashed": flashed, "failures": failures}

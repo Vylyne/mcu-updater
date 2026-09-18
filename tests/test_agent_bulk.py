@@ -662,6 +662,7 @@ def test_a_board_its_family_cannot_write_is_a_failure_not_an_abort(
     assert bulk.runner.wait(timeout=60)
 
     job = bulk.runner.get(res["job_id"])
+    assert job.params["count"] == len(res["boards"])
     assert job.state == "succeeded", job.error
     assert job.result["flashed"] == []
     [failure] = job.result["failures"]

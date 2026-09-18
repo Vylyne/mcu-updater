@@ -589,7 +589,7 @@ class BulkMixin(_Base):
 
         job = runner.submit(
             "flash_all",
-            {"scope": scope, "name": only, "count": len(targets)},
+            {"scope": scope, "name": only, "count": len(targets) + len(refused)},
             run,
         )
         return {

@@ -51,6 +51,23 @@ DEFAULT_BUILDER = "kconfig_make"
 #: holds the two equal, so a new provider cannot be added without this line.
 BUILDERS: tuple[str, ...] = ("cmake", "kconfig_make", "platformio")
 
+#: Every name a `flashers:` list may use - `flashers.registry`'s names, spelled
+#: out here because that package imports hardware code this module must not. A
+#: test holds the two equal.
+FLASHERS: tuple[str, ...] = ("bootsel", "dfu_util", "esptool", "flashtool")
+
+#: Every `helper:` value a registered helper answers to - `helpers.registry`'s
+#: names, for the same reason. A test holds the two equal.
+HELPERS: tuple[str, ...] = ("knomi_serial", "roadrunner")
+
+#: The `flashers:` line a refusal suggests, by what builds the family. A
+#: suggestion for a message only: selection reads the family's own list.
+_SUGGESTED_FLASHERS: dict[str, str] = {
+    "cmake": "bootsel",
+    "kconfig_make": "flashtool",
+    "platformio": "esptool",
+}
+
 #: Keys install.sh writes into the two sections it seeds, beside `source:`.
 #: Nothing reads `flashers:` yet - the flash loop does, in the next plan. Kept
 #: here so the lines a refusal tells a user to add match what install.sh writes.
@@ -96,6 +113,10 @@ class FirmwareFamily:
     cmake_args: str = ""
     #: Firmware-specific helper capability. Empty means this family has none.
     helper: str = ""
+    #: The flashers that may write this family, in the order they are tried.
+    #: Required: `typelist.validate` refuses a section without one. The first
+    #: whose `supports()` accepts a device writes it.
+    flashers: tuple[str, ...] = ()
     #: Sync this tree's git submodules before building it. Opt-in, and off
     #: everywhere it is not written, because it is not free: `git submodule
     #: update --init --recursive` resets an *already* initialized submodule
@@ -168,6 +189,7 @@ def load_from_doc(doc: CfgDocument) -> dict[str, FirmwareFamily]:
             builder=(doc.get(section, "builder") or "").strip() or DEFAULT_BUILDER,
             cmake_args=(doc.get(section, "cmake_args") or "").strip(),
             helper=(doc.get(section, "helper") or "").strip(),
+            flashers=tuple(doc.get_csv(section, "flashers") or ()),
             submodules=bool(parse_bool(doc.get(section, "submodules"), False)),
             # Absent means "whatever this name defaults to" - True only for
             # katapult - not a blanket False, so overriding one key on an
@@ -205,6 +227,20 @@ def names(paths: Paths, families: dict[str, FirmwareFamily] | None = None) -> tu
 def names_of(families: dict[str, FirmwareFamily]) -> tuple[str, ...]:
     """`names()` for a caller that already has the parsed sections."""
     return tuple(sorted(families))
+
+
+def suggested_flashers(family: FirmwareFamily) -> str:
+    """The `flashers:` value to suggest for a family that has none.
+
+    What install.sh seeds for the two sections it writes, otherwise what a
+    family of this kind is normally written with.
+    """
+    seeded = dict(SEEDED_KEYS.get(family.name, ())).get("flashers")
+    if seeded:
+        return seeded
+    if family.bootloader:
+        return "dfu_util, bootsel"
+    return _SUGGESTED_FLASHERS.get(family.builder, "flashtool")
 
 
 #: Where to look next, whichever families are missing - said once per message.

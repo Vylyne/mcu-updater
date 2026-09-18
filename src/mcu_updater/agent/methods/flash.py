@@ -203,7 +203,7 @@ class FlashMixin(_Base):
         target_type = cmake_mod.load(self.paths)[mcu_type]
         families = firmware.load(self.paths)
         family = firmware.resolve(self.paths, target_type.firmware, families)
-        helper = helpers.for_name(family.helper, family=family.name)
+        helper = helpers.bootsel_requester(helpers.for_name(family.helper, family=family.name))
         if helper is None:
             raise FlashError(
                 f"CMake type '{mcu_type}' has no firmware helper configured.",

@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from ..flashers.spec import Bench
@@ -16,6 +16,19 @@ class BootselHandoff:
     topology: str
 
 
+@runtime_checkable
+class Helper(Protocol):
+    """A registered firmware helper.
+
+    What a helper can do is the capability Protocols below, each asked for
+    through its accessor in `helpers` (`helpers.bootsel_requester(helper)`).
+    Nothing compares a helper's `name` to decide what to do with it.
+    """
+
+    name: str
+
+
+@runtime_checkable
 class BootselRequester(Protocol):
     """Firmware-specific BOOTSEL entry and post-write readiness."""
 

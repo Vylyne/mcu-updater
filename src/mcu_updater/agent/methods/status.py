@@ -1081,7 +1081,7 @@ class StatusMixin(_Base):
         # this type, so it is reported on this type's row.
         helper_problem: str | None = None
         try:
-            helper = helpers.for_name(family.helper, family=family.name)
+            helper = helpers.bootsel_requester(helpers.for_name(family.helper, family=family.name))
         except ConfigCorruptError as exc:
             helper = None
             helper_problem = str(exc)

@@ -620,7 +620,7 @@ def _cmake_targets(c: Context, mcu_type: str, serial: str) -> list:
         raise UpdaterError(f"CMake type '{mcu_type}' is no longer configured.")
     families = firmware.load(c.paths)
     family = firmware.resolve(c.paths, target_type.firmware, families)
-    helper = helpers.for_name(family.helper, family=family.name)
+    helper = helpers.bootsel_requester(helpers.for_name(family.helper, family=family.name))
     if helper is None:
         raise UpdaterError(
             f"CMake type '{mcu_type}' has no firmware helper configured, so "

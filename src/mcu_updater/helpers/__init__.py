@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from .spec import BootselHandoff, BootselRequester, Helper
+from .spec import BootselHandoff, BootselRequester, DeviceInfoReader, Helper, ImageReporter
 
 
 def for_name(name: str, *, family: str) -> Helper | None:
@@ -17,4 +17,24 @@ def bootsel_requester(helper: Helper | None) -> BootselRequester | None:
     return helper if isinstance(helper, BootselRequester) else None
 
 
-__all__ = ["BootselHandoff", "BootselRequester", "Helper", "bootsel_requester", "for_name"]
+def device_info_reader(helper: Helper | None) -> DeviceInfoReader | None:
+    """The helper's device-info reader, or None when it has none."""
+    return helper if isinstance(helper, DeviceInfoReader) else None
+
+
+def image_reporter(helper: Helper | None) -> ImageReporter | None:
+    """The helper's image reporter, or None when it has none."""
+    return helper if isinstance(helper, ImageReporter) else None
+
+
+__all__ = [
+    "BootselHandoff",
+    "BootselRequester",
+    "DeviceInfoReader",
+    "Helper",
+    "ImageReporter",
+    "bootsel_requester",
+    "device_info_reader",
+    "for_name",
+    "image_reporter",
+]

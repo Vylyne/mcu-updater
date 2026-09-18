@@ -22,8 +22,9 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Protocol
 
-from ... import flashers
+from ... import device_info, flashers
 from ...config import Registry
+from ...helpers import DeviceInfoReader
 from ...jobs import JobRunner
 from ...paths import Paths
 from ...settings import Settings
@@ -72,6 +73,8 @@ class _Api(Protocol):
         state: str | None = None,
         artifact_sha: str | None = None,
         flashlog: Any | None = None,
+        built_version: str | None = None,
+        reader: DeviceInfoReader = device_info.KLIPPER,
     ) -> dict[str, Any]: ...
     @staticmethod
     def _platformio_device_status(screen: dict[str, Any]) -> DeviceStatus: ...

@@ -1,12 +1,15 @@
 """KNOMI screens running knomi-serial.
 
-Only a name for now. Its capabilities arrive with the handlers that use them:
-device info in Task 2 of the one-pipeline plan, identity in Task 10. It is
-registered first so a `platformio` family can declare it and have that
-declaration checked when the config loads.
+Reads device info through `providers.pio`, the same regex the display's own
+staleness check uses - see `test_the_knomi_reader_is_the_platformio_one` for
+why the two must not disagree. Identity arrives in Task 10. It is registered
+first so a `platformio` family can declare it and have that declaration
+checked when the config loads.
 """
 
 from __future__ import annotations
+
+from ..providers import pio
 
 
 class KnomiSerialHelper:
@@ -21,6 +24,13 @@ class KnomiSerialHelper:
     """
 
     name: str = "knomi_serial"
+    klipper_prefix: str = "knomi_serial"
+
+    def running_sha(self, version: str | None) -> str | None:
+        return pio.running_sha(version)
+
+    def is_dirty(self, version: str | None) -> bool:
+        return pio.is_dirty(version)
 
 
 __all__ = ["KnomiSerialHelper"]

@@ -84,7 +84,7 @@
     {
       "name": "a record the screen disagrees with is discarded",
       "file": "src/mcu_updater/agent/methods/status.py",
-      "find": "        record = flashlog.entry_for(\n            display_key(ident), pio_mod.running_sha(entry.get(\"firmware_version\"))\n        )",
+      "find": "        record = flashlog.entry_for(\n            display_key(ident), reader.running_sha(entry.get(\"firmware_version\"))\n        )",
       "replace": "        record = flashlog.entry_for(display_key(ident), None)"
     },
     {

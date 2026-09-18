@@ -36,7 +36,7 @@ import shutil
 import threading
 import time
 
-from .. import firmware, typelist
+from .. import device_info, firmware, typelist
 from ..build import Reporter, null_reporter, run_streamed, sha256_file
 from ..discovery.knomi_serial import DEVICE_MAP_VERSION as DEVICE_MAP_VERSION
 from ..discovery.knomi_serial import WatcherDevice as WatcherDevice
@@ -94,9 +94,9 @@ class PioType:
     #: the `fw` axis providers.select() filters on.
     firmware: str = ""
     #: The Klipper section prefix whose entries are displays of this type.
-    #: `[knomi_serial T0_knomi]` -> `knomi_serial`. Fixed, not read from config:
-    #: the klippy module a firmware registers is a property of that module, not
-    #: a per-type choice - see `typelist.REMOVED_KEYS`.
+    #: `[knomi_serial T0_knomi]` -> `knomi_serial`. Set by `load()` from the
+    #: family helper's reader; never read from a `[type]` - see
+    #: `typelist.REMOVED_KEYS`.
     klipper_section: str = "knomi_serial"
     #: Units to stop before a write to this type, overriding `[firmware ...]`
     #: and `[updater]`. `None` means this type said nothing at the new key -
@@ -185,6 +185,7 @@ def load(paths: Paths) -> dict[str, PioType]:
             env=env,
             source=source,
             firmware=first_fw,
+            klipper_section=device_info.reader_for(family).klipper_prefix,
             stop_services=stop_services,
             device_map=(
                 "knomi/devices.json" if device_map is None else device_map
@@ -294,6 +295,11 @@ def running_sha(running: str | None) -> str | None:
     return match.group(1) if match else None
 
 
+def is_dirty(running: str | None) -> bool:
+    """Whether what a screen reports running was built from uncommitted changes."""
+    return bool(_FW_DIRTY_RE.search(running or ""))
+
+
 def device_status(running: str | None, state: SourceState) -> DeviceStatus:
     """Compare what a screen reports running against what the tree would build.
 
@@ -308,7 +314,7 @@ def device_status(running: str | None, state: SourceState) -> DeviceStatus:
     if not running or state.head is None:
         return DeviceStatus(UNKNOWN_VERSION)
 
-    if _FW_DIRTY_RE.search(running):
+    if is_dirty(running):
         # Built from uncommitted changes. The sha may well match HEAD, but the
         # working tree it was built from is not recoverable, so "current" is
         # unprovable rather than merely unknown - and it is not evidence of

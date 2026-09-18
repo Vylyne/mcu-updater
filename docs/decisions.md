@@ -56,14 +56,14 @@ suppressed, because it must not read as out of date.
 Cartographer's fork patches Klipper's `buildcommands.py` to stamp
 `CONFIG_VERSION` (a literal from the `.config`) instead of `build_version()`'s
 git describe. The describe is still computed, just discarded — so `mcu_version`
-carries no commit at all, and `_running_sha` (`agent/methods/status.py`)
-correctly returns `None`.
+carries no commit at all, and `CartographerHelper.running_sha()`
+(`helpers/cartographer.py`) correctly returns `None`.
 
 Since `read_config_version()` returns the string verbatim, appending the fork's
-HEAD before `make` — `CARTOGRAPHER 6.2.0-gd34db33` — would work: `_FW_SHA_RE`
-would match it and the whole existing sha-comparison path would run unchanged.
-Rejected anyway, because the cost lands on things that matter more than the
-convenience:
+HEAD before `make` — `CARTOGRAPHER 6.2.0-gd34db33` — would work:
+`device_info.KLIPPER`'s sha regex would match it and the whole existing
+sha-comparison path would run unchanged. Rejected anyway, because the cost
+lands on things that matter more than the convenience:
 
 - A synthesized value in the saved `.config` differs from the vendor seed, so
   `profiles.status` reports `customised` permanently — destroying the one
@@ -339,3 +339,16 @@ actually asked for. That difference is the asymmetry it looks like: `flashers:`
 is required of every section, so a config missing it cannot flash anything,
 while `helper:` is optional and a typo in it should cost one family rather
 than every row in the panel.
+
+### Device info is read through the family's helper
+
+What a board is running - its commit, whether it was dirty, its image digest -
+is read by the handler its family's helper supplies (`helpers.DeviceInfoReader`,
+`helpers.ImageReporter`), and by `device_info.KLIPPER` for a family with none.
+There used to be a sha regex in `status.py` for boards and another in `pio.py`
+for screens, and a Roadrunner's describe went through whichever the caller
+reached for. One reader per firmware means one answer per board. Cartographer
+has a helper for exactly one reason: to say its version has no sha, rather
+than leave that to a regex that happens not to match. A Roadrunner reports the
+same device info on usbserial, i2c and uart; a field firmware does not report
+is absence, never mismatch, whatever the transport.

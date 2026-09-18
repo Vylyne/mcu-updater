@@ -1482,24 +1482,6 @@ def test_klipper_and_katapult_are_configured_independently(kapi):
 # --------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize(
-    ("version", "sha"),
-    [
-        ("v0.13.0-711-gd7cea5bb", "d7cea5bb"),
-        # A makefile-patched build is always -dirty, so that must not defeat the
-        # match or those types would report needing a flash forever.
-        ("v0.13.0-712-g6d43f8b3-dirty", "6d43f8b3"),
-        ("v0.12.0", None),
-        ("unknown", None),
-        ("", None),
-    ],
-)
-def test_the_commit_is_extracted_from_a_git_describe(version, sha):
-    from mcu_updater.agent.methods import _running_sha
-
-    assert _running_sha(version) == sha
-
-
 def test_a_board_behind_the_source_tree_needs_flashing(api):
     head = "d7cea5bb1aca70849f28d0bb98ab1b96b9f6db65"
     versions = {"A": {"version": "v0.13.0-623-gaea1bcf5", "mcu": "mcu hexa"}}
@@ -1731,9 +1713,10 @@ def test_an_unparseable_version_is_unknown(api):
 # --------------------------------------------------------------------------
 # cartographer: a board that stamps a literal instead of a git describe
 #
-# CONFIG_VERSION carries no commit, so `_running_sha` returns None and the
-# ordinary sha comparison cannot run at all - the verdict falls to comparing
-# the stamp itself against what the build produced. See states.VERSION_ONLY.
+# CONFIG_VERSION carries no commit, so CartographerHelper.running_sha() returns
+# None and the ordinary sha comparison cannot run at all - the verdict falls to
+# comparing the stamp itself against what the build produced. See
+# states.VERSION_ONLY.
 # --------------------------------------------------------------------------
 
 CARTO_STAMP = {"A": {"version": "CARTOGRAPHER 6.2.0", "mcu": "mcu"}}

@@ -3,10 +3,13 @@
 from __future__ import annotations
 
 import dataclasses
+from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
+    from ..device_info import DeviceInfo
     from ..flashers.spec import Bench
+    from ..paths import Paths
 
 
 @dataclasses.dataclass(frozen=True)
@@ -42,4 +45,36 @@ class BootselRequester(Protocol):
         self, bench: Bench, *, serial: str, chipset: str, ctx: Any
     ) -> None:
         """Wait until the flashed firmware confirms its durable identity."""
+        ...
+
+
+@runtime_checkable
+class DeviceInfoReader(Protocol):
+    """Reads a commit and a dirty flag out of the version string a board stamps."""
+
+    name: str
+    #: The Klipper section prefix whose objects are this firmware's boards.
+    klipper_prefix: str
+
+    def running_sha(self, version: str | None) -> str | None: ...
+
+    def is_dirty(self, version: str | None) -> bool: ...
+
+
+@runtime_checkable
+class ImageReporter(Protocol):
+    """Reports a board's image digest, Klipper first and the wire second."""
+
+    name: str
+    klipper_prefix: str
+    #: The object fields to ask Klipper for; nothing else, inside fw.status's
+    #: sub-second budget.
+    klipper_fields: tuple[str, ...]
+
+    def from_klipper(self, values: Mapping[str, Any]) -> tuple[str, DeviceInfo] | None:
+        """(the serial the board reported, its report), or None with no serial."""
+        ...
+
+    def wire_source(self, paths: Paths) -> Callable[[str], DeviceInfo | None]:
+        """A per-serial reader that opens the port. Never from `fw.status`."""
         ...

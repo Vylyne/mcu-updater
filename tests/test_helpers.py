@@ -40,7 +40,7 @@ def test_a_misspelt_helper_names_the_known_ones():
         helpers.for_name("roadruner", family="roadrunner")
     message = str(exc.value)
     assert "unknown helper 'roadruner'" in message
-    assert "known: knomi_serial, roadrunner" in message
+    assert "known: cartographer, knomi_serial, roadrunner" in message
 
 
 def test_each_registered_helper_resolves_by_name():

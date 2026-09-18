@@ -61,7 +61,7 @@ FLASHERS: tuple[str, ...] = ("bootsel", "dfu_util", "esptool", "flashtool")
 
 #: Every `helper:` value a registered helper answers to - `helpers.registry`'s
 #: names, for the same reason. A test holds the two equal.
-HELPERS: tuple[str, ...] = ("knomi_serial", "roadrunner")
+HELPERS: tuple[str, ...] = ("cartographer", "knomi_serial", "roadrunner")
 
 #: The `flashers:` line a refusal suggests, by what builds the family. A
 #: suggestion for a message only: selection reads the family's own list.

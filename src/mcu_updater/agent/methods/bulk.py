@@ -6,7 +6,7 @@ import dataclasses
 import os
 from typing import Any
 
-from ... import firmware, flashers, providers, stop_services
+from ... import device_info, firmware, flashers, providers, stop_services
 from ...build import read_sidecar
 from ...config import Registry
 from ...devices import (
@@ -140,9 +140,9 @@ class BulkMixin(_Base):
             application = mcu.application(families)
             if not os.path.exists(self.paths.bin_file(name, application)):
                 continue
-            fw_head = git_head(
-                firmware.resolve(self.paths, application, families).source_dir(self.paths)
-            )
+            family = firmware.resolve(self.paths, application, families)
+            fw_head = git_head(family.source_dir(self.paths))
+            reader = device_info.reader_for(family)
             # Once per type, not per serial - every board of this type shares
             # the same resolved list.
             units = stop_services.for_mcu(self.paths, mcu, settings, families)
@@ -158,6 +158,7 @@ class BulkMixin(_Base):
                     state=state,
                     artifact_sha=artifact_sha,
                     flashlog=flashlog,
+                    reader=reader,
                 )
                 if scope == "all" or info["needs_flash"] is True:
                     out.append(
@@ -221,9 +222,9 @@ class BulkMixin(_Base):
             application = mcu.application(families)
             if not os.path.exists(self.paths.bin_file(name, application)):
                 continue
-            fw_head = git_head(
-                firmware.resolve(self.paths, application, families).source_dir(self.paths)
-            )
+            family = firmware.resolve(self.paths, application, families)
+            fw_head = git_head(family.source_dir(self.paths))
+            reader = device_info.reader_for(family)
             units = stop_services.for_mcu(self.paths, mcu, settings, families)
             artifact_sha = (read_sidecar(self.paths, name, application) or {}).get("bin_sha256")
             for uuid in mcu.canbus_uuids:
@@ -240,6 +241,7 @@ class BulkMixin(_Base):
                         fw_head,
                         artifact_sha=artifact_sha,
                         flashlog=flashlog,
+                        reader=reader,
                     )
                     if scope != "all" and info["needs_flash"] is not True:
                         continue

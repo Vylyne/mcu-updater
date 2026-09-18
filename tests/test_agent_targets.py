@@ -31,7 +31,14 @@ from mcu_updater.states import (
     DeviceStatus,
 )
 
-from .conftest import display_objects, make_device, serve_klipper, write_settings
+from .conftest import (
+    display_objects,
+    make_device,
+    read_main_config,
+    serve_klipper,
+    write_main_config,
+    write_settings,
+)
 
 ENV = "knomi_toolchanger"
 
@@ -1034,6 +1041,24 @@ def test_a_misspelled_helper_blocks_its_own_row_not_the_whole_panel(
     assert "roadruner" in blocked["message"]
     # And the row is still a row, with its build actions intact.
     assert {a["id"] for a in row["actions"]} >= {"build", "clean"}
+
+
+def test_a_misspelled_helper_on_a_non_cmake_family_does_not_blank_the_panel(api):
+    """`type_status`/`pio_status` call `device_info.reader_for(family)` with
+    no guard of their own - unlike `_cmake_target`, which resolves its
+    helper itself and reports the problem on its own row. Before
+    `reader_for` swallowed `ConfigCorruptError`, a typo in the cartographer
+    family's `helper:` propagated out of `dispatch`, which turns any
+    `UpdaterError` into one `RpcError` for the whole `fw.status` call - so
+    the typo cost every row of every provider, not only cartographer's own.
+    """
+    text = read_main_config(api.paths).replace("helper: cartographer", "helper: cartografer")
+    write_main_config(api.paths, text)
+
+    targets = api.dispatch("fw.status")["targets"]
+
+    # The whole panel came back, including the type whose family has the typo.
+    assert {t["name"] for t in targets} >= {"bttebb36", "cartographer"}
 
 
 def test_a_cmake_row_offers_build_and_clean(paths, tmp_path):

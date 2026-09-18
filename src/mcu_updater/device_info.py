@@ -17,6 +17,7 @@ import re
 from typing import TYPE_CHECKING
 
 from .discovery.byid import canonical_serial
+from .errors import ConfigCorruptError
 
 if TYPE_CHECKING:
     from .firmware import FirmwareFamily
@@ -128,12 +129,22 @@ KLIPPER = KlipperReader()
 def reader_for(family: FirmwareFamily | None) -> DeviceInfoReader:
     """The reader a family's boards are read through.
 
-    A misspelt helper raises, from `helpers.for_name`; a helper without the
-    capability is an ordinary firmware and reads through Klipper.
+    Never raises and never returns `None`: a family with no helper, a helper
+    without the capability, and a helper name no registered helper answers to
+    all read through Klipper. The last of those is a config error, and it is
+    deliberately not raised here - `reader_for` is called from `fw.status`,
+    where `dispatch` turns any `UpdaterError` into one `RpcError` for the
+    whole call, so raising would blank the panel for every MCU of every
+    provider over one typo. The write path resolves the helper itself and
+    refuses by name, which is where the operator learns what is wrong.
     """
     from . import helpers
 
     if family is None or not family.helper:
         return KLIPPER
-    reader = helpers.device_info_reader(helpers.for_name(family.helper, family=family.name))
+    try:
+        helper = helpers.for_name(family.helper, family=family.name)
+    except ConfigCorruptError:
+        return KLIPPER
+    reader = helpers.device_info_reader(helper)
     return reader if reader is not None else KLIPPER

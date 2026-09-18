@@ -183,6 +183,20 @@ def test_a_helper_without_a_reader_reads_through_klipper(monkeypatch):
     assert device_info.reader_for(family) is KLIPPER
 
 
+def test_a_misspelt_helper_reads_through_klipper_rather_than_raising():
+    """`helpers.for_name` raises `ConfigCorruptError` for a name no registered
+    helper answers to. `reader_for` is called from `fw.status`, where
+    `dispatch` turns any `UpdaterError` into one `RpcError` for the whole
+    call - so raising here would blank the panel for every MCU of every
+    provider over one typo in one family's `helper:`. The write path
+    (`_cmake_target`) is where the operator learns what is wrong; this reader
+    seam only has to not fall over.
+    """
+    family = firmware.FirmwareFamily(name="x", helper="roadrunnr")
+
+    assert device_info.reader_for(family) is KLIPPER
+
+
 def test_the_capability_accessors_answer_none_for_what_a_helper_lacks():
     assert helpers.device_info_reader(None) is None
     assert helpers.image_reporter(None) is None

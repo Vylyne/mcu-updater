@@ -76,6 +76,12 @@
       "file": "src/mcu_updater/agent/methods/bulk.py",
       "find": "            reader = device_info.reader_for(family)\n            # Once per type, not per serial - every board of this type shares",
       "replace": "            reader = device_info.KLIPPER\n            # Once per type, not per serial - every board of this type shares"
+    },
+    {
+      "_comment": "Caught by test_a_misspelt_helper_reads_through_klipper_rather_than_raising (tests/test_device_info.py) and test_a_misspelled_helper_on_a_non_cmake_family_does_not_blank_the_panel (tests/test_agent_targets.py): a misspelt helper: must read through Klipper, never propagate out of reader_for and blank the whole fw.status panel.",
+      "name": "a misspelt helper reads through Klipper rather than blanking the panel",
+      "find": "    except ConfigCorruptError:\n        return KLIPPER",
+      "replace": "    except ConfigCorruptError:\n        raise"
     }
   ]
 }

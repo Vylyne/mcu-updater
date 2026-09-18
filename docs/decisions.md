@@ -390,3 +390,17 @@ has a helper for exactly one reason: to say its version has no sha, rather
 than leave that to a regex that happens not to match. A Roadrunner reports the
 same device info on usbserial, i2c and uart; a field firmware does not report
 is absence, never mismatch, whatever the transport.
+
+### Tracking an unprovisioned board provisions it
+
+Spec section 11, Ruling 13. "Provision it first, then track the result" is two
+operations with one precondition — this board, here, untracked, nobody else on
+the bus — and the only thing the split ever produced was an order to get
+wrong. `tracking.add_serial` reads the type's family, and if its helper offers
+the `provision` capability and recognises the serial as a diagnostic identity,
+provisions under the op lock and tracks what came back.
+
+The old refusal is kept for a family with no provisioner, because there
+"provision it first" is still the only useful thing to say. A held lock
+refuses rather than waits: the write is irreversible, and a caller queued
+behind a flash would perform it at a moment nobody chose.

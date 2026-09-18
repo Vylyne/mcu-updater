@@ -133,7 +133,7 @@ application error (see `data.code`), `-32603` internal.
 | `fw.artifacts` | `name` (required) | `{<fw>: Artifact, ...}`, one key per family the type declares |
 | `fw.settings.get` | — | `{settings: Settings}` |
 | `fw.settings.set` | `settings` (required, non-empty) | `{settings: Settings, changed: [key]}` — only the `SETTABLE` keys |
-| `fw.serial.add` | `name`, `serial` (required) | `{name, serial, added, chipset}` — track a bus device under any declared type; its provider still owns builds |
+| `fw.serial.add` | `name`, `serial` (required) | `{name, serial, added, chipset, prior_serial?}` — track a bus device under any declared type; its provider still owns builds |
 | `fw.serial.remove` | `name`, `serial` (required) | `{name, serial, removed}` — untrack a serial from a type; non-destructive, keeps its firmware and saved config |
 | `fw.canbus.add` | `name`, `uuid` (required) | `{name, uuid, added, chipset}` — track a CAN-addressed board under any declared type; parallel to `fw.serial.add`, not an overload of it |
 | `fw.canbus.remove` | `name`, `uuid` (required) | `{name, uuid, removed}` — untrack a CAN uuid from a type; non-destructive, same as `fw.serial.remove` |
@@ -186,10 +186,27 @@ or a different device now sitting on that port - and its `data` carries
 was ever seen again.
 
 A related code, `roadrunner_unprovisioned`, is not raised by either of these
-two methods - `fw.serial.add` (see the "Methods" table above) raises it when
-asked to track an `RR-UNPROVISIONED-<flash-id>` serial, refusing to let the
-diagnostic identity (whose trailing hex is literally the RP2040 flash UID) get
-persisted into a type's tracked serials.
+two methods. `fw.serial.add` (see the "Methods" table above) provisions an
+`RR-UNPROVISIONED-<flash-id>` serial itself when the requested type's firmware
+family can - the same op-locked write as `fw.roadrunner.provision`, reached
+from ordinary tracking instead of a separate maintenance call - and tracks the
+durable `RR-...` serial that comes back, never the diagnostic identity whose
+trailing hex is literally the RP2040 flash UID. `roadrunner_unprovisioned` is
+raised only when the type's family has no provisioning capability, where
+refusing and pointing at `fw.roadrunner.provision` is still the only useful
+answer.
+
+`fw.serial.add`'s `serial` is the serial that was tracked, which is not always
+the one that was requested. When the type's firmware family can provision and
+the requested serial is an unprovisioned board's diagnostic identity
+(`RR-UNPROVISIONED-…`), the board is provisioned first and the durable serial
+is tracked; the request's serial comes back as `prior_serial`. `prior_serial`
+is absent when nothing moved.
+
+Provisioning holds the operation lock. A lock held elsewhere refuses with
+`busy` and does not retry — this is the one call under `fw.serial.add` that
+writes to hardware. A family with no provisioning capability still refuses an
+unprovisioned serial with `roadrunner_unprovisioned`.
 
 Neither call is ever triggered automatically - `fw.bus.scan`/`fw.status`
 identify a Roadrunner from its ordinary `BusDevice` fields alone (its

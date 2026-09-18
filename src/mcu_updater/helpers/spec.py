@@ -62,6 +62,32 @@ class DeviceInfoReader(Protocol):
 
 
 @runtime_checkable
+class Provisioner(Protocol):
+    """Give an unprovisioned board its durable identity.
+
+    Two questions, because the first is cheap and the second is irreversible:
+    `is_unprovisioned` is a string test on a serial the caller already has, and
+    `provision` writes to hardware.
+
+    **The caller holds the op lock.** Provisioning finds its own device, writes
+    to it and waits for it to re-enumerate under a new name - three steps that
+    must not interleave with a flash or with a second provision, and the lock
+    covering all three is the caller's to take (`lock.exclusive`), because the
+    caller is the one that knows what to call the operation.
+    """
+
+    name: str
+
+    def is_unprovisioned(self, serial: str) -> bool:
+        """Does this serial look like an unprovisioned board's diagnostic one?"""
+        ...
+
+    def provision(self, paths: Paths, serial: str) -> str:
+        """Provision the board answering to `serial`; return its new serial."""
+        ...
+
+
+@runtime_checkable
 class ImageReporter(Protocol):
     """Reports a board's image digest, Klipper first and the wire second."""
 

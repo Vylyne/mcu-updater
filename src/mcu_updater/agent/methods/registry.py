@@ -228,6 +228,11 @@ class RegistryMixin(_Base):
         """Track a physical board under an existing type.
 
         Touches nothing but the registry: no build, no flash, no board.
+
+        One exception, and it is the point of Ruling 13: a serial the type's
+        firmware family can recognise as an unprovisioned board's diagnostic
+        identity is provisioned first, and the resulting serial is what gets
+        tracked. That does touch the board. `prior_serial` says so.
         """
         name = self._require_str(args, "name")
         serial = self._require_str(args, "serial")
@@ -252,7 +257,7 @@ class RegistryMixin(_Base):
             )
 
         try:
-            added, chipset = tracking.add_serial(self.paths, name, serial)
+            tracked = tracking.add_serial(self.paths, name, serial)
         except UnprovisionedSerialError as exc:
             # Same code and message shape this raised before the refusal moved
             # into `tracking.add_serial` so the CLI could share it - the wire
@@ -268,7 +273,18 @@ class RegistryMixin(_Base):
             ) from exc
 
         self._changed()
-        return {"name": name, "serial": serial, "added": added, "chipset": chipset}
+        result = {
+            "name": name,
+            "serial": tracked.serial,
+            "added": tracked.added,
+            "chipset": tracked.chipset,
+        }
+        if tracked.provisioned_from is not None:
+            # The caller's handle on this board just changed. Reported rather
+            # than assumed: a panel holding the old serial has no other way to
+            # learn that the row it was looking at has a new name.
+            result["prior_serial"] = tracked.provisioned_from
+        return result
 
     def _require_family(self, args: dict, key: str = "firmware") -> str:
         """The firmware family named in `args`, checked against what exists.

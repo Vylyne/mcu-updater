@@ -2,7 +2,14 @@
 
 from __future__ import annotations
 
-from .spec import BootselHandoff, BootselRequester, DeviceInfoReader, Helper, ImageReporter
+from .spec import (
+    BootselHandoff,
+    BootselRequester,
+    DeviceInfoReader,
+    Helper,
+    ImageReporter,
+    Provisioner,
+)
 
 
 def for_name(name: str, *, family: str) -> Helper | None:
@@ -27,14 +34,25 @@ def image_reporter(helper: Helper | None) -> ImageReporter | None:
     return helper if isinstance(helper, ImageReporter) else None
 
 
+def provisioner(helper: Helper | None) -> Provisioner | None:
+    """This helper's provisioning capability, or None if it has none.
+
+    None is an ordinary answer, not a misconfiguration: most firmware has no
+    identity to hand out.
+    """
+    return helper if isinstance(helper, Provisioner) else None
+
+
 __all__ = [
     "BootselHandoff",
     "BootselRequester",
     "DeviceInfoReader",
     "Helper",
     "ImageReporter",
+    "Provisioner",
     "bootsel_requester",
     "device_info_reader",
     "for_name",
     "image_reporter",
+    "provisioner",
 ]

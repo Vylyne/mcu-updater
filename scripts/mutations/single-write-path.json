@@ -14,13 +14,13 @@
   "mutations": [
     {
       "name": "the flash add-prompt tracks through tracking, not an unlocked direct write",
-      "find": "            added, _ = tracking.add_serial(c.paths, args.type, args.serial)\n",
-      "replace": "            added = reg.add_declared_serial(args.type, args.serial)\n            reg._save(c.paths)\n"
+      "find": "            tracked = tracking.add_serial(c.paths, args.type, args.serial)\n",
+      "replace": "            reg.add_declared_serial(args.type, args.serial)\n            reg._save(c.paths)\n            tracked = tracking.Tracked(added=True, chipset=\"\", serial=args.serial)\n"
     },
     {
       "name": "add-mcu adoption tracks through tracking, so a board tracked elsewhere is refused",
-      "find": "                added, _ = tracking.add_serial(c.paths, args.type, dev.serial)\n",
-      "replace": "                with Registry.mutate(c.paths, \"adopt\") as writable:\n                    added = writable.add_declared_serial(args.type, dev.serial)\n"
+      "find": "                tracked = tracking.add_serial(c.paths, args.type, dev.serial)\n",
+      "replace": "                with Registry.mutate(c.paths, \"adopt\") as writable:\n                    writable.add_declared_serial(args.type, dev.serial)\n                tracked = tracking.Tracked(added=True, chipset=\"\", serial=dev.serial)\n"
     },
     {
       "name": "add-mcu reports a refused candidate and still offers the rest",
@@ -34,8 +34,8 @@
     },
     {
       "name": "the flash add-prompt does not claim to have added a serial that was already tracked",
-      "find": "            if added:\n                print(f\"Added serial {args.serial} to {args.type}\")\n",
-      "replace": "            if True:\n                print(f\"Added serial {args.serial} to {args.type}\")\n"
+      "find": "            if tracked.added:\n                print(f\"Added serial {tracked.serial} to {args.type}\")\n",
+      "replace": "            if True:\n                print(f\"Added serial {tracked.serial} to {args.type}\")\n"
     },
     {
       "name": "add_type refuses a name another builder declares",

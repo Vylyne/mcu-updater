@@ -246,11 +246,13 @@ def apply_profile(args: argparse.Namespace) -> None:
 
 def add_serial(args: argparse.Namespace) -> None:
     c = ctx()
-    added, _ = tracking.add_serial(c.paths, args.type, args.serial)
-    if added:
-        print(f"Added serial {args.serial} to {args.type}")
+    tracked = tracking.add_serial(c.paths, args.type, args.serial)
+    if tracked.provisioned_from is not None:
+        print(f"Provisioned {tracked.provisioned_from} as {tracked.serial}")
+    if tracked.added:
+        print(f"Added serial {tracked.serial} to {args.type}")
     else:
-        print(f"Serial {args.serial} already exists under {args.type}")
+        print(f"Serial {tracked.serial} already exists under {args.type}")
 
 
 def remove_mcu_type(args: argparse.Namespace) -> None:
@@ -922,11 +924,11 @@ def flash_fw_cmd(args: argparse.Namespace) -> None:
             # identity - and a CMake type gains an identity without the kconfig
             # registry claiming its build. The flash below reads the registry
             # afresh, so the stale `reg` is not consulted again.
-            added, _ = tracking.add_serial(c.paths, args.type, args.serial)
-            if added:
-                print(f"Added serial {args.serial} to {args.type}")
+            tracked = tracking.add_serial(c.paths, args.type, args.serial)
+            if tracked.added:
+                print(f"Added serial {tracked.serial} to {args.type}")
             else:
-                print(f"Serial {args.serial} is already tracked under {args.type}")
+                print(f"Serial {tracked.serial} is already tracked under {args.type}")
             mcu_type = args.type
     else:
         mcu_type = reg.resolve_declared_serial(args.serial)
@@ -1100,13 +1102,13 @@ def add_mcu(args: argparse.Namespace) -> None:
             # just flashed too, and each still deserves its own prompt. Reported
             # the way `main` reports it, and in the exit code once all are asked.
             try:
-                added, _ = tracking.add_serial(c.paths, args.type, dev.serial)
+                tracked = tracking.add_serial(c.paths, args.type, dev.serial)
             except UpdaterError as exc:
                 print(f"ERROR: {exc}", file=sys.stderr)
                 refused = True
                 continue
-            if added:
-                print(f"Added serial {dev.serial} to {args.type}")
+            if tracked.added:
+                print(f"Added serial {tracked.serial} to {args.type}")
     if refused:
         sys.exit(1)
 

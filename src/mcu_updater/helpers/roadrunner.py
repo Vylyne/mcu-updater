@@ -99,5 +99,27 @@ class RoadrunnerHelper:
     ) -> None:
         roadrunner.wait_for_provisioned(bench.paths, serial)
 
+    def is_unprovisioned(self, serial: str) -> bool:
+        from ..discovery.roadrunner import UNPROVISIONED_RE
+
+        return UNPROVISIONED_RE.fullmatch(serial) is not None
+
+    def provision(self, paths: Paths, serial: str) -> str:
+        """Give this board a durable serial. The caller holds the op lock.
+
+        `find_untracked` confirms the board over its own protocol before
+        anything is written, and `provision_roadrunner` does not return until
+        the same hardware has come back under the new name - which is what
+        makes the serial this returns safe to track.
+        """
+        import secrets
+
+        from ..discovery import roadrunner
+
+        device = roadrunner.find_untracked(paths, serial)
+        return roadrunner.provision_roadrunner(
+            paths, device, secrets.token_bytes(16)
+        ).serial
+
 
 __all__ = ["RoadrunnerHelper"]

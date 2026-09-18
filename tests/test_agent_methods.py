@@ -549,7 +549,7 @@ def test_serial_add_allows_a_board_that_is_not_plugged_in(api):
     assert res["added"] is True
 
 
-def test_serial_add_refuses_an_unprovisioned_roadrunner_diagnostic_serial(api):
+def test_serial_add_refuses_an_unprovisioned_serial_without_a_provisioner(api):
     """`RR-UNPROVISIONED-<16 hex>` is a diagnostic identity whose trailing hex
     IS the RP2040 flash UID - persisting it into a type's tracked serials is
     exactly what this plan's constraints forbid, and it goes stale the moment
@@ -563,6 +563,45 @@ def test_serial_add_refuses_an_unprovisioned_roadrunner_diagnostic_serial(api):
         )
     assert exc.value.data["code"] == "roadrunner_unprovisioned"
     assert "RR-UNPROVISIONED-50543165187A4D1C" not in api.registry().get("bttebb36").serials
+
+
+def test_serial_add_reports_the_serial_it_actually_tracked(api, monkeypatch):
+    """The panel offers an unprovisioned board; what gets tracked is the serial
+    provisioning returned. `prior_serial` is how a caller holding the old one
+    knows its handle moved."""
+    import mcu_updater.tracking as tracking_mod
+
+    monkeypatch.setattr(
+        tracking_mod,
+        "add_serial",
+        lambda paths, name, serial: tracking_mod.Tracked(
+            added=True, chipset="rp2040", serial="RR-NEW", provisioned_from=serial
+        ),
+    )
+
+    result = api.dispatch(
+        "fw.serial.add", {"name": "roadrunner", "serial": "RR-UNPROVISIONED-0"}
+    )
+
+    assert result["serial"] == "RR-NEW"
+    assert result["prior_serial"] == "RR-UNPROVISIONED-0"
+    assert result["added"] is True
+
+
+def test_serial_add_omits_prior_serial_when_nothing_moved(api, monkeypatch):
+    import mcu_updater.tracking as tracking_mod
+
+    monkeypatch.setattr(
+        tracking_mod,
+        "add_serial",
+        lambda paths, name, serial: tracking_mod.Tracked(
+            added=True, chipset="stm32g0b1xx", serial=serial
+        ),
+    )
+
+    result = api.dispatch("fw.serial.add", {"name": "board", "serial": "AAAA-if00"})
+
+    assert "prior_serial" not in result
 
 
 def test_serial_add_refuses_a_serial_tracked_under_another_type(api, fake_root):

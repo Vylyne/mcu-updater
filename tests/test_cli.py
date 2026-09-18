@@ -29,7 +29,6 @@ from mcu_updater.errors import (
     BusyError,
     NoFlasherError,
     SerialTrackedElsewhereError,
-    UnprovisionedSerialError,
     UpdaterError,
 )
 from mcu_updater.lock import ExclusiveLock
@@ -861,18 +860,27 @@ def test_add_serial_refuses_a_board_tracked_under_another_type(c):
         cli.add_serial(argparse.Namespace(type="roadrunner", serial="AAAA-if00"))
 
 
-def test_add_serial_refuses_an_unprovisioned_roadrunner_diagnostic_serial(c):
-    """The CLI could reach cmake types (Roadrunner included) once tracking was
-    shared, but only the agent's `serial_add` ever refused the diagnostic
-    identity - so `add-serial -t roadrunner RR-UNPROVISIONED-...` saved it."""
+def test_add_serial_provisions_an_unprovisioned_roadrunner_then_tracks_it(
+    c, monkeypatch, capsys
+):
+    """What used to be a refusal. The CLI reaches cmake types, and the family's
+    helper can provision, so the operator is not sent to the web UI and back."""
     _declare_roadrunner(c.paths, "RR-ONE")
-    with pytest.raises(UnprovisionedSerialError):
-        cli.add_serial(
-            argparse.Namespace(type="roadrunner", serial="RR-UNPROVISIONED-50543165187A4D1C")
-        )
-    assert "RR-UNPROVISIONED-50543165187A4D1C" not in Registry.load(c.paths).declared_serials(
-        "roadrunner"
+    monkeypatch.setattr(
+        tracking,
+        "add_serial",
+        lambda paths, name, serial: tracking.Tracked(
+            added=True, chipset="rp2040", serial="RR-NEW", provisioned_from=serial
+        ),
     )
+
+    cli.add_serial(
+        argparse.Namespace(type="roadrunner", serial="RR-UNPROVISIONED-50543165187A4D1C")
+    )
+
+    out = capsys.readouterr().out
+    assert "Provisioned RR-UNPROVISIONED-50543165187A4D1C as RR-NEW" in out
+    assert "Added serial RR-NEW to roadrunner" in out
 
 
 def test_remove_serial_untracks_a_board_under_a_cmake_type(c):

@@ -632,6 +632,45 @@ def test_a_batch_stops_klipper_once_not_once_per_board(bulk, paths, fake_root, m
     assert svc.actions == ["stop", "start"], "one stop for the whole batch"
 
 
+def _set_klipper_flashers(paths, value: str) -> None:
+    block = "[firmware klipper]\nsource: ~/klipper\nflashers: flashtool\n"
+    with open(paths.registry_file, encoding="utf-8") as fh:
+        text = fh.read()
+    assert block in text
+    with open(paths.registry_file, "w", encoding="utf-8") as fh:
+        fh.write(text.replace(block, block.replace("flashtool", value)))
+
+
+def test_a_board_its_family_cannot_write_is_a_failure_not_an_abort(
+    bulk, paths, fake_root, monkeypatch
+):
+    """Spec §8 step 1. Selection goes through the family's `flashers:`. A board
+    that nothing in the list can write shows up in the job's `failures[]` with
+    no flasher. It is not dropped, and Klipper is not stopped for it."""
+    svc = NullService()
+    monkeypatch.setattr("mcu_updater.service.make_controller", lambda *a, **k: svc)
+    _set_klipper_flashers(paths, "dfu_util")
+    _stage_artifact(paths, EBB)
+    make_device(fake_root / "bus", "Klipper", EBB_CHIPSET, EBB_A)
+    bulk._call = _moonraker({EBB_A: OLD_VERSION})
+    monkey_head(bulk, paths)
+    waited: list = []
+    bulk._await_klippy_ready = waited.append
+
+    res = bulk.dispatch("fw.flash_all", {})
+    assert [b["serial"] for b in res["boards"]] == [EBB_A]
+    assert bulk.runner.wait(timeout=60)
+
+    job = bulk.runner.get(res["job_id"])
+    assert job.state == "succeeded", job.error
+    assert job.result["flashed"] == []
+    [failure] = job.result["failures"]
+    assert (failure["type"], failure["id"], failure["flasher"]) == (EBB, EBB_A, None)
+    assert "[firmware klipper] (flashers: dfu_util)" in failure["error"]
+    assert svc.actions == [], "nothing to write, so nothing to stop"
+    assert waited == []
+
+
 def test_a_build_failure_does_not_abandon_the_rest_of_the_fleet(bulk, paths, monkeypatch):
     """One type failing to compile is usually about that type."""
     from mcu_updater import build as build_mod

@@ -670,6 +670,9 @@ real explanation instead of a job that dies a second later. In order:
 | board is on the bus | `device_not_found` |
 | printer idle | `print_in_progress` (bypass with `force: true`) |
 
+A failed write fails the job with the write's own error (`offset_mismatch`,
+`device_not_found`, `tool_missing`, …), as it always has.
+
 For a `builder: cmake` type, the same `fw.flash {name?, serial, force?}` method
 uses the type's declared serial identity, and the firmware family's
 `flashers:` list picks the writer. Resolution spans all configured providers:
@@ -968,6 +971,19 @@ Two keys rather than one merged list: the selections answer with different facts
 — a board has a chipset and a serial, a screen has a port and a klippy section —
 and flattening them would invent nulls for half of each. The *batch* is uniform;
 the confirmation is not, because a human reading it wants the real names.
+
+Selection goes through each device's `[firmware]` `flashers:` list. A device
+that nothing in the list can write is not dropped, and it does not stop the
+batch. It appears in the job's `failures[]` with `"flasher": null` and an
+`error` naming the family and its list:
+
+```json
+{"type": "bttebb36", "id": "2900...", "flasher": null,
+ "error": "nothing in [firmware klipper] (flashers: dfu_util) can write bttebb36 2900... while it is klipper."}
+```
+
+A refused board is still listed in `boards`. A refused screen is not listed in
+`displays`. A batch made only of refusals stops no service.
 
 #### Failures do not abandon the batch
 
@@ -1507,7 +1523,8 @@ could be skipped.
 This runs the same batch machinery `fw.flash_all` does — one flasher, one stop,
 the watcher paused and the screens rediscovered inside it — and projects the
 result back onto the shape above. `flashed` gained the uniform `type`/`id`/
-`flasher` slots; `failures` is unchanged.
+`flasher` slots; `failures` is unchanged. A screen its family's `flashers:`
+cannot write is listed here too, with the refusal as its `error`.
 
 **Which screen is on which port is not tracked**, deliberately. It used to be:
 every upload recorded the eFuse MAC esptool prints against the port it wrote to,

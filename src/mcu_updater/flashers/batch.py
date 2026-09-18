@@ -15,7 +15,7 @@ stop, and the accounting.
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
 from ..errors import OperationCancelled, UpdaterError
@@ -62,6 +62,8 @@ def write_all(
     ctx: Any,
     *,
     on_ready: ReadyCheck | None = None,
+    refused: Sequence[Mapping[str, Any]] = (),
+    errors: list[UpdaterError] | None = None,
 ) -> dict[str, Any]:
     """Write every selected device, with Klipper stopped once for the batch.
 
@@ -77,6 +79,12 @@ def write_all(
     Cancellation is honoured *between* devices only. Interrupting a write leaves
     half an image on a board, so the check is at the top of each iteration and
     never inside one.
+
+    `refused` is what selection could not give a flasher (`select_each`). Each
+    entry is warned and listed first in `failures`, so a batch never drops a
+    device without saying why. `errors`, when given, collects each write's
+    exception as raised: a single-device job re-raises it with its own code,
+    which a `failures` string has lost.
     """
     from ..service import services_stopped
 
@@ -84,6 +92,9 @@ def write_all(
 
     flashed: list[dict[str, Any]] = []
     failures: list[dict[str, Any]] = []
+    for entry in refused:
+        ctx.reporter("warn", f"{entry['id'] or entry['type']}: {entry['error']}")
+        failures.append(dict(entry))
     total = len(targets)
     done = 0
 
@@ -107,6 +118,8 @@ def write_all(
                     except UpdaterError as exc:
                         ctx.reporter("warn", f"{target.id}: {exc}")
                         failures.append({**target.to_json(), "error": str(exc)})
+                        if errors is not None:
+                            errors.append(exc)
                         continue
                     flashed.append({**target.to_json(), **extra})
                     # After the write and after it is recorded: a device that
@@ -134,8 +147,9 @@ def write_all(
             write_group(stopped)
     ctx.step(f"Flashed {len(flashed)} of {total}", total, total)
 
-    if on_ready is not None:
-        # services_stopped has started every unit again by now; confirm klipper
+    if on_ready is not None and targets:
+        # Nothing written means nothing was stopped; otherwise services_stopped
+        # has started every unit again by now; confirm klipper
         # really came back, which is the release gate for every flashing path.
         ctx.reporter("info", "Waiting for Klipper to be ready...")
         on_ready(ctx.reporter)

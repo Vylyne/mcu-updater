@@ -103,7 +103,10 @@ class _Api(Protocol):
 
     # -- bulk.py -------------------------------------------------------
     def _do_flash_all(
-        self, ctx: Any, targets: list[flashers.FlashTarget]
+        self,
+        ctx: Any,
+        targets: list[flashers.FlashTarget],
+        refused: list[dict[str, Any]] | tuple[()] = (),
     ) -> dict[str, Any]: ...
     def _bench(self, settings: Settings) -> flashers.Bench: ...
 

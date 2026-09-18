@@ -36,7 +36,7 @@ from ..errors import (
     OperationCancelled,
     UpdaterError,
 )
-from .spec import KIND_BARE, Bench, Device, FlashTarget, chipset_matches
+from .spec import KIND_SERIAL, Bench, Device, FlashTarget, chipset_matches
 
 if TYPE_CHECKING:
     from ..helpers.spec import BootselRequester, Helper
@@ -278,7 +278,7 @@ class Bootsel:
         """
         if device.state in self.states:
             return chipset_matches(self, device.chipset)
-        return device.kind != KIND_BARE and helpers.bootsel_requester(helper) is not None
+        return device.kind == KIND_SERIAL and helpers.bootsel_requester(helper) is not None
 
     def target(
         self,

@@ -344,14 +344,24 @@ than every row in the panel.
 
 `flashers.select` walks the family's `flashers:` list and takes the first
 flasher whose `supports(device, helper)` says yes. There is no global
-chipset-and-state table: `select_for` made an RP2040 reach exactly one flasher
-whatever it ran. `helper_bootsel` is folded into `bootsel` because a flasher
+chipset-and-state table: the former global selector made an RP2040 reach exactly
+one flasher whatever it ran. `helper_bootsel` is folded into `bootsel` because a flasher
 describes a mechanism, and "ask the firmware to enter BOOTSEL first" is a step
 of that mechanism the helper supplies, not a second product-named flasher.
 `needs_services_stopped` can therefore differ per target, and a target's own
 value wins over its flasher's. Do not turn it back into a class-only
 attribute: a board already in BOOTSEL would then stop Klipper for nothing, or a
 helper-requested one would write under a running Klipper.
+
+### A device nothing can write is a failure, not an abort
+
+Spec §8 step 1. `flashers.select_each` turns a `NoFlasherError` into a
+`failures[]` entry with `"flasher": null`, and `write_all` reports it with the
+writes that failed. A single-device RPC raises instead, before a job exists.
+First install asks `[firmware katapult]` the same question and keeps its
+`unsupported_chipset` refusal. The serial `fw.flash` job collects its write's
+exception (`write_all(errors=...)`) and re-raises it, because the job's error
+code was already on the wire.
 
 ### Device info is read through the family's helper
 

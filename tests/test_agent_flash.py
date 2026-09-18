@@ -605,6 +605,42 @@ def test_a_flash_stops_klipper_flashes_then_starts_it_again(flashable, paths):
     assert stop_at < flash_at < start_at, "klipper must be down only for the write"
 
 
+def test_a_board_its_family_cannot_write_refuses_before_a_job(flashable, paths):
+    block = "[firmware klipper]\nsource: ~/klipper\nflashers: flashtool\n"
+    with open(paths.registry_file, encoding="utf-8") as fh:
+        text = fh.read()
+    assert block in text
+    with open(paths.registry_file, "w", encoding="utf-8") as fh:
+        fh.write(text.replace(block, block.replace("flashtool", "esptool")))
+
+    with pytest.raises(RpcError) as exc:
+        flashable.dispatch("fw.flash", {"serial": TRACKED_SERIAL})
+
+    assert exc.value.data["code"] == "no_flasher"
+    assert flashable.runner.current() is None
+
+
+def test_a_failed_serial_write_keeps_its_own_error_code(flashable, monkeypatch):
+    """The serial path writes through the batch loop, and a batch reports
+    failures as strings. The job re-raises the write's own error, so a panel
+    switching on `device_not_found` or `offset_mismatch` still can."""
+    import mcu_updater.flashers.flash as flash_mod
+    from mcu_updater.errors import DeviceNotFoundError
+
+    def gone(*args, **kwargs):
+        raise DeviceNotFoundError("the board vanished mid-write", serial=TRACKED_SERIAL)
+
+    monkeypatch.setattr(flash_mod, "flash_katapult", gone)
+
+    res = flashable.dispatch("fw.flash", {"serial": TRACKED_SERIAL})
+    assert flashable.runner.wait(timeout=30)
+
+    job = flashable.runner.get(res["job_id"])
+    assert job.state == "failed"
+    assert job.error["code"] == "device_not_found"
+    assert job.error["data"] == {"serial": TRACKED_SERIAL}
+
+
 def test_a_type_whose_firmware_is_not_klipper_can_still_be_flashed(flashable_non_klipper):
     """The artifact staged for a non-klipper family must actually be the one
     the flash path looks for - see the `flashable_non_klipper` fixture."""

@@ -36,6 +36,7 @@ from .devices import (
     STATE_KATAPULT,
     STATE_KLIPPER,
     STATE_OFFLINE,
+    device_state,
     find_device,
     find_untracked,
     scan,
@@ -547,8 +548,9 @@ def _bench(c: Context) -> flashers.Bench:
 
 def _board_targets(
     c: Context, mcu_type: str, serials: list[str], *, force: bool = False
-) -> list:
-    """Tracked boards of one kconfig type, as things a batch can write.
+) -> tuple[list, list]:
+    """Tracked boards of one kconfig type, selected through their family:
+    `(targets, refused)` for `_run_batch`.
 
     `force` overrides a refused bootloader offset check (flash_katapult's own
     `force` parameter) and defaults off - a caller flashing more than one board
@@ -557,40 +559,70 @@ def _board_targets(
     the only caller that sets it.
     """
     mcu = c.registry().get(mcu_type)
-    application = mcu.application()
-    units = stop_services.for_mcu(c.paths, mcu, c.settings)
-    return [
-        flashers.flashtool.target_for(
-            {
-                "type": mcu_type,
-                "serial": serial,
-                "chipset": mcu.chipset,
-                "fw": application,
-                "force": force,
-            },
-            stop_services=units,
-        )
-        for serial in serials
-    ]
+    families = firmware.load(c.paths)
+    application = mcu.application(families)
+    units = stop_services.for_mcu(c.paths, mcu, c.settings, families)
+    return flashers.select_each(
+        c.paths,
+        families,
+        [
+            (
+                flashers.Device(
+                    type=mcu_type,
+                    id=serial,
+                    chipset=mcu.chipset,
+                    state=device_state(c.paths, mcu.chipset, serial)[0],
+                    fw=application,
+                    detail={
+                        "type": mcu_type,
+                        "serial": serial,
+                        "chipset": mcu.chipset,
+                        "fw": application,
+                        "force": force,
+                    },
+                ),
+                units,
+            )
+            for serial in serials
+        ],
+    )
 
 
-def _canbus_targets(c: Context, mcu_type: str, uuids: list[str]) -> list:
+def _canbus_targets(c: Context, mcu_type: str, uuids: list[str]) -> tuple[list, list]:
     """CAN-uuid counterpart to `_board_targets`, for a type's `canbus_uuids:`.
 
     Same resolved `stop_services` as this same type's by-id boards. The CLI
     has no Klipper mapping, so the flasher discovers the current interface at
-    write time; `canbus_uuids:` stores no interface.
+    write time; `canbus_uuids:` stores no interface, and liveness is unknown.
     """
     mcu = c.registry().get(mcu_type)
-    application = mcu.application()
-    units = stop_services.for_mcu(c.paths, mcu, c.settings)
-    return [
-        flashers.flashtool.target_for(
-            {"type": mcu_type, "uuid": uuid, "chipset": mcu.chipset, "fw": application},
-            stop_services=units,
-        )
-        for uuid in uuids
-    ]
+    families = firmware.load(c.paths)
+    application = mcu.application(families)
+    units = stop_services.for_mcu(c.paths, mcu, c.settings, families)
+    return flashers.select_each(
+        c.paths,
+        families,
+        [
+            (
+                flashers.Device(
+                    type=mcu_type,
+                    id=uuid,
+                    chipset=mcu.chipset,
+                    state=inventory.STATE_UNKNOWN,
+                    fw=application,
+                    kind=flashers.KIND_CANBUS,
+                    detail={
+                        "type": mcu_type,
+                        "uuid": uuid,
+                        "chipset": mcu.chipset,
+                        "fw": application,
+                    },
+                ),
+                units,
+            )
+            for uuid in uuids
+        ],
+    )
 
 
 def _cmake_targets(c: Context, mcu_type: str, serial: str) -> list:
@@ -657,7 +689,7 @@ def _pio_targets(
     only_id: str | None = None,
     *,
     allow_discovery: bool = False,
-) -> list:
+) -> tuple[list, list]:
     """Devices of one PlatformIO type: the watcher's map, or ask them ourselves.
 
     **Not from Klipper.** The agent reads its list from the klippy module's own
@@ -679,6 +711,9 @@ def _pio_targets(
     An empty answer from both is reported as "cannot tell", not as "no devices".
     Flashing nothing and calling it success is the failure this whole area exists
     to prevent.
+
+    Returns `(targets, refused)`: the screens go through their family's
+    `flashers:` like any other device.
     """
     from .providers import pio
 
@@ -706,21 +741,36 @@ def _pio_targets(
             f"is not running and nothing answered on the free ports, or there is "
             f"nothing plugged in."
         )
-    return [
-        flashers.esptool.target_for(
-            display,
-            {
-                "name": device.device_id,
-                "section": f"{display.klipper_section} {device.device_id}",
-                "configured_path": device.port,
-                "device_id": device.device_id,
-                "present": device.present,
-            },
-            stop_services=units,
-        )
-        for device in sorted(found.values(), key=lambda d: d.port)
-        if device.present and (only_id is None or only_id in (device.port, device.device_id))
-    ]
+    return flashers.select_each(
+        c.paths,
+        firmware.load(c.paths),
+        [
+            (
+                flashers.Device(
+                    type=display.name,
+                    id=device.port,
+                    chipset="",
+                    state=inventory.STATE_UNKNOWN,
+                    fw=display.firmware,
+                    kind=flashers.KIND_SCREEN,
+                    detail={
+                        "display": display,
+                        "screen": {
+                            "name": device.device_id,
+                            "section": f"{display.klipper_section} {device.device_id}",
+                            "configured_path": device.port,
+                            "device_id": device.device_id,
+                            "present": device.present,
+                        },
+                    },
+                ),
+                units,
+            )
+            for device in sorted(found.values(), key=lambda d: d.port)
+            if device.present
+            and (only_id is None or only_id in (device.port, device.device_id))
+        ],
+    )
 
 
 @contextlib.contextmanager
@@ -757,7 +807,7 @@ def _ports_free(c: Context, names: Sequence[str], label: str):
         yield
 
 
-def _run_batch(c: Context, targets: list, label: str) -> int:
+def _run_batch(c: Context, targets: list, label: str, refused: list | tuple = ()) -> int:
     """Write a batch and print what happened. Returns an exit code.
 
     The same `flashers.write_all` the agent submits as a job, with a context that
@@ -765,15 +815,18 @@ def _run_batch(c: Context, targets: list, label: str) -> int:
     Moonraker whether klippy really came back and will issue a FIRMWARE_RESTART,
     and the CLI has nobody to ask - `services_stopped` restarting the units is
     the whole of its answer.
+
+    `refused` is what selection could not give a flasher. The batch reports
+    each as a failure.
     """
     result = flashers.write_all(
-        _bench(c), targets, flashers.PlainContext(stdout_reporter)
+        _bench(c), targets, flashers.PlainContext(stdout_reporter), refused=refused
     )
     for failure in result["failures"]:
         print(f"ERROR: {failure['id']}: {failure['error']}", file=sys.stderr)
     if result["failures"]:
         print(
-            f"\n{len(result['flashed'])} of {len(targets)} written; "
+            f"\n{len(result['flashed'])} of {len(targets) + len(refused)} written; "
             f"{len(result['failures'])} failed.",
             file=sys.stderr,
         )
@@ -820,13 +873,13 @@ def flash_fw_cmd(args: argparse.Namespace) -> None:
     if owner == providers.PlatformIO.name:
         with exclusive(c.paths, f"flash type {args.type}"):
             with _ports_free(c, [args.type], f"flash {args.type}"):
-                targets = _pio_targets(
+                targets, refused = _pio_targets(
                     c, args.type, only_id=args.serial, allow_discovery=True
                 )
-                if not targets:
+                if not targets and not refused:
                     print(f"No device is reachable for '{args.type}'.", file=sys.stderr)
                     sys.exit(1)
-                code = _run_batch(c, targets, f"flash {args.type}")
+                code = _run_batch(c, targets, f"flash {args.type}", refused)
         sys.exit(code)
 
     # Whole type: flash every tracked board under it - by-id serials and CAN
@@ -840,10 +893,11 @@ def flash_fw_cmd(args: argparse.Namespace) -> None:
             sys.exit(1)
 
         with exclusive(c.paths, f"flash type {args.type}"):
-            targets = _board_targets(c, args.type, mcu.serials) + _canbus_targets(
-                c, args.type, mcu.canbus_uuids
+            boards, refused = _board_targets(c, args.type, mcu.serials)
+            can, can_refused = _canbus_targets(c, args.type, mcu.canbus_uuids)
+            code = _run_batch(
+                c, boards + can, f"flash {args.type}", refused + can_refused
             )
-            code = _run_batch(c, targets, f"flash {args.type}")
         sys.exit(code)
 
     # Single device. Identity, not build semantics: `resolve_serial` reads the
@@ -893,11 +947,8 @@ def flash_fw_cmd(args: argparse.Namespace) -> None:
         sys.exit(code)
 
     with exclusive(c.paths, f"flash {mcu_type}/{args.serial}"):
-        code = _run_batch(
-            c,
-            _board_targets(c, mcu_type, [args.serial], force=args.force),
-            f"flash {args.serial}",
-        )
+        targets, refused = _board_targets(c, mcu_type, [args.serial], force=args.force)
+        code = _run_batch(c, targets, f"flash {args.serial}", refused)
     sys.exit(code)
 
 
@@ -956,29 +1007,43 @@ def update_all(args: argparse.Namespace) -> None:
         # devices themselves is how a PlatformIO family gets enumerated.
         with _ports_free(c, sorted(install.platformio), "update-all"):
             targets: list = []
+            refused: list = []
             for name in sorted(install.registry.names()):
                 reg_mcu = install.registry.get(name)
-                targets += _board_targets(c, name, reg_mcu.serials)
-                targets += _canbus_targets(c, name, reg_mcu.canbus_uuids)
+                boards, boards_refused = _board_targets(c, name, reg_mcu.serials)
+                can, can_refused = _canbus_targets(c, name, reg_mcu.canbus_uuids)
+                targets += boards + can
+                refused += boards_refused + can_refused
             for name in sorted(install.platformio):
                 try:
-                    targets += _pio_targets(c, name, allow_discovery=True)
+                    screens, screens_refused = _pio_targets(
+                        c, name, allow_discovery=True
+                    )
                 except UpdaterError as exc:
                     # Not fatal: the boards are still worth writing, and a host with
                     # no watcher running is a configuration gap rather than a fault.
                     print(f"SKIP {name}: {exc}", file=sys.stderr)
                     failures.append((name, "no devices found"))
+                    continue
+                targets += screens
+                refused += screens_refused
 
-            if not targets:
+            if not targets and not refused:
                 print("\nNothing to write.")
             else:
                 result = flashers.write_all(
-                    _bench(c), targets, flashers.PlainContext(stdout_reporter)
+                    _bench(c),
+                    targets,
+                    flashers.PlainContext(stdout_reporter),
+                    refused=refused,
                 )
                 for failure in result["failures"]:
                     print(f"ERROR: {failure['id']}: {failure['error']}", file=sys.stderr)
                     failures.append((failure["type"], failure["id"]))
-                print(f"\nWrote {len(result['flashed'])} of {len(targets)} device(s).")
+                print(
+                    f"\nWrote {len(result['flashed'])} of "
+                    f"{len(targets) + len(refused)} device(s)."
+                )
 
     if failures:
         print("\nCompleted with failures:")

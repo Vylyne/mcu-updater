@@ -27,9 +27,11 @@ from .registry import (
     by_name,
     group_by_stop,
     needs_services_stopped,
+    refusal,
     resolve,
     select,
-    select_for,
+    select_device,
+    select_each,
     stop_services_union,
 )
 from .spec import (
@@ -62,9 +64,11 @@ __all__ = [
     "by_name",
     "group_by_stop",
     "needs_services_stopped",
+    "refusal",
     "resolve",
     "select",
-    "select_for",
+    "select_device",
+    "select_each",
     "stop_services_union",
     "write_all",
 ]

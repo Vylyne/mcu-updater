@@ -763,6 +763,7 @@ def test_missing_binary_for_dfu_raises(paths, ready):
 
 
 def test_stm32_dispatches_to_dfu(paths, ready, monkeypatch):
+    seed_base_firmwares(paths)
     called = {}
     monkeypatch.setattr(
         flash_mod,
@@ -778,6 +779,7 @@ def test_rp2040_dispatches_to_bootsel_when_a_uf2_was_built(paths, settings, tmp_
     `flash_initial_bootloader` used to build a DfuUtil-shaped target for every
     chipset, so handing one to Bootsel would `KeyError` on
     `target.detail["uf2_file"]` rather than copy anything."""
+    seed_base_firmwares(paths)
     root = tmp_path / "bootsel_root"
     vol = root / "RPI-RP2"
     vol.mkdir(parents=True)
@@ -817,6 +819,7 @@ def test_bootsel_copies_katapult_with_the_application_sector_erased(
     """Parity with DFU's mass-erase. Without it a board that last ran other
     firmware keeps that image at the application address, Katapult chain-loads
     it, and the board never comes back as Katapult."""
+    seed_base_firmwares(paths)
     from mcu_updater.uf2_erase import with_erased_sector
 
     root = tmp_path / "bootsel_root"
@@ -843,6 +846,7 @@ def test_bootsel_refuses_without_an_application_address(
 ):
     """No address, no erase - and no silent fallback to copying Katapult alone,
     which is exactly the write that leaves a board chain-loading old firmware."""
+    seed_base_firmwares(paths)
     root = tmp_path / "bootsel_root"
     vol = root / "RPI-RP2"
     vol.mkdir(parents=True)
@@ -859,6 +863,7 @@ def test_bootsel_refuses_without_an_application_address(
 
 
 def test_bootsel_refuses_with_no_katapult_config(paths, settings, tmp_path):
+    seed_base_firmwares(paths)
     uf2, _cfg = _katapult_uf2(tmp_path)
     with pytest.raises(FlashError) as exc:
         flash_initial_bootloader(paths, settings, "rp2040", "unused.bin", uf2_bin=uf2)
@@ -868,6 +873,7 @@ def test_bootsel_refuses_with_no_katapult_config(paths, settings, tmp_path):
 def test_bootsel_refuses_a_uf2_it_cannot_extend(paths, settings, tmp_path):
     """A corrupt artifact is a flash failure the caller can read, not a
     traceback out of the UF2 parser."""
+    seed_base_firmwares(paths)
     _uf2, cfg = _katapult_uf2(tmp_path)
     bad = tmp_path / "bad.uf2"
     bad.write_bytes(b"\0" * 8)
@@ -879,6 +885,7 @@ def test_bootsel_refuses_a_uf2_it_cannot_extend(paths, settings, tmp_path):
 
 
 def test_bootsel_reports_a_missing_uf2_as_a_flash_error(paths, settings, tmp_path):
+    seed_base_firmwares(paths)
     _uf2, cfg = _katapult_uf2(tmp_path)
     missing = str(tmp_path / "nope.uf2")
     with pytest.raises(FlashError) as exc:
@@ -891,49 +898,36 @@ def test_bootsel_reports_a_missing_uf2_as_a_flash_error(paths, settings, tmp_pat
 def test_rp2040_refuses_with_no_uf2_built(paths, settings):
     """A .bin copied to BOOTSEL mass storage is silently ignored - refusing
     outright is better than a write that appears to succeed and does nothing."""
+    seed_base_firmwares(paths)
     with pytest.raises(FlashError) as exc:
         flash_initial_bootloader(paths, settings, "rp2040", "x.bin")
     assert ".uf2" in str(exc.value)
 
 
 def test_an_unknown_chipset_is_reported_clearly(paths, ready):
+    seed_base_firmwares(paths)
     with pytest.raises(UnsupportedChipsetError) as exc:
         flash_initial_bootloader(paths, ready, "esp32", "x.bin")
     assert exc.value.data["chipset"] == "esp32"
 
 
-# --------------------------------------------------------------------------
-# select_for: the capability-match seam flash_initial_bootloader now goes
-# through, and the same one a batch's own flasher-per-target lookup uses.
-# --------------------------------------------------------------------------
+def test_first_install_writes_only_with_what_katapult_lists(paths, settings, tmp_path):
+    """A bare board's flasher comes from [firmware katapult]'s `flashers:`.
+    A katapult listing only dfu_util has nothing that writes an RP2040 in
+    BOOTSEL, and refuses it the way an unknown chipset is refused."""
+    seed_base_firmwares(paths)
+    with open(paths.main_config, encoding="utf-8") as fh:
+        text = fh.read()
+    assert "flashers: dfu_util, bootsel" in text
+    with open(paths.main_config, "w", encoding="utf-8") as fh:
+        fh.write(text.replace("flashers: dfu_util, bootsel", "flashers: dfu_util"))
+    uf2, cfg = _katapult_uf2(tmp_path)
 
-
-def test_select_for_matches_a_bare_stm32_to_dfu_util():
-    assert flashers.select_for("stm32f072xb", devices_mod.STATE_DFU).name == "dfu_util"
-
-
-def test_select_for_matches_a_tracked_board_to_flashtool_in_either_state():
-    """Flashtool owns both states on the Klipper bus - the write is what moves
-    a board from one to the other, not a precondition on which it starts in."""
-    assert flashers.select_for("stm32g431xx", devices_mod.STATE_KLIPPER).name == (
-        "flashtool"
-    )
-    assert flashers.select_for("rp2040", devices_mod.STATE_KATAPULT).name == "flashtool"
-
-
-def test_select_for_matches_a_display_to_esptool():
-    assert flashers.select_for("esp32", devices_mod.STATE_ESP_ROM).name == "esptool"
-
-
-def test_select_for_matches_a_bare_rp2040_to_bootsel():
-    assert flashers.select_for("rp2040", devices_mod.STATE_BOOTSEL).name == "bootsel"
-
-
-def test_select_for_refuses_an_impossible_chipset_state_pair():
-    """esp32 is a real, registered chipset (Esptool writes it) - just never in
-    a `klipper` bus state, which nothing claims to answer to."""
-    with pytest.raises(UnsupportedChipsetError):
-        flashers.select_for("esp32", devices_mod.STATE_KLIPPER)
+    with pytest.raises(UnsupportedChipsetError) as exc:
+        flash_initial_bootloader(
+            paths, settings, "rp2040", "unused.bin", uf2_bin=uf2, katapult_config=cfg
+        )
+    assert exc.value.data["chipset"] == "rp2040"
 
 
 # --------------------------------------------------------------------------

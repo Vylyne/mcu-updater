@@ -33,6 +33,7 @@ on *now*. Only the USB path has this problem: CAN addresses a board as
 
 from __future__ import annotations
 
+import dataclasses
 import os
 import re
 import sys
@@ -66,6 +67,7 @@ from ..errors import (
     OffsetMismatchError,
     OperationCancelled,
     ToolMissingError,
+    UnsupportedChipsetError,
 )
 from ..paths import HUMAN_ACTION_TIMEOUT, REENUMERATE_TIMEOUT, Paths
 from ..settings import Settings
@@ -925,10 +927,9 @@ def flash_initial_bootloader(
 
     Which ROM bootloader a factory-bare board of this chipset speaks is a
     single fact about the silicon, not a lookup table: every STM32 answers DFU,
-    every RP2040 answers BOOTSEL. `flashers.select_for` is the actual dispatch -
-    driven through the same `Flasher` protocol a batch uses, so a route added
-    for this path is a route a batch could take too, with nothing here to edit
-    when it lands.
+    every RP2040 answers BOOTSEL. What goes on the board is katapult, so
+    `[firmware katapult]`'s `flashers:` list picks the writer, through the same
+    `Flasher` protocol a batch uses.
 
     `uf2_bin` is separate from `fw_bin`: BOOTSEL mass storage only accepts a
     `.uf2` - a `.bin` copied there is silently ignored - and a build only
@@ -946,7 +947,23 @@ def flash_initial_bootloader(
     from .. import flashers
 
     state = STATE_BOOTSEL if chipset.startswith("rp2040") else STATE_DFU
-    flasher = flashers.select_for(chipset, state)
+    katapult = firmware.resolve(paths, "katapult")
+    device = flashers.Device(
+        type=chipset,
+        id=target_serial or "",
+        chipset=chipset,
+        state=state,
+        fw=katapult.name,
+        kind=flashers.KIND_BARE,
+        detail={"fw_bin": fw_bin},
+    )
+    flasher = flashers.resolve(katapult, device, None)
+    if flasher is None:
+        raise UnsupportedChipsetError(
+            f"don't know how to perform a first-time flash for chipset '{chipset}'. "
+            f"Flash katapult manually, then use 'add-serial' once it enumerates.",
+            chipset=chipset,
+        )
 
     with tempfile.TemporaryDirectory(prefix="mcu-updater-bootsel-") as staging:
         if state == STATE_BOOTSEL:
@@ -962,11 +979,10 @@ def flash_initial_bootloader(
                 "Staged Katapult with the application sector erased, so the board "
                 "cannot chain-load whatever it ran before.",
             )
-            target = flashers.bootsel.target_for(staged, chipset=chipset, paths=paths)
-        else:
-            target = flashers.dfu_util.target_for(
-                fw_bin, chipset=chipset, dfu_serial=target_serial
+            device = dataclasses.replace(
+                device, detail={**device.detail, "uf2_file": staged}
             )
+        target = flasher.target(paths, device, None, stop_services=())
 
         bench = flashers.Bench(
             paths=paths,

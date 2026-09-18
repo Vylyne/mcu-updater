@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-import dataclasses
 import os
 from typing import Any
 
-from ... import device_info, firmware, flashers, providers, stop_services
+from ... import device_info, firmware, flashers, inventory, providers, stop_services
 from ...build import read_sidecar
 from ...config import Registry
 from ...devices import (
@@ -22,28 +21,28 @@ from ..rpc import ERR_INVALID_PARAMS, RpcError
 from ._api import _Base
 
 
-def _board_target(board: dict) -> flashers.FlashTarget:
-    """One entry from `_boards_to_flash`/`_canbus_boards_to_flash`, as
-    something a batch can write.
+def _board_request(board: dict) -> tuple[flashers.Device, tuple[str, ...]]:
+    """One entry from `_boards_to_flash`/`_canbus_boards_to_flash`, as a
+    device for `flashers.select_each`, with its resolved stop list.
 
-    A one-line alias so the bulk callers say the same thing, and so the board
-    selection's dict shape - which is on the wire - stays the selection's
-    business rather than leaking a second copy into each of them.
-
-    `stop_services` rides inside the same dict (set by whichever selection
-    produced it, resolved once per type) rather than as a second argument
-    here, since `board` is already the one place that selection's per-target
-    facts live.
-
-    Branches on which identity key the dict carries - `uuid` for a CAN board,
-    `serial` for a by-id one - rather than a `kind` field, since the two
-    selections never overlap for one board (a type's `serials:` and
-    `canbus_uuids:` name different physical devices).
+    The dict rides whole as `detail`: its shape is on the wire (`fw.flash_all`
+    returns it) and flashtool's target is built from it. Branches on which
+    identity key the dict carries, `uuid` or `serial`, since the two selections
+    never overlap for one board.
     """
-    stop_services = tuple(board.get("stop_services") or ())
-    if "uuid" in board:
-        return flashers.flashtool.target_for(board, stop_services=stop_services)
-    return flashers.flashtool.target_for(board, stop_services=stop_services)
+    can = "uuid" in board
+    return (
+        flashers.Device(
+            type=board["type"],
+            id=board["uuid"] if can else board["serial"],
+            chipset=board["chipset"],
+            state=board["state"],
+            fw=board["fw"],
+            kind=flashers.KIND_CANBUS if can else flashers.KIND_SERIAL,
+            detail=board,
+        ),
+        tuple(board.get("stop_services") or ()),
+    )
 
 
 def _platformio_json(target: flashers.FlashTarget) -> dict[str, Any]:
@@ -281,7 +280,7 @@ class BulkMixin(_Base):
 
     def _screens_to_flash(
         self, scope: str, only: str | None = None
-    ) -> list[flashers.FlashTarget]:
+    ) -> tuple[list[flashers.FlashTarget], list[dict[str, Any]]]:
         """Which screens a flash_all should write, with the reason for each.
 
         **Selected here, at submission time, because only a running Klipper can
@@ -293,10 +292,14 @@ class BulkMixin(_Base):
         nothing built has nothing to write, and a screen that is not there
         cannot be written to. `scope: all` overrides the judgement, never the
         physics.
+
+        Returns `(targets, refused)` from `flashers.select_each`: a screen its
+        family cannot write is a refusal for the batch to report.
         """
         known = self.pio_types()
         settings = self.settings()
-        out: list[flashers.FlashTarget] = []
+        families = firmware.load(self.paths)
+        requests: list[tuple[flashers.Device, tuple[str, ...]]] = []
         for payload in self.pio_status():
             if only is not None and payload["name"] != only:
                 continue
@@ -306,24 +309,32 @@ class BulkMixin(_Base):
             # wire projection and reversing it is the thing this codebase keeps
             # deciding not to do.
             display = known[payload["name"]]
-            units = stop_services.for_platformio(self.paths, display, settings)
+            units = stop_services.for_platformio(self.paths, display, settings, families)
             for screen in payload["screens"]:
                 if not screen["present"]:
                     continue
                 status = self._platformio_device_status(screen)
                 if scope != "all" and status.needs_flash is not True:
                     continue
-                target = flashers.esptool.target_for(display, screen, stop_services=units)
-                out.append(
-                    dataclasses.replace(
-                        target,
-                        detail={
-                            **target.detail,
-                            "reason": "forced" if scope == "all" else status.reason,
-                        },
+                requests.append(
+                    (
+                        flashers.Device(
+                            type=display.name,
+                            id=screen["configured_path"],
+                            chipset="",
+                            state=inventory.STATE_UNKNOWN,
+                            fw=display.firmware,
+                            kind=flashers.KIND_SCREEN,
+                            detail={
+                                "display": display,
+                                "screen": screen,
+                                "reason": "forced" if scope == "all" else status.reason,
+                            },
+                        ),
+                        units,
                     )
                 )
-        return out
+        return flashers.select_each(self.paths, families, requests)
 
     def _do_build_all(
         self, ctx: Any, targets: list[providers.BuildTarget]
@@ -387,7 +398,10 @@ class BulkMixin(_Base):
         )
 
     def _do_flash_all(
-        self, ctx: Any, targets: list[flashers.FlashTarget]
+        self,
+        ctx: Any,
+        targets: list[flashers.FlashTarget],
+        refused: list[dict[str, Any]] | tuple[()] = (),
     ) -> dict[str, Any]:
         """Write every selected device. The loop itself is `flashers.write_all`.
 
@@ -402,6 +416,7 @@ class BulkMixin(_Base):
             targets,
             ctx,
             on_ready=self._await_klippy_ready,
+            refused=refused,
         )
 
     def build_all(self, args: dict) -> dict[str, Any]:
@@ -540,8 +555,8 @@ class BulkMixin(_Base):
         # Read now, while Klipper can still answer - the same constraint
         # `_pio_flash` has always had, and the reason this is selection
         # rather than something the batch could work out for itself.
-        screens = self._screens_to_flash(scope, only)
-        if not boards and not screens:
+        screens, screens_refused = self._screens_to_flash(scope, only)
+        if not boards and not screens and not screens_refused:
             raise RpcError(
                 "nothing to flash: every online device already matches its built "
                 "firmware. Use scope 'all' to flash regardless.",
@@ -563,10 +578,14 @@ class BulkMixin(_Base):
             reporter=self._log_reporter,
         )
 
-        targets = [_board_target(b) for b in boards] + screens
+        board_targets, refused = flashers.select_each(
+            self.paths, firmware.load(self.paths), [_board_request(b) for b in boards]
+        )
+        targets = board_targets + screens
+        refused += screens_refused
 
         def run(ctx) -> dict[str, Any]:
-            return self._do_flash_all(ctx, targets)
+            return self._do_flash_all(ctx, targets, refused=refused)
 
         job = runner.submit(
             "flash_all",
@@ -581,6 +600,7 @@ class BulkMixin(_Base):
             # answer with different facts - a board has a chipset and a serial,
             # a screen has a port and a section - and flattening them would
             # invent nulls for half of each.
+            # A screen its family cannot write is not here; it is in the job's failures[].
             "displays": [_platformio_json(t) for t in screens],
         }
 
@@ -648,10 +668,15 @@ class BulkMixin(_Base):
             boards = self._boards_to_flash(reg_now, scope, only) + self._canbus_boards_to_flash(
                 reg_now, scope, only
             )
-            devices = [_board_target(b) for b in boards] + self._screens_to_flash(
-                scope, only
+            board_targets, refused = flashers.select_each(
+                self.paths,
+                firmware.load(self.paths),
+                [_board_request(b) for b in boards],
             )
-            if not devices:
+            screens, screens_refused = self._screens_to_flash(scope, only)
+            devices = board_targets + screens
+            refused += screens_refused
+            if not devices and not refused:
                 ctx.reporter("info", "No device needs flashing.")
                 return {"build": build_result, "flash": {"flashed": [], "failures": []}}
 
@@ -664,7 +689,10 @@ class BulkMixin(_Base):
                 force=bool(args.get("force")),
                 reporter=ctx.reporter,
             )
-            return {"build": build_result, "flash": self._do_flash_all(ctx, devices)}
+            return {
+                "build": build_result,
+                "flash": self._do_flash_all(ctx, devices, refused=refused),
+            }
 
         names = sorted({t.name for t in targets})
         job = runner.submit("update_all", {"scope": scope, "name": only, "types": names}, run)

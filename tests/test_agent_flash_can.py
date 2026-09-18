@@ -373,7 +373,7 @@ def test_cross_reference_miss_falls_back_to_unconditional_inclusion(paths, live_
 
 
 def test_flash_all_selection_includes_both_serial_and_canbus_boards(paths, live_registry_text):
-    """`_board_target` must route each dict shape to the right flasher -
+    """`_board_request` must route each dict shape to the right flasher -
     both identities to Flashtool - inside one combined batch."""
     with open(paths.registry_file, "w", encoding="utf-8") as fh:
         fh.write(live_registry_text)
@@ -383,9 +383,13 @@ def test_flash_all_selection_includes_both_serial_and_canbus_boards(paths, live_
 
     reg = Registry.load(paths)
     boards = api._boards_to_flash(reg, "all") + api._canbus_boards_to_flash(reg, "all")
-    from mcu_updater.agent.methods.bulk import _board_target
+    from mcu_updater import firmware, flashers
+    from mcu_updater.agent.methods.bulk import _board_request
 
-    targets = [_board_target(b) for b in boards]
+    targets, refused = flashers.select_each(
+        paths, firmware.load(paths), [_board_request(b) for b in boards]
+    )
+    assert refused == []
     by_flasher = {t.flasher for t in targets}
     assert by_flasher == {"flashtool"}
     can_targets = [t for t in targets if "uuid" in t.detail]

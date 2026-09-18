@@ -1,10 +1,11 @@
 """Which flasher writes a device is its family's answer.
 
-`select_for` matched a chipset and a state against every registered flasher in
-registry order, so an RP2040 had one reachable flasher no matter what it was
-running. Each `[firmware]` section now lists the flashers that may write it, in
-order, and the first whose `supports()` accepts the device wins. A family that
-lists nothing able to write a device refuses it by name instead of guessing.
+The old global selector matched a chipset and state against every registered
+flasher in registry order, so an RP2040 had one reachable flasher no matter
+what it was running. Each `[firmware]` section now lists the flashers that may
+write it, in order, and the first whose `supports()` accepts the device wins. A
+family that lists nothing able to write a device refuses it by name instead of
+guessing.
 """
 
 from __future__ import annotations
@@ -19,7 +20,7 @@ from mcu_updater.devices import (
     STATE_KLIPPER,
     STATE_OFFLINE,
 )
-from mcu_updater.errors import NoFlasherError
+from mcu_updater.errors import ConfigCorruptError, NoFlasherError
 from mcu_updater.firmware import FirmwareFamily
 from mcu_updater.flashers import (
     KIND_BARE,
@@ -29,6 +30,7 @@ from mcu_updater.flashers import (
     Device,
 )
 from mcu_updater.helpers import BootselHandoff
+from mcu_updater.settings import Settings
 
 RR_SERIAL = "RR-0123456789ABCDEFGHJKMNPQRS"
 
@@ -156,6 +158,18 @@ def test_bootsel_does_not_write_a_bare_board_that_is_not_in_bootsel():
 
 def test_bootsel_writes_a_running_board_whose_helper_can_request_bootsel():
     assert flashers.Bootsel().supports(_roadrunner(), _Requester()) is True
+
+
+@pytest.mark.parametrize("kind", [KIND_SCREEN, KIND_CANBUS])
+def test_bootsel_does_not_claim_a_non_serial_handoff(kind):
+    device = _device(
+        chipset="rp2040",
+        state="unknown",
+        kind=kind,
+        detail={},
+    )
+
+    assert flashers.Bootsel().supports(device, _Requester()) is False
 
 
 def test_the_helper_vouches_for_its_board_without_a_chipset():
@@ -307,6 +321,99 @@ def test_the_dfu_target_carries_the_image_and_serial(paths):
     assert target.detail["fw_bin"] == "/tmp/k.bin"
     assert target.detail["dfu_serial"] == "DFU123"
     assert flashers.needs_services_stopped(target) is False
+
+
+# --- a batch ------------------------------------------------------------------
+
+
+def _board_device(fw: str = "klipper") -> Device:
+    return Device(
+        type="ebb36",
+        id="usb-Klipper_stm32g0b1xx_1-if00",
+        chipset="stm32g0b1xx",
+        state=STATE_KLIPPER,
+        fw=fw,
+        detail={
+            "type": "ebb36",
+            "serial": "usb-Klipper_stm32g0b1xx_1-if00",
+            "chipset": "stm32g0b1xx",
+            "fw": fw,
+        },
+    )
+
+
+def _screen_device(fw: str = "knomi") -> Device:
+    return Device(
+        type="knomi",
+        id="/dev/ttyKNOMI",
+        chipset="",
+        state="unknown",
+        fw=fw,
+        kind=KIND_SCREEN,
+        detail={},
+    )
+
+
+def test_a_batch_refuses_one_device_without_dropping_the_rest(paths):
+    """Spec §8 step 1. The refused screen comes first, so a refusal that raised
+    would lose the board after it."""
+    families = {
+        "klipper": _family("flashtool", name="klipper"),
+        "knomi": _family("dfu_util", name="knomi"),
+    }
+
+    targets, refused = flashers.select_each(
+        paths,
+        families,
+        [(_screen_device(), ("klipper",)), (_board_device(), ("klipper", "moonraker"))],
+    )
+
+    assert [t.id for t in targets] == ["usb-Klipper_stm32g0b1xx_1-if00"]
+    assert targets[0].flasher == "flashtool"
+    assert targets[0].stop_services == ("klipper", "moonraker")
+    [entry] = refused
+    assert entry["type"] == "knomi"
+    assert entry["id"] == "/dev/ttyKNOMI"
+    assert entry["flasher"] is None
+    # Its own family, not whichever the batch happened to resolve first.
+    assert "[firmware knomi] (flashers: dfu_util)" in entry["error"]
+
+
+def test_a_device_whose_family_is_undeclared_is_a_config_error(paths):
+    with pytest.raises(ConfigCorruptError):
+        flashers.select_device(
+            paths, {}, _board_device(fw="nowhere"), stop_services=()
+        )
+
+
+def _no_controller(name=None):
+    raise AssertionError(f"nothing was written, so nothing should stop {name!r}")
+
+
+def test_a_refusal_is_reported_with_the_failures_and_nothing_waits(paths):
+    """A refusal is warned and listed in `failures[]` like a failed write. A batch of
+    nothing but refusals stopped nothing, so it has no restart to wait on."""
+    lines: list[tuple[str, str]] = []
+    ready: list = []
+    entry = {
+        "type": "ebb36",
+        "id": "usb-x",
+        "flasher": None,
+        "error": "nothing in [firmware klipper] (flashers: esptool) can write it",
+    }
+    bench = flashers.Bench(paths=paths, settings=Settings(), controller=_no_controller)
+
+    result = flashers.write_all(
+        bench,
+        [],
+        flashers.PlainContext(lambda stream, line: lines.append((stream, line))),
+        on_ready=ready.append,
+        refused=[entry],
+    )
+
+    assert result == {"flashed": [], "failures": [entry]}
+    assert ("warn", f"usb-x: {entry['error']}") in lines
+    assert ready == []
 
 
 # --- group_by_stop -----------------------------------------------------------

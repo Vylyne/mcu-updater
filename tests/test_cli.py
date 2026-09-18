@@ -266,6 +266,34 @@ def test_a_single_device_flash_defaults_to_not_forced(c, captured, monkeypatch):
     assert captured[0][0].detail["force"] is False
 
 
+def test_a_board_its_family_cannot_write_is_reported_not_written(c, monkeypatch):
+    """The CLI selects through the family's `flashers:` too. A board that
+    nothing in the list can write reaches the batch as a refusal, and the
+    command exits non-zero."""
+    with open(c.paths.main_config, encoding="utf-8") as fh:
+        text = fh.read()
+    assert text.count("flashers: flashtool") == 1
+    with open(c.paths.main_config, "w", encoding="utf-8") as fh:
+        fh.write(text.replace("flashers: flashtool", "flashers: esptool"))
+    written: list = []
+    refusals: list = []
+
+    def fake(bench, targets, ctx, *, refused=(), **kwargs):
+        written.extend(targets)
+        refusals.extend(refused)
+        return {"flashed": [], "failures": list(refused)}
+
+    monkeypatch.setattr(flashers, "write_all", fake)
+
+    with pytest.raises(SystemExit) as exc:
+        cli.flash_fw_cmd(argparse.Namespace(type="board", serial=None, yes=True))
+
+    assert exc.value.code == 1
+    assert written == []
+    assert [r["id"] for r in refusals] == ["AAAA-if00"]
+    assert "[firmware klipper]" in refusals[0]["error"]
+
+
 def test_flashing_a_platformio_type_uses_the_watcher_map(
     c, pio_type, captured, fake_root, monkeypatch
 ):

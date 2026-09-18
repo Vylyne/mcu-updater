@@ -1,0 +1,69 @@
+{
+  "_comment": "Every write selects through its family. A refusal must reach failures[] without aborting the batch, a device must be resolved against its own family, a batch of only refusals must not wait on a restart it never caused, the serial fw.flash job must keep its write's own error code, and first install must refuse what katapult's list cannot write.",
+  "file": "src/mcu_updater/flashers/registry.py",
+  "command": [
+    "python",
+    "-m",
+    "pytest",
+    "tests/test_flasher_select.py",
+    "tests/test_flash.py",
+    "tests/test_agent_bulk.py",
+    "tests/test_agent_flash.py",
+    "tests/test_cli.py",
+    "-q"
+  ],
+  "mutations": [
+    {
+      "name": "a refusal does not abort the batch's selection",
+      "find": "        except NoFlasherError as exc:\n            refused.append(refusal(device, exc))",
+      "replace": "        except ZeroDivisionError as exc:\n            refused.append(refusal(device, exc))"
+    },
+    {
+      "name": "each device resolves its own family",
+      "find": "    family = firmware.resolve(paths, device.fw, families)",
+      "replace": "    family = next(iter(families.values()))"
+    },
+    {
+      "name": "refusals are reported with the failures",
+      "file": "src/mcu_updater/flashers/batch.py",
+      "find": "    for entry in refused:",
+      "replace": "    for entry in ():"
+    },
+    {
+      "name": "nothing written means nothing to wait for",
+      "file": "src/mcu_updater/flashers/batch.py",
+      "find": "    if on_ready is not None and targets:",
+      "replace": "    if on_ready is not None:"
+    },
+    {
+      "name": "a write's own error is collected for a single-device job",
+      "file": "src/mcu_updater/flashers/batch.py",
+      "find": "                        if errors is not None:\n                            errors.append(exc)",
+      "replace": "                        if False:\n                            errors.append(exc)"
+    },
+    {
+      "name": "the serial fw.flash job fails with its write's error",
+      "file": "src/mcu_updater/agent/methods/flash.py",
+      "find": "            if errors:\n                raise errors[0]",
+      "replace": "            if False:\n                raise errors[0]"
+    },
+    {
+      "name": "flash_all hands its refusals to the batch",
+      "file": "src/mcu_updater/agent/methods/bulk.py",
+      "find": "            return self._do_flash_all(ctx, targets, refused=refused)",
+      "replace": "            return self._do_flash_all(ctx, targets)"
+    },
+    {
+      "name": "the CLI hands its refusals to the batch",
+      "file": "src/mcu_updater/cli.py",
+      "find": "        _bench(c), targets, flashers.PlainContext(stdout_reporter), refused=refused",
+      "replace": "        _bench(c), targets, flashers.PlainContext(stdout_reporter)"
+    },
+    {
+      "name": "first install refuses what katapult's list cannot write",
+      "file": "src/mcu_updater/flashers/flash.py",
+      "find": "    if flasher is None:\n        raise UnsupportedChipsetError(",
+      "replace": "    if False:\n        raise UnsupportedChipsetError("
+    }
+  ]
+}

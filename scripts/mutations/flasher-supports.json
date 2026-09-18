@@ -70,13 +70,13 @@
     {
       "name": "the handoff path needs a requester",
       "file": "src/mcu_updater/flashers/bootsel.py",
-      "find": "        return device.kind != KIND_BARE and helpers.bootsel_requester(helper) is not None",
-      "replace": "        return device.kind != KIND_BARE"
+      "find": "        return device.kind == KIND_SERIAL and helpers.bootsel_requester(helper) is not None",
+      "replace": "        return device.kind == KIND_SERIAL"
     },
     {
-      "name": "a bare board is never a handoff",
+      "name": "only a serial board is a handoff",
       "file": "src/mcu_updater/flashers/bootsel.py",
-      "find": "        return device.kind != KIND_BARE and helpers.bootsel_requester(helper) is not None",
+      "find": "        return device.kind == KIND_SERIAL and helpers.bootsel_requester(helper) is not None",
       "replace": "        return helpers.bootsel_requester(helper) is not None"
     },
     {

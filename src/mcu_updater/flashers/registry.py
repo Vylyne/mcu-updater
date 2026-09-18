@@ -9,9 +9,10 @@ has NOPASSWD `systemctl` for Klipper. The tuple is the seam.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from collections.abc import Iterable
+from typing import TYPE_CHECKING, Any
 
-from ..errors import NoFlasherError, UnsupportedChipsetError
+from ..errors import NoFlasherError
 from .bootsel import Bootsel
 from .dfu_util import DfuUtil
 from .esptool import Esptool
@@ -156,23 +157,54 @@ def select(
     return flasher.target(paths, device, helper, stop_services=stop_services)
 
 
-def select_for(chipset: str, state: str) -> Flasher:
-    """Which flasher writes a device of this chipset while it is in this state.
+def select_device(
+    paths: Paths,
+    families: dict[str, FirmwareFamily],
+    device: Device,
+    *,
+    stop_services: tuple[str, ...],
+) -> FlashTarget:
+    """`select`, for a caller holding a device rather than its family.
 
-    A capability match against `FLASHERS` itself - each flasher's own
-    `chipsets`/`states` are the whole answer, so there is no separate table to
-    keep in step. First-time install is not special: it is a selection where
-    `state` happens to be `dfu` or `bootsel`, same as any other.
-
-    Raises `UnsupportedChipsetError` when nothing registered answers to this
-    chipset/state pair - the user's only recourse is to flash katapult
-    manually, then use 'add-serial' once it enumerates.
+    `device.fw` names the family and the family names the helper, so every
+    caller asks the same two questions in the same order. Raises
+    `ConfigCorruptError` for an undeclared family and `NoFlasherError` as
+    `select` does.
     """
-    for f in FLASHERS:
-        if state in f.states and any(chipset.startswith(p) for p in f.chipsets):
-            return f
-    raise UnsupportedChipsetError(
-        f"don't know how to perform a first-time flash for chipset '{chipset}'. "
-        f"Flash katapult manually, then use 'add-serial' once it enumerates.",
-        chipset=chipset,
-    )
+    from .. import firmware, helpers
+
+    family = firmware.resolve(paths, device.fw, families)
+    helper = helpers.for_name(family.helper, family=family.name)
+    return select(paths, family, device, helper, stop_services=stop_services)
+
+
+def refusal(device: Device, exc: NoFlasherError) -> dict[str, Any]:
+    """A device nothing could write, in a batch's `failures[]` shape.
+
+    The uniform slots `FlashTarget.to_json` has, with no flasher because none
+    was chosen, and the refusal's own sentence as the error.
+    """
+    return {"type": device.type, "id": device.id, "flasher": None, "error": str(exc)}
+
+
+def select_each(
+    paths: Paths,
+    families: dict[str, FirmwareFamily],
+    requests: Iterable[tuple[Device, tuple[str, ...]]],
+) -> tuple[list[FlashTarget], list[dict[str, Any]]]:
+    """Select a batch: (targets, refusals), each in request order.
+
+    A device nothing can write is a refusal, not an exception. Spec §8: it is
+    reported with the batch's failures and does not abort the rest. Hand the
+    refusals to `write_all(refused=...)`.
+    """
+    targets: list[FlashTarget] = []
+    refused: list[dict[str, Any]] = []
+    for device, units in requests:
+        try:
+            targets.append(
+                select_device(paths, families, device, stop_services=units)
+            )
+        except NoFlasherError as exc:
+            refused.append(refusal(device, exc))
+    return targets, refused

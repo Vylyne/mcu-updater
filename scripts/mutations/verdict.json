@@ -28,6 +28,11 @@
       "replace": "    if False:"
     },
     {
+      "name": "offline and bootloader state outrank a matching digest",
+      "find": "    if evidence.state == STATE_OFFLINE:\n        return DeviceStatus(OFFLINE)\n    if evidence.state == STATE_KATAPULT:\n        # Sitting in its bootloader, so it reports no application version at\n        # all. Not \"unknown\" - the clearest possible signal that it wants\n        # firmware.\n        return DeviceStatus(IN_BOOTLOADER)\n\n    measured = _image_verdict(evidence.info, expected.digest)\n    if measured is not None:\n        return measured",
+      "replace": "    measured = _image_verdict(evidence.info, expected.digest)\n    if measured is not None:\n        return measured\n\n    if evidence.state == STATE_OFFLINE:\n        return DeviceStatus(OFFLINE)\n    if evidence.state == STATE_KATAPULT:\n        # Sitting in its bootloader, so it reports no application version at\n        # all. Not \"unknown\" - the clearest possible signal that it wants\n        # firmware.\n        return DeviceStatus(IN_BOOTLOADER)"
+    },
+    {
       "name": "the measurement is consulted before the version string",
       "find": "    measured = _image_verdict(evidence.info, expected.digest)\n    if measured is not None:\n        return measured",
       "replace": "    measured = None"

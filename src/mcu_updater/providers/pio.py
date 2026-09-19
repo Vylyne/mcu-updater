@@ -282,11 +282,10 @@ def source_state(source: str) -> SourceState:
 def running_sha(running: str | None) -> str | None:
     """The git short sha inside what a screen reports running, if it carries one.
 
-    Public because two callers need it and must not disagree: `device_status`
-    below, deciding whether the screen is behind the tree, and the agent, asking
-    the flash log whether our record of writing to this screen is still
-    believable. A screen sitting exactly on a version tag reports no sha at all,
-    which is None here rather than an error - see `_FW_SHA_RE`.
+    Public because the status projection and fleet selection both need it and
+    must not disagree when they assemble evidence for `verdict.decide`. A
+    screen sitting exactly on a version tag reports no sha at all, which is None
+    here rather than an error - see `_FW_SHA_RE`.
     """
     match = _FW_SHA_RE.search(running or "")
     return match.group(1) if match else None
@@ -300,10 +299,10 @@ def is_dirty(running: str | None) -> bool:
 # --------------------------------------------------------------------------
 # is the BUILT IMAGE current
 #
-# Separate from device_status, which asks about the screens. This asks about
-# the .bin, and it earns its place because flashing a display uploads whatever
-# is in .pio/build without building first - so a source tree that has moved
-# since the last build writes old firmware to every screen, silently.
+# Separate from the device verdict assembled for `verdict.decide`. This asks
+# about the .bin, and it earns its place because flashing a display uploads
+# whatever is in .pio/build without building first - so a source tree that has
+# moved since the last build writes old firmware to every screen, silently.
 # --------------------------------------------------------------------------
 
 def record_build(paths: Paths, display: PioType, state: SourceState) -> None:

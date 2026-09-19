@@ -92,6 +92,33 @@ def test_a_board_in_its_bootloader_is_a_strong_yes():
     assert status.needs_flash is True
 
 
+def test_an_offline_board_outranks_a_matching_digest():
+    status = decide(
+        Evidence(state="offline", version="v1.2.0-3-gdeadbee", info=_reported()),
+        Expected(digest=IMAGE),
+    )
+    assert status.reason == OFFLINE
+    assert status.needs_flash is None
+
+
+def test_a_bootloader_outranks_a_matching_digest():
+    status = decide(
+        Evidence(state="katapult", version="v1.2.0-3-gdeadbee", info=_reported()),
+        Expected(digest=IMAGE),
+    )
+    assert status.reason == IN_BOOTLOADER
+    assert status.needs_flash is True
+
+
+def test_a_protocol_mismatch_outranks_offline():
+    status = decide(
+        Evidence(state="offline", protocol_match=False),
+        Expected(),
+    )
+    assert status.reason == PROTOCOL_MISMATCH
+    assert status.needs_flash is True
+
+
 # -- the measurement -------------------------------------------------------
 
 

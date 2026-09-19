@@ -546,6 +546,10 @@ def test_source_state_survives_a_directory_that_is_not_a_checkout(tmp_path):
     assert source_state("").head is None
 
 
+def test_running_sha_accepts_a_tagless_report_without_a_commit_count():
+    assert pio.running_sha("0.4.0+gd34db33") == "d34db33"
+
+
 # --------------------------------------------------------------------------
 # is the BUILT IMAGE current
 #

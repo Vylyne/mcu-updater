@@ -193,6 +193,10 @@ unchanged bus would not otherwise prompt another attempt. Deployment-policy
 refusals and non-busy updater errors are not retries. A handler retry does not
 re-emit the `bus` event because its payload is identical.
 
+Within one watcher sweep, a serial reaches the provisioning write path at most
+once, even if multiple opted-in families claim it. A failed or busy attempt is
+also spent for that sweep; the next poll is the retry boundary.
+
 ### Do not give `Confidence` a fourth degree of certainty
 
 Three tones and a tri-state `safe_to_write`, built the way `states.py` is. A

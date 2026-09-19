@@ -247,8 +247,9 @@ the watcher's poll, never from `fw.status`, and only when the deployment's
 operation lock was held is tried again on the next poll; a policy refusal and
 other updater errors are not retried. Late adoption still runs because it is a
 registry write completing an operation already requested. Auto-provisioning
-does not track the resulting board; `fw.serial.add` does that and performs its
-own provisioning when needed (reported as `prior_serial`).
+attempts each serial at most once per watcher sweep, even when multiple
+families claim it. It does not track the resulting board; `fw.serial.add` does
+that and performs its own provisioning when needed (reported as `prior_serial`).
 
 ### `fw.ping`
 

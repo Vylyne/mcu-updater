@@ -35,6 +35,7 @@ def auto_provision(
     from .lock import exclusive
 
     retry = False
+    attempted_serials: set[str] = set()
     try:
         _entries, families = typelist.read_config(paths)
     except UpdaterError as exc:
@@ -56,13 +57,20 @@ def auto_provision(
         if judge is None or prov is None:
             continue
         for serial in sorted(devices):
-            verdict = judge.is_trackable(serial)
+            try:
+                verdict = judge.is_trackable(serial)
+            except Exception as exc:  # noqa: BLE001 - never kill the watcher
+                reporter("warn", f"[firmware {family.name}]: {exc}")
+                break
             if verdict.ok:
                 continue
             if verdict.remedy != "provision":
                 continue
             if not may_provision:
                 continue
+            if serial in attempted_serials:
+                continue
+            attempted_serials.add(serial)
             try:
                 # Selection, irreversible write and re-enumeration handoff are
                 # one operation and must not interleave with a flash.

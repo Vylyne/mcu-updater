@@ -70,14 +70,16 @@ class _TrackableOnly:
         return helpers.TrackVerdict(ok=False, remedy="provision")
 
 
-def _family(paths, *, auto: str) -> None:
+def _family(
+    paths, *, auto: str, name: str = "roadrunner", helper: str = "roadrunner"
+) -> None:
     with open(paths.main_config, "a", encoding="utf-8") as fh:
         fh.write(
-            "\n[firmware roadrunner]\n"
+            f"\n[firmware {name}]\n"
             "source: ~/roadrunner\n"
             "builder: cmake\n"
             "flashers: bootsel\n"
-            "helper: roadrunner\n"
+            f"helper: {helper}\n"
             f"{auto}"
         )
 
@@ -215,6 +217,71 @@ def test_one_board_is_provisioned_exactly_once(paths, rr):
     provisioning.auto_provision(paths, _sweep(PROVISIONED), may_provision=True)
 
     assert rr.calls == [UNPROVISIONED]
+
+
+def test_one_sweep_provisions_a_shared_helper_serial_once(paths, rr):
+    from mcu_updater import provisioning
+
+    _family(paths, auto="auto_provision: true\n", name="roadrunner-main")
+    _family(paths, auto="auto_provision: true\n", name="roadrunner-feature")
+
+    provisioning.auto_provision(paths, _sweep(UNPROVISIONED), may_provision=True)
+
+    assert rr.calls == [UNPROVISIONED]
+
+
+def test_one_sweep_provisions_a_serial_claimed_by_different_helpers_once(
+    paths, rr, monkeypatch
+):
+    from mcu_updater import provisioning
+
+    other = _FakeRoadrunner()
+    other.name = "other"
+    monkeypatch.setitem(helpers_registry._BY_NAME, "other", other)
+    _family(paths, auto="auto_provision: true\n", name="roadrunner-main")
+    _family(
+        paths,
+        auto="auto_provision: true\n",
+        name="roadrunner-feature",
+        helper="other",
+    )
+
+    provisioning.auto_provision(paths, _sweep(UNPROVISIONED), may_provision=True)
+
+    assert rr.calls == [UNPROVISIONED]
+    assert other.calls == []
+
+
+def test_a_trackability_failure_does_not_skip_later_families(paths, rr, monkeypatch):
+    from mcu_updater import provisioning
+
+    lines: list[tuple[str, str]] = []
+    broken = _FakeRoadrunner()
+    broken.name = "broken"
+    monkeypatch.setitem(helpers_registry._BY_NAME, "broken", broken)
+    monkeypatch.setattr(
+        broken,
+        "is_trackable",
+        lambda serial: (_ for _ in ()).throw(RuntimeError("broken helper")),
+    )
+    _family(
+        paths,
+        auto="auto_provision: true\n",
+        name="broken-family",
+        helper="broken",
+    )
+    _family(paths, auto="auto_provision: true\n", name="roadrunner-family")
+
+    provisioning.auto_provision(
+        paths,
+        _sweep(UNPROVISIONED),
+        may_provision=True,
+        reporter=lambda stream, line: lines.append((stream, line)),
+    )
+
+    assert broken.calls == []
+    assert rr.calls == [UNPROVISIONED]
+    assert ("warn", "[firmware broken-family]: broken helper") in lines
 
 
 def test_the_key_is_refused_on_a_family_that_cannot_auto_provision(paths):
@@ -360,9 +427,13 @@ def test_a_status_poll_never_reaches_auto_provision(paths, monkeypatch):
 
     agent = Agent(paths)
 
-    def _refuse(*args, **kwargs):
-        raise AssertionError("fw.status reached auto_provision")
+    calls: list[object] = []
 
-    monkeypatch.setattr(provisioning, "auto_provision", _refuse)
+    def _record(*args, **kwargs):
+        calls.append(args)
+
+    monkeypatch.setattr(provisioning, "auto_provision", _record)
 
     agent.api.dispatch("fw.status")
+
+    assert calls == []

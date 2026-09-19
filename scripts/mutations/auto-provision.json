@@ -1,5 +1,5 @@
 {
-  "_comment": "Auto-provisioning on appearance. Both helper capabilities identify a candidate, only the provision remedy is actionable, deployment policy gates the write, busy retries, other updater failures do not, and a watcher retry does not re-emit an unchanged bus.",
+  "_comment": "Auto-provisioning on appearance. Both helper capabilities identify a candidate, only the provision remedy is actionable, deployment policy gates the write, one serial is attempted once per sweep, busy retries, other updater failures do not, and a watcher retry does not re-emit an unchanged bus.",
   "file": "src/mcu_updater/provisioning.py",
   "command": [
     "python",
@@ -28,6 +28,11 @@
     {
       "name": "deployment policy gates the unattended write",
       "find": "            if not may_provision:\n                continue",
+      "replace": "            if False:\n                continue"
+    },
+    {
+      "name": "one serial is attempted only once per sweep",
+      "find": "            if serial in attempted_serials:\n                continue",
       "replace": "            if False:\n                continue"
     },
     {

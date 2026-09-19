@@ -144,8 +144,10 @@ def test_a_held_lock_refuses_the_track_and_never_retries(paths, rr, monkeypatch)
     assert Registry.load(paths).declared_serials("roadrunner") == []
 
 
-def test_a_helper_without_trackable_capability_tracks_an_ordinary_serial(paths):
-    """A helper without the capability has no durability opinion."""
+def test_a_firmware_without_the_capability_is_not_governed_by_other_identity_rules(
+    paths,
+):
+    """A firmware without Trackable does not inherit another firmware's rules."""
     with open(paths.main_config, "a", encoding="utf-8") as fh:
         fh.write(
             "\n[firmware knomi]\n"
@@ -162,10 +164,10 @@ def test_a_helper_without_trackable_capability_tracks_an_ordinary_serial(paths):
     helper = helpers.for_name("knomi_serial", family="knomi")
     assert helpers.trackable(helper) is None
 
-    tracked = tracking.add_serial(paths, "knomi", "ordinary-serial")
+    tracked = tracking.add_serial(paths, "knomi", UNPROVISIONED)
 
-    assert tracked.serial == "ordinary-serial"
-    assert Registry.load(paths).declared_serials("knomi") == ["ordinary-serial"]
+    assert tracked.serial == UNPROVISIONED
+    assert Registry.load(paths).declared_serials("knomi") == [UNPROVISIONED]
 
 
 def test_a_trackable_helper_with_no_provisioner_refuses_with_its_reason(

@@ -437,3 +437,33 @@ def test_a_status_poll_never_reaches_auto_provision(paths, monkeypatch):
     agent.api.dispatch("fw.status")
 
     assert calls == []
+
+
+def test_the_ruling_14_tripwire_can_actually_fire(paths, monkeypatch):
+    """Positive control for the test above: prove the recorder intercepts.
+
+    `test_a_status_poll_never_reaches_auto_provision` asserts an empty list,
+    so it passes for the wrong reason if the patch ever stops intercepting -
+    moving `service.py`'s import of `auto_provision` to module scope would do
+    exactly that, binding the name before the monkeypatch lands. It also has
+    to survive `_on_bus_change`'s `except Exception`, which is why it records
+    rather than raises. This test takes the one path that definitely calls
+    auto_provision and asserts the record arrives, so the guard above is only
+    ever empty because nothing called it.
+    """
+    from mcu_updater import provisioning
+    from mcu_updater.agent.service import Agent
+
+    agent = Agent(paths)
+    monkeypatch.setattr(agent.api, "adopt_paired", lambda: [])
+
+    calls: list[object] = []
+
+    def _record(*args, **kwargs):
+        calls.append(args)
+
+    monkeypatch.setattr(provisioning, "auto_provision", _record)
+
+    agent._on_bus_change(_sweep(UNPROVISIONED))
+
+    assert calls, "the tripwire did not record a call that definitely happened"

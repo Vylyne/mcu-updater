@@ -465,7 +465,7 @@ def screens_port(screens: dict, which: str) -> str:
 
 
 def _found(**by_id):
-    from mcu_updater.providers.pio import WatcherDevice
+    from mcu_updater.discovery.knomi_serial import WatcherDevice
 
     return {
         i: WatcherDevice(device_id=i, port=p, present=True) for i, p in by_id.items()
@@ -490,6 +490,30 @@ def _discover_only_for(name, **by_id):
 def _with_ids(screens, **ids):
     """The live get_status half, giving each section a reported id."""
     return {f"knomi_serial {name}": {"reported_id": i} for name, i in ids.items()}
+
+
+def test_a_screen_can_be_flashed_by_its_device_id(api, paths, fake_root):
+    """Ruling 18: either spelling of the one identity. A caller reading
+    `targets[].devices[].id` off the wire hands it back without knowing
+    whether the section it came from named a path or an id.
+
+    Overrides the call channel rather than using the `screens` fixture: that
+    fixture builds two `serial:` sections, and the case here is the other kind
+    of section entirely - `device_id:`, whose path Klipper's own discovery
+    resolved and reported back.
+    """
+    port = fake_root / "knomi_discovered"
+    port.write_text("", encoding="utf-8")
+    api._call = serve_klipper(
+        display_objects(
+            {"knomi_serial t0_knomi": {"device_id": "aaa111"}},
+            {"knomi_serial t0_knomi": {"port": str(port)}},
+        )
+    )
+
+    res = api.flash({"name": ENV, "id": "aaa111"})  # the spelling a caller may pick
+
+    assert [d["configured_path"] for d in res["displays"]] == [str(port)]
 
 
 def test_a_screen_is_written_where_it_answered_not_where_it_was(

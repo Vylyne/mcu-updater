@@ -77,6 +77,25 @@ def _add_display(paths, fake_root, api):
     return str(port)
 
 
+def _add_display_by_id(paths, fake_root, api, device_id="aaa111"):
+    """The other half of spec §3: a `[knomi_serial ...]` section that names the
+    screen's burned-in id instead of a path. Klipper's own discovery resolves
+    it and reports the path back, so the config has no path in it at all."""
+    (fake_root / "knomi_serial").mkdir(exist_ok=True)
+    port = fake_root / "knomi_discovered"
+    port.write_text("", encoding="utf-8")
+    with open(paths.main_config, "a", encoding="utf-8") as fh:
+        fh.write(f"\n[type {ENV}]\nchipset: esp32\nfirmware: knomi_serial\nplatformio_env: {ENV}\n")
+    api._call = serve_klipper(
+        display_objects(
+            {"knomi_serial t0_knomi": {"device_id": device_id}},
+            {"knomi_serial t0_knomi": {"port": str(port)}},
+        ),
+        reachable=True,
+    )
+    return device_id, str(port)
+
+
 # --------------------------------------------------------------------------
 # the shape
 # --------------------------------------------------------------------------
@@ -362,7 +381,7 @@ def test_a_device_carries_its_own_flash_call(paths, live_registry_text):
     assert flash["blocked"]["code"] == Api.BLOCKED_NO_ARTIFACT
 
 
-def test_a_screen_carries_the_display_flash_call_pinned_to_its_port(api, paths, fake_root):
+def test_a_screen_carries_the_display_flash_call_pinned_to_its_identity(api, paths, fake_root):
     """A port is never inferred: every screen of a type is an identical CH340,
     and PlatformIO's auto-detect was seen picking between two of them."""
     write_settings(paths, enable_flashing="true")
@@ -374,6 +393,43 @@ def test_a_screen_carries_the_display_flash_call_pinned_to_its_port(api, paths, 
 
     assert flash["method"] == "fw.flash"
     assert flash["params"] == {"name": ENV, "port": port}
+
+
+def test_a_screen_addressed_by_id_reports_that_id(api, paths, fake_root):
+    """spec §3. A `device_id:` section names the screen's own burned-in id and
+    no path at all - the path is whatever discovery found this boot, and
+    reporting it as the identity hands a caller back a value that changes when
+    the screen moves socket. It was null until discovery ran, too."""
+    device_id, port = _add_display_by_id(paths, fake_root, api)
+
+    device = _targets(api, "platformio")[ENV]["devices"][0]
+    assert device["id"] == device_id
+    assert device["path"] == os.path.realpath(port)
+
+
+def test_a_screen_addressed_by_port_still_reports_its_port(api, paths, fake_root):
+    """The other branch of the same rule, unchanged: a `serial:` section names
+    a path and carries no id, so the path *is* the identity."""
+    port = _add_display(paths, fake_root, api)
+
+    assert _targets(api, "platformio")[ENV]["devices"][0]["id"] == port
+
+
+def test_a_screens_flash_action_carries_the_identity_its_row_reports(
+    api, paths, fake_root
+):
+    """`devices[].id` exists to be handed straight back. An action carrying a
+    different value than the row reports would defeat that for exactly the
+    sections whose path is the least trustworthy thing about them.
+
+    The param keeps its name. Spec section 3: the row's `id` becomes the
+    declared identity, and "Flash parameter keys are unchanged."""
+    write_settings(paths, enable_flashing="true")
+    device_id, _port = _add_display_by_id(paths, fake_root, api)
+    api = Api(paths, runner=_runner(), call=api._call)
+
+    device = _targets(api, "platformio")[ENV]["devices"][0]
+    assert _action(device, "flash")["params"] == {"name": ENV, "port": device_id}
 
 
 def test_untrack_is_offered_per_board_and_never_for_a_screen(paths, live_registry_text, fake_root):

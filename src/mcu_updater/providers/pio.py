@@ -17,13 +17,12 @@ indistinguishable CH340 - so an upload without an explicit port writes firmware
 to whichever one answered first. See `upload()`.
 
 The two knomi discovery sources - the broadcast listen pass and the watcher's
-`devices.json` map - moved to `discovery.knomi_serial`, the subpackage named
+`devices.json` map - live in `discovery.knomi_serial`, the subpackage named
 for the firmware they integrate with (as opposed to `discovery.byid`/`dfu`/
-`bootsel`, which answer questions true of any board). `discover`,
-`read_device_map`, `device_map_path`, `WatcherDevice` and `DEVICE_MAP_VERSION`
-are re-exported here unchanged, the same shim shape `devices.py` uses for the
-three bus sources; new code should import from `discovery.knomi_serial`
-directly.
+`bootsel`, which answer questions true of any board). Nothing here re-exports
+them: the one module that reaches for either is `helpers.knomi_serial`, the
+firmware's own identity handler, and a provider is handed its configuration
+rather than going looking for devices.
 """
 
 from __future__ import annotations
@@ -38,11 +37,6 @@ import time
 
 from .. import device_info, firmware, typelist
 from ..build import Reporter, null_reporter, run_streamed, sha256_file
-from ..discovery.knomi_serial import DEVICE_MAP_VERSION as DEVICE_MAP_VERSION
-from ..discovery.knomi_serial import WatcherDevice as WatcherDevice
-from ..discovery.knomi_serial import device_map_path as device_map_path
-from ..discovery.knomi_serial import discover as discover
-from ..discovery.knomi_serial import read_device_map as read_device_map
 from ..discovery.knomi_serial import source_dir as _source_dir
 from ..errors import BuildError, ConfigError, FlashError, ToolMissingError
 from ..paths import Paths

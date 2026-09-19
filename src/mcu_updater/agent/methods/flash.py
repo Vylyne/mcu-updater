@@ -430,12 +430,18 @@ class FlashMixin(_Base):
 
         # Read the devices NOW, while Klipper can still answer.
         listed = self.device_list({})
-        # `id` is the uniform slot, `port` what this call has always taken.
+        # Either spelling of the one identity. `port` is what this call has
+        # always taken; `id` is the uniform slot, and for a screen that is its
+        # configured path or - where printer.cfg named one instead - its
+        # burned-in device id. Matching both means a caller can hand back what
+        # it read from `targets[].devices[].id` without knowing which kind of
+        # section produced it.
         wanted = args.get("port") or args.get("id")
         targets = [
             d
             for d in listed["displays"]
-            if d["present"] and (wanted is None or d["configured_path"] == str(wanted))
+            if d["present"]
+            and (wanted is None or str(wanted) in {d["configured_path"], d["device_id"]})
         ]
         if not targets:
             raise RpcError(

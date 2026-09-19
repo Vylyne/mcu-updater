@@ -496,7 +496,8 @@ def test_an_empty_device_map_falls_back_to_asking_the_devices(
     own docs put identity at flash time for exactly this reason, and the ports
     are free by the time this runs - which is the only moment it is possible.
     """
-    from mcu_updater.providers import pio
+    from mcu_updater.discovery.knomi_serial import WatcherDevice
+    from mcu_updater.helpers import knomi_serial as handler
 
     port = fake_root / "ttyUSB7"
     port.write_text("", encoding="utf-8")
@@ -505,12 +506,10 @@ def test_an_empty_device_map_falls_back_to_asking_the_devices(
     def fake_discover(paths, settings, display, **kwargs):
         asked.append(display.name)
         return {
-            "aaa111": pio.WatcherDevice(
-                device_id="aaa111", port=str(port), present=True
-            )
+            "aaa111": WatcherDevice(device_id="aaa111", port=str(port), present=True)
         }
 
-    monkeypatch.setattr(pio, "discover", fake_discover)
+    monkeypatch.setattr(handler, "discover", fake_discover)
     monkeypatch.setattr(cli, "_confirm", lambda prompt: True)
 
     with pytest.raises(SystemExit):
@@ -524,12 +523,12 @@ def test_discovery_failing_still_names_both_sources(c, pio_type, monkeypatch):
     """A host with no pyserial must not surface a tool error from the fallback -
     the useful message is the one naming what it tried."""
     from mcu_updater.errors import ToolMissingError
-    from mcu_updater.providers import pio
+    from mcu_updater.helpers import knomi_serial as handler
 
     def boom(*a, **k):
         raise ToolMissingError("no python3 here", tool="python3")
 
-    monkeypatch.setattr(pio, "discover", boom)
+    monkeypatch.setattr(handler, "discover", boom)
     monkeypatch.setattr(cli, "_confirm", lambda prompt: True)
 
     with pytest.raises(UpdaterError) as exc:
@@ -537,6 +536,31 @@ def test_discovery_failing_still_names_both_sources(c, pio_type, monkeypatch):
 
     assert "device map" in str(exc.value)
     assert "asking the devices directly" in str(exc.value)
+
+
+def test_the_refusal_names_the_file_it_read(c, pio_type, monkeypatch):
+    """Where the remembered answers live is the handler's to say. The CLI
+    naming `devices.json` itself is what put `providers.pio` in this sentence."""
+    monkeypatch.setattr(cli, "_confirm", lambda prompt: True)
+
+    with pytest.raises(UpdaterError) as exc:
+        cli.flash_fw_cmd(argparse.Namespace(type=ENV, serial=None, yes=True))
+
+    assert "devices.json" in str(exc.value)
+
+
+def test_a_type_whose_firmware_cannot_identify_devices_is_refused(
+    c, pio_type, monkeypatch
+):
+    """The handler-absent refusal, in the same shape a missing flasher gets:
+    say so, rather than flash whatever happens to be on a remembered path."""
+    monkeypatch.setattr(cli.helpers, "identifier", lambda helper: None)
+    monkeypatch.setattr(cli, "_confirm", lambda prompt: True)
+
+    with pytest.raises(UpdaterError) as exc:
+        cli.flash_fw_cmd(argparse.Namespace(type=ENV, serial=None, yes=True))
+
+    assert "identify" in str(exc.value)
 
 
 # --------------------------------------------------------------------------

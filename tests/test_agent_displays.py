@@ -697,3 +697,21 @@ def test_the_map_file_mtime_is_reported(api, paths):
     api._call = _moonraker({}, reachable=False)
 
     assert api.device_list({})["watcher"][env]["updated"] is not None
+
+
+def test_the_watcher_block_never_asks_the_devices(api, paths, monkeypatch):
+    """`fw.device.list` rides along in every `fw.status` poll, and asking means
+    six seconds with every free port open. The handler takes `ask` for exactly
+    this: a status read passes False and gets the remembered answer or
+    nothing."""
+    from mcu_updater.helpers import knomi_serial as handler
+
+    env = _declare_display(paths)
+
+    def boom(*a, **kw):
+        raise AssertionError("opened the ports from a status read")
+
+    monkeypatch.setattr(handler, "discover", boom)
+    api._call = _moonraker({}, reachable=False)
+
+    assert api.device_list({})["watcher"][env]["devices"] == []

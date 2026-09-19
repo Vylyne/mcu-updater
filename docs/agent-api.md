@@ -564,6 +564,17 @@ a type can be offline while its neighbour waits in Katapult. `fw.flash` writes
 both kinds now — a board's action carries `serial`, a screen's carries `port` —
 so the reader never has to branch on which it is holding.
 
+**A screen's `id` is how it is addressed, not where it was found.** A
+`[knomi_serial ...]` section says one of two things. `serial:` names a path
+and carries no id, so the path is the identity and `id` is that path.
+`device_id:` names the screen's own burned-in id and no path at all — the path
+is whatever Klipper's discovery found this boot — so `id` is that id, and the
+tty is reported as `path` beside it. Before this, a `device_id:` screen had
+`id: null` until discovery ran. The device's own flash action carries the same
+value, in the `port` param it has always used, and `fw.flash` accepts either
+spelling in either `port` or `id` — so a value read off this row can always be
+handed straight back, whichever slot you read it from.
+
 For an MCU target, `devices` contains both tracked USB serials and tracked CAN
 UUIDs. A CAN device's flash action carries `uuid` (rather than `serial`), and a
 UUID whose liveness cannot be established is reported as `state: "unknown"`,
@@ -1095,6 +1106,13 @@ than one family and a host can write with more than one tool. `id` is the unifor
 slot: a board's serial, a screen's configured port. `serial` rides along on a
 flashtool result because that is what a board's id has always been called here.
 
+For a screen, that "configured port" is deliberately still the port, and from
+here on it can differ from the `id` the screen's `targets[]` row reports. This
+half of the wire says what esptool actually wrote to; a `device_id:` screen is
+addressed by an id and written to a tty. The row's `path` carries that same
+tty, which is how a caller correlates the two. A screen's flash *action* is the
+row's side of that line, not this one: it carries the identity, in `port`.
+
 #### Grouped by requirement, not by kind
 
 A flash batch splits on whether each write needs Klipper down, and opens the stop
@@ -1501,6 +1519,11 @@ opened this row's detail"; do not poll it per row.
                   "build_variant": "knomi"}]}}}
 ```
 
+The block itself is about the watcher — is this display family's own watcher
+service up, and when did it last write. What it *found* comes through the
+firmware's identity handler with asking disabled: this method rides along in
+every `fw.status` poll, and asking means six seconds with every free port open.
+
 **This is the case flashing actually needs.** esptool wants the port to itself,
 so Klipper has to be stopped — and stopping Klipper is precisely what removes
 the `configfile.settings` source everything else here depends on.
@@ -1552,10 +1575,11 @@ with a mismatched config.
 ### Flashing a display
 
 Reached through `fw.flash` — `name` resolving to a PlatformIO type is what
-routes there instead of the board path above, so the call is `{name, port?,
-force?}` rather than `{serial, name?, force?}`. (`fw.display.flash` was a
-separate method for this until API_VERSION 2 retired it;
-nothing called it once `fw.flash` grew the same routing.)
+routes there instead of the board path above, so the call is `{name, port?, id?,
+force?}` — either slot, spelled as the configured path or as the screen's own
+device id — rather than `{serial, name?, force?}`. (`fw.display.flash` was a
+separate method for this until API_VERSION 2 retired it; nothing called it once
+`fw.flash` grew the same routing.)
 
 Two properties carry the risk, and both are enforced rather than documented.
 

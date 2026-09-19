@@ -22,7 +22,7 @@ from ... import (
     verdict,
 )
 from ... import inventory as inventory_mod
-from ...build import read_sidecar
+from ...build import null_reporter, read_sidecar
 from ...config import Registry
 from ...device_info import DeviceInfo
 from ...devices import (
@@ -1230,6 +1230,25 @@ class StatusMixin(_Base):
             },
         }
 
+    @staticmethod
+    def _screen_id(screen: dict[str, Any]) -> str | None:
+        """How this screen is addressed, which is what identifies it.
+
+        printer.cfg says one of two things. A `serial:` section names a path
+        and carries no id, so the path is the identity. A `device_id:`
+        section names the screen's own burned-in id and no path at all: the
+        path is whatever Klipper's discovery found this boot, so reporting it
+        as the identity would hand a caller back a value that changes when
+        the screen moves socket - and it is null until discovery runs, which
+        left a `device_id:` screen with no `id` at all.
+
+        `addressed_by` is computed once, in `device_list`, from the same
+        config this would have to re-read. This only reads it.
+        """
+        if screen.get("addressed_by") == "device_id":
+            return screen.get("device_id")
+        return screen.get("configured_path")
+
     def _pio_target(
         self, payload: dict[str, Any], allowed: set[str]
     ) -> dict[str, Any]:
@@ -1239,9 +1258,10 @@ class StatusMixin(_Base):
         devices = []
         for screen in payload["screens"]:
             device = self._platformio_device_status(screen)
+            screen_id = self._screen_id(screen)
             devices.append(
                 {
-                    "id": screen["configured_path"],
+                    "id": screen_id,
                     # "knomi_serial t0_knomi" - the same slot the MCU rows use
                     # for their [mcu] section, and the same kind of fact.
                     "name": screen["section"],
@@ -1259,7 +1279,7 @@ class StatusMixin(_Base):
                         allowed,
                         flash=(
                             "fw.flash",
-                            {"name": name, "port": screen["configured_path"]},
+                            {"name": name, "port": screen_id},
                         ),
                         present=screen["present"],
                         has_artifact=bool(payload["has_firmware"]),
@@ -2274,10 +2294,10 @@ class StatusMixin(_Base):
         since moved, and nothing in it says so.
         """
         from ... import stop_services
-        from ...providers import pio as pio_mod
         from ...service import make_controller
 
         settings = self.settings()
+        families = firmware.load(self.paths)
         out: dict[str, Any] = {}
         for name, display in self.pio_types().items():
             # The resolved list, minus klipper: klipper is reported through
@@ -2291,7 +2311,30 @@ class StatusMixin(_Base):
                 if watcher
                 else None
             )
-            devices = pio_mod.read_device_map(self.paths, display)
+            # The family names the helper, and the helper knows where its
+            # firmware remembers identities. `ask=False` is not a preference:
+            # this method rides along in every `fw.status` poll, and asking
+            # means six seconds with every free port open.
+            #
+            # Wrapped because `pio_types()` reaches the type list through
+            # `typelist.read_config`, which is deliberately lenient and never
+            # calls `validate` - so an undeclared family or a misspelt
+            # `helper:` is still live here, and a status poll has to report
+            # "cannot tell" rather than raise.
+            try:
+                family = firmware.resolve(self.paths, display.firmware, families)
+                identify = helpers.identifier(
+                    helpers.for_name(family.helper, family=family.name)
+                )
+            except ConfigCorruptError:
+                identify = None
+            devices = (
+                identify.identify(
+                    self.paths, settings, display, ask=False, reporter=null_reporter
+                )
+                if identify is not None
+                else {}
+            )
             out[name] = {
                 "service": watcher,
                 "active": svc.is_active() if svc is not None else None,
@@ -2301,7 +2344,11 @@ class StatusMixin(_Base):
                 # second after writing - and an old one does not mean the map is
                 # wrong, because nothing changing means nothing to write. Shown
                 # so a human can judge; never branched on.
-                "updated": _mtime(pio_mod.device_map_path(self.paths, display)),
+                "updated": (
+                    _mtime(identify.remembered_at(self.paths, display))
+                    if identify is not None
+                    else None
+                ),
                 "devices": [d.to_json() for d in devices.values()],
             }
         return out

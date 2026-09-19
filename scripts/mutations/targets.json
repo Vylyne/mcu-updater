@@ -66,9 +66,9 @@
       "replace": "            \"firmware\": \"klipper\","
     },
     {
-      "name": "a screen's flash is pinned to its own port",
-      "find": "                            {\"name\": name, \"port\": screen[\"configured_path\"]},",
-      "replace": "                            {\"name\": name},"
+      "name": "a screen's flash is pinned to the identity its row reports",
+      "find": "                            {\"name\": name, \"port\": screen_id},",
+      "replace": "                            {\"name\": name, \"port\": screen[\"configured_path\"]},"
     },
     {
       "name": "a board's flash names the board",

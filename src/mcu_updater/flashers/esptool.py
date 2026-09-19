@@ -182,7 +182,7 @@ class Esptool:
 class _Answered:
     """One `discovery.Sighting`, in the shape `port_for` already reads.
 
-    `port_for` was written against `providers.pio.WatcherDevice` and reads
+    `port_for` was written against `discovery.knomi_serial.WatcherDevice` and reads
     `.port` - kept exactly as it is, per this step's own rule, rather than
     switched onto `Sighting.address` under a different name.
 

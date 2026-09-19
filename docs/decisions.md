@@ -510,3 +510,34 @@ this board is behind" and "the fleet flash writes this board" the same claim.
 Whether a host has any types at all is `providers.Install.empty`, not a list of
 section maps at the call site. The list was `registry` and `platformio`, and it
 told a Roadrunner-only host it had nothing configured.
+
+### Identity is a helper capability, not a discovery source
+
+`discovery`'s sources — `byid`, `dfu`, `bootsel`, the knomi listen pass, the
+knomi watcher map — all answer the same question: *which of these sightings do
+I trust?* They exist because a board can be seen twice, differently, and
+something has to rank the answers. Every one of them is about an identity the
+host can already read off the bus.
+
+A KNOMI screen has no such identity. The CH340K in front of it reports no USB
+serial at all, so `/dev/serial/by-id` has nothing to say and neither does
+anything else the host can do on its own. The only stable name the screen has
+is one its *firmware* knows and will state if asked — which makes "what is this
+thing" a question about the firmware, not about the host, and therefore a
+`helpers.Identifier` rather than a `discovery.Source`.
+
+Both seams stay, and they compose: the handler's answer is a sighting like any
+other, and `confirm()` still decides what to trust at write time.
+
+The capability carries `ask` as a required keyword because the two sources cost
+three orders of magnitude apart — reading `devices.json` versus opening every
+free serial port for six seconds — and only the caller knows whether it has
+stopped the services holding those ports. `fw.device.list` passes False and
+takes the remembered answer or nothing; the CLI passes True from inside
+`_ports_free` and takes the authoritative one. There is no default, so that
+cost cannot be acquired by omission.
+
+One consequence worth stating: `providers.pio` no longer re-exports
+`read_device_map`, `discover` or `device_map_path`. A provider is handed its
+configuration and builds from it; going looking for devices was never its job,
+and the shim that made it look like it was is gone.

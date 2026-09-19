@@ -7,6 +7,7 @@ from .spec import (
     BootselRequester,
     DeviceInfoReader,
     Helper,
+    Identifier,
     ImageReporter,
     Provisioner,
     Trackable,
@@ -36,6 +37,11 @@ def image_reporter(helper: Helper | None) -> ImageReporter | None:
     return helper if isinstance(helper, ImageReporter) else None
 
 
+def identifier(helper: Helper | None) -> Identifier | None:
+    """The helper's identity capability, or None when it has none."""
+    return helper if isinstance(helper, Identifier) else None
+
+
 def provisioner(helper: Helper | None) -> Provisioner | None:
     """This helper's provisioning capability, or None if it has none.
 
@@ -55,6 +61,7 @@ __all__ = [
     "BootselRequester",
     "DeviceInfoReader",
     "Helper",
+    "Identifier",
     "ImageReporter",
     "Provisioner",
     "Trackable",
@@ -62,6 +69,7 @@ __all__ = [
     "bootsel_requester",
     "device_info_reader",
     "for_name",
+    "identifier",
     "image_reporter",
     "provisioner",
     "trackable",

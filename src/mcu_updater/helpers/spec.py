@@ -7,9 +7,13 @@ from collections.abc import Callable, Mapping
 from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
+    from ..build import Reporter
     from ..device_info import DeviceInfo
+    from ..discovery.knomi_serial import WatcherDevice
     from ..flashers.spec import Bench
     from ..paths import Paths
+    from ..providers.pio import PioType
+    from ..settings import Settings
 
 
 @dataclasses.dataclass(frozen=True)
@@ -117,4 +121,46 @@ class ImageReporter(Protocol):
 
     def wire_source(self, paths: Paths) -> Callable[[str], DeviceInfo | None]:
         """A per-serial reader that opens the port. Never from `fw.status`."""
+        ...
+
+
+@runtime_checkable
+class Identifier(Protocol):
+    """Answers which device is which, for hardware the host cannot name.
+
+    Every other device in this tool is found by something the host can see
+    without asking: a serial in `/dev/serial/by-id`, a DFU descriptor, an
+    `RPI-RP2` volume. `discovery`'s sources exist to decide which of those
+    sightings to trust. A KNOMI screen has none of them - the CH340K in
+    front of it reports no USB serial at all - so the only stable name it
+    has is one its *firmware* knows and will state if asked. That is
+    firmware-specific by construction, which is what makes it a helper
+    capability rather than a source.
+
+    `ask` is the cost. False is the remembered answer: a file, instant, and
+    safe while Klipper holds every port. True additionally opens the free
+    ports and reads what broadcasts back - authoritative, and only possible
+    once the caller has stopped the services holding them. No default, so
+    that cost is never acquired by omission.
+
+    Keyed by device id. The value is knomi's own `WatcherDevice` because
+    `fw.device.list` already puts it on the wire and a five-field copy here
+    would be a second description of one thing; knomi_serial is the only
+    identifier, and a second one is when to generalise it.
+    """
+
+    name: str
+
+    def identify(
+        self,
+        paths: Paths,
+        settings: Settings,
+        entry: PioType,
+        *,
+        ask: bool,
+        reporter: Reporter,
+    ) -> dict[str, WatcherDevice]: ...
+
+    def remembered_at(self, paths: Paths, entry: PioType) -> str:
+        """The file the remembered answers live in, or "" when there is none."""
         ...

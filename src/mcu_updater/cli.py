@@ -23,6 +23,7 @@ from . import (
     __version__,
     firmware,
     flashers,
+    helpers,
     inventory,
     profiles,
     providers,
@@ -689,52 +690,51 @@ def _pio_targets(
     c: Context,
     name: str,
     only_id: str | None = None,
-    *,
-    allow_discovery: bool = False,
 ) -> tuple[list, list]:
-    """Devices of one PlatformIO type: the watcher's map, or ask them ourselves.
+    """Devices of one PlatformIO type, from the firmware that knows them.
 
     **Not from Klipper.** The agent reads its list from the klippy module's own
     printer objects, and the CLI has no Moonraker to ask.
 
-    So, in order of what it costs: the watcher's `id -> port` map, which answers
-    instantly and is the source written for exactly this moment; and failing
-    that, `pio.discover`, which is the *authoritative* one - each device
-    broadcasts its id every couple of seconds unprompted, so this opens the free
-    ports and reads what answered. Their own docs are explicit that identity
-    belongs at flash time rather than to a remembered path, and the map is a
-    remembered path.
+    So it asks the firmware's own identity handler, which knows the two
+    sources this firmware has and what each costs: the watcher's `id -> port`
+    map, written for exactly this moment, and failing that the broadcast
+    listen pass, which is the *authoritative* one - each device announces its
+    id every couple of seconds unprompted. Their own docs are explicit that
+    identity belongs at flash time rather than to a remembered path, and the
+    map is a remembered path.
 
-    Discovery needs the ports free, which is why `allow_discovery` exists rather
-    than it simply always being tried: the caller has to have stopped Klipper and
-    paused the watcher first. `services_stopped` is idempotent per unit, so the
-    batch's own stop inside that one correctly no-ops.
+    Asking needs the ports free. Both callers of this function are inside
+    `_ports_free`, which is why `ask=True` is passed unconditionally rather
+    than through a flag: a caller that had not stopped the services would be
+    a caller in the wrong place, not a caller with the wrong argument.
+    `services_stopped` is idempotent per unit, so the batch's own stop inside
+    that one correctly no-ops.
 
-    An empty answer from both is reported as "cannot tell", not as "no devices".
-    Flashing nothing and calling it success is the failure this whole area exists
-    to prevent.
-
-    Returns `(targets, refused)`: the screens go through their family's
-    `flashers:` like any other device.
+    An empty answer from both is reported as "cannot tell", not as "no
+    devices". Flashing nothing and calling it success is the failure this
+    whole area exists to prevent.
     """
     from .providers import pio
 
     display = pio.load(c.paths)[name]
-    found = pio.read_device_map(c.paths, display)
-    if not found and allow_discovery:
-        # The ports are free by now, which is the one moment this is possible.
-        print(f"No device map for '{name}' - asking the devices which they are...")
-        try:
-            found = pio.discover(c.paths, c.settings, display, reporter=stdout_reporter)
-        except UpdaterError as exc:
-            # Best effort, as it is in the esptool flasher: discovery needs
-            # pyserial and the source tree, and a host missing either should get
-            # the message below naming both sources rather than a tool error
-            # from the fallback.
-            stdout_reporter("warn", f"could not ask the devices ({exc})")
+    families = firmware.load(c.paths)
+    family = firmware.resolve(c.paths, display.firmware, families)
+    identify = helpers.identifier(helpers.for_name(family.helper, family=family.name))
+    if identify is None:
+        raise UpdaterError(
+            f"firmware family '{family.name}' names no helper that can identify "
+            f"its devices, and a PlatformIO type is not yet joined against the "
+            f"by-id sweep - so there is no way to tell which device of '{name}' "
+            f"is which, and writing to a guessed port is what this refuses to do."
+        )
+
+    found = identify.identify(
+        c.paths, c.settings, display, ask=True, reporter=stdout_reporter
+    )
     units = stop_services.for_platformio(c.paths, display, c.settings)
     if not found:
-        where = pio.device_map_path(c.paths, display) or "(no device_map configured)"
+        where = identify.remembered_at(c.paths, display) or "(nothing remembered)"
         own_watcher = [u for u in units if u != "klipper"]
         watcher = f"the '{own_watcher[0]}' watcher" if own_watcher else "a watcher"
         raise UpdaterError(
@@ -745,7 +745,7 @@ def _pio_targets(
         )
     return flashers.select_each(
         c.paths,
-        firmware.load(c.paths),
+        families,
         [
             (
                 flashers.Device(
@@ -864,9 +864,7 @@ def flash_fw_cmd(args: argparse.Namespace) -> None:
     if owner == providers.PlatformIO.name:
         with exclusive(c.paths, f"flash type {args.type}"):
             with _ports_free(c, [args.type], f"flash {args.type}"):
-                targets, refused = _pio_targets(
-                    c, args.type, only_id=args.serial, allow_discovery=True
-                )
+                targets, refused = _pio_targets(c, args.type, only_id=args.serial)
                 if not targets and not refused:
                     print(f"No device is reachable for '{args.type}'.", file=sys.stderr)
                     sys.exit(1)
@@ -1031,9 +1029,7 @@ def update_all(args: argparse.Namespace) -> None:
                 refused += boards_refused + can_refused
             for name in sorted(install.platformio):
                 try:
-                    screens, screens_refused = _pio_targets(
-                        c, name, allow_discovery=True
-                    )
+                    screens, screens_refused = _pio_targets(c, name)
                 except UpdaterError as exc:
                     # Not fatal: the boards are still worth writing, and a host with
                     # no watcher running is a configuration gap rather than a fault.

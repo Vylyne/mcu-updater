@@ -11,6 +11,7 @@ exact set, and only the handful that need it run a real job.
 
 from __future__ import annotations
 
+import json
 import os
 
 import pytest
@@ -505,6 +506,30 @@ def test_a_board_in_its_bootloader_is_selected(paths, live_registry_text, fake_r
 
     boards = api._boards_to_flash(Registry.load(paths), "stale")
     assert [b["reason"] for b in boards] == ["in_bootloader"]
+
+
+def test_a_sha_less_board_uses_the_built_stamp_during_fleet_selection(
+    paths, live_registry_text, fake_root
+):
+    """Omitting built_version made bulk disagree with the panel and skip it."""
+    with open(paths.registry_file, "w", encoding="utf-8") as fh:
+        fh.write(live_registry_text)
+    _declare_cartographer(paths)
+    serial = "CARTO-1"
+    with Registry.mutate(paths, "track cartographer test board") as reg:
+        reg.get("carto_v4").serials = [serial]
+    os.makedirs(paths.artifact_dir("carto_v4"), exist_ok=True)
+    with open(paths.bin_file("carto_v4", "cartographer"), "wb") as fh:
+        fh.write(b"firmware")
+    with open(paths.sidecar_file("carto_v4", "cartographer"), "w", encoding="utf-8") as fh:
+        json.dump({"version": "CARTOGRAPHER v4 6.2.0"}, fh)
+    make_device(fake_root / "bus", "Klipper", "stm32g431xx", serial)
+    api = Api(paths, call=_moonraker({serial: "CARTOGRAPHER 6.2.0"}))
+
+    boards = api._boards_to_flash(Registry.load(paths), "stale")
+
+    assert [board["serial"] for board in boards] == [serial]
+    assert boards[0]["reason"] == "source_changed"
 
 
 def test_an_untracked_board_is_structurally_excluded(paths, live_registry_text, fake_root):

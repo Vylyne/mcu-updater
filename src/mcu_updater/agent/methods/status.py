@@ -10,13 +10,22 @@ import time
 from collections.abc import Callable, Iterable
 from typing import Any
 
-from ... import API_VERSION, __version__, device_info, firmware, helpers, profiles, providers, typelist
+from ... import (
+    API_VERSION,
+    __version__,
+    device_info,
+    firmware,
+    helpers,
+    profiles,
+    providers,
+    typelist,
+    verdict,
+)
 from ... import inventory as inventory_mod
 from ...build import read_sidecar
 from ...config import Registry
 from ...device_info import DeviceInfo
 from ...devices import (
-    STATE_KATAPULT,
     STATE_KLIPPER,
     STATE_OFFLINE,
     BusDevice,
@@ -33,13 +42,8 @@ from ...lock import exclusive
 from ...paths import Paths
 from ...settings import Settings, load_settings
 from ...states import (
-    ARTIFACT_CHANGED,
-    IN_BOOTLOADER,
     OFFLINE,
     PROTOCOL_MISMATCH,
-    SOURCE_CHANGED,
-    UNKNOWN_VERSION,
-    VERSION_ONLY,
     ArtifactStatus,
     DeviceStatus,
 )
@@ -515,12 +519,36 @@ class StatusMixin(_Base):
             # Once per type, not once per screen: they share a source tree, and
             # it costs three git calls.
             tree = pio_mod.source_state(display.source)
+            # Once per type: every screen of it is judged against the same tree.
+            expected = verdict.Expected(
+                head=tree.head,
+                stamp=tree.version,
+                stamp_kind=verdict.STAMP_TAG,
+                # A release build reports a bare version with no commit in it,
+                # so it is current only while the tree is still sitting on that
+                # tag with nothing uncommitted.
+                tag_clean=tree.on_tag and not tree.dirty,
+                # The screens' own rule, kept: no checkout means no verdict,
+                # even though the VERSION file would still give a stamp.
+                require_head=True,
+            )
             art = pio_mod.artifact_status(self.paths, display, tree)
             screens = []
             for entry in listed["displays"]:
                 if not entry["section"].startswith(prefix + " "):
                     continue
-                device = pio_mod.device_status(entry.get("firmware_version"), tree)
+                running = entry.get("firmware_version")
+                device = verdict.decide(
+                    # No `state`: presence is layered on top by
+                    # `_platformio_device_status`, which owns the `offline` and
+                    # `protocol_mismatch` answers for a screen row.
+                    verdict.Evidence(
+                        version=running,
+                        running_sha=pio_mod.running_sha(running),
+                        dirty=pio_mod.is_dirty(running),
+                    ),
+                    expected,
+                )
                 screens.append(
                     {
                         **entry,
@@ -984,6 +1012,11 @@ class StatusMixin(_Base):
                     "cmake_target": entry.cmake_target,
                     "source": entry.source,
                     "artifact_reason": status.reason,
+                    # The build's own record of the image on disk: its commit,
+                    # the version it stamped, its `bin_sha256` and its digest
+                    # fields. Read once per type here rather than once per
+                    # board in the projection below.
+                    "sidecar": cmake_mod.read_sidecar(self.paths, entry) or {},
                     "has_firmware": os.path.exists(
                         self.paths.uf2_file(name, entry.firmware)
                     ),
@@ -1031,13 +1064,54 @@ class StatusMixin(_Base):
             helper_problem = str(exc)
         helper_configured = helper is not None
 
+        from ... import device_info, verdict
+        from ...build import FlashLog
+
+        flashlog = FlashLog(self.paths)
+        sidecar = payload["sidecar"]
+        reader = device_info.reader_for(family)
+        reporter = helpers.image_reporter(helper)
+        # Klipper's own answer for every serial at once. A board Klippy is
+        # holding is a board whose port cannot be opened, which is exactly when
+        # its own measurement of its image matters most - and no port is opened
+        # from a status poll, so a family whose helper cannot report through
+        # Klipper simply has no digest here.
+        reported = (
+            self.reported_images(reporter, payload["serials"])
+            if reporter is not None
+            else {}
+        )
+        expected = verdict.Expected(
+            # No `head`: a Roadrunner reports the repository-wide `git
+            # describe`, and `cmake.SourceState.sha` is subtree-scoped - the two
+            # "routinely disagree", so comparing them would read every board as
+            # behind whenever an unrelated part of its repo moved. The stamp we
+            # recorded building is the comparison that means something.
+            stamp=sidecar.get("version"),
+            artifact_sha=sidecar.get("bin_sha256"),
+            digest=sidecar,
+        )
+
         if rows is None:
             rows = inventory_mod.index(self.inventory())
         devices: list[dict[str, Any]] = []
         for serial in payload["serials"]:
             device_row = rows.get((name, inventory_mod.SERIAL, serial))
             present = device_row is not None and device_row.present
-            device_status = DeviceStatus(UNKNOWN_VERSION if present else OFFLINE)
+            info = reported.get(serial)
+            version = info.version if info is not None else None
+            running = reader.running_sha(version)
+            record = flashlog.entry_for(serial, running, version=version)
+            device_status = verdict.decide(
+                verdict.Evidence(
+                    state=device_row.state if device_row is not None else STATE_OFFLINE,
+                    version=version,
+                    running_sha=running,
+                    dirty=reader.is_dirty(version),
+                    info=info,
+                ),
+                dataclasses.replace(expected, record=record),
+            )
             device_actions = (
                 self._device_actions(
                     allowed,
@@ -1077,8 +1151,8 @@ class StatusMixin(_Base):
                     "present": present,
                     "state": device_row.state if device_row is not None else STATE_OFFLINE,
                     "path": device_row.path if device_row is not None else None,
-                    "version": None,
-                    "confidence": None,
+                    "version": version,
+                    "confidence": (record or {}).get("confidence"),
                     **self._device_json(device_status),
                     "actions": device_actions,
                 }
@@ -2490,52 +2564,37 @@ class StatusMixin(_Base):
 
         `reader` is the family's device-info reader; `device_info.reader_for(family)`.
 
-        `reason` is the useful part, because the answers are not equivalent:
-
-        ``in_bootloader``
-            Sitting in Katapult, so it reports no klipper version at all. That is
-            not "unknown" - a board waiting in its bootloader is the strongest
-            possible signal that it wants firmware.
-        ``source_changed``
-            Running an older klipper commit than the source tree.
-        ``artifact_changed``
-            Same commit, different binary. This is the one a version comparison
-            structurally cannot see: an edited makefile-patch source or a changed
-            .config produces a different build from an identical commit, and the
-            board cannot tell us which one it holds. Only our own flash record can.
-        ``offline`` / ``unknown_version``
-            Genuinely no answer.
+        `reason` is the useful part, because the answers are not equivalent -
+        "in its bootloader" is a strong yes and "offline" is not an answer at
+        all. `verdict.decide` holds the vocabulary and the ordering; this
+        method's job is to assemble the two halves it judges from.
         """
         entry = info.get(serial) or {}
         version = entry.get("version")
         mcu = entry.get("mcu")
-        running = reader.running_sha(version or "")
-        status = self._device_status(
-            serial,
-            version,
-            running,
-            fw_head,
-            state=state,
-            artifact_sha=artifact_sha,
-            flashlog=flashlog,
-            built_version=built_version,
-        )
-        # Our own record of how the board's identity was confirmed the last time
-        # this tool wrote to it - a `discovery.spec.Confidence.reason` string, or
-        # None when there is no record (never flashed by this tool, or the record
-        # was discarded because the running commit no longer matches it). Not the
-        # live discovery answer: that only exists inside a flash's own Klipper
-        # stop, and a status poll must never pay for one.
-        #
-        # `version` is passed through so a sha-less board's record is governed by
-        # the same discard rule as its verdict below: a confidence read off a
-        # discarded record would be exactly as misleading as a stale bin_sha256.
-        confidence = (
-            (flashlog.entry_for(serial, running, version=version) or {}).get(
-                "confidence"
-            )
+        running = reader.running_sha(version)
+        # One lookup, two consumers. `version` is passed so a sha-less board's
+        # record is governed by the same discard rule as its verdict: a
+        # confidence read off a discarded record would be exactly as misleading
+        # as a stale `bin_sha256`.
+        record = (
+            flashlog.entry_for(serial, running, version=version)
             if flashlog is not None
             else None
+        )
+        status = verdict.decide(
+            verdict.Evidence(
+                state=state,
+                version=version,
+                running_sha=running,
+                dirty=reader.is_dirty(version),
+            ),
+            verdict.Expected(
+                head=fw_head,
+                stamp=built_version,
+                artifact_sha=artifact_sha,
+                record=record,
+            ),
         )
         return {
             "mcu": mcu,
@@ -2543,79 +2602,13 @@ class StatusMixin(_Base):
             "running_sha": running,
             "needs_flash": status.needs_flash,
             "reason": status.reason,
-            "confidence": confidence,
+            # Our own record of how the board's identity was confirmed the last
+            # time this tool wrote to it - a `discovery.spec.Confidence.reason`
+            # string, or None when there is no believable record. Never the live
+            # discovery answer: that exists only inside a flash's own Klipper
+            # stop, and a status poll must not pay for one.
+            "confidence": (record or {}).get("confidence"),
         }
-
-    @staticmethod
-    def _device_status(
-        serial: str,
-        version: str | None,
-        running: str | None,
-        fw_head: str | None,
-        *,
-        state: str | None,
-        artifact_sha: str | None,
-        flashlog: Any | None,
-        built_version: str | None = None,
-    ) -> DeviceStatus:
-        """The verdict behind `flash_state`, in the shared vocabulary."""
-        if state == STATE_OFFLINE:
-            return DeviceStatus(OFFLINE)
-        if state == STATE_KATAPULT:
-            return DeviceStatus(IN_BOOTLOADER)
-        if version is None:
-            return DeviceStatus(UNKNOWN_VERSION)
-
-        if running is not None:
-            if not fw_head:
-                return DeviceStatus(UNKNOWN_VERSION)
-
-            # `-dirty` is normal and must not read as a mismatch: a type with
-            # makefile patches is dirty by construction, because the patch is in
-            # place while klipper stamps its version.
-            if not fw_head.startswith(running):
-                return DeviceStatus(SOURCE_CHANGED)
-
-            # The commit matches, so only our own record can distinguish two
-            # builds of it. Used to *add* confidence and never to remove it: with
-            # no record, the commit match stands rather than degrading every
-            # board to unknown.
-            if flashlog is not None and artifact_sha:
-                record = flashlog.entry_for(serial, running, version=version)
-                flashed = (record or {}).get("bin_sha256")
-                if record is not None and flashed and flashed != artifact_sha:
-                    return DeviceStatus(ARTIFACT_CHANGED)
-
-            return DeviceStatus()
-
-        # No sha in the reported version: a board that stamps a hand-maintained
-        # literal instead of a git describe (Cartographer's CONFIG_VERSION).
-        # There is no commit to compare, so the comparison is against the string
-        # our own build stamped, not the tree.
-        if built_version is None:
-            return DeviceStatus(UNKNOWN_VERSION)
-
-        if version != built_version:
-            return DeviceStatus(SOURCE_CHANGED)
-
-        # The stamp matches, so - as on the sha path - only our own record can
-        # distinguish two builds of the same release. Unlike the sha path, there
-        # is no commit match to stand on when the record is absent:
-        # CONFIG_VERSION alone is identical for anyone's build of that release,
-        # so here the absence of a record is the difference between green and
-        # amber rather than a no-op.
-        if flashlog is None:
-            return DeviceStatus(VERSION_ONLY)
-
-        record = flashlog.entry_for(serial, running, version=version)
-        if record is None:
-            return DeviceStatus(VERSION_ONLY)
-
-        flashed = record.get("bin_sha256")
-        if artifact_sha and flashed and flashed != artifact_sha:
-            return DeviceStatus(ARTIFACT_CHANGED)
-
-        return DeviceStatus()
 
     # -- kconfig -----------------------------------------------------------
 

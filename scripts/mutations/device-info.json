@@ -62,8 +62,8 @@
     {
       "name": "flash_state extracts the sha with the reader it is given",
       "file": "src/mcu_updater/agent/methods/status.py",
-      "find": "        running = reader.running_sha(version or \"\")",
-      "replace": "        running = device_info.KLIPPER.running_sha(version or \"\")"
+      "find": "        mcu = entry.get(\"mcu\")\n        running = reader.running_sha(version)\n        # One lookup, two consumers.",
+      "replace": "        mcu = entry.get(\"mcu\")\n        running = device_info.KLIPPER.running_sha(version)\n        # One lookup, two consumers."
     },
     {
       "name": "type_status reads through the family's reader",

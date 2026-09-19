@@ -16,13 +16,15 @@ that is a bug in the projection rather than a reason to add a key.
 
 from __future__ import annotations
 
+import json
 import os
 
 import pytest
 
-from mcu_updater import firmware, inventory
+from mcu_updater import device_info, firmware, inventory, uf2
 from mcu_updater.agent.methods import Api
 from mcu_updater.agent.rpc import RpcError
+from mcu_updater.build import FlashLog
 from mcu_updater.config import Registry
 from mcu_updater.states import (
     TONE_ATTENTION,
@@ -980,6 +982,62 @@ def test_a_helper_backed_cmake_type_projects_real_serial_devices(
         "blocked": None,
     }
     assert _action(device, "untrack")["method"] == "fw.serial.remove"
+
+
+def test_a_cmake_device_projects_its_reported_image_verdict_and_record(
+    paths, tmp_path, fake_root, monkeypatch
+):
+    """Dropping the CMake evidence wiring would restore the fixed unknown stub."""
+    serial = "RR-5K3DNTFCR1B3C9D0RZMYA3Y720"
+    _cmake_config(paths, tmp_path, helper=True, serial=serial)
+    os.makedirs(paths.artifact_dir("roadrunner"), exist_ok=True)
+    with open(paths.uf2_file("roadrunner", "roadrunner"), "wb") as fh:
+        fh.write(b"UF2")
+    with open(paths.sidecar_file("roadrunner", "roadrunner"), "w", encoding="utf-8") as fh:
+        json.dump(
+            {
+                "provider": "cmake",
+                "version": "v1.2.0-3-gdeadbee",
+                "bin_sha256": "aa" * 32,
+                "digest_algorithm": uf2.DIGEST_CRC32_ISO_HDLC,
+                "digest": 0xBBE38AA9,
+                "image_start": 0x10000000,
+                "image_length": 600,
+            },
+            fh,
+        )
+    make_device(fake_root / "bus", "Vylyne", "Roadrunner", serial)
+    FlashLog(paths).record(
+        serial,
+        mcu_type="roadrunner",
+        fw="roadrunner",
+        bin_sha256="aa" * 32,
+        fw_sha="deadbee",
+        confidence="unique_bus_id",
+        version="v1.2.0-3-gdeadbee",
+    )
+    api = Api(paths, runner=_runner())
+    monkeypatch.setattr(
+        api,
+        "reported_images",
+        lambda _reporter, _serials: {
+            serial: device_info.DeviceInfo(
+                source=device_info.SOURCE_KLIPPER,
+                version="v1.2.0-3-gdeadbee",
+                digest_algorithm=uf2.DIGEST_CRC32_ISO_HDLC,
+                digest=0x12345678,
+                image_start=0x10000000,
+                image_length=600,
+            )
+        },
+    )
+
+    device = _targets(api, "cmake")["roadrunner"]["devices"][0]
+
+    assert device["version"] == "v1.2.0-3-gdeadbee"
+    assert device["confidence"] == "unique_bus_id"
+    assert device["needs_flash"] is True
+    assert device["reason"] == "unexpected_image"
 
 
 def test_an_offline_helper_backed_cmake_device_carries_the_normal_block(

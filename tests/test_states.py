@@ -60,6 +60,7 @@ DEVICE_VERDICTS = {
     states.IN_BOOTLOADER: True,
     states.SOURCE_CHANGED: True,
     states.ARTIFACT_CHANGED: True,
+    states.UNEXPECTED_IMAGE: True,
     states.PROTOCOL_MISMATCH: True,
     states.DEVICE_DIRTY: None,
     states.OFFLINE: None,
@@ -198,30 +199,6 @@ def test_a_device_tone_is_just_its_verdict_coloured():
         status = DeviceStatus(reason)
         expected = {False: states.TONE_OK, True: states.TONE_ATTENTION, None: states.TONE_UNKNOWN}
         assert status.tone == expected[status.needs_flash]
-
-
-# --------------------------------------------------------------------------
-# the display side, in the shared vocabulary
-# --------------------------------------------------------------------------
-
-
-@pytest.mark.parametrize(
-    ("running", "reason"),
-    [
-        ("0.4.0+3.gd34db33", None),
-        ("0.4.0+1.gbadc0de", states.SOURCE_CHANGED),
-        ("0.4.0+3.gd34db33.dirty", states.DEVICE_DIRTY),
-        ("", states.UNKNOWN_VERSION),
-    ],
-)
-def test_the_same_answers_in_the_shared_vocabulary(running, reason):
-    assert pio.device_status(running, TREE).reason == reason
-
-
-def test_a_dirty_screen_is_not_reported_as_wanting_a_flash():
-    """It cannot be shown current, but it is not evidence of being behind
-    either - which is what the old FW_DIRTY meant and must keep meaning."""
-    assert pio.device_status("0.4.0+3.gd34db33.dirty", TREE).needs_flash is None
 
 
 # --------------------------------------------------------------------------

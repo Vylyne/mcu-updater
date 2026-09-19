@@ -193,12 +193,18 @@ UNKNOWN_VERSION = "unknown_version"
 #: is not. Amber, and it resolves to `None` (up to date) on the first flash
 #: through this tool, once our own record backs the match.
 VERSION_ONLY = "version_only"
+#: The board measured the image it is running and got a number that is not the
+#: artifact's. Stronger than any version comparison and pointed the other way:
+#: `source_changed` says "we know what is on it and it is old", this says "we
+#: do not know what is on it". Flashing is what makes it known.
+UNEXPECTED_IMAGE = "unexpected_image"
 
 _NEEDS_FLASH: dict[str | None, bool | None] = {
     None: False,
     IN_BOOTLOADER: True,
     SOURCE_CHANGED: True,
     ARTIFACT_CHANGED: True,
+    UNEXPECTED_IMAGE: True,
     PROTOCOL_MISMATCH: True,
     DEVICE_DIRTY: None,
     OFFLINE: None,
@@ -221,6 +227,7 @@ _DEVICE_LABEL: dict[str | None, str] = {
     IN_BOOTLOADER: "Waiting in bootloader",
     SOURCE_CHANGED: "Update available",
     ARTIFACT_CHANGED: "Newer build available",
+    UNEXPECTED_IMAGE: "Unexpected firmware",
     PROTOCOL_MISMATCH: "Firmware too old for this host",
     DEVICE_DIRTY: "Unverified build",
     OFFLINE: "Not connected",

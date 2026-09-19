@@ -49,13 +49,10 @@ from ..paths import Paths
 from ..settings import Settings
 from ..states import (
     BUILT_DIRTY,
-    DEVICE_DIRTY,
     NEVER_BUILT,
     NO_PROVENANCE,
     SOURCE_CHANGED,
-    UNKNOWN_VERSION,
     ArtifactStatus,
-    DeviceStatus,
 )
 
 #: Where PlatformIO puts itself. `pio` on PATH first, because that is what a
@@ -298,45 +295,6 @@ def running_sha(running: str | None) -> str | None:
 def is_dirty(running: str | None) -> bool:
     """Whether what a screen reports running was built from uncommitted changes."""
     return bool(_FW_DIRTY_RE.search(running or ""))
-
-
-def device_status(running: str | None, state: SourceState) -> DeviceStatus:
-    """Compare what a screen reports running against what the tree would build.
-
-    Stronger than the artifact check, which compares a built artifact against
-    its source. This compares what is *actually on the device*, so a screen
-    flashed by hand months ago cannot report itself up to date.
-
-    Verdicts are withheld generously. Every input here is optional - no git
-    checkout, no VERSION file, a module too old to report a version - and a
-    wrong "behind" sends someone to reflash a healthy display during a print.
-    """
-    if not running or state.head is None:
-        return DeviceStatus(UNKNOWN_VERSION)
-
-    if is_dirty(running):
-        # Built from uncommitted changes. The sha may well match HEAD, but the
-        # working tree it was built from is not recoverable, so "current" is
-        # unprovable rather than merely unknown - and it is not evidence of
-        # being behind either, hence a None verdict rather than True.
-        return DeviceStatus(DEVICE_DIRTY)
-
-    built_sha = running_sha(running)
-    if built_sha:
-        # Short shas can differ in length between builds; compare on the shorter.
-        built, head = built_sha.lower(), state.head.lower()
-        size = min(len(built), len(head))
-        return DeviceStatus() if built[:size] == head[:size] else DeviceStatus(SOURCE_CHANGED)
-
-    # No sha at all means a clean build sitting exactly on the version tag. It
-    # is current only if the tree is still there - same version, still on the
-    # tag, still clean.
-    if state.version and running.strip() == state.version and state.on_tag and not state.dirty:
-        return DeviceStatus()
-    if state.version and state.on_tag and not state.dirty:
-        # A release build of a different version than the tree holds.
-        return DeviceStatus(SOURCE_CHANGED)
-    return DeviceStatus(SOURCE_CHANGED if state.version else UNKNOWN_VERSION)
 
 
 # --------------------------------------------------------------------------

@@ -416,6 +416,31 @@ than leave that to a regex that happens not to match. A Roadrunner reports the
 same device info on usbserial, i2c and uart; a field firmware does not report
 is absence, never mismatch, whatever the transport.
 
+### A digest match is the end of the question
+
+`verdict.decide` checks the board's reported image digest before it looks at
+any version string, and the check is decisive in both directions. A mismatch is
+`unexpected_image`; a match is up to date, and neither a version that reads as
+older, nor a dirty tree, nor this tool's own flash record can overturn it.
+
+The tempting extra caution - "the digest matches, but our record says we last
+wrote a different binary, so call it `artifact_changed`" - is wrong, and
+`artifact_changed`'s own definition says why. It exists because a *commit*
+match is a weak proxy: same commit, edited makefile patch, different bytes. The
+record is what makes that case visible. A digest match is not a proxy for
+anything; it is the running bytes measured against the bytes on disk, and the
+sidecar computes `bin_sha256` and the digest fields from the same file in the
+same write, so they cannot disagree about which image they describe. Letting
+the weaker witness overrule the stronger one would report "newer build
+available" for a board provably holding the newest build - and send someone to
+reflash it mid-print.
+
+The same reasoning puts the digest ahead of `device_dirty`, which is
+`needs_flash: null`, "cannot be shown current". The digest shows it current.
+The unrecoverable-tree worry behind `device_dirty` is real, but it is a fact
+about the artifact and is already reported there as `built_dirty`; carrying it
+on the device axis as well double-counts one doubt as two.
+
 ### Trackability owns identity durability, not registry uniqueness
 
 Spec section 11, Ruling 13. A firmware helper's optional `Trackable` capability

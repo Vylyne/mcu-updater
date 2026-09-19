@@ -364,6 +364,27 @@ null`) when the stamp matches but no believable flash record backs it,
 `"source_changed"` when it does not match, or the ordinary green/`null` verdict
 once a record does back it.
 
+`reason` can also be `"unexpected_image"` (attention, `needs_flash: true`). A
+board that can measure the image it is running - today the Roadrunner, through
+its klippy extra's `firmware_image` - reports a digest and the byte range it
+covers, and this host compares them field for field against the build's own
+record of the artifact on disk. A disagreement is not "behind": it means we do
+not know what is on the board, and flashing is what makes it known. The
+comparison outranks every version check, including a matching commit and a
+matching release string, because a digest is a measurement of the running image
+and a version string is a claim about it. It is equally decisive the other way:
+a board whose digest matches the artifact is up to date even when its version
+reads as older, and even when this tool's own flash record names a different
+binary. Absence on either side - a board too old to report one, a board that
+answers algorithm `0`, an artifact this host could not parse - falls through to
+the version comparison untouched and is never reported as a mismatch.
+
+CMake type rows carry real device verdicts. Until now every `devices[]` entry
+under a CMake target reported `version: null`, `confidence: null` and a fixed
+`unknown_version`/`offline`, whatever the board was doing; they now use the same
+`DeviceStatus` vocabulary, the same `confidence` field and the same rules as
+every other row.
+
 `confidence` is a `discovery.spec.Confidence.reason` string (`"unique_bus_id"`,
 `"answered"`, ...), or `null`. It is this tool's own record of how the board's
 identity was last confirmed *at flash time* - not a live discovery answer, which

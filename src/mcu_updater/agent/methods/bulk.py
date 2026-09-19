@@ -145,7 +145,13 @@ class BulkMixin(_Base):
             # Once per type, not per serial - every board of this type shares
             # the same resolved list.
             units = stop_services.for_mcu(self.paths, mcu, settings, families)
-            artifact_sha = (read_sidecar(self.paths, name, application) or {}).get("bin_sha256")
+            sidecar = read_sidecar(self.paths, name, application) or {}
+            artifact_sha = sidecar.get("bin_sha256")
+            # Passed for the same reason the panel passes it: a type whose
+            # boards stamp a literal instead of a git describe has no commit to
+            # compare, and omitting this here made the fleet-flash selection
+            # disagree with the row the panel painted.
+            built_version = sidecar.get("version")
             for serial in mcu.serials:
                 state, _ = device_state(self.paths, mcu.chipset, serial)
                 if state == STATE_OFFLINE:
@@ -157,6 +163,7 @@ class BulkMixin(_Base):
                     state=state,
                     artifact_sha=artifact_sha,
                     flashlog=flashlog,
+                    built_version=built_version,
                     reader=reader,
                 )
                 if scope == "all" or info["needs_flash"] is True:
@@ -225,7 +232,13 @@ class BulkMixin(_Base):
             fw_head = git_head(family.source_dir(self.paths))
             reader = device_info.reader_for(family)
             units = stop_services.for_mcu(self.paths, mcu, settings, families)
-            artifact_sha = (read_sidecar(self.paths, name, application) or {}).get("bin_sha256")
+            sidecar = read_sidecar(self.paths, name, application) or {}
+            artifact_sha = sidecar.get("bin_sha256")
+            # Passed for the same reason the panel passes it: a type whose
+            # boards stamp a literal instead of a git describe has no commit to
+            # compare, and omitting this here made the fleet-flash selection
+            # disagree with the row the panel painted.
+            built_version = sidecar.get("version")
             for uuid in mcu.canbus_uuids:
                 # configfile.settings lowercases everything; canbus_uuids: is
                 # stored verbatim (canbus_add never normalises case), so this
@@ -240,6 +253,7 @@ class BulkMixin(_Base):
                         fw_head,
                         artifact_sha=artifact_sha,
                         flashlog=flashlog,
+                        built_version=built_version,
                         reader=reader,
                     )
                     if scope != "all" and info["needs_flash"] is not True:

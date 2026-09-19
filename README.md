@@ -64,6 +64,8 @@ Firmware and boards:
 - [x] CAN device discovery and tracking by `canbus_uuid`
 - [x] Ignore an untracked USB or CAN bus device
 - [x] Explicit provision/clear identity actions for an untracked Roadrunner
+- [x] Optional auto-provisioning of a Roadrunner that appears unprovisioned
+      (`auto_provision:` on its `[firmware]` section)
 
 Interfaces:
 

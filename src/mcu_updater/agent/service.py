@@ -18,6 +18,7 @@ from __future__ import annotations
 import logging
 import threading
 import time
+from collections.abc import Mapping
 from typing import Any
 
 from .. import AGENT_NAME, __version__
@@ -85,7 +86,7 @@ class Agent:
             # A board that took longer to enumerate than add_mcu's wait turns up
             # here instead. Adopting it on the same tick means the bus event the
             # panel receives already shows it under its type.
-            on_change=self.api.adopt_paired,
+            on_change=self._on_bus_change,
         )
         # Built last: it needs the Api to serialise with. Nothing above calls it
         # during construction - `emit_state` resolves this attribute at call time.
@@ -128,6 +129,38 @@ class Agent:
             # Artifacts and staleness changed, so refresh the whole picture.
             self.watcher.poke()
             self.emit_state()
+
+    def _on_bus_change(self, devices: Mapping[str, Any]) -> bool:
+        """Run watcher-thread registry and hardware work for a changed bus.
+
+        Late adoption completes an operation the operator already requested,
+        so it remains independent of the deployment's hardware-write gate.
+        Auto-provisioning is an unattended irreversible write and receives the
+        exact predicate used to advertise the API's hardware methods.
+        """
+        try:
+            self.api.adopt_paired()
+        except Exception as exc:  # noqa: BLE001 - never kill the watcher
+            self.log.warning(f"late adoption failed: {exc}")
+
+        from ..provisioning import auto_provision
+
+        def reporter(stream: str, line: str) -> None:
+            if stream == "warn":
+                self.log.warning(line)
+            else:
+                self.log.info(line)
+
+        try:
+            return auto_provision(
+                self.paths,
+                devices,
+                may_provision=self.api._hardware_writes_allowed(),
+                reporter=reporter,
+            )
+        except Exception as exc:  # noqa: BLE001 - never kill the watcher
+            self.log.warning(f"auto-provisioning failed: {exc}")
+            return False
 
     def _on_notify(self, method: str, params: Any) -> None:
         # Moonraker broadcasts a lot; we only care about klipper's service state

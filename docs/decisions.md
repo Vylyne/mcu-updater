@@ -172,6 +172,27 @@ version handling in particular - needs its own design and plan; see the
 question today than discovery and version reporting need, so it likely has to
 widen before anything moves.
 
+### Auto-provisioning is opt in, watcher-inline, and deployment-gated
+
+Spec section 10, Ruling 14. The klippy extra provisions on `klippy:connect`,
+which reaches only boards already configured in Klipper; the host's watcher is
+the component that sees a board plugged in and configured nowhere.
+
+`auto_provision: true` is per-family opt-in because a `[firmware]` section
+should not write to hardware nobody mentioned. It is not sufficient authority
+on its own: the deployment-wide hardware-write predicate that controls the
+advertised maintenance methods also gates this unattended irreversible write,
+and defaults closed at the provisioning function's boundary. Late adoption is
+not gated because it is a registry write completing an operation the operator
+already requested.
+
+Provisioning runs inline on the watcher thread, with no job: it is a sub-second
+helper call, and a job entry would appear in the panel for something nobody
+asked for. A held operation lock is the one failure worth retrying because the
+unchanged bus would not otherwise prompt another attempt. Deployment-policy
+refusals and non-busy updater errors are not retries. A handler retry does not
+re-emit the `bus` event because its payload is identical.
+
 ### Do not give `Confidence` a fourth degree of certainty
 
 Three tones and a tri-state `safe_to_write`, built the way `states.py` is. A

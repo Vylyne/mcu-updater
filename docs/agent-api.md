@@ -223,9 +223,8 @@ keeps its own type and code but has its `message` rewritten to name the new
 serial, and carries it again under `data.provisioned_serial`, so a caller
 does not lose track of a board that already changed identity.
 
-Neither `fw.roadrunner.provision` nor `fw.roadrunner.clear` is ever triggered
-automatically - `fw.bus.scan`/`fw.status`
-identify a Roadrunner from its ordinary `BusDevice` fields alone (its
+Neither RPC method is called automatically. `fw.bus.scan`/`fw.status` identify
+a Roadrunner from its ordinary `BusDevice` fields alone (its
 `usb-Vylyne_Roadrunner_...-if00` descriptor gives `fw: "Vylyne"`,
 `chipset: "Roadrunner"`, and its serial already carries the
 `RR-UNPROVISIONED-...`/`RR-...` shape - discovery stays entirely read-only,
@@ -238,6 +237,18 @@ other new board until it is separately adopted with `fw.serial.add`. The
 names are read back only for that prompt; the agent never writes either one
 to the registry. The helper this uses needs nothing beyond `python3-serial`
 (the same package `flashtool.py` already requires) - no extra system package.
+
+Separately, `auto_provision: true` (default `false`) on a `[firmware ...]`
+family asks the bus watcher to provision a board of that family that appears
+with an unprovisioned identity. It is refused at config load unless the named
+`helper:` can both judge trackability and provision. The write runs inline on
+the watcher's poll, never from `fw.status`, and only when the deployment's
+`enable_flashing` policy allows hardware writes. A board skipped because the
+operation lock was held is tried again on the next poll; a policy refusal and
+other updater errors are not retried. Late adoption still runs because it is a
+registry write completing an operation already requested. Auto-provisioning
+does not track the resulting board; `fw.serial.add` does that and performs its
+own provisioning when needed (reported as `prior_serial`).
 
 ### `fw.ping`
 

@@ -233,6 +233,24 @@ def _refuse_family_keys(families: dict[str, firmware.FirmwareFamily], *, path: s
             value=unknown_flashers[first][0],
             flashers=unknown_flashers,
         )
+    cannot_provision = [
+        family.name
+        for family in families.values()
+        if family.auto_provision and family.helper not in firmware.PROVISIONING_HELPERS
+    ]
+    if cannot_provision:
+        listed = "\n".join(
+            f"  [firmware {name}] auto_provision: true" for name in cannot_provision
+        )
+        raise ConfigCorruptError(
+            f"{path}: auto_provision: on a family whose helper cannot auto-provision "
+            f"(helpers that can: {', '.join(firmware.PROVISIONING_HELPERS)}):\n"
+            f"{listed}\nRemove the line, or name a helper that can auto-provision.",
+            path=path,
+            family=cannot_provision[0],
+            key="auto_provision",
+            families=cannot_provision,
+        )
 
 
 def validate(

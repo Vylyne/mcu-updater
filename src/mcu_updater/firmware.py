@@ -63,6 +63,13 @@ FLASHERS: tuple[str, ...] = ("bootsel", "dfu_util", "esptool", "flashtool")
 #: names, for the same reason. A test holds the two equal.
 HELPERS: tuple[str, ...] = ("cartographer", "knomi_serial", "roadrunner")
 
+#: Helpers that can both identify an auto-provision candidate and provision it.
+#: `typelist` must check `auto_provision:` without importing helper
+#: implementations, for the same reason `HELPERS` is static. A test holds this
+#: equal to the registry's intersection of Trackable and Provisioner; either
+#: capability alone cannot keep the configuration's promise.
+PROVISIONING_HELPERS: tuple[str, ...] = ("roadrunner",)
+
 #: The `flashers:` line a refusal suggests, by what builds the family. A
 #: suggestion for a message only: selection reads the family's own list.
 _SUGGESTED_FLASHERS: dict[str, str] = {
@@ -132,6 +139,12 @@ class FirmwareFamily:
     #: (`providers.spec.on_demand`) and, with the application, whether the two
     #: are the pair the flash-time offset checks compare.
     bootloader: bool = False
+    #: Provision a board of this family that appears on the bus unprovisioned,
+    #: without being asked. Opt in, and off everywhere it is not written: a
+    #: `[firmware]` section should not write to hardware nobody mentioned.
+    #: Refused on a family whose helper cannot both judge trackability and
+    #: provision. See `provisioning.auto_provision`.
+    auto_provision: bool = False
     #: Units to stop before a write of this family, overriding `[updater]`
     #: and overridden by a `[type ...]` that names its own.
     #: `None` means this family said nothing - inherit the next level out.
@@ -199,6 +212,7 @@ def load_from_doc(doc: CfgDocument) -> dict[str, FirmwareFamily]:
             # existing [firmware katapult] section can't silently turn its
             # bootloader status off.
             bootloader=bool(parse_bool(doc.get(section, "bootloader"), name == "katapult")),
+            auto_provision=bool(parse_bool(doc.get(section, "auto_provision"), False)),
             stop_services=doc.get_csv(section, "stop_services"),
         )
     return out

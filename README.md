@@ -47,6 +47,7 @@ Flashing:
 - [x] `esptool` - ESP32, via PlatformIO
 - [x] RP2040 BOOTSEL - copy a `.uf2` to the mounted volume
 - [x] CAN - unified `flashtool.py` transport, with live interface discovery
+- [x] Per-firmware `flashers:` lists - a family declares which tools may write it, tried in order, and a device no tool supports is refused by name
 
 Firmware and boards:
 
@@ -66,12 +67,15 @@ Firmware and boards:
 - [x] Explicit provision/clear identity actions for an untracked Roadrunner
 - [x] Optional auto-provisioning of a Roadrunner that appears unprovisioned
       (`auto_provision:` on its `[firmware]` section), once per board per watcher sweep
+- [x] Firmware-specific behaviour behind reviewed helper capabilities - device info, identity, BOOTSEL entry and provisioning, never a caller branch
+- [x] One verdict per device, from one inventory join, whatever builds or flashes it
+- [x] A screen's identity comes from its firmware, and is what `targets[]` reports it as
 
 Interfaces:
 
 - [x] CLI and interactive TUI
 - [x] Moonraker agent (JSON-RPC over the unix socket)
-- [x] Bulk build / flash / update-all
+- [x] Bulk build / flash / update-all, covering every provider - kconfig, PlatformIO and cmake alike
 - [x] Guided first-time MCU setup over DFU and BOOTSEL
 - [x] Standalone embeddable UI
 
@@ -80,9 +84,11 @@ Interfaces:
 [docs/decisions.md](docs/decisions.md) for the standing decisions that came out
 of it. What is still open:
 
-- [ ] **IN PROGRESS** One pipeline: one type list, one inventory, one flash loop, one verdict. Design: [docs/superpowers/specs/2026-09-14-one-pipeline-design.md](docs/superpowers/specs/2026-09-14-one-pipeline-design.md). This covers declaring every firmware in config (install.sh seeds klipper and katapult), moving firmware-specific code behind helper capabilities, per-firmware `flashers:` lists, Roadrunner auto-provisioning, and the rest of the CMake provenance work. It also fixes the Roadrunner board that is tracked in the UI but not the CLI. Plan 1 (config and inventory) has landed; plan 2 is device-info handlers, flasher lists and the loops.
+- [ ] **BENCH** One pipeline is code-complete: one type list, one inventory, one flash loop, one verdict. Design: [docs/superpowers/specs/2026-09-14-one-pipeline-design.md](docs/superpowers/specs/2026-09-14-one-pipeline-design.md). What is left is hardware. A Roadrunner over usbserial, with a bystander RP2040 sitting in BOOTSEL during the write, to prove the topology match refuses the wrong volume - the one claim host tests cannot make. Until that runs, the closed BOOTSEL loop has host-test coverage only.
 - [ ] **TEST ERROR** Reproduce and fix the flaky teardown `RuntimeError` in `test_an_unknown_inbound_method_gets_an_error_not_silence`.
 - [ ] **NEEDS DESIGN** Run config migrations as the first step of agent startup, so that restarting the service migrates an existing install. First check the restrictions the service runs under.
+- [ ] **BUG** A CMake type's staged image is never compared against its `cmake_target:`. `cmake.record_build` writes `cmake_target` into the sidecar, but `artifact_status` never reads it back - its ladder runs missing file, no sidecar, not-our-image, `dirty`, then `sha` against HEAD - so changing `cmake_target:` without touching the source leaves the artifact reporting **current** while the previous target's `.uf2` stays staged. The panel shows up to date, `update-all` under the default `stale` scope will not select it, and since the target axes are transport and LED ordering, the board keeps running firmware for the wrong transport. Fix: compare `record["cmake_target"]` against the configured one before the `sha` check and return `ArtifactStatus(CONFIG_CHANGED)` on mismatch - that state, its `ARTIFACT_STALE` mapping and its "Config changed - rebuild" label all already exist in `states.py`. Only a re-stage is needed rather than a recompile, because the build runs bare `make` with no `--target` and every target's `.uf2` is already in the build directory.
+- [ ] **BUG** `FOREIGN_BUILD` is defined, mapped to `ARTIFACT_UNPROVABLE` and labelled "Rebuilt outside this tool" in `states.py`, but nothing in `src/` ever emits it. A CMake sidecar that exists while the staged bytes no longer match it - `_is_our_image` failing in `providers/cmake.py` - returns `NO_PROVENANCE` instead, which says "no evidence" when what we actually have is positive evidence that somebody rebuilt behind us. The resulting state is `ARTIFACT_UNPROVABLE` either way, so this is label accuracy rather than behaviour, and the same gap exists on the kconfig path in `build.py`.
 
 ## Requirements
 
@@ -571,8 +577,13 @@ change are for a second display family with its own klippy module and port
 watcher.
 
 The screens themselves are not listed here - `[knomi_serial T0_knomi]` in
-`printer.cfg` already names its port, and a second copy would only be something
-to disagree with.
+`printer.cfg` already names them, and a second copy would only be something to
+disagree with. A section names *either* a port (`serial:`) or the screen's own
+burned-in id (`device_id:`), and that choice is what identifies it: `status`,
+`fw.status` and `fw.flash` all address a `device_id:` screen by its id and a
+`serial:` screen by its path. The port a `device_id:` screen is actually on is
+whatever discovery found this boot, and is reported beside its id rather than
+standing in for it.
 
 A few things to know:
 
@@ -639,6 +650,13 @@ to enter BOOTSEL, and copies the staged UF2 only to the one marker-bearing
 `INFO_UF2.TXT` mount that matches that topology. Other BOOTSEL boards may remain
 attached; zero or multiple matching mounts are refused. After the copy it waits
 for the same serial and protocol identity before stopped services restart.
+
+Cmake types are ordinary members of every batch. `flash -t roadrunner` with no
+`-s` writes every serial the type declares, `update-all` builds and then flashes
+them alongside the kconfig and PlatformIO types, and `status` gives each board a
+real verdict rather than the `unknown_version` stub it used to. A board whose
+declared serial is not on the bus is reported offline and skipped, exactly as a
+kconfig board is.
 
 This closed loop has host-test coverage but has not yet been verified end to
 end on hardware. The manual first-install path is unchanged: a bare board that

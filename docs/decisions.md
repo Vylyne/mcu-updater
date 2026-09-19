@@ -541,3 +541,36 @@ One consequence worth stating: `providers.pio` no longer re-exports
 `read_device_map`, `discover` or `device_map_path`. A provider is handed its
 configuration and builds from it; going looking for devices was never its job,
 and the shim that made it look like it was is gone.
+
+### One loop per operation, and handlers for everything else
+
+Ten changes, one rule: a caller never branches on which firmware, which
+builder or which flasher it is holding. The branch becomes a capability
+somebody registered by hand.
+
+What that looks like in practice. `fw.status` joins one inventory against one
+type list and produces one verdict per device, and a firmware with an odd
+version string answers through a `DeviceInfoReader` rather than being special-
+cased in the join. `fw.flash_all` walks every provider's boards through one
+selection, and a family that needs a particular tool says so in `flashers:`
+rather than being routed by a name comparison. A board that has to be talked
+into its bootloader first has a `BootselRequester`; a screen whose hardware
+carries no name has an `Identifier`; a board that needs an identity written to
+it before it can be tracked has a `Provisioner`. `update-all` is build-all then
+flash-all, over the same lists, for every provider there is.
+
+The cost is real and worth stating. There are now four capability Protocols and
+a registry of helpers, where before there were `if` statements - more
+indirection to read through, and a new firmware means writing a module and
+adding two lines to two registries rather than one branch in one function.
+That trade was taken because the branches did not stay in one function: the
+same "is this a display?" question was being asked in `status.py`, `flash.py`,
+`bulk.py` and `cli.py`, and the four answers drifted. A Roadrunner tracked in
+the UI and invisible to the CLI was that drift, reported as a bug.
+
+Configuration never chooses which Python module gets imported. Every helper is
+named in `helpers.registry.HELPERS` and every flasher in the flashers registry,
+by hand, because a helper can stop services and write firmware. A misspelt
+`helper:` or `flashers:` refuses the config when it loads, naming the known
+values - the one place in this design where the answer to a wrong name is a
+refusal rather than a fallback.

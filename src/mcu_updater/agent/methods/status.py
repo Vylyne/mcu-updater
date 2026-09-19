@@ -42,6 +42,8 @@ from ...lock import exclusive
 from ...paths import Paths
 from ...settings import Settings, load_settings
 from ...states import (
+    NEVER_BUILT,
+    NO_PROVENANCE,
     OFFLINE,
     PROTOCOL_MISMATCH,
     ArtifactStatus,
@@ -1016,7 +1018,11 @@ class StatusMixin(_Base):
                     # the version it stamped, its `bin_sha256` and its digest
                     # fields. Read once per type here rather than once per
                     # board in the projection below.
-                    "sidecar": cmake_mod.read_sidecar(self.paths, entry) or {},
+                    "sidecar": (
+                        {}
+                        if status.reason in (NEVER_BUILT, NO_PROVENANCE)
+                        else cmake_mod.read_sidecar(self.paths, entry) or {}
+                    ),
                     "has_firmware": os.path.exists(
                         self.paths.uf2_file(name, entry.firmware)
                     ),

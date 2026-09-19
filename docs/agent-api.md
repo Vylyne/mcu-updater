@@ -383,7 +383,10 @@ CMake type rows carry real device verdicts. Until now every `devices[]` entry
 under a CMake target reported `version: null`, `confidence: null` and a fixed
 `unknown_version`/`offline`, whatever the board was doing; they now use the same
 `DeviceStatus` vocabulary, the same `confidence` field and the same rules as
-every other row.
+every other row. A build sidecar participates only after artifact provenance
+shows that it describes the staged image; `no_provenance` leaves an online
+device at `unknown_version` rather than letting stale build evidence prove it
+current.
 
 `confidence` is a `discovery.spec.Confidence.reason` string (`"unique_bus_id"`,
 `"answered"`, ...), or `null`. It is this tool's own record of how the board's

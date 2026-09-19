@@ -16,6 +16,7 @@ that is a bug in the projection rather than a reason to add a key.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 
@@ -26,6 +27,7 @@ from mcu_updater.agent.methods import Api
 from mcu_updater.agent.rpc import RpcError
 from mcu_updater.build import FlashLog
 from mcu_updater.config import Registry
+from mcu_updater.providers import cmake
 from mcu_updater.states import (
     TONE_ATTENTION,
     TONE_UNKNOWN,
@@ -991,14 +993,25 @@ def test_a_cmake_device_projects_its_reported_image_verdict_and_record(
     serial = "RR-5K3DNTFCR1B3C9D0RZMYA3Y720"
     _cmake_config(paths, tmp_path, helper=True, serial=serial)
     os.makedirs(paths.artifact_dir("roadrunner"), exist_ok=True)
-    with open(paths.uf2_file("roadrunner", "roadrunner"), "wb") as fh:
+    artifact = paths.uf2_file("roadrunner", "roadrunner")
+    with open(artifact, "wb") as fh:
         fh.write(b"UF2")
+    stat = os.stat(artifact)
+    monkeypatch.setattr(
+        cmake,
+        "source_state",
+        lambda _source: cmake.SourceState(sha="deadbee"),
+    )
     with open(paths.sidecar_file("roadrunner", "roadrunner"), "w", encoding="utf-8") as fh:
         json.dump(
             {
                 "provider": "cmake",
+                "sha": "deadbee",
                 "version": "v1.2.0-3-gdeadbee",
-                "bin_sha256": "aa" * 32,
+                "dirty": False,
+                "bin_sha256": hashlib.sha256(b"UF2").hexdigest(),
+                "bin_size": stat.st_size,
+                "bin_mtime": stat.st_mtime,
                 "digest_algorithm": uf2.DIGEST_CRC32_ISO_HDLC,
                 "digest": 0xBBE38AA9,
                 "image_start": 0x10000000,
@@ -1011,7 +1024,7 @@ def test_a_cmake_device_projects_its_reported_image_verdict_and_record(
         serial,
         mcu_type="roadrunner",
         fw="roadrunner",
-        bin_sha256="aa" * 32,
+        bin_sha256=hashlib.sha256(b"UF2").hexdigest(),
         fw_sha="deadbee",
         confidence="unique_bus_id",
         version="v1.2.0-3-gdeadbee",
@@ -1038,6 +1051,113 @@ def test_a_cmake_device_projects_its_reported_image_verdict_and_record(
     assert device["confidence"] == "unique_bus_id"
     assert device["needs_flash"] is True
     assert device["reason"] == "unexpected_image"
+
+
+def test_a_stale_cmake_sidecar_cannot_prove_its_old_image_current(
+    paths, tmp_path, fake_root, monkeypatch
+):
+    """A copied artifact with the previous build's sidecar is absence of
+    evidence, even when the board still reports the image that sidecar names."""
+    serial = "RR-5K3DNTFCR1B3C9D0RZMYA3Y720"
+    _cmake_config(paths, tmp_path, helper=True, serial=serial)
+    os.makedirs(paths.artifact_dir("roadrunner"), exist_ok=True)
+    with open(paths.uf2_file("roadrunner", "roadrunner"), "wb") as fh:
+        fh.write(b"NEW UF2")
+    with open(paths.sidecar_file("roadrunner", "roadrunner"), "w", encoding="utf-8") as fh:
+        json.dump(
+            {
+                "provider": "cmake",
+                "sha": "deadbee",
+                "version": "v1.2.0-3-gdeadbee",
+                "dirty": False,
+                "bin_sha256": hashlib.sha256(b"OLD UF2").hexdigest(),
+                "bin_size": len(b"OLD UF2"),
+                "bin_mtime": 0,
+                "digest_algorithm": uf2.DIGEST_CRC32_ISO_HDLC,
+                "digest": 0xBBE38AA9,
+                "image_start": 0x10000000,
+                "image_length": 600,
+            },
+            fh,
+        )
+    make_device(fake_root / "bus", "Vylyne", "Roadrunner", serial)
+    api = Api(paths, runner=_runner())
+    monkeypatch.setattr(
+        api,
+        "reported_images",
+        lambda _reporter, _serials: {
+            serial: device_info.DeviceInfo(
+                source=device_info.SOURCE_KLIPPER,
+                version="v1.2.0-3-gdeadbee",
+                digest_algorithm=uf2.DIGEST_CRC32_ISO_HDLC,
+                digest=0xBBE38AA9,
+                image_start=0x10000000,
+                image_length=600,
+            )
+        },
+    )
+
+    payload = api.cmake_status()[0]
+    device = _targets(api, "cmake")["roadrunner"]["devices"][0]
+
+    assert payload["artifact_reason"] == "no_provenance"
+    assert device["reason"] == "unknown_version"
+    assert device["needs_flash"] is None
+
+
+def test_a_provenance_valid_cmake_sidecar_can_prove_a_matching_image_current(
+    paths, tmp_path, fake_root, monkeypatch
+):
+    serial = "RR-5K3DNTFCR1B3C9D0RZMYA3Y720"
+    _cmake_config(paths, tmp_path, helper=True, serial=serial)
+    os.makedirs(paths.artifact_dir("roadrunner"), exist_ok=True)
+    artifact = paths.uf2_file("roadrunner", "roadrunner")
+    with open(artifact, "wb") as fh:
+        fh.write(b"UF2")
+    stat = os.stat(artifact)
+    monkeypatch.setattr(
+        cmake,
+        "source_state",
+        lambda _source: cmake.SourceState(sha="deadbee"),
+    )
+    with open(paths.sidecar_file("roadrunner", "roadrunner"), "w", encoding="utf-8") as fh:
+        json.dump(
+            {
+                "provider": "cmake",
+                "sha": "deadbee",
+                "version": "v1.2.0-3-gdeadbee",
+                "dirty": False,
+                "bin_sha256": hashlib.sha256(b"UF2").hexdigest(),
+                "bin_size": stat.st_size,
+                "bin_mtime": stat.st_mtime,
+                "digest_algorithm": uf2.DIGEST_CRC32_ISO_HDLC,
+                "digest": 0xBBE38AA9,
+                "image_start": 0x10000000,
+                "image_length": 600,
+            },
+            fh,
+        )
+    make_device(fake_root / "bus", "Vylyne", "Roadrunner", serial)
+    api = Api(paths, runner=_runner())
+    monkeypatch.setattr(
+        api,
+        "reported_images",
+        lambda _reporter, _serials: {
+            serial: device_info.DeviceInfo(
+                source=device_info.SOURCE_KLIPPER,
+                version="v1.2.0-3-gdeadbee",
+                digest_algorithm=uf2.DIGEST_CRC32_ISO_HDLC,
+                digest=0xBBE38AA9,
+                image_start=0x10000000,
+                image_length=600,
+            )
+        },
+    )
+
+    device = _targets(api, "cmake")["roadrunner"]["devices"][0]
+
+    assert device["reason"] is None
+    assert device["needs_flash"] is False
 
 
 def test_an_offline_helper_backed_cmake_device_carries_the_normal_block(

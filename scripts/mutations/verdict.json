@@ -43,6 +43,12 @@
       "replace": "    if False:"
     },
     {
+      "name": "a disowned cmake sidecar cannot prove its old image current",
+      "file": "src/mcu_updater/agent/methods/status.py",
+      "find": "                    \"sidecar\": (\n                        {}\n                        if status.reason in (NEVER_BUILT, NO_PROVENANCE)\n                        else cmake_mod.read_sidecar(self.paths, entry) or {}\n                    ),",
+      "replace": "                    \"sidecar\": cmake_mod.read_sidecar(self.paths, entry) or {},"
+    },
+    {
       "name": "a device that reported no digest is not compared as if it had",
       "find": "    if info is None or not info.has_digest() or not expected:",
       "replace": "    if info is None or not expected:"

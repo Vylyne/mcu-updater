@@ -431,17 +431,21 @@ class FlashMixin(_Base):
         # Read the devices NOW, while Klipper can still answer.
         listed = self.device_list({})
         # Either spelling of the one identity. `port` is what this call has
-        # always taken; `id` is the uniform slot, and for a screen that is its
-        # configured path or - where printer.cfg named one instead - its
-        # burned-in device id. Matching both means a caller can hand back what
-        # it read from `targets[].devices[].id` without knowing which kind of
-        # section produced it.
+        # always taken; `id` is the uniform slot, and either can name the
+        # configured path, printer.cfg's burned-in device id, or the identity
+        # the firmware itself reported. The path stays exact because it is a
+        # POSIX filesystem path; only identities are compared case-insensitively.
         wanted = args.get("port") or args.get("id")
+        want = None if wanted is None else str(wanted)
         targets = [
             d
             for d in listed["displays"]
             if d["present"]
-            and (wanted is None or str(wanted) in {d["configured_path"], d["device_id"]})
+            and (
+                want is None
+                or want == d["configured_path"]
+                or want.lower() in {i.lower() for i in (d["device_id"], d["reported_id"]) if i}
+            )
         ]
         if not targets:
             raise RpcError(

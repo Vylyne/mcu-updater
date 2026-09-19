@@ -770,7 +770,11 @@ def _pio_targets(
             )
             for device in sorted(found.values(), key=lambda d: d.port)
             if device.present
-            and (only_id is None or only_id in (device.port, device.device_id))
+            and (
+                only_id is None
+                or only_id == device.port
+                or only_id.lower() == device.device_id.lower()
+            )
         ],
     )
 

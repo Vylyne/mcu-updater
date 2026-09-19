@@ -309,6 +309,21 @@ def test_flashing_a_platformio_type_uses_the_watcher_map(
     assert {t.flasher for t in captured[0]} == {"esptool"}
 
 
+def test_flashing_a_platformio_screen_matches_its_id_case_insensitively(
+    c, pio_type, captured, fake_root, monkeypatch
+):
+    _device_map(c.paths, pio_type, aaa111=str(fake_root / "ttyUSB0"))
+    monkeypatch.setattr(cli, "_confirm", lambda prompt: True)
+
+    with pytest.raises(SystemExit):
+        cli.flash_fw_cmd(argparse.Namespace(type=ENV, serial="AAA111", yes=True))
+
+    assert len(captured) == 1
+    assert [target.detail["screen"]["device_id"] for target in captured[0]] == [
+        "aaa111"
+    ]
+
+
 def test_a_platformio_type_with_no_watcher_map_says_so(c, pio_type, monkeypatch):
     """Flashing nothing and reporting success is the failure this area exists to
     prevent, so an absent map is "cannot tell" rather than "no devices"."""

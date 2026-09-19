@@ -49,14 +49,26 @@
     {
       "name": "either spelling of a screen's identity is accepted",
       "file": "src/mcu_updater/agent/methods/flash.py",
-      "find": "            and (wanted is None or str(wanted) in {d[\"configured_path\"], d[\"device_id\"]})",
-      "replace": "            and (wanted is None or str(wanted) == d[\"configured_path\"])"
+      "find": "                or want.lower() in {i.lower() for i in (d[\"device_id\"], d[\"reported_id\"]) if i}",
+      "replace": "                or want.lower() in {i.lower() for i in (d[\"reported_id\"],) if i}"
+    },
+    {
+      "name": "a serial screen is accepted by its firmware-reported identity",
+      "file": "src/mcu_updater/agent/methods/flash.py",
+      "find": "                or want.lower() in {i.lower() for i in (d[\"device_id\"], d[\"reported_id\"]) if i}",
+      "replace": "                or want.lower() in {i.lower() for i in (d[\"device_id\"],) if i}"
     },
     {
       "name": "the ports are free by here, so the devices are asked",
       "file": "src/mcu_updater/cli.py",
       "find": "        c.paths, c.settings, display, ask=True, reporter=stdout_reporter",
       "replace": "        c.paths, c.settings, display, ask=False, reporter=stdout_reporter"
+    },
+    {
+      "name": "the CLI matches a firmware-reported identity case-insensitively",
+      "file": "src/mcu_updater/cli.py",
+      "find": "                or only_id.lower() == device.device_id.lower()",
+      "replace": "                or only_id == device.device_id"
     },
     {
       "name": "a firmware that cannot identify its devices is refused",

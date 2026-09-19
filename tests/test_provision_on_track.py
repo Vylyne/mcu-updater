@@ -35,14 +35,36 @@ class _FakeRoadrunner:
         self.result = result
         self.error = error
 
-    def is_unprovisioned(self, serial: str) -> bool:
-        return serial.startswith("RR-UNPROVISIONED-")
+    def is_trackable(self, serial: str) -> helpers.TrackVerdict:
+        if serial.startswith("RR-UNPROVISIONED-"):
+            return helpers.TrackVerdict(
+                ok=False,
+                reason="fake helper says provision this identity first",
+                remedy="provision",
+            )
+        return helpers.TrackVerdict(ok=True)
 
     def provision(self, paths, serial: str) -> str:
         self.calls.append(serial)
         if self.error is not None:
             raise self.error
         return self.result
+
+
+class _TrackableOnly:
+    """Rejects an unstable identity but deliberately cannot provision it."""
+
+    name = "roadrunner"
+
+    def __init__(self, *, remedy: str = "provision"):
+        self.remedy = remedy
+
+    def is_trackable(self, serial: str) -> helpers.TrackVerdict:
+        return helpers.TrackVerdict(
+            ok=False,
+            reason="trackable-only helper refuses this identity",
+            remedy=self.remedy,
+        )
 
 
 @pytest.fixture
@@ -122,30 +144,51 @@ def test_a_held_lock_refuses_the_track_and_never_retries(paths, rr, monkeypatch)
     assert Registry.load(paths).declared_serials("roadrunner") == []
 
 
-def test_a_family_with_no_helper_still_refuses_the_diagnostic_serial(paths):
-    """The old refusal, where it is still correct: with nothing able to
-    provision, "provision it first" is the only useful thing to say.
-
-    A `[firmware roadrunner]` section with no `helper:` line, not a deleted
-    registry entry: deleting a *registered* name that a family still declares
-    would reproduce the misspelt-helper case, which `helpers.for_name` refuses
-    loudly on this write path (Task 6 dispatch correction 1) rather than
-    falling back to "no provisioner"."""
+def test_a_helper_without_trackable_capability_tracks_an_ordinary_serial(paths):
+    """A helper without the capability has no durability opinion."""
     with open(paths.main_config, "a", encoding="utf-8") as fh:
         fh.write(
-            "\n[firmware roadrunner]\n"
-            "source: ~/roadrunner\n"
+            "\n[firmware knomi]\n"
+            "source: ~/knomi\n"
             "builder: cmake\n"
             "flashers: bootsel\n"
-            "\n[type roadrunner]\n"
-            "firmware: roadrunner\n"
-            "cmake_target: roadrunner_v1_i2c_rgb\n"
+            "helper: knomi_serial\n"
+            "\n[type knomi]\n"
+            "firmware: knomi\n"
+            "cmake_target: knomi\n"
             "chipset: rp2040\n"
         )
 
-    with pytest.raises(UnprovisionedSerialError):
+    helper = helpers.for_name("knomi_serial", family="knomi")
+    assert helpers.trackable(helper) is None
+
+    tracked = tracking.add_serial(paths, "knomi", "ordinary-serial")
+
+    assert tracked.serial == "ordinary-serial"
+    assert Registry.load(paths).declared_serials("knomi") == ["ordinary-serial"]
+
+
+def test_a_trackable_helper_with_no_provisioner_refuses_with_its_reason(
+    paths, rr, monkeypatch
+):
+    helper = _TrackableOnly()
+    monkeypatch.setitem(helpers_registry._BY_NAME, "roadrunner", helper)
+
+    with pytest.raises(UnprovisionedSerialError) as excinfo:
         tracking.add_serial(paths, "roadrunner", UNPROVISIONED)
 
+    assert excinfo.value.message == "trackable-only helper refuses this identity"
+    assert Registry.load(paths).declared_serials("roadrunner") == []
+
+
+def test_an_unknown_trackability_remedy_is_a_refusal(paths, rr, monkeypatch):
+    helper = _TrackableOnly(remedy="replace-board")
+    monkeypatch.setitem(helpers_registry._BY_NAME, "roadrunner", helper)
+
+    with pytest.raises(UnprovisionedSerialError) as excinfo:
+        tracking.add_serial(paths, "roadrunner", UNPROVISIONED)
+
+    assert excinfo.value.message == "trackable-only helper refuses this identity"
     assert Registry.load(paths).declared_serials("roadrunner") == []
 
 
@@ -164,13 +207,21 @@ def test_a_misconfigured_helper_name_refuses_loudly_rather_than_provisioning_not
     assert Registry.load(paths).declared_serials("roadrunner") == []
 
 
-def test_the_real_roadrunner_helper_offers_provisioning(paths):
+def test_the_real_roadrunner_helper_judges_trackability_without_hardware(paths):
     helper = helpers.for_name("roadrunner", family="roadrunner")
-    prov = helpers.provisioner(helper)
+    judge = helpers.trackable(helper)
 
-    assert prov is not None
-    assert prov.is_unprovisioned(UNPROVISIONED) is True
-    assert prov.is_unprovisioned(PROVISIONED) is False
+    assert judge is not None
+    refused = judge.is_trackable(UNPROVISIONED)
+    assert refused.ok is False
+    assert refused.reason == (
+        f"'{UNPROVISIONED}' is an unprovisioned Roadrunner's diagnostic identity, "
+        "not a stable serial - provision it first (the web UI's Provision "
+        "Roadrunner action, or fw.roadrunner.provision), then track the "
+        "resulting RR-... serial."
+    )
+    assert refused.remedy == "provision"
+    assert judge.is_trackable(PROVISIONED) == helpers.TrackVerdict(ok=True)
 
 
 def test_a_helper_without_the_capability_offers_none(paths):
@@ -183,9 +234,10 @@ def test_may_provision_false_refuses_an_unprovisioned_serial_without_writing(pat
     is read-only or `enable_flashing` is off, the same test that already
     withholds `fw.roadrunner.provision` - passes `may_provision=False` and
     gets the pre-Task-6 refusal, not a provisioned board."""
-    with pytest.raises(UnprovisionedSerialError):
+    with pytest.raises(UnprovisionedSerialError) as excinfo:
         tracking.add_serial(paths, "roadrunner", UNPROVISIONED, may_provision=False)
 
+    assert excinfo.value.message == "fake helper says provision this identity first"
     assert rr.calls == []
     assert Registry.load(paths).declared_serials("roadrunner") == []
 

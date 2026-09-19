@@ -13,8 +13,13 @@
   "mutations": [
     {
       "name": "an unprovisioned serial is provisioned first",
-      "find": "    if prov is not None and prov.is_unprovisioned(serial):",
+      "find": "    if not verdict.ok:",
       "replace": "    if False:"
+    },
+    {
+      "name": "an unknown trackability remedy is a refusal",
+      "find": "    if not verdict.ok:",
+      "replace": "    if not verdict.ok and verdict.remedy == \"provision\":"
     },
     {
       "name": "what gets tracked is what provisioning returned",
@@ -28,8 +33,8 @@
     },
     {
       "name": "a family with no provisioner still refuses the diagnostic serial",
-      "find": "        if UNPROVISIONED_RE.fullmatch(serial):",
-      "replace": "        if False:"
+      "find": "        if verdict.remedy != \"provision\" or prov is None or not may_provision:",
+      "replace": "        if verdict.remedy != \"provision\" or not may_provision:"
     },
     {
       "name": "the serial that was tracked is the one reported",

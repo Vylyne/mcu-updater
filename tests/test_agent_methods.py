@@ -13,7 +13,7 @@ import sys
 
 import pytest
 
-from mcu_updater import API_VERSION, typelist
+from mcu_updater import API_VERSION, helpers, typelist
 from mcu_updater.agent.methods import Api
 from mcu_updater.agent.rpc import ERR_INVALID_PARAMS, ERR_METHOD_NOT_FOUND, RpcError
 from mcu_updater.cfgdoc import CfgDocument
@@ -549,20 +549,15 @@ def test_serial_add_allows_a_board_that_is_not_plugged_in(api):
     assert res["added"] is True
 
 
-def test_serial_add_refuses_an_unprovisioned_serial_without_a_provisioner(api):
-    """`RR-UNPROVISIONED-<16 hex>` is a diagnostic identity whose trailing hex
-    IS the RP2040 flash UID - persisting it into a type's tracked serials is
-    exactly what this plan's constraints forbid, and it goes stale the moment
-    the board is actually provisioned. Refused on the string alone, not on
-    whether the device is currently visible on the bus - unlike
-    `not_an_mcu` above."""
-    with pytest.raises(RpcError) as exc:
-        api.dispatch(
-            "fw.serial.add",
-            {"name": "bttebb36", "serial": "RR-UNPROVISIONED-50543165187A4D1C"},
-        )
-    assert exc.value.data["code"] == "roadrunner_unprovisioned"
-    assert "RR-UNPROVISIONED-50543165187A4D1C" not in api.registry().get("bttebb36").serials
+def test_serial_add_without_a_trackable_helper_accepts_the_serial(api):
+    """Without the capability, generic tracking has no firmware verdict to apply."""
+    result = api.dispatch(
+        "fw.serial.add",
+        {"name": "bttebb36", "serial": "ordinary-serial"},
+    )
+
+    assert result["added"] is True
+    assert "ordinary-serial" in api.registry().get("bttebb36").serials
 
 
 def test_serial_add_reports_the_serial_it_actually_tracked(api, monkeypatch):
@@ -621,8 +616,14 @@ def test_serial_add_withholds_provisioning_from_a_runner_less_agent(api, monkeyp
         def __init__(self) -> None:
             self.calls: list[str] = []
 
-        def is_unprovisioned(self, serial: str) -> bool:
-            return serial.startswith("RR-UNPROVISIONED-")
+        def is_trackable(self, serial: str) -> helpers.TrackVerdict:
+            if serial.startswith("RR-UNPROVISIONED-"):
+                return helpers.TrackVerdict(
+                    ok=False,
+                    reason="fake helper says provision this identity first",
+                    remedy="provision",
+                )
+            return helpers.TrackVerdict(ok=True)
 
         def provision(self, paths, serial: str) -> str:
             self.calls.append(serial)
@@ -652,6 +653,8 @@ def test_serial_add_withholds_provisioning_from_a_runner_less_agent(api, monkeyp
         )
 
     assert exc.value.data["code"] == "roadrunner_unprovisioned"
+    assert exc.value.message == "fake helper says provision this identity first"
+    assert exc.value.data["message"] == exc.value.message
     assert helper.calls == [], "withheld, not attempted and then queued"
 
 

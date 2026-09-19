@@ -12,8 +12,8 @@
   "mutations": [
     {
       "name": "an unprovisioned roadrunner diagnostic serial is refused before it is written",
-      "find": "        if UNPROVISIONED_RE.fullmatch(serial):",
-      "replace": "        if False:"
+      "find": "    if not verdict.ok:",
+      "replace": "    if False:"
     },
     {
       "name": "a serial tracked under another type is refused",

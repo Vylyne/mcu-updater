@@ -61,13 +61,31 @@ class DeviceInfoReader(Protocol):
     def is_dirty(self, version: str | None) -> bool: ...
 
 
+@dataclasses.dataclass(frozen=True)
+class TrackVerdict:
+    """Whether a serial is a durable identity, and what to do when it is not."""
+
+    ok: bool
+    reason: str | None = None
+    remedy: str | None = None
+
+
+@runtime_checkable
+class Trackable(Protocol):
+    """Judges whether a serial is a durable identity for this firmware."""
+
+    name: str
+
+    def is_trackable(self, serial: str) -> TrackVerdict: ...
+
+
 @runtime_checkable
 class Provisioner(Protocol):
     """Give an unprovisioned board its durable identity.
 
-    Two questions, because the first is cheap and the second is irreversible:
-    `is_unprovisioned` is a string test on a serial the caller already has, and
-    `provision` writes to hardware.
+    Trackability and provisioning are separate capabilities because judging a
+    serial is a cheap string test while provisioning is an irreversible hardware
+    write. A helper may refuse tracking without being able to apply the remedy.
 
     **The caller holds the op lock.** Provisioning finds its own device, writes
     to it and waits for it to re-enumerate under a new name - three steps that
@@ -77,10 +95,6 @@ class Provisioner(Protocol):
     """
 
     name: str
-
-    def is_unprovisioned(self, serial: str) -> bool:
-        """Does this serial look like an unprovisioned board's diagnostic one?"""
-        ...
 
     def provision(self, paths: Paths, serial: str) -> str:
         """Provision the board answering to `serial`; return its new serial."""

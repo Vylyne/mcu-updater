@@ -16,7 +16,7 @@ from .errors import SerialTrackedElsewhereError, UnprovisionedSerialError, Updat
 from .paths import Paths
 
 if TYPE_CHECKING:
-    from .helpers.spec import Provisioner
+    from .helpers.spec import Helper
 
 
 @dataclasses.dataclass(frozen=True)
@@ -24,8 +24,8 @@ class Tracked:
     """What tracking a serial did.
 
     `serial` is what ended up in `serials:`, which is not always what the
-    caller asked for: an unprovisioned board is given its durable identity
-    first, and that is the one tracked. `provisioned_from` is the serial the
+    caller asked for: a helper-rejected identity may be provisioned first, and
+    that durable result is the one tracked. `provisioned_from` is the serial the
     caller passed, and is None when nothing moved - so a caller that just
     forwards both fields reports the truth either way.
     """
@@ -36,8 +36,8 @@ class Tracked:
     provisioned_from: str | None = None
 
 
-def _provisioner_for(paths: Paths, name: str) -> Provisioner | None:
-    """The provisioning capability of type `name`'s firmware family, or None.
+def _helper_for(paths: Paths, name: str) -> Helper | None:
+    """The helper of type `name`'s firmware family, or None.
 
     Read before anything is written to a board, so a typo in the type name
     surfaces as `UnknownTypeError` (raised later, from `get_declared_chipset`,
@@ -46,7 +46,7 @@ def _provisioner_for(paths: Paths, name: str) -> Provisioner | None:
 
     Only `entry.firmwares[0]` is consulted: every type today builds exactly
     one family, and a type declaring more than one would take its
-    provisioning capability from whichever is listed first.
+    helper from whichever is listed first.
     """
     from . import firmware, helpers, typelist
 
@@ -55,7 +55,7 @@ def _provisioner_for(paths: Paths, name: str) -> Provisioner | None:
     if entry is None or not entry.firmwares:
         return None
     family = firmware.resolve(paths, entry.firmwares[0], families)
-    return helpers.provisioner(helpers.for_name(family.helper, family=family.name))
+    return helpers.for_name(family.helper, family=family.name)
 
 
 def _elsewhere_error(
@@ -74,14 +74,10 @@ def _elsewhere_error(
     )
 
 
-def _unprovisioned_error(serial: str) -> UnprovisionedSerialError:
-    """The refusal for a diagnostic identity that must be provisioned first -
-    shared by "nothing can provision it" and "this caller may not"."""
+def _untrackable_error(serial: str, reason: str | None) -> UnprovisionedSerialError:
+    """Refuse a helper-rejected identity without interpreting its prose."""
     return UnprovisionedSerialError(
-        f"'{serial}' is an unprovisioned Roadrunner's diagnostic identity, "
-        f"not a stable serial - provision it first (the web UI's Provision "
-        f"Roadrunner action, or fw.roadrunner.provision), then track the "
-        f"resulting RR-... serial.",
+        reason or f"'{serial}' is not a durable identity for this firmware.",
         serial=serial,
     )
 
@@ -91,11 +87,9 @@ def add_serial(
 ) -> Tracked:
     """Track `serial` under type `name`, provisioning it first if it needs it.
 
-    Spec section 11. A board whose serial is its unprovisioned diagnostic
-    identity is provisioned under the op lock and the *returned* serial is
-    tracked - the two steps share a precondition (this board, here, untracked,
-    nobody else on the bus) and splitting them only creates an order to get
-    wrong.
+    Spec section 11. A helper may reject a serial as non-durable and name a
+    machine-readable remedy. The recognised `provision` remedy runs under the
+    op lock and the *returned* serial is tracked.
 
     A held lock raises `BusyError` and is never retried: provisioning writes
     irreversibly to a board, and queueing behind a flash would perform that
@@ -115,15 +109,24 @@ def add_serial(
     agent, when it is read-only or `enable_flashing` is off - the same test
     that already withholds `fw.roadrunner.provision`) passes False rather
     than inheriting this default. With `may_provision=False`, a serial that
-    would have been provisioned refuses exactly as it would with no
-    provisioner at all: `UnprovisionedSerialError` / `roadrunner_unprovisioned`,
-    not a new code.
+    would have been provisioned refuses with the helper's reason and the
+    existing `UnprovisionedSerialError` / `roadrunner_unprovisioned`, not a new
+    code.
     """
     provisioned_from: str | None = None
-    prov = _provisioner_for(paths, name)
-    if prov is not None and prov.is_unprovisioned(serial):
-        if not may_provision:
-            raise _unprovisioned_error(serial)
+    from . import helpers
+
+    helper = _helper_for(paths, name)
+    judge = helpers.trackable(helper)
+    verdict = (
+        judge.is_trackable(serial)
+        if judge is not None
+        else helpers.TrackVerdict(ok=True)
+    )
+    if not verdict.ok:
+        prov = helpers.provisioner(helper)
+        if verdict.remedy != "provision" or prov is None or not may_provision:
+            raise _untrackable_error(serial, verdict.reason)
 
         requested_elsewhere = _elsewhere_error(Registry.load(paths), serial, name)
         if requested_elsewhere is not None:
@@ -157,25 +160,10 @@ def add_serial(
 def _record(paths: Paths, name: str, serial: str) -> tuple[bool, str]:
     """The actual registry write `add_serial` makes, split out so a failure
     here - after a successful provision - can be caught and re-annotated with
-    the new serial by its caller, without changing this function's own
-    indentation (and so without moving the mutation-tested lines below).
+    the new serial by its caller.
     """
     with Registry.mutate(paths, f"add serial {serial}") as reg:
         chipset = reg.get_declared_chipset(name)  # UnknownTypeError if absent
-
-        # An unprovisioned Roadrunner's serial is `RR-UNPROVISIONED-<flash-uid>`
-        # - the trailing 16 hex characters ARE the RP2040 flash UID, which this
-        # plan's constraints forbid ever persisting. Reached only when nothing
-        # could provision it (above), which is where "provision it first" is
-        # still the useful answer. Checked here, not only from the agent's live
-        # bus scan, so every caller of this function refuses one. Not every
-        # registry write: the agent's pairing-key adoption
-        # (agent/methods/flash.py) calls Registry.add_serial directly, and only
-        # ever for kconfig types.
-        from .discovery.roadrunner import UNPROVISIONED_RE
-
-        if UNPROVISIONED_RE.fullmatch(serial):
-            raise _unprovisioned_error(serial)
 
         # One board tracked under two types would get flashed twice with
         # different firmware, so this is refused rather than merged.

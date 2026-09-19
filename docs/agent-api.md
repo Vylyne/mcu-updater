@@ -185,32 +185,32 @@ or a different device now sitting on that port - and its `data` carries
 `roadrunner_timeout` is reserved for the case where nothing on that topology
 was ever seen again.
 
-A related code, `roadrunner_unprovisioned`, is not raised by either of these
-two methods. `fw.serial.add` (see the "Methods" table above) can also raise
+A related legacy code, `roadrunner_unprovisioned`, is not raised by either of
+these two methods. `fw.serial.add` (see the "Methods" table above) can also raise
 `config_corrupt`: a `helper:` name declared in `[firmware ...]` but not
 registered is refused loudly, by name, rather than silently treated as "no
 provisioning capability" - the same misconfiguration `fw.type.add`/`update`
-already refuse with that code elsewhere. `fw.serial.add` provisions an
-`RR-UNPROVISIONED-<flash-id>` serial itself when the requested type's firmware
-family can - the same op-locked write as `fw.roadrunner.provision`, reached
-from ordinary tracking instead of a separate maintenance call - and tracks the
-durable `RR-...` serial that comes back, never the diagnostic identity whose
-trailing hex is literally the RP2040 flash UID. `roadrunner_unprovisioned` is
-raised only when the type's family has no provisioning capability, where
-refusing and pointing at `fw.roadrunner.provision` is still the only useful
-answer.
+already refuse with that code elsewhere. `fw.serial.add` asks the requested
+type's firmware helper whether the serial is a durable identity. A helper with
+no trackability capability has no opinion and the serial is tracked normally.
+A refusal carries the helper's operator-facing reason. If its machine-readable
+remedy is `provision`, the family can provision, and the caller's hardware-write
+policy allows it, the same op-locked write as `fw.roadrunner.provision` runs and
+the durable serial that comes back is tracked. An unknown remedy, a missing
+provisioner, or a caller that withholds provisioning refuses with
+`roadrunner_unprovisioned`; that firmware-named code is retained for wire
+compatibility even though the verdict mechanism is generic.
 
 `fw.serial.add`'s `serial` is the serial that was tracked, which is not always
-the one that was requested. When the type's firmware family can provision and
-the requested serial is an unprovisioned board's diagnostic identity
-(`RR-UNPROVISIONED-…`), the board is provisioned first and the durable serial
-is tracked; the request's serial comes back as `prior_serial`. `prior_serial`
-is absent when nothing moved.
+the one that was requested. When the helper rejects a serial with remedy
+`provision` and the family can apply it, the board is provisioned first and the
+durable serial is tracked; the request's serial comes back as `prior_serial`.
+`prior_serial` is absent when nothing moved.
 
 Provisioning holds the operation lock. A lock held elsewhere refuses with
 `busy` and does not retry — this is the one call under `fw.serial.add` that
-writes to hardware. A family with no provisioning capability still refuses an
-unprovisioned serial with `roadrunner_unprovisioned`.
+writes to hardware. A helper refusal that cannot be remedied here still returns
+the helper's reason with `roadrunner_unprovisioned`.
 
 Because that write is irreversible in exactly the same way
 `fw.roadrunner.provision` is, `fw.serial.add` withholds it under the same

@@ -22,7 +22,7 @@ import types
 
 import pytest
 
-from mcu_updater import cli, flashers, tracking, typelist
+from mcu_updater import cli, flashers, helpers, tracking, typelist
 from mcu_updater.config import Registry
 from mcu_updater.discovery import canbus
 from mcu_updater.errors import (
@@ -783,12 +783,25 @@ def test_an_ambiguous_serial_still_asks_for_a_type(c, cmake_flashable, monkeypat
     assert sorted(exc.value.data["tracked_under"]) == ["board", "roadrunner"]
 
 
-def _declare_roadrunner(paths, serial: str) -> None:
+def _declare_roadrunner(paths, serial: str, *, helper: bool = False) -> None:
+    helper_line = "helper: roadrunner\n" if helper else ""
     with open(paths.main_config, "a", encoding="utf-8", newline="\n") as fh:
         fh.write(
-            "\n[firmware roadrunner]\nsource: ~/roadrunner/rp2040\nbuilder: cmake\nflashers: bootsel\n\n"
+            "\n[firmware roadrunner]\nsource: ~/roadrunner/rp2040\nbuilder: cmake\n"
+            f"{helper_line}flashers: bootsel\n\n"
             "[type roadrunner]\nchipset: rp2040\nfirmware: roadrunner\n"
             f"cmake_target: roadrunner_v1_usbserial\nserials:\n    {serial}\n"
+        )
+
+
+class _TrackableOnly:
+    name = "roadrunner"
+
+    def is_trackable(self, serial: str) -> helpers.TrackVerdict:
+        return helpers.TrackVerdict(
+            ok=False,
+            reason="trackable-only helper says provision it first",
+            remedy="provision",
         )
 
 
@@ -884,12 +897,14 @@ def test_add_serial_provisions_an_unprovisioned_roadrunner_then_tracks_it(
     assert "Added serial RR-NEW to roadrunner" in out
 
 
-def test_add_serial_refuses_an_unprovisioned_serial_with_no_provisioner(c):
-    """Review finding I3: the old refusal, unmocked. `_declare_roadrunner`
-    writes no `helper:` line at all, so `tracking.add_serial` has nothing
-    that can provision - "provision it first" is still the only useful
-    thing to say, and nothing about the CLI path changes that."""
-    _declare_roadrunner(c.paths, "RR-ONE")
+def test_add_serial_refuses_when_the_trackable_helper_has_no_provisioner(
+    c, monkeypatch
+):
+    """A helper's durability refusal stands even when it cannot fix the serial."""
+    from mcu_updater.helpers import registry as helpers_registry
+
+    monkeypatch.setitem(helpers_registry._BY_NAME, "roadrunner", _TrackableOnly())
+    _declare_roadrunner(c.paths, "RR-ONE", helper=True)
 
     with pytest.raises(UnprovisionedSerialError):
         cli.add_serial(
@@ -1001,17 +1016,12 @@ def test_the_flash_prompt_refuses_an_unprovisioned_roadrunner_serial(
     """`add_declared_serial` has no idea what an unprovisioned serial is, so
     answering "y" persisted the RP2040's flash UID.
 
-    Built with `helper=False` directly, not the `cmake_flashable` fixture
-    (which defaults to a real helper): with a provisioner in play this would
-    have exercised the tripwire this test is meant to catch - a fake config
-    with no `helper:` line reaches `tracking.add_serial`'s "no provisioner"
-    branch, which is what "provision it first" tests here. The message
-    check is narrowed to a substring unique to that refusal:
-    "unprovisioned Roadrunner" alone is also present in
-    `find_untracked`'s "no confirmed unprovisioned Roadrunner matched that
-    serial", so it could pass while `add_declared_serial` had already been
-    called."""
-    _cmake_flashable(c, fake_root, helper=False)
+    A trackability helper is configured without provisioning capability, so
+    this reaches the refusal path without driving hardware."""
+    from mcu_updater.helpers import registry as helpers_registry
+
+    monkeypatch.setitem(helpers_registry._BY_NAME, "roadrunner", _TrackableOnly())
+    _cmake_flashable(c, fake_root, helper=True)
     monkeypatch.setattr(cli, "_confirm", lambda prompt: True)
 
     code = _main(
@@ -1047,8 +1057,14 @@ def test_the_flash_prompt_provisions_an_unprovisioned_roadrunner_then_flashes_it
         def __init__(self) -> None:
             self.calls: list[str] = []
 
-        def is_unprovisioned(self, serial: str) -> bool:
-            return serial.startswith("RR-UNPROVISIONED-")
+        def is_trackable(self, serial: str) -> helpers.TrackVerdict:
+            if serial.startswith("RR-UNPROVISIONED-"):
+                return helpers.TrackVerdict(
+                    ok=False,
+                    reason="fake helper says provision this identity first",
+                    remedy="provision",
+                )
+            return helpers.TrackVerdict(ok=True)
 
         def provision(self, paths, serial: str) -> str:
             self.calls.append(serial)

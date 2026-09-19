@@ -11,7 +11,7 @@ from ..device_info import SOURCE_INFO, SOURCE_KLIPPER, DeviceInfo
 from ..discovery import bootsel, roadrunner
 from ..flashers.spec import Bench
 from ..paths import Paths
-from .spec import BootselHandoff
+from .spec import BootselHandoff, TrackVerdict
 
 #: `git describe --tags --always --dirty`: `v1.2.0-3-gdeadbee`, a bare
 #: `deadbee` in a repo with no tags, either with `-dirty`. A bare tag or `dev`
@@ -99,10 +99,21 @@ class RoadrunnerHelper:
     ) -> None:
         roadrunner.wait_for_provisioned(bench.paths, serial)
 
-    def is_unprovisioned(self, serial: str) -> bool:
+    def is_trackable(self, serial: str) -> TrackVerdict:
         from ..discovery.roadrunner import UNPROVISIONED_RE
 
-        return UNPROVISIONED_RE.fullmatch(serial) is not None
+        if UNPROVISIONED_RE.fullmatch(serial) is None:
+            return TrackVerdict(ok=True)
+        return TrackVerdict(
+            ok=False,
+            reason=(
+                f"'{serial}' is an unprovisioned Roadrunner's diagnostic identity, "
+                f"not a stable serial - provision it first (the web UI's Provision "
+                f"Roadrunner action, or fw.roadrunner.provision), then track the "
+                f"resulting RR-... serial."
+            ),
+            remedy="provision",
+        )
 
     def provision(self, paths: Paths, serial: str) -> str:
         """Give this board a durable serial. The caller holds the op lock.

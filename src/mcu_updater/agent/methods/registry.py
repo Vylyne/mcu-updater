@@ -230,18 +230,18 @@ class RegistryMixin(_Base):
         Touches nothing but the registry: no build, no flash, no board.
 
         One exception, and it is the point of Ruling 13: a serial the type's
-        firmware family can recognise as an unprovisioned board's diagnostic
-        identity is provisioned first, and the resulting serial is what gets
-        tracked. That does touch the board. `prior_serial` says so.
+        firmware helper rejects with remedy `provision` is provisioned first,
+        and the resulting serial is what gets tracked. That does touch the
+        board. `prior_serial` says so.
 
         That write is gated the same way `fw.roadrunner.provision` is
         (`_hardware_writes_allowed`) even though this method itself sits in
         the ungated `METHODS` table: a read-only or flashing-disabled
         deployment must not perform an irreversible hardware write just
         because it arrived through ordinary tracking instead of the
-        dedicated maintenance call. Withheld, it refuses with the same
-        `UnprovisionedSerialError` / `roadrunner_unprovisioned` a family with
-        no provisioner at all would raise - not a new code.
+        dedicated maintenance call. Withheld, it refuses with the helper's
+        reason and the existing `UnprovisionedSerialError` /
+        `roadrunner_unprovisioned` - not a new code.
         """
         name = self._require_str(args, "name")
         serial = self._require_str(args, "serial")
@@ -249,9 +249,9 @@ class RegistryMixin(_Base):
         # The panel only offers `adoptable` devices, but the panel is not the only
         # possible caller - enforce the same rule here so a direct RPC cannot add
         # a Knomi's CH340 as a board. Only refused when we can actually see it:
-        # a serial for a board that is currently unplugged is legitimate. Unlike
-        # the unprovisioned-Roadrunner refusal below, this needs a live scan, so
-        # it stays agent-only rather than moving into `tracking.add_serial`.
+        # a serial for a board that is currently unplugged is legitimate. This
+        # needs a live scan, unlike a helper's pure string verdict, so it stays
+        # agent-only rather than moving into `tracking.add_serial`.
         present = next((d for d in scan(self.paths) if d.serial == serial), None)
         if present is not None and not present.is_mcu:
             raise RpcError(
@@ -278,7 +278,7 @@ class RegistryMixin(_Base):
                 exc.message,
                 data={
                     "code": exc.code,
-                    "message": "refusing to track an unprovisioned Roadrunner's diagnostic serial",
+                    "message": exc.message,
                     "data": exc.data,
                 },
             ) from exc

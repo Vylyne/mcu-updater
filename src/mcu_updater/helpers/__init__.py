@@ -9,6 +9,8 @@ from .spec import (
     Helper,
     ImageReporter,
     Provisioner,
+    Trackable,
+    TrackVerdict,
 )
 
 
@@ -43,6 +45,11 @@ def provisioner(helper: Helper | None) -> Provisioner | None:
     return helper if isinstance(helper, Provisioner) else None
 
 
+def trackable(helper: Helper | None) -> Trackable | None:
+    """This helper's identity-durability judge, or None if all serials qualify."""
+    return helper if isinstance(helper, Trackable) else None
+
+
 __all__ = [
     "BootselHandoff",
     "BootselRequester",
@@ -50,9 +57,12 @@ __all__ = [
     "Helper",
     "ImageReporter",
     "Provisioner",
+    "Trackable",
+    "TrackVerdict",
     "bootsel_requester",
     "device_info_reader",
     "for_name",
     "image_reporter",
     "provisioner",
+    "trackable",
 ]

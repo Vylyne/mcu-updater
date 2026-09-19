@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 from typing import Any
 
-from ... import device_info, firmware, flashers, inventory, providers, stop_services
+from ... import device_info, firmware, flashers, helpers, inventory, providers, stop_services
 from ...build import read_sidecar
 from ...config import Registry
 from ...devices import (
@@ -13,6 +13,7 @@ from ...devices import (
     device_state,
 )
 from ...errors import (
+    ConfigCorruptError,
     OperationCancelled,
     UpdaterError,
 )
@@ -292,6 +293,53 @@ class BulkMixin(_Base):
                 )
         return out
 
+    def _cmake_boards_to_flash(
+        self, scope: str, only: str | None = None
+    ) -> list[dict]:
+        """Select present CMake serials with staged firmware for a fleet write."""
+        from ...providers import cmake as cmake_mod
+
+        families = firmware.load(self.paths)
+        settings = self.settings()
+        entries = cmake_mod.load(self.paths)
+
+        out: list[dict] = []
+        for payload in self.cmake_status():
+            name = payload["name"]
+            if only is not None and name != only:
+                continue
+            if not payload["has_firmware"]:
+                continue
+            entry = entries[name]
+            family = firmware.resolve(self.paths, payload["firmware"], families)
+            try:
+                helper = helpers.for_name(family.helper, family=family.name)
+            except ConfigCorruptError:
+                helper = None
+            units = stop_services.for_cmake(self.paths, entry, settings, families)
+            uf2_file = self.paths.uf2_file(name, payload["firmware"])
+            for device in self._cmake_devices(payload, family, helper):
+                if not device["present"]:
+                    continue
+                # Explicit `all` is operator intent even without provenance.
+                if scope != "all" and device["status"].needs_flash is not True:
+                    continue
+                out.append(
+                    {
+                        "type": name,
+                        "serial": device["serial"],
+                        "chipset": payload["chipset"],
+                        "fw": payload["firmware"],
+                        "uf2_file": uf2_file,
+                        "stop_services": list(units),
+                        "state": device["state"],
+                        "reason": (
+                            "forced" if scope == "all" else device["status"].reason
+                        ),
+                    }
+                )
+        return out
+
     def _screens_to_flash(
         self, scope: str, only: str | None = None
     ) -> tuple[list[flashers.FlashTarget], list[dict[str, Any]]]:
@@ -498,40 +546,6 @@ class BulkMixin(_Base):
             "skipped": [s.to_json() for s in selection.skipped],
         }
 
-    def _require_flashable_type(self, only: str) -> str:
-        """A name that must be something this host can flash, board or screen.
-
-        Fails fast on a typo, before a job exists. Asks the provider seam rather
-        than testing registry membership: "not in the kconfig registry" meant
-        "PlatformIO" for exactly as long as there were two providers, and a
-        CMake name reaching `_boards_to_flash` under that assumption selects
-        nothing while reporting success.
-
-        A CMake name is refused here, deliberately and by name. `_boards_to_flash`
-        walks the kconfig registry and has no CMake branch, so type-level flash
-        genuinely cannot serve one yet; saying so is honest, where the old
-        `unknown_type` claimed a configured type did not exist. Per-device
-        `fw.flash` does work and the message points at it.
-        """
-        owner = self._provider_of(only)  # RpcError unknown_type for a typo
-        if owner == providers.Cmake.name:
-            raise RpcError(
-                f"type-level flash is not available for CMake-built type "
-                f"'{only}'. Flash its boards individually with fw.flash.",
-                data={
-                    "code": "type_not_bulk_flashable",
-                    # The panel reads this nested message in preference to the
-                    # outer one, so it carries the sentence that names the type
-                    # and the way out - not a category label.
-                    "message": (
-                        f"type-level flash is not available for CMake-built "
-                        f"type '{only}'. Flash its boards individually."
-                    ),
-                    "data": {"name": only, "provider": owner},
-                },
-            )
-        return only
-
     def flash_all(self, args: dict) -> dict[str, Any]:
         """Flash everything that needs it, or everything of one type.
 
@@ -559,12 +573,13 @@ class BulkMixin(_Base):
         only = args.get("name")
         reg = self.registry()
         if only is not None:
-            only = self._require_flashable_type(str(only))
+            only = str(only)
+            self._provider_of(only)  # RpcError unknown_type
 
-        # By-id and CAN both, and neither excludes the other - a type may
-        # legitimately track both `serials:` and `canbus_uuids:`.
-        boards = self._boards_to_flash(reg, scope, only) + self._canbus_boards_to_flash(
-            reg, scope, only
+        boards = (
+            self._boards_to_flash(reg, scope, only)
+            + self._canbus_boards_to_flash(reg, scope, only)
+            + self._cmake_boards_to_flash(scope, only)
         )
         # Read now, while Klipper can still answer - the same constraint
         # `_pio_flash` has always had, and the reason this is selection
@@ -653,7 +668,8 @@ class BulkMixin(_Base):
         only = args.get("name")
         install = self._install()
         if only is not None:
-            only = self._require_flashable_type(str(only))
+            only = str(only)
+            self._provider_of(only)  # RpcError unknown_type
         # Every family each type uses, not klipper for all of them. A fleet
         # update that rebuilds klipper and leaves the probe on last month's
         # cartographer is the failure this exists to prevent, and it was silent.
@@ -679,8 +695,10 @@ class BulkMixin(_Base):
             # invalidated. Screens included - a fleet update that rebuilt a
             # screen's firmware and then declined to write it is half a job.
             reg_now = self.registry()
-            boards = self._boards_to_flash(reg_now, scope, only) + self._canbus_boards_to_flash(
-                reg_now, scope, only
+            boards = (
+                self._boards_to_flash(reg_now, scope, only)
+                + self._canbus_boards_to_flash(reg_now, scope, only)
+                + self._cmake_boards_to_flash(scope, only)
             )
             board_targets, refused = flashers.select_each(
                 self.paths,

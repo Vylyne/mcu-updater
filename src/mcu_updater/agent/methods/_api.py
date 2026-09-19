@@ -22,9 +22,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Protocol
 
-from ... import device_info, flashers
+from ... import device_info, flashers, inventory
 from ...config import Registry
-from ...helpers import DeviceInfoReader
+from ...firmware import FirmwareFamily
+from ...helpers import DeviceInfoReader, Helper
 from ...jobs import JobRunner
 from ...paths import Paths
 from ...settings import Settings
@@ -77,6 +78,14 @@ class _Api(Protocol):
         built_version: str | None = None,
         reader: DeviceInfoReader = device_info.KLIPPER,
     ) -> dict[str, Any]: ...
+    def cmake_status(self) -> list[dict[str, Any]]: ...
+    def _cmake_devices(
+        self,
+        payload: dict[str, Any],
+        family: FirmwareFamily,
+        helper: Helper | None,
+        rows: dict[tuple[str, str, str], inventory.Row] | None = None,
+    ) -> list[dict[str, Any]]: ...
     @staticmethod
     def _platformio_device_status(screen: dict[str, Any]) -> DeviceStatus: ...
     def _log_reporter(self, stream: str, line: str) -> None: ...

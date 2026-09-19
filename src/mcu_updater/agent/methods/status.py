@@ -1041,6 +1041,66 @@ class StatusMixin(_Base):
             )
         return out
 
+    def _cmake_devices(
+        self,
+        payload: dict[str, Any],
+        family: firmware.FirmwareFamily,
+        helper: helpers.Helper | None,
+        rows: dict[tuple[str, str, str], inventory_mod.Row] | None = None,
+    ) -> list[dict[str, Any]]:
+        """Judge each declared serial once for the panel and fleet selection."""
+        from ... import device_info, verdict
+        from ...build import FlashLog
+
+        name = payload["name"]
+        flashlog = FlashLog(self.paths)
+        sidecar = payload["sidecar"]
+        reader = device_info.reader_for(family)
+        reporter = helpers.image_reporter(helper)
+        reported = (
+            self.reported_images(reporter, payload["serials"])
+            if reporter is not None
+            else {}
+        )
+        expected = verdict.Expected(
+            stamp=sidecar.get("version"),
+            artifact_sha=sidecar.get("bin_sha256"),
+            digest=sidecar,
+        )
+
+        if rows is None:
+            rows = inventory_mod.index(self.inventory())
+        out: list[dict[str, Any]] = []
+        for serial in payload["serials"]:
+            device_row = rows.get((name, inventory_mod.SERIAL, serial))
+            present = device_row is not None and device_row.present
+            state = device_row.state if device_row is not None else STATE_OFFLINE
+            info = reported.get(serial)
+            version = info.version if info is not None else None
+            running = reader.running_sha(version)
+            record = flashlog.entry_for(serial, running, version=version)
+            out.append(
+                {
+                    "serial": serial,
+                    "present": present,
+                    "state": state,
+                    "path": device_row.path if device_row is not None else None,
+                    "version": version,
+                    "confidence": (record or {}).get("confidence"),
+                    "status": verdict.decide(
+                        verdict.Evidence(
+                            state=state,
+                            version=version,
+                            running_sha=running,
+                            dirty=reader.is_dirty(version),
+                            info=info,
+                        ),
+                        dataclasses.replace(expected, record=record),
+                    ),
+                }
+            )
+        return out
+
     def _cmake_target(
         self,
         payload: dict[str, Any],
@@ -1069,55 +1129,10 @@ class StatusMixin(_Base):
             helper = None
             helper_problem = str(exc)
         helper_configured = helper is not None
-
-        from ... import device_info, verdict
-        from ...build import FlashLog
-
-        flashlog = FlashLog(self.paths)
-        sidecar = payload["sidecar"]
-        reader = device_info.reader_for(family)
-        reporter = helpers.image_reporter(helper)
-        # Klipper's own answer for every serial at once. A board Klippy is
-        # holding is a board whose port cannot be opened, which is exactly when
-        # its own measurement of its image matters most - and no port is opened
-        # from a status poll, so a family whose helper cannot report through
-        # Klipper simply has no digest here.
-        reported = (
-            self.reported_images(reporter, payload["serials"])
-            if reporter is not None
-            else {}
-        )
-        expected = verdict.Expected(
-            # No `head`: a Roadrunner reports the repository-wide `git
-            # describe`, and `cmake.SourceState.sha` is subtree-scoped - the two
-            # "routinely disagree", so comparing them would read every board as
-            # behind whenever an unrelated part of its repo moved. The stamp we
-            # recorded building is the comparison that means something.
-            stamp=sidecar.get("version"),
-            artifact_sha=sidecar.get("bin_sha256"),
-            digest=sidecar,
-        )
-
-        if rows is None:
-            rows = inventory_mod.index(self.inventory())
         devices: list[dict[str, Any]] = []
-        for serial in payload["serials"]:
-            device_row = rows.get((name, inventory_mod.SERIAL, serial))
-            present = device_row is not None and device_row.present
-            info = reported.get(serial)
-            version = info.version if info is not None else None
-            running = reader.running_sha(version)
-            record = flashlog.entry_for(serial, running, version=version)
-            device_status = verdict.decide(
-                verdict.Evidence(
-                    state=device_row.state if device_row is not None else STATE_OFFLINE,
-                    version=version,
-                    running_sha=running,
-                    dirty=reader.is_dirty(version),
-                    info=info,
-                ),
-                dataclasses.replace(expected, record=record),
-            )
+        for device in self._cmake_devices(payload, family, helper, rows):
+            serial = device["serial"]
+            present = device["present"]
             device_actions = (
                 self._device_actions(
                     allowed,
@@ -1155,11 +1170,11 @@ class StatusMixin(_Base):
                     "id": serial,
                     "name": None,
                     "present": present,
-                    "state": device_row.state if device_row is not None else STATE_OFFLINE,
-                    "path": device_row.path if device_row is not None else None,
-                    "version": version,
-                    "confidence": (record or {}).get("confidence"),
-                    **self._device_json(device_status),
+                    "state": device["state"],
+                    "path": device["path"],
+                    "version": device["version"],
+                    "confidence": device["confidence"],
+                    **self._device_json(device["status"]),
                     "actions": device_actions,
                 }
             )

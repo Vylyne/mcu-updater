@@ -202,3 +202,25 @@ def test_pio_source_is_not_yet_applied_to_a_family_with_no_source(paths, setting
     install = Install.load(paths, settings)
     assert install.platformio["knomi"].source != str(tree)
     assert install.platformio["knomi"].source == str(os.path.join(paths.home, "knomi_serial"))
+
+
+def test_a_host_with_no_types_at_all_is_empty(paths, settings):
+    """What `update-all`'s early exit was actually asking."""
+    assert Install.load(paths, settings).empty is True
+
+
+def test_a_host_whose_only_type_is_cmake_is_not_empty(paths, settings, fake_root):
+    """A Roadrunner-only host has a configured type despite empty older maps."""
+    tree = os.path.join(fake_root, "roadrunner", "rp2040")
+    os.makedirs(tree, exist_ok=True)
+    with open(os.path.join(tree, "CMakeLists.txt"), "w", encoding="utf-8") as fh:
+        fh.write("project(roadrunner)\n")
+    with open(paths.main_config, "a", encoding="utf-8") as fh:
+        fh.write(
+            f"\n[firmware roadrunner]\nsource: {tree}\nbuilder: cmake\n"
+            "flashers: bootsel\n\n"
+            "[type roadrunner]\nchipset: rp2040\nfirmware: roadrunner\n"
+            "cmake_target: roadrunner_v1_i2c_rgb\n"
+        )
+
+    assert Install.load(paths, settings).empty is False

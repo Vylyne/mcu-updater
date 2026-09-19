@@ -84,6 +84,11 @@ class Install:
             cmake=cmake_mod.load(paths),
         )
 
+    @property
+    def empty(self) -> bool:
+        """No type of any provider is configured on this host."""
+        return not self.registry and not self.platformio and not self.cmake
+
 
 @dataclasses.dataclass(frozen=True)
 class BuildTarget:

@@ -585,6 +585,13 @@ burned-in id (`device_id:`), and that choice is what identifies it: `status`,
 whatever discovery found this boot, and is reported beside its id rather than
 standing in for it.
 
+`fw.flash` accepts more than it reports, because a caller may hold an identity
+this tool never configured: the path, the configured id, or the id the screen
+itself reported - so a `serial:` screen can still be named by its burned-in id
+even though its section carries none. Ids compare case-insensitively, the
+vendor's docs being explicit that their lowercase output is not a guarantee;
+the path does not, because a path is a path.
+
 A few things to know:
 
 - **A port is never inferred.** `pio run -t upload` picks one on its own when

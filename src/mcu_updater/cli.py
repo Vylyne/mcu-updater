@@ -851,17 +851,6 @@ def flash_fw_cmd(args: argparse.Namespace) -> None:
     # and indexed the PlatformIO map with a name that is not in it.
     owner = providers.provider_of(c.paths, args.type) if args.type else None
 
-    # Before the confirmation, not after: this is deferred work with its own
-    # spec, and there is nothing to warn about a flash that will not happen.
-    # The same refusal `fw.bulk_flash` makes, worded for this caller.
-    if owner == providers.Cmake.name and not args.serial:
-        print(
-            f"ERROR: type-level flash is not available for CMake-built type "
-            f"'{args.type}'. Flash its boards individually with -s <serial>.",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-
     if not args.yes and not _confirm(
         "Flashing requires stopping the affected service(s) "
         "(aborts any active print!). Continue?"
@@ -882,6 +871,23 @@ def flash_fw_cmd(args: argparse.Namespace) -> None:
                     print(f"No device is reachable for '{args.type}'.", file=sys.stderr)
                     sys.exit(1)
                 code = _run_batch(c, targets, f"flash {args.type}", refused)
+        sys.exit(code)
+
+    # A CMake type: its boards are the `serials:` its own `[type]` section
+    # declares, each written over BOOTSEL by the family's helper.
+    if owner == providers.Cmake.name and not args.serial:
+        from .providers import cmake as cmake_mod
+
+        entry = cmake_mod.load(c.paths).get(args.type)
+        if entry is None or not entry.serials:
+            print(f"No serials tracked under '{args.type}'.", file=sys.stderr)
+            sys.exit(1)
+
+        with exclusive(c.paths, f"flash type {args.type}"):
+            targets = []
+            for serial in entry.serials:
+                targets += _cmake_targets(c, args.type, serial)
+            code = _run_batch(c, targets, f"flash {args.type}")
         sys.exit(code)
 
     # Whole type: flash every tracked board under it - by-id serials and CAN
@@ -974,7 +980,7 @@ def update_all(args: argparse.Namespace) -> None:
     """
     c = ctx()
     install = providers.Install.load(c.paths, c.settings)
-    if not install.registry and not install.platformio:
+    if install.empty:
         print("No types configured.", file=sys.stderr)
         sys.exit(1)
 
@@ -1036,6 +1042,15 @@ def update_all(args: argparse.Namespace) -> None:
                     continue
                 targets += screens
                 refused += screens_refused
+            for name in sorted(install.cmake):
+                for serial in install.cmake[name].serials:
+                    try:
+                        targets += _cmake_targets(c, name, serial)
+                    except UpdaterError as exc:
+                        # Not fatal, and not silent: the rest of the fleet is
+                        # still worth writing while this configuration gap is fixed.
+                        print(f"SKIP {name}: {exc}", file=sys.stderr)
+                        failures.append((name, serial))
 
             if not targets and not refused:
                 print("\nNothing to write.")

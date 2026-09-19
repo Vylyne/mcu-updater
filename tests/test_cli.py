@@ -550,9 +550,17 @@ def test_discovery_failing_still_names_both_sources(c, pio_type, monkeypatch):
 
 
 RR_SERIAL = "5K3DNTFCR1B3C9D0RZMYA3Y720"
+RR_SERIAL_B = "5K3DNTFCR1B3C9D0RZMYA3Z831"
 
 
-def _cmake_flashable(c, fake_root, *, helper: bool = True, staged: bool = True):
+def _cmake_flashable(
+    c,
+    fake_root,
+    *,
+    helper: bool = True,
+    staged: bool = True,
+    serials=(RR_SERIAL,),
+):
     """A CMake type a flash can actually reach: a helper and a built UF2.
 
     Separate from `cmake_type` above, which deliberately declares neither - the
@@ -570,7 +578,12 @@ def _cmake_flashable(c, fake_root, *, helper: bool = True, staged: bool = True):
             f"\n[firmware roadrunner]\nsource: {tree}\nbuilder: cmake\n{helper_line}"
             "flashers: bootsel\n"
             f"\n[type roadrunner]\nchipset: rp2040\nfirmware: roadrunner\n"
-            f"cmake_target: roadrunner_v1_i2c_rgb\nserials: {RR_SERIAL}\n"
+            "cmake_target: roadrunner_v1_i2c_rgb\n"
+            + (
+                "serials:\n" + "".join(f"    {serial}\n" for serial in serials)
+                if serials
+                else ""
+            )
         )
     if staged:
         os.makedirs(c.paths.artifact_dir("roadrunner"), exist_ok=True)
@@ -639,21 +652,91 @@ def test_the_cmake_target_carries_the_staged_uf2_and_its_stop_services(
     assert "klipper" in target.stop_services
 
 
-def test_flashing_a_cmake_type_by_name_alone_is_refused(
-    c, cmake_flashable, captured, capsys, monkeypatch
+def test_flashing_a_cmake_type_by_name_alone_writes_its_boards(
+    c, cmake_flashable, captured, monkeypatch
 ):
-    """Deferred work with its own spec, not a silent no-op. `bulk.py` refuses
-    the same thing for the same reason and points at the per-device call."""
+    """A named CMake type writes every serial its own section declares."""
     monkeypatch.setattr(cli, "_confirm", lambda prompt: True)
 
     with pytest.raises(SystemExit) as exc:
-        cli.flash_fw_cmd(argparse.Namespace(type="roadrunner", serial=None, yes=True))
+        cli.flash_fw_cmd(
+            argparse.Namespace(type="roadrunner", serial=None, yes=True, force=False)
+        )
+
+    assert exc.value.code == 0
+    assert [target.id for target in captured[0]] == [RR_SERIAL]
+    assert [target.flasher for target in captured[0]] == ["bootsel"]
+
+
+def test_flashing_a_cmake_type_covers_every_serial_it_declares(
+    c, fake_root, captured, monkeypatch
+):
+    _cmake_flashable(c, fake_root, serials=(RR_SERIAL, RR_SERIAL_B))
+    monkeypatch.setattr(cli, "_confirm", lambda prompt: True)
+
+    with pytest.raises(SystemExit) as exc:
+        cli.flash_fw_cmd(
+            argparse.Namespace(type="roadrunner", serial=None, yes=True, force=False)
+        )
+
+    assert exc.value.code == 0
+    assert [target.id for target in captured[0]] == [RR_SERIAL, RR_SERIAL_B]
+
+
+def test_flashing_a_cmake_type_that_tracks_nothing_says_so(
+    c, fake_root, captured, capsys, monkeypatch
+):
+    _cmake_flashable(c, fake_root, serials=())
+    monkeypatch.setattr(cli, "_confirm", lambda prompt: True)
+
+    with pytest.raises(SystemExit) as exc:
+        cli.flash_fw_cmd(
+            argparse.Namespace(type="roadrunner", serial=None, yes=True, force=False)
+        )
 
     assert exc.value.code == 1
-    err = capsys.readouterr().err
-    assert "CMake" in err and "roadrunner" in err
-    assert "-s <serial>" in err
+    assert "No serials tracked" in capsys.readouterr().err
     assert captured == []
+
+
+def test_update_all_flashes_cmake_boards_too(
+    c, fake_root, captured, capsys, monkeypatch
+):
+    _cmake_flashable(c, fake_root)
+    built: list[str] = []
+    monkeypatch.setattr(
+        "mcu_updater.providers.cmake.Cmake.build",
+        lambda self, install, target, **kw: built.append(target.name),
+    )
+    monkeypatch.setattr(
+        "mcu_updater.providers.kconfig_make.KconfigMake.build",
+        lambda self, install, target, **kw: built.append(target.name),
+    )
+
+    cli.update_all(argparse.Namespace(yes=True, jobs=None))
+
+    assert "roadrunner" in built, capsys.readouterr().out
+    assert RR_SERIAL in [target.id for target in captured[0]]
+
+
+def test_update_all_names_a_cmake_type_it_could_not_write(
+    c, fake_root, captured, capsys, monkeypatch
+):
+    _cmake_flashable(c, fake_root, helper=False)
+    monkeypatch.setattr(
+        "mcu_updater.providers.cmake.Cmake.build",
+        lambda self, install, target, **kw: None,
+    )
+    monkeypatch.setattr(
+        "mcu_updater.providers.kconfig_make.KconfigMake.build",
+        lambda self, install, target, **kw: None,
+    )
+
+    with pytest.raises(SystemExit) as exc:
+        cli.update_all(argparse.Namespace(yes=True, jobs=None))
+
+    assert exc.value.code == 1
+    assert "SKIP roadrunner" in capsys.readouterr().err
 
 
 def test_a_cmake_type_with_no_helper_names_its_flashers(c, fake_root, captured, monkeypatch):

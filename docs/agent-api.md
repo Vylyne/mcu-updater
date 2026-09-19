@@ -1007,6 +1007,19 @@ than a single instant by-id check:
    Slower than the by-id scan's instant presence check, and an accepted cost
    rather than a reason to leave a tracked CAN board out of a fleet operation.
 
+**A cmake type's declared `serials:` are included too**, judged by the same
+verdict the panel row shows and selected by the same two tests as a kconfig
+board: something staged to write, and the board on the by-id bus. Its board
+dict carries `uf2_file` beside the usual keys, because a BOOTSEL write copies an
+image rather than driving a bootloader protocol. A board already *in* BOOTSEL is
+not selected - it has no by-id entry while its volume is mounted, so its verdict
+is `offline` - and `fw.flash` with its serial still writes it.
+
+A cmake type with no `helper:` cannot be put into BOOTSEL by anything here. It
+is not dropped from the selection: it appears in `boards[]` and then in the
+job's `failures[]` as a refusal naming the family, the same as any other device
+its family's `flashers:` cannot write.
+
 `fw.bus.scan` stays USB-by-id-specific, as it is today — CAN's own "on bus"
 view is `fw.canbus.scan`, not a merge into this one.
 

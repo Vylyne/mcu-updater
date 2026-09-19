@@ -491,3 +491,22 @@ that here" answer. The CLI passes no such gate and provisions unconditionally
 by default: `enable_flashing` is documented as an agent-only safety gate the
 CLI has always ignored (`Settings.enable_flashing`), and grepping `cli.py`
 confirms it never consults it anywhere today.
+
+### One selection per identity, every builder
+
+A fleet flash's selection is one list per kind of identity a type can declare -
+a by-id `serials:` entry, a `canbus_uuids:` entry, a cmake type's `serials:` -
+and the callers concatenate them. Adding a builder adds a selection beside the
+others; it never adds a branch to a caller, and it never adds a refusal saying
+this operation does not serve that builder. `type_not_bulk_flashable` and the
+CLI's `-t`-only CMake refusal were both honest while the selection did not
+exist, and both became the only remaining way to leave a board behind once it
+did.
+
+The verdict behind each selection is the verdict the panel shows.
+`_cmake_devices` is the one judgement both read, which makes "the panel says
+this board is behind" and "the fleet flash writes this board" the same claim.
+
+Whether a host has any types at all is `providers.Install.empty`, not a list of
+section maps at the call site. The list was `registry` and `platformio`, and it
+told a Roadrunner-only host it had nothing configured.

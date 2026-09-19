@@ -1,0 +1,80 @@
+{
+  "_comment": "The loops cover every builder. Every mutation here is a way for a Roadrunner to be built and then silently left on its old image - the exact failure spec section 8 exists to end. Run: ./scripts/mutation_test.py scripts/mutations/loops.json",
+  "file": "src/mcu_updater/agent/methods/bulk.py",
+  "command": [
+    "python",
+    "-m",
+    "pytest",
+    "tests/test_agent_bulk.py",
+    "tests/test_cli.py",
+    "tests/test_providers.py",
+    "-q"
+  ],
+  "mutations": [
+    {
+      "name": "a cmake board that is not on the bus is never flashed",
+      "find": "                if not device[\"present\"]:\n                    continue\n",
+      "replace": ""
+    },
+    {
+      "name": "scope 'all' overrides the cmake verdict",
+      "find": "                if scope != \"all\" and device[\"status\"].needs_flash is not True:",
+      "replace": "                if device[\"status\"].needs_flash is not True:"
+    },
+    {
+      "name": "a cmake type with nothing staged is skipped",
+      "find": "            if not payload[\"has_firmware\"]:\n                continue\n            entry = entries[name]",
+      "replace": "            entry = entries[name]"
+    },
+    {
+      "name": "a named type narrows the cmake selection too",
+      "find": "            name = payload[\"name\"]\n            if only is not None and name != only:\n                continue",
+      "replace": "            name = payload[\"name\"]"
+    },
+    {
+      "name": "the cmake board dict carries the staged uf2",
+      "find": "                        \"uf2_file\": uf2,",
+      "replace": "                        \"uf2_file\": \"\","
+    },
+    {
+      "name": "flash_all selects cmake boards beside the others",
+      "find": "            + self._canbus_boards_to_flash(reg, scope, only)\n            + self._cmake_boards_to_flash(scope, only)",
+      "replace": "            + self._canbus_boards_to_flash(reg, scope, only)"
+    },
+    {
+      "name": "update_all selects cmake boards beside the others",
+      "find": "                + self._canbus_boards_to_flash(reg_now, scope, only)\n                + self._cmake_boards_to_flash(scope, only)",
+      "replace": "                + self._canbus_boards_to_flash(reg_now, scope, only)"
+    },
+    {
+      "name": "the panel row and the fleet selection share one verdict",
+      "file": "src/mcu_updater/agent/methods/status.py",
+      "find": "        for device in self._cmake_devices(payload, family, helper, rows):",
+      "replace": "        for device in self._cmake_devices(payload, family, None, rows):"
+    },
+    {
+      "name": "a cmake type-level flash covers every serial it declares",
+      "file": "src/mcu_updater/cli.py",
+      "find": "            for serial in entry.serials:\n                targets += _cmake_targets(c, args.type, serial)",
+      "replace": "            for serial in entry.serials[:1]:\n                targets += _cmake_targets(c, args.type, serial)"
+    },
+    {
+      "name": "update-all sweeps cmake types",
+      "file": "src/mcu_updater/cli.py",
+      "find": "            for name in sorted(install.cmake):",
+      "replace": "            for name in ():"
+    },
+    {
+      "name": "update-all names a cmake type it could not write",
+      "file": "src/mcu_updater/cli.py",
+      "find": "                        print(f\"SKIP {name}: {exc}\", file=sys.stderr)\n                        failures.append((name, serial))",
+      "replace": "                        pass"
+    },
+    {
+      "name": "a host whose only type is cmake is configured",
+      "file": "src/mcu_updater/providers/spec.py",
+      "find": "        return not self.registry and not self.platformio and not self.cmake",
+      "replace": "        return not self.registry and not self.platformio"
+    }
+  ]
+}

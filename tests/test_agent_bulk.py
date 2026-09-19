@@ -11,8 +11,8 @@ exact set, and only the handful that need it run a real job.
 
 from __future__ import annotations
 
-import json
 import hashlib
+import json
 import os
 
 import pytest
@@ -1075,9 +1075,14 @@ def test_a_genuinely_stale_cmake_board_joins_the_flash_selection(
     )
 
     boards = bulk._cmake_boards_to_flash("stale")
+    panel = next(
+        target
+        for target in bulk.dispatch("fw.status")["targets"]
+        if target["name"] == RR
+    )
 
     assert [board["serial"] for board in boards] == [RR_SERIAL]
-    assert boards[0]["reason"] == "unexpected_image"
+    assert panel["devices"][0]["reason"] == boards[0]["reason"] == "unexpected_image"
 
 
 def test_a_no_provenance_cmake_board_is_only_selected_by_scope_all(

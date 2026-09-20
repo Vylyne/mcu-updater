@@ -354,6 +354,9 @@ class Bootsel:
         if target_type is None:
             return None
         side = cmake_mod.read_sidecar(bench.paths, target_type) or {}
+        uf2 = target.detail["uf2_file"]
+        if side.get("dirty") or not cmake_mod.sidecar_describes_image(side, uf2, os.stat(uf2)):
+            side = {}
         return FlashRecord(
             key=target.id,
             mcu_type=target.type,

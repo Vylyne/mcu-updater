@@ -9,6 +9,7 @@ used to make separately.
 from __future__ import annotations
 
 import dataclasses
+import hashlib
 import json
 import os
 
@@ -247,26 +248,86 @@ def test_flashtool_describes_the_kconfig_sidecar(bench, paths):
     )
 
 
-def test_bootsel_describes_the_cmake_sidecar(bench, paths, cmake_type, tmp_path):
-    """The two sidecar schemas name the tree commit differently - `sha` here,
-    `fw_sha` for kconfig - so each flasher reads the one its own builder wrote."""
-    uf2 = tmp_path / "roadrunner.uf2"
-    uf2.write_bytes(b"image")
-    target = flashers.bootsel.target_for(
-        str(uf2),
+def _cmake_bootsel_target(paths, *, sidecar: dict | None) -> flashers.FlashTarget:
+    uf2 = paths.uf2_file("roadrunner", "roadrunner")
+    with open(uf2, "wb") as fh:
+        fh.write(b"staged image")
+    if sidecar is not None:
+        stat = os.stat(uf2)
+        record = {
+            "provider": "cmake",
+            "sha": "built-subtree-sha",
+            "version": "v1.2.3-4-gabcdef0",
+            "dirty": False,
+            "cmake_target": "roadrunner_v1_i2c_rgb",
+            "bin_sha256": hashlib.sha256(b"staged image").hexdigest(),
+            "bin_size": stat.st_size,
+            "bin_mtime": stat.st_mtime,
+            **sidecar,
+        }
+        with open(paths.sidecar_file("roadrunner", "roadrunner"), "w", encoding="utf-8") as fh:
+            json.dump(record, fh)
+    else:
+        os.unlink(paths.sidecar_file("roadrunner", "roadrunner"))
+    return flashers.bootsel.target_for(
+        uf2,
         chipset="rp2040",
         type_name="roadrunner",
         serial="RR-1",
         helper=helpers.for_name("roadrunner", family="roadrunner"),
     )
 
-    record = flashers.Bootsel().record(bench, target)
 
+def _assert_cmake_record_without_provenance(record) -> None:
     assert record is not None
     assert record.key == "RR-1"
+    assert record.mcu_type == "roadrunner"
     assert record.fw == "roadrunner"
-    assert record.fw_sha == "built-subtree-sha"
-    assert record.bin_sha256 == "built-uf2-sha256"
+    assert record.bin_sha256 is None
+    assert record.fw_sha is None
+    assert record.version is None
+
+
+def test_bootsel_describes_an_owned_clean_cmake_sidecar(bench, paths, cmake_type):
+    """The two sidecar schemas name the tree commit differently - `sha` here,
+    `fw_sha` for kconfig - so each flasher reads the one its own builder wrote."""
+    target = _cmake_bootsel_target(paths, sidecar={})
+
+    record = flashers.Bootsel().record(bench, target)
+
+    assert record == flashers.FlashRecord(
+        key="RR-1",
+        mcu_type="roadrunner",
+        fw="roadrunner",
+        bin_sha256=hashlib.sha256(b"staged image").hexdigest(),
+        fw_sha="built-subtree-sha",
+        version="v1.2.3-4-gabcdef0",
+    )
+
+
+def test_bootsel_withholds_a_sidecar_for_different_bytes(bench, paths, cmake_type):
+    target = _cmake_bootsel_target(
+        paths,
+        sidecar={
+            "bin_sha256": hashlib.sha256(b"different image bytes").hexdigest(),
+            "bin_size": len(b"different image bytes"),
+            "bin_mtime": -1,
+        },
+    )
+
+    _assert_cmake_record_without_provenance(flashers.Bootsel().record(bench, target))
+
+
+def test_bootsel_withholds_a_dirty_sidecar(bench, paths, cmake_type):
+    target = _cmake_bootsel_target(paths, sidecar={"dirty": True})
+
+    _assert_cmake_record_without_provenance(flashers.Bootsel().record(bench, target))
+
+
+def test_bootsel_records_the_board_when_no_sidecar_exists(bench, paths, cmake_type):
+    target = _cmake_bootsel_target(paths, sidecar=None)
+
+    _assert_cmake_record_without_provenance(flashers.Bootsel().record(bench, target))
 
 
 def test_bootsel_has_nothing_to_file_for_a_bare_board(bench, cmake_type, tmp_path):

@@ -654,13 +654,17 @@ def build(
     return staged
 
 
-def _is_our_image(record: dict, path: str, stat: os.stat_result) -> bool:
+def sidecar_describes_image(record: dict, path: str, stat: os.stat_result) -> bool:
     """Are the bytes on disk the bytes we recorded?
 
     Two tiers, same as `pio._is_our_image` and for the same reason: this runs
     on the `fw.status` poll path, so size and mtime answer almost every time
     for the cost of a stat, and the content hash only runs when something
     looks changed - which is exactly when the question is worth paying for.
+
+    This is public because a flasher filing the image it just wrote must enforce
+    the same ownership boundary without calling `artifact_status`, whose source
+    comparison would add an unrelated git read after the hardware write.
     """
     if record.get("bin_size") == stat.st_size and record.get("bin_mtime") == stat.st_mtime:
         return True
@@ -692,7 +696,7 @@ def artifact_status(
     record = read_sidecar(paths, target)
     if record is None:
         return ArtifactStatus(NO_PROVENANCE)
-    if not _is_our_image(record, path, stat):
+    if not sidecar_describes_image(record, path, stat):
         return ArtifactStatus(NO_PROVENANCE)
     if record.get("dirty"):
         # The tree it came from is not recoverable, so current is unprovable

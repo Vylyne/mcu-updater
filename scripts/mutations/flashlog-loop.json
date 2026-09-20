@@ -46,6 +46,13 @@
       "replace": "            fw_sha=side.get(\"fw_sha\"),"
     },
     {
+      "name": "bootsel files only provenance that describes the staged image",
+      "_comment": "Protect the ownership and clean-tree checks so rejected CMake evidence cannot return through the flash ledger.",
+      "file": "src/mcu_updater/flashers/bootsel.py",
+      "find": "        if side.get(\"dirty\") or not cmake_mod.sidecar_describes_image(side, uf2, os.stat(uf2)):",
+      "replace": "        if False:"
+    },
+    {
       "name": "a bare board has nothing to file",
       "file": "src/mcu_updater/flashers/bootsel.py",
       "find": "        if target_type is None:\n            return None",

@@ -3,7 +3,7 @@
 Different enough from an MCU to live apart. There is no Kconfig, no Katapult, no
 chipset to reason about - a PlatformIO env already names the board, the partition
 table and the build flags, so the env *is* the type. Adding the second display
-is another `[display <env>]` section and nothing structural.
+is another `[type <name>]` section and nothing structural.
 
 The device list is not here either: `[knomi_serial T0_knomi]` in Klipper's config
 already names how to find its port - directly with `serial:`, or by chip identity
@@ -17,13 +17,12 @@ indistinguishable CH340 - so an upload without an explicit port writes firmware
 to whichever one answered first. See `upload()`.
 
 The two knomi discovery sources - the broadcast listen pass and the watcher's
-`devices.json` map - moved to `discovery.knomi_serial`, the subpackage named
+`devices.json` map - live in `discovery.knomi_serial`, the subpackage named
 for the firmware they integrate with (as opposed to `discovery.byid`/`dfu`/
-`bootsel`, which answer questions true of any board). `discover`,
-`read_device_map`, `device_map_path`, `WatcherDevice` and `DEVICE_MAP_VERSION`
-are re-exported here unchanged, the same shim shape `devices.py` uses for the
-three bus sources; new code should import from `discovery.knomi_serial`
-directly.
+`bootsel`, which answer questions true of any board). Nothing here re-exports
+them: the one module that reaches for either is `helpers.knomi_serial`, the
+firmware's own identity handler, and a provider is handed its configuration
+rather than going looking for devices.
 """
 
 from __future__ import annotations
@@ -36,27 +35,18 @@ import shutil
 import threading
 import time
 
-from .. import firmware, sections
+from .. import device_info, firmware, typelist
 from ..build import Reporter, null_reporter, run_streamed, sha256_file
-from ..cfgdoc import CfgDocument
-from ..discovery.knomi_serial import DEVICE_MAP_VERSION as DEVICE_MAP_VERSION
-from ..discovery.knomi_serial import WatcherDevice as WatcherDevice
-from ..discovery.knomi_serial import device_map_path as device_map_path
-from ..discovery.knomi_serial import discover as discover
-from ..discovery.knomi_serial import read_device_map as read_device_map
 from ..discovery.knomi_serial import source_dir as _source_dir
 from ..errors import BuildError, ConfigError, FlashError, ToolMissingError
 from ..paths import Paths
 from ..settings import Settings
 from ..states import (
     BUILT_DIRTY,
-    DEVICE_DIRTY,
     NEVER_BUILT,
     NO_PROVENANCE,
     SOURCE_CHANGED,
-    UNKNOWN_VERSION,
     ArtifactStatus,
-    DeviceStatus,
 )
 
 #: Where PlatformIO puts itself. `pio` on PATH first, because that is what a
@@ -95,8 +85,9 @@ class PioType:
     #: the `fw` axis providers.select() filters on.
     firmware: str = ""
     #: The Klipper section prefix whose entries are displays of this type.
-    #: `[knomi_serial T0_knomi]` -> `knomi_serial`. A second display with its own
-    #: klippy module would set this differently; one sharing the module leaves it.
+    #: `[knomi_serial T0_knomi]` -> `knomi_serial`. Set by `load()` from the
+    #: family helper's reader; never read from a `[type]` - see
+    #: `typelist.REMOVED_KEYS`.
     klipper_section: str = "knomi_serial"
     #: Units to stop before a write to this type, overriding `[firmware ...]`
     #: and `[updater]`. `None` means this type said nothing at the new key -
@@ -137,42 +128,33 @@ class PioType:
 
 
 def load(paths: Paths) -> dict[str, PioType]:
-    """Read this provider's type sections from the shared config file.
+    """The PlatformIO types: the one type list, filtered by builder.
 
-    A type is ours if the family it declares (`firmware:`) is built by
-    `platformio` - the same "provider is derived from the family's builder"
-    rule `config.py` applies. A type predating that key is no longer
-    recognised at all.
+    A view over :mod:`..typelist`, kept until its callers read the list
+    directly. Lenient about other sections, like the list's own `read`; an
+    ill-formed PlatformIO section is still refused here.
     """
-    try:
-        with open(paths.main_config, encoding="utf-8") as fh:
-            doc = CfgDocument(fh.read())
-    except OSError:
-        return {}
-
-    families_map = firmware.load_from_doc(doc)
+    entries, families_map = typelist.read_config(paths)
 
     out: dict[str, PioType] = {}
-    for declared in sections.read(doc):
-        name, section = declared.name, declared.section
-        declared_fws = doc.get_csv(section, "firmware") or []
-        if not declared_fws:
+    for entry in entries:
+        if entry.builder != "platformio":
             continue
-        first_fw = declared_fws[0]
+        name, block = entry.name, entry.block
+        typelist.refuse_renamed_keys(entry, path=paths.main_config)
+        first_fw = entry.firmwares[0]
         family = firmware.resolve(paths, first_fw, families_map)
-        if family.builder != "platformio":
-            continue
         source = family.source_dir(paths)
 
-        env = (doc.get(section, "env") or "").strip()
+        env = (block.get("platformio_env") or "").strip()
         if not env:
             raise ConfigError(
-                f"'{name}' is a PlatformIO type but names no env: - the "
+                f"'{name}' is a PlatformIO type but names no platformio_env: - the "
                 f"PlatformIO environment to build is not optional.",
                 type=name,
             )
 
-        stop_services = doc.get_csv(section, "stop_services")
+        stop_services = block.get_csv("stop_services")
         if stop_services is None:
             # Legacy `service:` key. Its meaning does not carry over
             # mechanically: today it means "pause this *in addition to*
@@ -182,19 +164,19 @@ def load(paths: Paths) -> dict[str, PioType]:
             # not `["knomi_serial"]`. Absent takes the default watcher, same
             # as it always did; present-but-blank means no watcher at all,
             # which is still just klipper.
-            legacy = doc.get(section, "service")
+            legacy = block.get("service")
             if legacy is None:
                 stop_services = None  # no key at all: inherit the next level
             else:
                 unit = legacy.strip()
                 stop_services = ["klipper", unit] if unit else ["klipper"]
-        device_map = doc.get(section, "device_map")
+        device_map = block.get("knomi_serial_device_map")
         out[name] = PioType(
             name=name,
             env=env,
             source=source,
             firmware=first_fw,
-            klipper_section=(doc.get(section, "klipper_section") or "knomi_serial").strip(),
+            klipper_section=device_info.reader_for(family).klipper_prefix,
             stop_services=stop_services,
             device_map=(
                 "knomi/devices.json" if device_map is None else device_map
@@ -294,62 +276,27 @@ def source_state(source: str) -> SourceState:
 def running_sha(running: str | None) -> str | None:
     """The git short sha inside what a screen reports running, if it carries one.
 
-    Public because two callers need it and must not disagree: `device_status`
-    below, deciding whether the screen is behind the tree, and the agent, asking
-    the flash log whether our record of writing to this screen is still
-    believable. A screen sitting exactly on a version tag reports no sha at all,
-    which is None here rather than an error - see `_FW_SHA_RE`.
+    Public because the status projection and fleet selection both need it and
+    must not disagree when they assemble evidence for `verdict.decide`. A
+    screen sitting exactly on a version tag reports no sha at all, which is None
+    here rather than an error - see `_FW_SHA_RE`.
     """
     match = _FW_SHA_RE.search(running or "")
     return match.group(1) if match else None
 
 
-def device_status(running: str | None, state: SourceState) -> DeviceStatus:
-    """Compare what a screen reports running against what the tree would build.
-
-    Stronger than the artifact check, which compares a built artifact against
-    its source. This compares what is *actually on the device*, so a screen
-    flashed by hand months ago cannot report itself up to date.
-
-    Verdicts are withheld generously. Every input here is optional - no git
-    checkout, no VERSION file, a module too old to report a version - and a
-    wrong "behind" sends someone to reflash a healthy display during a print.
-    """
-    if not running or state.head is None:
-        return DeviceStatus(UNKNOWN_VERSION)
-
-    if _FW_DIRTY_RE.search(running):
-        # Built from uncommitted changes. The sha may well match HEAD, but the
-        # working tree it was built from is not recoverable, so "current" is
-        # unprovable rather than merely unknown - and it is not evidence of
-        # being behind either, hence a None verdict rather than True.
-        return DeviceStatus(DEVICE_DIRTY)
-
-    built_sha = running_sha(running)
-    if built_sha:
-        # Short shas can differ in length between builds; compare on the shorter.
-        built, head = built_sha.lower(), state.head.lower()
-        size = min(len(built), len(head))
-        return DeviceStatus() if built[:size] == head[:size] else DeviceStatus(SOURCE_CHANGED)
-
-    # No sha at all means a clean build sitting exactly on the version tag. It
-    # is current only if the tree is still there - same version, still on the
-    # tag, still clean.
-    if state.version and running.strip() == state.version and state.on_tag and not state.dirty:
-        return DeviceStatus()
-    if state.version and state.on_tag and not state.dirty:
-        # A release build of a different version than the tree holds.
-        return DeviceStatus(SOURCE_CHANGED)
-    return DeviceStatus(SOURCE_CHANGED if state.version else UNKNOWN_VERSION)
+def is_dirty(running: str | None) -> bool:
+    """Whether what a screen reports running was built from uncommitted changes."""
+    return bool(_FW_DIRTY_RE.search(running or ""))
 
 
 # --------------------------------------------------------------------------
 # is the BUILT IMAGE current
 #
-# Separate from device_status, which asks about the screens. This asks about
-# the .bin, and it earns its place because flashing a display uploads whatever
-# is in .pio/build without building first - so a source tree that has moved
-# since the last build writes old firmware to every screen, silently.
+# Separate from the device verdict assembled for `verdict.decide`. This asks
+# about the .bin, and it earns its place because flashing a display uploads
+# whatever is in .pio/build without building first - so a source tree that has
+# moved since the last build writes old firmware to every screen, silently.
 # --------------------------------------------------------------------------
 
 def record_build(paths: Paths, display: PioType, state: SourceState) -> None:
@@ -381,7 +328,7 @@ def record_build(paths: Paths, display: PioType, state: SourceState) -> None:
         "bin_size": stat.st_size,
         "bin_mtime": stat.st_mtime,
     }
-    sidecar = paths.display_sidecar(display.env)
+    sidecar = paths.platformio_sidecar(display.env)
     os.makedirs(os.path.dirname(sidecar), exist_ok=True)
     tmp = sidecar + ".tmp"
     with open(tmp, "w", encoding="utf-8") as fh:
@@ -434,7 +381,7 @@ def read_sidecar(paths: Paths, display: PioType) -> dict | None:
     "no provenance", and telling them apart would not change any answer.
     """
     try:
-        with open(paths.display_sidecar(display.env), encoding="utf-8") as fh:
+        with open(paths.platformio_sidecar(display.env), encoding="utf-8") as fh:
             record = json.load(fh)
     except (OSError, ValueError):
         return None

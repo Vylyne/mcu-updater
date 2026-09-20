@@ -1,6 +1,6 @@
 """Which systemd units must be down before a write, resolved.
 
-Three levels, most granular wins: ``[type ...]``/``[display ...]`` overrides
+Three levels, most granular wins: ``[type ...]`` overrides
 ``[firmware ...]`` overrides ``[updater]`` overrides a per-provider built-in
 default. Absent (``None``) at a level inherits the next one out; a value that
 *is* set - even ``[]``, "stop nothing" - replaces every level beyond it and is
@@ -33,10 +33,10 @@ if TYPE_CHECKING:
 #: existed.
 DEFAULT_MCU: tuple[str, ...] = ("klipper",)
 
-#: What a PlatformIO display stops when nothing at any level says otherwise.
+#: What a PlatformIO type stops when nothing at any level says otherwise.
 #: Klipper first, then the display's own port watcher - what the esptool
 #: flasher hardcoded before this existed.
-DEFAULT_DISPLAY: tuple[str, ...] = ("klipper", "knomi_serial")
+DEFAULT_PLATFORMIO: tuple[str, ...] = ("klipper", "knomi_serial")
 
 
 def resolve_stop_services(
@@ -96,22 +96,22 @@ def for_cmake(
     )
 
 
-def for_display(
+def for_platformio(
     paths: Paths,
-    display: PioType,
+    pio_type: PioType,
     settings: Settings,
     families: dict | None = None,
 ) -> tuple[str, ...]:
-    """The resolved list for one PlatformIO display type: type, its firmware
-    family, then `[updater]`, falling back to `DEFAULT_DISPLAY`."""
+    """The resolved list for one PlatformIO type: type, its firmware
+    family, then `[updater]`, falling back to `DEFAULT_PLATFORMIO`."""
     from . import firmware as firmware_mod
 
-    family = firmware_mod.resolve(paths, display.firmware, families)
+    family = firmware_mod.resolve(paths, pio_type.firmware, families)
     return tuple(
         resolve_stop_services(
-            display.stop_services,
+            pio_type.stop_services,
             family.stop_services,
             settings.stop_services,
-            default=DEFAULT_DISPLAY,
+            default=DEFAULT_PLATFORMIO,
         )
     )

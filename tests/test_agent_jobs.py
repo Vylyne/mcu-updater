@@ -232,7 +232,7 @@ def test_build_reaches_a_cmake_type_named_on_its_own(api, paths, tmp_path):
     (source / "CMakeLists.txt").write_text("project(roadrunner)\n", encoding="utf-8")
     with open(paths.main_config, "a", encoding="utf-8") as fh:
         fh.write(
-            f"\n[firmware roadrunner]\nsource: {source}\nbuilder: cmake\n\n"
+            f"\n[firmware roadrunner]\nsource: {source}\nbuilder: cmake\nflashers: bootsel\n\n"
             f"[type roadrunner]\nchipset: rp2040\nfirmware: roadrunner\n"
             f"cmake_target: roadrunner_v1_i2c_rgb\n"
         )
@@ -265,7 +265,7 @@ def test_a_cmake_type_with_no_source_tree_is_refused_before_a_job_exists(
     missing = tmp_path / "not-cloned"
     with open(paths.main_config, "a", encoding="utf-8") as fh:
         fh.write(
-            f"\n[firmware roadrunner]\nsource: {missing}\nbuilder: cmake\n\n"
+            f"\n[firmware roadrunner]\nsource: {missing}\nbuilder: cmake\nflashers: bootsel\n\n"
             f"[type roadrunner]\nchipset: rp2040\nfirmware: roadrunner\n"
             f"cmake_target: roadrunner_v1_i2c_rgb\n"
         )

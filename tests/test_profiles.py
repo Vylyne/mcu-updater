@@ -26,6 +26,8 @@ from mcu_updater.errors import (
 )
 from mcu_updater.paths import Paths
 
+from .conftest import seed_base_firmwares, with_base_firmwares
+
 FIXTURES = pathlib.Path(__file__).resolve().parent / "fixtures"
 VENDORED = FIXTURES / "kconfiglib" / "kconfiglib.py"
 PROFILE_TREE = FIXTURES / "profile_tree"
@@ -73,6 +75,7 @@ def paths(trees: pathlib.Path) -> Paths:
 
 @pytest.fixture
 def registry(paths: Paths) -> Registry:
+    seed_base_firmwares(paths)
     with Registry.mutate(paths, "test setup") as reg:
         reg.add_type("carto_v4", "stm32g431xx")
     return Registry.load(paths)
@@ -104,7 +107,7 @@ def test_a_tree_shipping_none_is_not_an_error(paths, registry):
 
 
 def test_a_missing_tree_lists_nothing_rather_than_raising(paths, registry):
-    shutil.rmtree(paths.fw_dir("klipper"))
+    shutil.rmtree(os.path.join(paths.home, "klipper"))
     assert profiles.available(paths, "klipper") == []
 
 
@@ -194,7 +197,7 @@ def test_seeding_recomputes_rather_than_copying(paths, registry):
     copy would leave it absent, and `make` would then run olddefconfig over the
     saved answers on the next build. Loading picks it up now.
     """
-    kconfig = pathlib.Path(paths.fw_dir("klipper")) / "src" / "Kconfig"
+    kconfig = pathlib.Path(os.path.join(paths.home, "klipper")) / "src" / "Kconfig"
     kconfig.write_text(
         kconfig.read_text(encoding="utf-8")
         + '\nconfig ADDED_LATER\n    bool "Added after the vendor wrote their config"\n'
@@ -396,9 +399,9 @@ def test_your_profile_is_never_written_into_the_vendors_tree(paths, registry):
     customise(paths, registry)
     own = profiles.capture_custom(paths, "carto_v4", "klipper")
 
-    assert not own.path.startswith(paths.fw_dir("klipper"))
-    assert list(pathlib.Path(paths.fw_dir("klipper")).glob("config.*")) != []
-    assert not (pathlib.Path(paths.fw_dir("klipper")) / profiles.CUSTOM_PROFILE).exists()
+    assert not own.path.startswith(os.path.join(paths.home, "klipper"))
+    assert list(pathlib.Path(os.path.join(paths.home, "klipper")).glob("config.*")) != []
+    assert not (pathlib.Path(os.path.join(paths.home, "klipper")) / profiles.CUSTOM_PROFILE).exists()
 
 
 def test_your_profile_is_kept_where_backups_look(paths, registry):
@@ -421,7 +424,7 @@ def test_your_profile_is_kept_where_backups_look(paths, registry):
 
 def test_a_vendor_shipping_the_reserved_name_is_shadowed(paths, registry):
     """Two entries with one name is a picker where a click is ambiguous."""
-    (pathlib.Path(paths.fw_dir("klipper")) / profiles.CUSTOM_PROFILE).write_text(
+    (pathlib.Path(os.path.join(paths.home, "klipper")) / profiles.CUSTOM_PROFILE).write_text(
         "CONFIG_MACH_STM32=y\n", encoding="utf-8"
     )
     customise(paths, registry)
@@ -520,7 +523,7 @@ def test_what_you_changed_survives_switching_away_and_back(paths, registry):
 
 
 def bump(paths: Paths, name: str = "config.TestBoardUSB") -> None:
-    seed = pathlib.Path(paths.fw_dir("klipper")) / name
+    seed = pathlib.Path(os.path.join(paths.home, "klipper")) / name
     seed.write_text(
         seed.read_text(encoding="utf-8").replace("6.2.0", "6.3.0"), encoding="utf-8"
     )
@@ -636,7 +639,7 @@ def test_editing_the_config_becomes_visible(paths, registry):
 
 def test_a_vendor_bump_reads_as_a_moved_seed(paths, registry):
     profiles.apply_seed(paths, "carto_v4", "klipper", "config.TestBoardUSB")
-    seed = pathlib.Path(paths.fw_dir("klipper")) / "config.TestBoardUSB"
+    seed = pathlib.Path(os.path.join(paths.home, "klipper")) / "config.TestBoardUSB"
     seed.write_text(
         seed.read_text(encoding="utf-8").replace("6.2.0", "6.3.0"), encoding="utf-8"
     )
@@ -650,7 +653,7 @@ def test_a_local_edit_outranks_a_vendor_bump(paths, registry):
     """Both can be true at once. The one that changes what a caller may safely
     do is the local edit, because reseeding over it is what loses work."""
     profiles.apply_seed(paths, "carto_v4", "klipper", "config.TestBoardUSB")
-    seed = pathlib.Path(paths.fw_dir("klipper")) / "config.TestBoardUSB"
+    seed = pathlib.Path(os.path.join(paths.home, "klipper")) / "config.TestBoardUSB"
     seed.write_text(
         seed.read_text(encoding="utf-8").replace("6.2.0", "6.3.0"), encoding="utf-8"
     )
@@ -758,7 +761,7 @@ def test_a_disagreeing_offset_is_refused(paths, registry):
 def test_a_check_that_cannot_run_is_refused_rather_than_skipped(paths, registry):
     """A missing symbol on one side turns the offset check into a no-op that
     still reads as verified. That is worse than having no check."""
-    kconfig = pathlib.Path(paths.fw_dir("katapult")) / "src" / "Kconfig"
+    kconfig = pathlib.Path(os.path.join(paths.home, "katapult")) / "src" / "Kconfig"
     kconfig.write_text(
         kconfig.read_text(encoding="utf-8").replace("config LAUNCH_APP_ADDRESS", "config UNUSED_ADDR"),
         encoding="utf-8",
@@ -879,13 +882,16 @@ def test_a_declared_family_seeds_from_its_own_tree(tmp_path, trees):
     paths = Paths.from_env(env={"MCU_UPDATER_HOME": str(trees)})
     config = pathlib.Path(paths.main_config)
     config.write_text(
-        "[firmware cartographer]\n"
-        "source: ~/MCU-Firmware---Based-on-Klipper\n"
-        "artifact: klipper\n\n"
-        "[type carto_v4]\n"
-        "chipset: stm32g431xx\n"
-        "firmware: cartographer\n"
-        "profile: config.TestBoardUSB\n",
+        with_base_firmwares(
+            "[firmware cartographer]\n"
+            "source: ~/MCU-Firmware---Based-on-Klipper\n"
+            "artifact: klipper\n"
+            "flashers: flashtool\n\n"
+            "[type carto_v4]\n"
+            "chipset: stm32g431xx\n"
+            "firmware: cartographer\n"
+            "kconfig_make_profile: config.TestBoardUSB\n"
+        ),
         encoding="utf-8",
     )
 

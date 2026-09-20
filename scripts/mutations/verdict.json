@@ -1,0 +1,107 @@
+{
+  "_comment": "The one verdict. Every mutation here is a way of claiming more than the evidence supports, in one direction or the other: a favourable answer on absence leaves a toolhead running old firmware while the panel says it is fine, and an unfavourable one sends someone to reflash a healthy board during a print. The ordering is as load-bearing as the rules - a measurement that a version string can overrule is not a measurement.",
+  "file": "src/mcu_updater/verdict.py",
+  "command": [
+    "python",
+    "-m",
+    "pytest",
+    "tests/test_verdict.py",
+    "tests/test_agent_methods.py",
+    "tests/test_agent_displays.py",
+    "tests/test_agent_targets.py",
+    "-q"
+  ],
+  "mutations": [
+    {
+      "name": "a device that cannot talk to this host is not judged on its version",
+      "find": "    if evidence.protocol_match is False:",
+      "replace": "    if False:"
+    },
+    {
+      "name": "an offline device is never a verdict",
+      "find": "    if evidence.state == STATE_OFFLINE:",
+      "replace": "    if False:"
+    },
+    {
+      "name": "a board in its bootloader is a yes, not an unknown",
+      "find": "    if evidence.state == STATE_KATAPULT:",
+      "replace": "    if False:"
+    },
+    {
+      "name": "offline and bootloader state outrank a matching digest",
+      "find": "    if evidence.state == STATE_OFFLINE:\n        return DeviceStatus(OFFLINE)\n    if evidence.state == STATE_KATAPULT:\n        # Sitting in its bootloader, so it reports no application version at\n        # all. Not \"unknown\" - the clearest possible signal that it wants\n        # firmware.\n        return DeviceStatus(IN_BOOTLOADER)\n\n    measured = _image_verdict(evidence.info, expected.digest)\n    if measured is not None:\n        return measured",
+      "replace": "    measured = _image_verdict(evidence.info, expected.digest)\n    if measured is not None:\n        return measured\n\n    if evidence.state == STATE_OFFLINE:\n        return DeviceStatus(OFFLINE)\n    if evidence.state == STATE_KATAPULT:\n        # Sitting in its bootloader, so it reports no application version at\n        # all. Not \"unknown\" - the clearest possible signal that it wants\n        # firmware.\n        return DeviceStatus(IN_BOOTLOADER)"
+    },
+    {
+      "name": "the measurement is consulted before the version string",
+      "find": "    measured = _image_verdict(evidence.info, expected.digest)\n    if measured is not None:\n        return measured",
+      "replace": "    measured = None"
+    },
+    {
+      "name": "a digest that disagrees is reported rather than shrugged off",
+      "find": "    if theirs != ours:\n        return DeviceStatus(UNEXPECTED_IMAGE)",
+      "replace": "    if False:\n        return DeviceStatus(UNEXPECTED_IMAGE)"
+    },
+    {
+      "name": "an artifact we could not describe is absence, not mismatch",
+      "find": "    if None in ours:",
+      "replace": "    if False:"
+    },
+    {
+      "name": "a disowned cmake sidecar cannot prove its old image current",
+      "file": "src/mcu_updater/agent/methods/status.py",
+      "find": "                    \"sidecar\": (\n                        {}\n                        if status.reason in (NEVER_BUILT, NO_PROVENANCE)\n                        else cmake_mod.read_sidecar(self.paths, entry) or {}\n                    ),",
+      "replace": "                    \"sidecar\": cmake_mod.read_sidecar(self.paths, entry) or {},"
+    },
+    {
+      "name": "a device that reported no digest is not compared as if it had",
+      "find": "    if info is None or not info.has_digest() or not expected:",
+      "replace": "    if info is None or not expected:"
+    },
+    {
+      "name": "an empty reported version says as little as a missing one",
+      "find": "    if not evidence.version:",
+      "replace": "    if evidence.version is None:"
+    },
+    {
+      "name": "a screen with no checkout behind it gets no verdict",
+      "find": "    if expected.require_head and not expected.head:",
+      "replace": "    if False:"
+    },
+    {
+      "name": "a build from an uncommitted tree is never proven current",
+      "find": "    if evidence.dirty:",
+      "replace": "    if False:"
+    },
+    {
+      "name": "shas are compared on the shorter of the two, not the reported one",
+      "find": "        size = min(len(running), len(head))",
+      "replace": "        size = len(head)"
+    },
+    {
+      "name": "a differing commit is reported rather than passed over",
+      "find": "        if running[:size] != head[:size]:\n            return DeviceStatus(SOURCE_CHANGED)",
+      "replace": "        if False:\n            return DeviceStatus(SOURCE_CHANGED)"
+    },
+    {
+      "name": "a bare release string with no tree left on its tag is not current",
+      "find": "        if evidence.version.strip() == expected.stamp and expected.tag_clean:",
+      "replace": "        if evidence.version.strip() == expected.stamp:"
+    },
+    {
+      "name": "a stamp we did not build is reported",
+      "find": "    if evidence.version.strip() != expected.stamp:\n        return DeviceStatus(SOURCE_CHANGED)",
+      "replace": "    if False:\n        return DeviceStatus(SOURCE_CHANGED)"
+    },
+    {
+      "name": "a matching literal with no record behind it is amber, not green",
+      "find": "    return _record_verdict(expected, absent_is=VERSION_ONLY)",
+      "replace": "    return _record_verdict(expected, absent_is=None)"
+    },
+    {
+      "name": "a record naming another binary is not ignored",
+      "find": "    if flashed and expected.artifact_sha and flashed != expected.artifact_sha:",
+      "replace": "    if False:"
+    }
+  ]
+}

@@ -33,6 +33,7 @@ on *now*. Only the USB path has this problem: CAN addresses a board as
 
 from __future__ import annotations
 
+import dataclasses
 import os
 import re
 import sys
@@ -66,6 +67,7 @@ from ..errors import (
     OffsetMismatchError,
     OperationCancelled,
     ToolMissingError,
+    UnsupportedChipsetError,
 )
 from ..paths import HUMAN_ACTION_TIMEOUT, REENUMERATE_TIMEOUT, Paths
 from ..settings import Settings
@@ -76,10 +78,16 @@ DFU_VID_PID = "0483:df11"
 
 
 def find_flashtool(paths: Paths, settings: Settings) -> str:
-    """Katapult's flashtool.py: the configured path, or the ~/katapult convention."""
+    """Katapult's flashtool.py: `flashtool_path` if set, else the declared katapult tree's.
+
+    Raises ConfigCorruptError, naming the section to add, when neither is set
+    and katapult is not declared. A flash stops on that. `fw.canbus.scan`
+    reports it instead, because that method answers rather than fails.
+    """
     if settings.flashtool_path:
         return firmware.expand_home(settings.flashtool_path, paths.home)
-    return paths.flashtool
+    katapult = firmware.resolve(paths, "katapult")
+    return os.path.join(katapult.source_dir(paths), "scripts", "flashtool.py")
 
 
 def device_for(
@@ -138,7 +146,7 @@ def flash_katapult(
     reporter: Reporter = null_reporter,
     timeout: float = REENUMERATE_TIMEOUT,
     force: bool = False,
-) -> None:
+) -> str | None:
     """Flash one board through katapult's flashtool.py.
 
     ``-f`` performs the transition from a running application into Katapult
@@ -147,7 +155,9 @@ def flash_katapult(
     `force` overrides the offset checks below (downgrading a refusal to a
     logged warning) for the case where the operator genuinely knows better.
 
-    Raises on any failure; returns None on success.
+    Raises on any failure. Returns how the board was identified - a
+    `discovery.spec.Confidence.reason`, or None when the sighting was a
+    remembered one - for `write_all` to put in the ledger.
     """
     flashtool = find_flashtool(paths, settings)
     if not os.path.exists(flashtool):
@@ -191,7 +201,7 @@ def flash_katapult(
     assert dev is not None  # device_for: reason is None iff dev is not None
     side: dict = {}
     if not settings.dry_run:
-        from ..build import FlashLog, git_head, read_sidecar
+        from ..build import read_sidecar
 
         side = read_sidecar(paths, mcu_type, fw) or {}
         # The probe can move the board: it returns the device to write to,
@@ -227,28 +237,11 @@ def flash_katapult(
             returncode=rc,
         )
 
-    # Note which binary this board now holds. A board only ever reports its
-    # application commit, so without this record two builds from the same commit -
-    # a changed .config, an edited makefile-patch source - are indistinguishable,
-    # and "flash only the stale ones" would skip exactly the boards a patch
-    # change affected.
     if not settings.dry_run:
-        # side and the FlashLog/git_head imports came from the pre-write block
-        # above, which runs under the same `not settings.dry_run` condition.
-        FlashLog(paths).record(
-            serial,
-            mcu_type=mcu_type,
-            fw=fw,
-            bin_sha256=side.get("bin_sha256"),
-            fw_sha=side.get("fw_sha")
-            or git_head(firmware.resolve(paths, fw).source_dir(paths)),
-            confidence=confidence.reason if confidence is not None else None,
-            version=side.get("version"),
-        )
-
         _report_offset_mismatch(reporter, serial, mcu_type, fw, side, transcript)
 
     reporter("info", f"Flashed {serial} successfully.")
+    return confidence.reason if confidence is not None else None
 
 
 #: Katapult's own words, from flashtool.py's handshake with the bootloader:
@@ -459,7 +452,7 @@ def flash_katapult_can(
     force: bool = False,
     bridge: bool | None = None,
     interface: str | None = None,
-) -> None:
+) -> str | None:
     """Flash one CAN-addressed board through katapult's flashtool.py.
 
     `flash_katapult`'s CAN counterpart, mirrored as closely as the identity
@@ -499,7 +492,9 @@ def flash_katapult_can(
     - not a gap for a native node, which keeps the full pre-write guard - and
     is recorded here and in `docs/decisions.md` rather than silently dropped.
 
-    Raises on any failure; returns None on success.
+    Raises on any failure. Returns how the board was identified - a
+    `discovery.spec.Confidence.reason`, or None when the sighting was a
+    remembered one - for `write_all` to put in the ledger.
     """
     from ..discovery.canbus import list_can_interfaces
 
@@ -535,7 +530,7 @@ def flash_katapult_can(
     side: dict = {}
     app_address = None
     if not settings.dry_run:
-        from ..build import FlashLog, git_head, read_sidecar
+        from ..build import read_sidecar
 
         side = read_sidecar(paths, mcu_type, fw) or {}
         app_address = side.get("app_address")
@@ -665,25 +660,13 @@ def flash_katapult_can(
         )
 
     if not settings.dry_run:
-        # side/FlashLog/git_head came from the pre-write block above, which
-        # runs under the same `not settings.dry_run` condition.
-        FlashLog(paths).record(
-            uuid,
-            mcu_type=mcu_type,
-            fw=fw,
-            bin_sha256=side.get("bin_sha256"),
-            fw_sha=side.get("fw_sha")
-            or git_head(firmware.resolve(paths, fw).source_dir(paths)),
-            # Finding a uuid answer on the bus at all - probe or write - is
-            # itself the confirmation; there is no separate by-id sighting to
-            # carry a `Confidence.reason` the way a serial's does.
-            confidence="canbus_uuid",
-            version=side.get("version"),
-        )
-
         _report_offset_mismatch(reporter, uuid, mcu_type, fw, side, transcript)
 
     reporter("info", f"Flashed {uuid} successfully.")
+    # Finding a uuid answer on the bus at all - probe or write - is itself the
+    # confirmation; there is no separate by-id sighting to carry a
+    # `Confidence.reason` the way a serial's does.
+    return "canbus_uuid"
 
 
 def _report_offset_mismatch(
@@ -919,10 +902,9 @@ def flash_initial_bootloader(
 
     Which ROM bootloader a factory-bare board of this chipset speaks is a
     single fact about the silicon, not a lookup table: every STM32 answers DFU,
-    every RP2040 answers BOOTSEL. `flashers.select_for` is the actual dispatch -
-    driven through the same `Flasher` protocol a batch uses, so a route added
-    for this path is a route a batch could take too, with nothing here to edit
-    when it lands.
+    every RP2040 answers BOOTSEL. What goes on the board is katapult, so
+    `[firmware katapult]`'s `flashers:` list picks the writer, through the same
+    `Flasher` protocol a batch uses.
 
     `uf2_bin` is separate from `fw_bin`: BOOTSEL mass storage only accepts a
     `.uf2` - a `.bin` copied there is silently ignored - and a build only
@@ -940,7 +922,23 @@ def flash_initial_bootloader(
     from .. import flashers
 
     state = STATE_BOOTSEL if chipset.startswith("rp2040") else STATE_DFU
-    flasher = flashers.select_for(chipset, state)
+    katapult = firmware.resolve(paths, "katapult")
+    device = flashers.Device(
+        type=chipset,
+        id=target_serial or "",
+        chipset=chipset,
+        state=state,
+        fw=katapult.name,
+        kind=flashers.KIND_BARE,
+        detail={"fw_bin": fw_bin},
+    )
+    flasher = flashers.resolve(katapult, device, None)
+    if flasher is None:
+        raise UnsupportedChipsetError(
+            f"don't know how to perform a first-time flash for chipset '{chipset}'. "
+            f"Flash katapult manually, then use 'add-serial' once it enumerates.",
+            chipset=chipset,
+        )
 
     with tempfile.TemporaryDirectory(prefix="mcu-updater-bootsel-") as staging:
         if state == STATE_BOOTSEL:
@@ -956,11 +954,10 @@ def flash_initial_bootloader(
                 "Staged Katapult with the application sector erased, so the board "
                 "cannot chain-load whatever it ran before.",
             )
-            target = flashers.bootsel.target_for(staged, chipset=chipset, paths=paths)
-        else:
-            target = flashers.dfu_util.target_for(
-                fw_bin, chipset=chipset, dfu_serial=target_serial
+            device = dataclasses.replace(
+                device, detail={**device.detail, "uf2_file": staged}
             )
+        target = flasher.target(paths, device, None, stop_services=())
 
         bench = flashers.Bench(
             paths=paths,

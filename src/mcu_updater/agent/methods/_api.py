@@ -22,8 +22,10 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any, Protocol
 
-from ... import flashers
+from ... import device_info, flashers, inventory
 from ...config import Registry
+from ...firmware import FirmwareFamily
+from ...helpers import DeviceInfoReader, Helper
 from ...jobs import JobRunner
 from ...paths import Paths
 from ...settings import Settings
@@ -56,6 +58,7 @@ class _Api(Protocol):
     # -- status.py -----------------------------------------------------
     def settings(self) -> Settings: ...
     def registry(self) -> Registry: ...
+    def _hardware_writes_allowed(self) -> bool: ...
     def _fw_names(self) -> tuple[str, ...]: ...
     def artifact(self, mcu_type: str, fw: str) -> dict[str, Any]: ...
     def pio_status(self) -> list[dict[str, Any]]: ...
@@ -72,9 +75,19 @@ class _Api(Protocol):
         state: str | None = None,
         artifact_sha: str | None = None,
         flashlog: Any | None = None,
+        built_version: str | None = None,
+        reader: DeviceInfoReader = device_info.KLIPPER,
     ) -> dict[str, Any]: ...
+    def cmake_status(self) -> list[dict[str, Any]]: ...
+    def _cmake_devices(
+        self,
+        payload: dict[str, Any],
+        family: FirmwareFamily,
+        helper: Helper | None,
+        rows: dict[tuple[str, str, str], inventory.Row] | None = None,
+    ) -> list[dict[str, Any]]: ...
     @staticmethod
-    def _screen_device_status(screen: dict[str, Any]) -> DeviceStatus: ...
+    def _platformio_device_status(screen: dict[str, Any]) -> DeviceStatus: ...
     def _log_reporter(self, stream: str, line: str) -> None: ...
     def _printer_activity(self) -> dict[str, str | None]: ...
     def _await_klippy_ready(
@@ -100,7 +113,10 @@ class _Api(Protocol):
 
     # -- bulk.py -------------------------------------------------------
     def _do_flash_all(
-        self, ctx: Any, targets: list[flashers.FlashTarget]
+        self,
+        ctx: Any,
+        targets: list[flashers.FlashTarget],
+        refused: list[dict[str, Any]] | tuple[()] = (),
     ) -> dict[str, Any]: ...
     def _bench(self, settings: Settings) -> flashers.Bench: ...
 

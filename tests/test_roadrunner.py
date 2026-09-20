@@ -671,7 +671,7 @@ def test_firmware_helper_wait_ready_stops_waiting_on_ambiguity(
 ):
     """Two devices answering to one serial is not a slow return, so the wait
     ends at once. Post-copy it is still only a warning - see
-    `test_helper_bootsel_settled_warns_on_non_timeout_roadrunner_errors`."""
+    `test_bootsel_handoff_settled_warns_on_non_timeout_roadrunner_errors`."""
     error = roadrunner._error("roadrunner_ambiguous", "Roadrunner readiness failed")
     attempts: list[str] = []
 
@@ -821,7 +821,7 @@ def test_agent_clear_returns_to_unprovisioned_without_tracking(paths, monkeypatc
 def test_agent_refuses_maintenance_for_a_cmake_tracked_roadrunner(paths):
     with open(paths.registry_file, "w", encoding="utf-8") as fh:
         fh.write(
-            "[firmware roadrunner]\nsource: ~/roadrunner/rp2040\nbuilder: cmake\n"
+            "[firmware roadrunner]\nsource: ~/roadrunner/rp2040\nbuilder: cmake\nflashers: bootsel\n"
             "\n[type roadrunner]\nchipset: rp2040\nfirmware: roadrunner\n"
             f"serials:\n    {PROVISIONED}\n"
         )

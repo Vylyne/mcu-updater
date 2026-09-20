@@ -18,7 +18,7 @@ from mcu_updater.errors import ServiceControlError
 from mcu_updater.jobs import JobRunner
 from mcu_updater.service import Journal, NullService, services_stopped
 
-from .conftest import make_device, write_settings
+from .conftest import make_device, with_base_firmwares, write_settings
 
 TRACKED_SERIAL = "123456789012345678901"
 TRACKED_TYPE = "bttebb36"
@@ -80,17 +80,20 @@ def cmake_flash_factory(paths, fake_root, tmp_path):
         helper_line = f"helper: {helper}\n" if helper is not None else ""
         with open(paths.main_config, "w", encoding="utf-8", newline="\n") as fh:
             fh.write(
-                "[firmware roadrunner]\n"
-                f"source: {source}\n"
-                "builder: cmake\n"
-                f"{helper_line}\n"
-                "[type roadrunner]\n"
-                "chipset: rp2040\n"
-                "firmware: roadrunner\n"
-                "cmake_target: roadrunner_v1_i2c_rgb\n"
-                "serials:\n"
-                f"    {serial}\n"
-                f"{extra_types}"
+                with_base_firmwares(
+                    "[firmware roadrunner]\n"
+                    f"source: {source}\n"
+                    "builder: cmake\n"
+                    f"{helper_line}"
+                    "flashers: bootsel\n\n"
+                    "[type roadrunner]\n"
+                    "chipset: rp2040\n"
+                    "firmware: roadrunner\n"
+                    "cmake_target: roadrunner_v1_i2c_rgb\n"
+                    "serials:\n"
+                    f"    {serial}\n"
+                    f"{extra_types}"
+                )
             )
         write_settings(
             paths,
@@ -291,9 +294,11 @@ def test_a_helper_backed_cmake_uf2_routes_through_a_normal_flash_job(
     assert FlashLog(api.paths).all() == {}, "dry runs must not claim a write"
 
 
-def test_a_cmake_type_without_a_helper_is_refused_before_a_job(
+def test_a_cmake_type_without_a_helper_names_its_flashers(
     cmake_flash_factory,
 ):
+    """A family whose helper cannot request BOOTSEL leaves `bootsel` nothing to
+    write a running board with, and the refusal names the list to fix."""
     api = cmake_flash_factory(helper=None)
 
     with pytest.raises(RpcError) as exc:
@@ -301,7 +306,8 @@ def test_a_cmake_type_without_a_helper_is_refused_before_a_job(
             "fw.flash", {"name": "roadrunner", "serial": ROADRUNNER_SERIAL}
         )
 
-    assert exc.value.data["code"] == "flash_failed"
+    assert exc.value.data["code"] == "no_flasher"
+    assert "flashers: bootsel" in str(exc.value)
     assert api.runner.current() is None
 
 
@@ -407,6 +413,8 @@ def test_a_single_cmake_batch_failure_fails_the_flash_job(
 def test_a_successful_cmake_write_records_build_sidecar_provenance(
     cmake_flash_factory, monkeypatch
 ):
+    """The ledger is `write_all`'s now (Ruling 12), so a faked batch writes
+    none - see `test_flashlog_loop.py`."""
     api = cmake_flash_factory(dry_run="false")
     sidecar = {
         "provider": "cmake",
@@ -442,65 +450,22 @@ def test_a_successful_cmake_write_records_build_sidecar_provenance(
     assert api.runner.wait(timeout=30)
     job = api.runner.get(response["job_id"])
     assert job.state == "succeeded", job.error
-    assert captured["target"].flasher == "helper_bootsel"
-
-    record = FlashLog(api.paths).all()[ROADRUNNER_SERIAL]
-    assert record["type"] == "roadrunner"
-    assert record["fw"] == "roadrunner"
-    assert record["fw_sha"] == "built-subtree-sha"
-    assert record["bin_sha256"] == "built-uf2-sha256"
-    assert record["version"] == "v1.2.3-4-gabcdef0"
-    assert record["confidence"] is None
+    assert captured["target"].flasher == "bootsel"
 
 
-def test_a_completed_cmake_copy_records_provenance_whatever_follows_it(
+def test_a_cmake_family_that_cannot_write_the_board_refuses_before_a_job(
     cmake_flash_factory, monkeypatch
 ):
-    """A written board is a written board.
-
-    The readiness wait after the copy is non-fatal, but nothing downstream of
-    the copy may take the ledger entry with it either: an operator told "failed"
-    with no `flash.json` record has every reason to flash the same image again.
-    """
     api = cmake_flash_factory(dry_run="false")
-    os.makedirs(api.paths.artifact_dir("roadrunner"), exist_ok=True)
-    with open(
-        api.paths.sidecar_file("roadrunner", "roadrunner"), "w", encoding="utf-8"
-    ) as fh:
-        json.dump(
-            {
-                "provider": "cmake",
-                "sha": "built-subtree-sha",
-                "version": "v1.2.3-4-gabcdef0",
-                "dirty": False,
-                "cmake_target": "roadrunner_v1_i2c_rgb",
-                "bin_sha256": "built-uf2-sha256",
-                "bin_size": 15,
-                "bin_mtime": 123.0,
-            },
-            fh,
-        )
-
-    def wrote_then_stumbled(bench, targets, ctx, *, on_ready=None):
-        return {
-            "flashed": [targets[0].to_json()],
-            "failures": [
-                {**targets[0].to_json(), "error": "something after the copy"}
-            ],
-        }
-
-    monkeypatch.setattr("mcu_updater.flashers.write_all", wrote_then_stumbled)
-
-    response = api.dispatch(
-        "fw.flash", {"name": "roadrunner", "serial": ROADRUNNER_SERIAL}
+    monkeypatch.setattr(
+        "mcu_updater.flashers.registry.resolve", lambda family, device, helper: None
     )
-    assert api.runner.wait(timeout=30)
-    job = api.runner.get(response["job_id"])
-    assert job.state == "failed"
 
-    record = FlashLog(api.paths).all()[ROADRUNNER_SERIAL]
-    assert record["type"] == "roadrunner"
-    assert record["bin_sha256"] == "built-uf2-sha256"
+    with pytest.raises(RpcError) as exc:
+        api.dispatch("fw.flash", {"name": "roadrunner", "serial": ROADRUNNER_SERIAL})
+
+    assert exc.value.data["code"] == "no_flasher"
+    assert api.runner.current() is None
 
 
 def test_flashing_without_a_built_artifact_is_refused(flashable, paths):
@@ -582,6 +547,42 @@ def test_a_flash_stops_klipper_flashes_then_starts_it_again(flashable, paths):
     flash_at = joined.index("Flashing")
     start_at = joined.index("would start klipper")
     assert stop_at < flash_at < start_at, "klipper must be down only for the write"
+
+
+def test_a_board_its_family_cannot_write_refuses_before_a_job(flashable, paths):
+    block = "[firmware klipper]\nsource: ~/klipper\nflashers: flashtool\n"
+    with open(paths.registry_file, encoding="utf-8") as fh:
+        text = fh.read()
+    assert block in text
+    with open(paths.registry_file, "w", encoding="utf-8") as fh:
+        fh.write(text.replace(block, block.replace("flashtool", "esptool")))
+
+    with pytest.raises(RpcError) as exc:
+        flashable.dispatch("fw.flash", {"serial": TRACKED_SERIAL})
+
+    assert exc.value.data["code"] == "no_flasher"
+    assert flashable.runner.current() is None
+
+
+def test_a_failed_serial_write_keeps_its_own_error_code(flashable, monkeypatch):
+    """The serial path writes through the batch loop, and a batch reports
+    failures as strings. The job re-raises the write's own error, so a panel
+    switching on `device_not_found` or `offset_mismatch` still can."""
+    import mcu_updater.flashers.flash as flash_mod
+    from mcu_updater.errors import DeviceNotFoundError
+
+    def gone(*args, **kwargs):
+        raise DeviceNotFoundError("the board vanished mid-write", serial=TRACKED_SERIAL)
+
+    monkeypatch.setattr(flash_mod, "flash_katapult", gone)
+
+    res = flashable.dispatch("fw.flash", {"serial": TRACKED_SERIAL})
+    assert flashable.runner.wait(timeout=30)
+
+    job = flashable.runner.get(res["job_id"])
+    assert job.state == "failed"
+    assert job.error["code"] == "device_not_found"
+    assert job.error["data"] == {"serial": TRACKED_SERIAL}
 
 
 def test_a_type_whose_firmware_is_not_klipper_can_still_be_flashed(flashable_non_klipper):

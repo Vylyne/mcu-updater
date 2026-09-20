@@ -45,7 +45,7 @@ def _declare_cmake(paths: Paths, fake_root, name: str = "roadrunner") -> None:
         fh.write("project(roadrunner)\n")
     _append(
         paths,
-        f"\n[firmware roadrunner]\nsource: {tree}\nbuilder: cmake\n\n"
+        f"\n[firmware roadrunner]\nsource: {tree}\nbuilder: cmake\nflashers: bootsel\n\n"
         f"[type {name}]\nchipset: rp2040\nfirmware: roadrunner\n"
         f"cmake_target: roadrunner_v1_i2c_rgb\n",
     )
@@ -64,7 +64,7 @@ def _declare_display(paths: Paths, name: str = "knomi_toolchanger") -> None:
     os.makedirs(os.path.join(tree, ".pio", "build", name), exist_ok=True)
     _append(
         paths,
-        f"\n[type {name}]\nchipset: esp32\nfirmware: knomi_serial\nenv: {name}\n",
+        f"\n[type {name}]\nchipset: esp32\nfirmware: knomi_serial\nplatformio_env: {name}\n",
     )
 
 
@@ -180,7 +180,8 @@ def test_a_malformed_foreign_section_does_not_break_resolution(
         paths,
         "\n[firmware roadrunner]\n"
         f"source: {tree}\n"
-        "builder: cmake\n\n"
+        "builder: cmake\n"
+        "flashers: bootsel\n\n"
         "[type halfwritten]\nchipset: rp2040\nfirmware: roadrunner\n",
     )
 

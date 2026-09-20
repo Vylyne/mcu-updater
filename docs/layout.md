@@ -80,11 +80,11 @@ canbus_uuids:
 
 | Key | Meaning |
 | --- | --- |
-| `chipset` | Required on every type, PlatformIO included. Matches the chipset segment of the `/dev/serial/by-id` name. |
+| `chipset` | Required on every type, PlatformIO included. Drives flasher and build selection, not presence - see docs/decisions.md "Presence comes from the inventory". |
 | `serials` | One tracked board per line, using the canonical hardware serial without udev's terminal `-if00` suffix. The full `/dev/serial/by-id` path remains the transport address and is rediscovered. |
 | `canbus_uuids` | One tracked CAN-addressed board's uuid per line, parallel to `serials` but a separate key. No interface is stored — Linux CAN interface names (`can0`, `can1`, ...) are enumeration order, not stable identity, so the flasher re-discovers one at write time instead of trusting a remembered one. |
 | `firmware` | A **list** of the families this board runs, e.g. `cartographer, katapult`. A type with no bootloader simply omits it. See `[firmware ...]` sections, below. |
-| `profile` | The vendor answer file the config was seeded from, e.g. `config.CartoV4USB`. |
+| `kconfig_make_profile` | The vendor answer file the config was seeded from, e.g. `config.CartoV4USB`. |
 | `<fw>_extra_args` | Appended to the `make` command line. |
 | `<fw>_makefile_patches` | `<file> -> <line>`, appended to that Makefile for one build then reverted. |
 | `<fw>_extra_repos` | Secondary source trees whose git SHA is tracked alongside the main tree; a commit in any of them is reported the same as a change in the main source. |
@@ -94,7 +94,7 @@ canbus_uuids:
 `builder:` lives on `[firmware ...]`, not on `[type ...]` — how a tree
 compiles is a property of the tree, not of a board that happens to use it. A
 type declaring only `[firmware ...]` sections whose builder is `platformio`
-needs no Kconfig and no Katapult; the env named by `env:` is the type. There
+needs no Kconfig and no Katapult; the env named by `platformio_env:` is the type. There
 is no `provider:` key on `[type ...]` — it is derived from the families the
 type names.
 

@@ -15,10 +15,14 @@ from __future__ import annotations
 
 import contextlib
 from collections.abc import Iterator
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from ..devices import STATE_DFU
-from .spec import Bench, FlashTarget
+from .spec import KIND_BARE, Bench, Device, FlashRecord, FlashTarget, chipset_matches
+
+if TYPE_CHECKING:
+    from ..helpers.spec import Helper
+    from ..paths import Paths
 
 
 class DfuUtil:
@@ -38,6 +42,28 @@ class DfuUtil:
     #: tool routes a board into DFU itself rather than asking - over the serial
     #: port Klipper may be holding - this becomes True.
     needs_services_stopped = False
+
+    def supports(self, device: Device, helper: Helper | None) -> bool:
+        """A bare STM32 holding BOOT0."""
+        return (
+            device.kind == KIND_BARE
+            and device.state in self.states
+            and chipset_matches(self, device.chipset)
+        )
+
+    def target(
+        self,
+        paths: Paths,
+        device: Device,
+        helper: Helper | None,
+        *,
+        stop_services: tuple[str, ...],
+    ) -> FlashTarget:
+        return target_for(
+            device.detail["fw_bin"],
+            chipset=device.chipset,
+            dfu_serial=device.id or None,
+        )
 
     @contextlib.contextmanager
     def prepared(
@@ -59,6 +85,12 @@ class DfuUtil:
             target_serial=target.detail.get("dfu_serial"),
         )
         return {"dfu_serial": target.detail.get("dfu_serial")}
+
+    def record(self, bench: Bench, target: FlashTarget) -> FlashRecord | None:
+        """Nothing to file. dfu-util only ever writes a bootloader to a bare
+        board here, before it has the durable identity a record is filed
+        under."""
+        return None
 
     def settled(self, bench: Bench, target: FlashTarget, ctx: Any) -> None:
         """Nothing to wait *for* here, and deliberately so.

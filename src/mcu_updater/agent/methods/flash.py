@@ -5,7 +5,7 @@ from __future__ import annotations
 import os
 from typing import Any
 
-from ... import firmware, flashers, helpers, providers, stop_services
+from ... import firmware, flashers, helpers, inventory, providers, stop_services
 from ...config import Registry
 from ...errors import (
     DfuPermissionError,
@@ -26,7 +26,8 @@ class FlashMixin(_Base):
         Every refusal happens *here*, synchronously, before a job exists - so the
         caller gets a real explanation instead of a job that fails a second later.
         In order: capability gate, argument validation, type/serial pairing,
-        artifact present, board actually attached, and finally the print gate.
+        artifact present, board actually attached, the family able to write it,
+        and finally the print gate.
         """
         runner = self._require_runner()
         settings = self.settings()
@@ -74,7 +75,8 @@ class FlashMixin(_Base):
         # serial_tracked_elsewhere, all of which the panel switches on by code.
         mcu_type = reg.resolve_serial(serial, str(name) if name else None)
         mcu = reg.get(mcu_type)
-        application = mcu.application(firmware.load(self.paths))
+        families = firmware.load(self.paths)
+        application = mcu.application(families)
 
         fw_bin = self.paths.bin_file(mcu_type, application)
         if not os.path.exists(fw_bin):
@@ -91,7 +93,8 @@ class FlashMixin(_Base):
         # klipper. Katapult means it's already in the bootloader.
         from ...devices import find_device
 
-        if find_device(self.paths, mcu.chipset, serial) is None:
+        present = find_device(self.paths, mcu.chipset, serial)
+        if present is None:
             raise RpcError(
                 f"{serial} is not attached (looked for chipset {mcu.chipset}). "
                 f"Is it plugged in and powered?",
@@ -101,6 +104,27 @@ class FlashMixin(_Base):
                     "data": {"serial": serial, "chipset": mcu.chipset},
                 },
             )
+
+        # The family decides who writes this board, before a job exists.
+        target = flashers.select_device(
+            self.paths,
+            families,
+            flashers.Device(
+                type=mcu_type,
+                id=serial,
+                chipset=mcu.chipset,
+                state=present.state,
+                fw=application,
+                detail={
+                    "type": mcu_type,
+                    "serial": serial,
+                    "chipset": mcu.chipset,
+                    "fw": application,
+                    "force": force,
+                },
+            ),
+            stop_services=stop_services.for_mcu(self.paths, mcu, settings, families),
+        )
 
         # Last gate. Covers a running print *and* any other klipper activity -
         # homing, QGL, a macro - because stopping klipper mid-motion is just as
@@ -112,70 +136,30 @@ class FlashMixin(_Base):
         )
 
         def run(ctx) -> dict[str, Any]:
-            from ...devices import KLIPPER_FW_NAME, wait_for_device
-            from ...errors import BootloaderTimeoutError
-            from ...flashers.flash import flash_katapult
-            from ...service import make_controller, services_stopped
+            # The batch loop, for one target: it stops the units, writes, waits
+            # for the board to come back and restarts them. No cancel is
+            # threaded into the write - interrupting flashtool leaves half an
+            # image on the board.
+            state_holder: dict[str, Any] = {}
 
-            settings_now = self.settings()
-            units = stop_services.for_mcu(self.paths, mcu, settings_now)
-            controllers = [
-                make_controller(settings_now, call=self._call_for_service, name=unit)
-                for unit in units
-            ]
-            ctx.step(f"Stopping {', '.join(units) or 'nothing'}", 0, 4)
-            with services_stopped(
-                self.paths, controllers, f"flash {serial}", reporter=ctx.reporter
-            ):
-                ctx.step(f"Flashing {serial}", 1, 4)
-                # No cancel is threaded into the write on purpose - interrupting
-                # flashtool leaves half an image on the board.
-                flash_katapult(
-                    self.paths,
-                    settings_now,
-                    mcu_type,
-                    mcu.chipset,
-                    serial,
-                    fw_bin=fw_bin,
-                    fw=application,
-                    reporter=ctx.reporter,
-                    force=force,
-                )
+            def on_ready(reporter: Any) -> None:
+                state_holder["klippy_state"] = self._await_klippy_ready(reporter)
 
-                # The board reboots into the new firmware and re-enumerates over
-                # USB, which takes a couple of seconds. Starting klipper before
-                # the device node exists means klipper cannot find its MCU and
-                # comes up in an error state.
-                ctx.step(f"Waiting for {serial} to come back", 2, 4)
-                if not settings_now.dry_run:
-                    try:
-                        wait_for_device(
-                            self.paths,
-                            mcu.chipset,
-                            serial,
-                            KLIPPER_FW_NAME,
-                            timeout=REENUMERATE_TIMEOUT,
-                            settle=1.0,
-                        )
-                        ctx.reporter("info", f"{serial} is back as a Klipper device.")
-                    except BootloaderTimeoutError as exc:
-                        # Not fatal here: klipper still has to be started, and it
-                        # may yet find the board. The readiness check below is the
-                        # real verdict.
-                        ctx.reporter("warn", str(exc))
-
-                ctx.step(f"Restarting {', '.join(units) or 'nothing'}", 3, 4)
-
-            # services_stopped has started them by now. Being *active* is
-            # not the same as being ready, so confirm - and firmware-restart if
-            # the MCU came back shut down.
-            klippy_state = self._await_klippy_ready(ctx.reporter)
-            ctx.step("Done", 4, 4)
+            errors: list[UpdaterError] = []
+            flashers.write_all(
+                self._bench(self.settings()),
+                [target],
+                ctx,
+                on_ready=on_ready,
+                errors=errors,
+            )
+            if errors:
+                raise errors[0]
             return {
                 "type": mcu_type,
                 "serial": serial,
                 "fw_bin": fw_bin,
-                "klippy_state": klippy_state,
+                "klippy_state": state_holder.get("klippy_state"),
             }
 
         job = runner.submit("flash", {"name": mcu_type, "serial": serial}, run)
@@ -204,11 +188,6 @@ class FlashMixin(_Base):
         families = firmware.load(self.paths)
         family = firmware.resolve(self.paths, target_type.firmware, families)
         helper = helpers.for_name(family.helper, family=family.name)
-        if helper is None:
-            raise FlashError(
-                f"CMake type '{mcu_type}' has no firmware helper configured.",
-                type=mcu_type,
-            )
 
         fw_bin = self.paths.uf2_file(mcu_type, target_type.firmware)
         if not os.path.exists(fw_bin):
@@ -227,7 +206,8 @@ class FlashMixin(_Base):
         # after services release the port.
         from ...devices import find_device
 
-        if find_device(self.paths, "", serial) is None:
+        present = find_device(self.paths, "", serial)
+        if present is None:
             raise RpcError(
                 f"{serial} is not attached. Is it plugged in and powered?",
                 data={
@@ -237,6 +217,24 @@ class FlashMixin(_Base):
                 },
             )
 
+        units = stop_services.for_cmake(self.paths, target_type, settings, families)
+        # The family decides who writes this board. A family whose list or
+        # helper cannot is a NoFlasherError here, before a job exists.
+        target = flashers.select(
+            self.paths,
+            family,
+            flashers.Device(
+                type=mcu_type,
+                id=serial,
+                chipset=target_type.chipset,
+                state=present.state,
+                fw=family.name,
+                detail={"uf2_file": fw_bin},
+            ),
+            helper,
+            stop_services=units,
+        )
+
         from ...service import assert_printer_idle
 
         assert_printer_idle(
@@ -244,16 +242,6 @@ class FlashMixin(_Base):
             activity=self._printer_activity,
             force=force,
             reporter=self._log_reporter,
-        )
-
-        units = stop_services.for_cmake(self.paths, target_type, settings, families)
-        target = flashers.helper_bootsel.target_for(
-            fw_bin,
-            type_name=mcu_type,
-            serial=serial,
-            chipset=target_type.chipset,
-            helper=helper,
-            stop_services=units,
         )
 
         def run(ctx) -> dict[str, Any]:
@@ -266,24 +254,6 @@ class FlashMixin(_Base):
             result = flashers.write_all(
                 self._bench(settings_now), [target], ctx, on_ready=on_ready
             )
-
-            # Before the refusal below, not after: the UF2 is on the board the
-            # moment the copy returns, and the post-copy readiness wait is
-            # non-fatal by spec. A job that still ends up failing must not also
-            # lose the ledger entry - "it failed" plus no recorded write is what
-            # makes an operator flash an already-correct board a second time.
-            if result["flashed"] and not settings_now.dry_run:
-                from ...build import FlashLog
-
-                side = cmake_mod.read_sidecar(self.paths, target_type) or {}
-                FlashLog(self.paths).record(
-                    serial,
-                    mcu_type=mcu_type,
-                    fw=target_type.firmware,
-                    bin_sha256=side.get("bin_sha256"),
-                    fw_sha=side.get("sha"),
-                    version=side.get("version"),
-                )
 
             if result["failures"]:
                 raise FlashError(
@@ -313,7 +283,7 @@ class FlashMixin(_Base):
         CAN interface exists on this host at all" is refused up front; a uuid
         that simply does not answer is discovered inside the job.
 
-        Routes through `flashtool.target_for` and the same `write_all`
+        Routes through `flashers.select_device` and the same `write_all`
         batch machinery `flash_all`/`update_all` use for a CAN board, rather
         than a second hand-written stop/write/wait sequence - one target,
         one flasher, the loop already written for a batch of one.
@@ -323,7 +293,8 @@ class FlashMixin(_Base):
         # resolve_uuid raises unknown_uuid / ambiguous_uuid / uuid_tracked_elsewhere.
         mcu_type = reg.resolve_uuid(uuid, str(name) if name else None)
         mcu = reg.get(mcu_type)
-        application = mcu.application(firmware.load(self.paths))
+        families = firmware.load(self.paths)
+        application = mcu.application(families)
 
         fw_bin = self.paths.bin_file(mcu_type, application)
         if not os.path.exists(fw_bin):
@@ -355,28 +326,42 @@ class FlashMixin(_Base):
                 },
             )
 
-        from ...service import assert_printer_idle
-
-        assert_printer_idle(
-            settings, activity=self._printer_activity, force=force, reporter=self._log_reporter
-        )
-
         # A Klipper mapping chooses one configured bus; config silence leaves
         # the flasher to try every currently-present CAN interface.
         bridge = cross.get("bridge") if cross is not None else None
 
-        units = stop_services.for_mcu(self.paths, mcu, settings)
-        target = flashers.flashtool.target_for(
-            {
-                "type": mcu_type,
-                "uuid": uuid,
-                "chipset": mcu.chipset,
-                "fw": application,
-                "force": force,
-                "bridge": bridge,
-                "interface": interface,
-            },
-            stop_services=units,
+        board = {
+            "type": mcu_type,
+            "uuid": uuid,
+            "chipset": mcu.chipset,
+            "fw": application,
+            "force": force,
+            "bridge": bridge,
+            "interface": interface,
+        }
+        target = flashers.select_device(
+            self.paths,
+            families,
+            flashers.Device(
+                type=mcu_type,
+                id=uuid,
+                chipset=mcu.chipset,
+                state=(
+                    "klipper"
+                    if cross is not None and cross.get("version") is not None
+                    else "unknown"
+                ),
+                fw=application,
+                kind=flashers.KIND_CANBUS,
+                detail=board,
+            ),
+            stop_services=stop_services.for_mcu(self.paths, mcu, settings, families),
+        )
+
+        from ...service import assert_printer_idle
+
+        assert_printer_idle(
+            settings, activity=self._printer_activity, force=force, reporter=self._log_reporter
         )
 
         def run(ctx) -> dict[str, Any]:
@@ -445,12 +430,22 @@ class FlashMixin(_Base):
 
         # Read the devices NOW, while Klipper can still answer.
         listed = self.device_list({})
-        # `id` is the uniform slot, `port` what this call has always taken.
+        # Either spelling of the one identity. `port` is what this call has
+        # always taken; `id` is the uniform slot, and either can name the
+        # configured path, printer.cfg's burned-in device id, or the identity
+        # the firmware itself reported. The path stays exact because it is a
+        # POSIX filesystem path; only identities are compared case-insensitively.
         wanted = args.get("port") or args.get("id")
+        want = None if wanted is None else str(wanted)
         targets = [
             d
             for d in listed["displays"]
-            if d["present"] and (wanted is None or d["configured_path"] == str(wanted))
+            if d["present"]
+            and (
+                want is None
+                or want == d["configured_path"]
+                or want.lower() in {i.lower() for i in (d["device_id"], d["reported_id"]) if i}
+            )
         ]
         if not targets:
             raise RpcError(
@@ -477,18 +472,35 @@ class FlashMixin(_Base):
         # watcher pause, the discovery, the writes - is the same machinery a
         # fleet flash uses, because there was never anything display-shaped
         # about it beyond the two steps the esptool flasher now owns.
-        units = stop_services.for_display(self.paths, display, settings)
-        screens = [
-            flashers.esptool.target_for(display, s, stop_services=units) for s in targets
-        ]
+        units = stop_services.for_platformio(self.paths, display, settings)
+        families = firmware.load(self.paths)
+        screens, refused = flashers.select_each(
+            self.paths,
+            families,
+            [
+                (
+                    flashers.Device(
+                        type=display.name,
+                        id=s["configured_path"],
+                        chipset="",
+                        state=inventory.STATE_UNKNOWN,
+                        fw=display.firmware,
+                        kind=flashers.KIND_SCREEN,
+                        detail={"display": display, "screen": s},
+                    ),
+                    units,
+                )
+                for s in targets
+            ],
+        )
 
         def run(ctx) -> dict[str, Any]:
-            result = self._do_flash_all(ctx, screens)
+            result = self._do_flash_all(ctx, screens, refused=refused)
             # Projected back onto this method's own documented shape rather
             # than leaking the uniform one. The batch says `type`/`id`; a
             # display caller has always been told `name`/`port`, and `id` for a
             # screen *is* its configured port.
-            named = {t.id: t.detail["screen"]["name"] for t in screens}
+            named = {d["configured_path"]: d["name"] for d in targets}
             return {
                 "env": display.env,
                 "flashed": result["flashed"],

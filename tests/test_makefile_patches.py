@@ -11,7 +11,15 @@ import pytest
 from mcu_updater.build import makefile_patches
 from mcu_updater.config import MakefilePatch, McuType
 
+from .conftest import save_registry, seed_base_firmwares
+
 ORIGINAL = b"# klipper src makefile\nsrc-y += sched.c\n"
+
+
+@pytest.fixture(autouse=True)
+def _declared(paths):
+    """Every test here patches klipper's own tree, so klipper must be declared."""
+    seed_base_firmwares(paths)
 
 
 def _mcu(*patches: MakefilePatch) -> McuType:
@@ -156,7 +164,7 @@ def test_patches_are_reverted_when_make_blows_up(paths, settings, fake_root, mon
     mcu.fw("klipper").makefile_patches = [
         MakefilePatch(file="src/Makefile", line="src-y += buffer.c")
     ]
-    reg.save(paths)
+    save_registry(reg, paths)
 
     os.makedirs(paths.type_dir("board"), exist_ok=True)
     with open(paths.config_file("board", "klipper"), "w", encoding="utf-8") as fh:

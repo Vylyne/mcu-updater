@@ -11,15 +11,18 @@ exact set, and only the handful that need it run a real job.
 
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 
 import pytest
 
-from mcu_updater import flashers
+from mcu_updater import device_info, flashers, uf2
 from mcu_updater.agent.methods import Api
 from mcu_updater.agent.rpc import ERR_INVALID_PARAMS, RpcError
 from mcu_updater.config import Registry
 from mcu_updater.jobs import IMMEDIATELY_CANCELLABLE, JobRunner
+from mcu_updater.providers import cmake
 from mcu_updater.service import NullService
 
 from .conftest import make_device, write_settings
@@ -31,6 +34,10 @@ EBB_B = "912345678901234567890"
 MMB = "OctopusMAXEZ"
 MMB_CHIPSET = "stm32h723xx"
 MMB_SERIAL = "49382710567432109845312"
+RR = "roadrunner"
+RR_CHIPSET = "rp2040"
+RR_SERIAL = "5K3DNTFCR1B3C9D0RZMYA3Y720"
+RR_SERIAL_B = "5K3DNTFCR1B3C9D0RZMYA3Z831"
 
 HEAD = "d7cea5bb1aca70849f28d0bb98ab1b96b9f6db65"
 CURRENT_VERSION = "v0.13.0-711-gd7cea5bb"
@@ -117,8 +124,17 @@ def _declare_cartographer(paths) -> None:
         fh.write("\n[type carto_v4]\nchipset: stm32g431xx\nfirmware: cartographer\n")
 
 
-def _declare_cmake(paths, fake_root, name="roadrunner") -> str:
-    """A cmake type with a source tree and nothing staged yet.
+def _declare_cmake(
+    paths,
+    fake_root,
+    name="roadrunner",
+    *,
+    serials=(),
+    helper=False,
+    staged=False,
+    provenance=False,
+) -> str:
+    """A cmake type with a source tree, and optionally what makes it flashable.
 
     Opt-in rather than part of the `bulk` fixture: several tests here assert on
     the *exact* pair list a sweep produces, and a type declared for everybody
@@ -134,10 +150,42 @@ def _declare_cmake(paths, fake_root, name="roadrunner") -> str:
         fh.write("project(roadrunner)\n")
     with open(paths.main_config, "a", encoding="utf-8") as fh:
         fh.write(
-            f"\n[firmware roadrunner]\nsource: {tree}\nbuilder: cmake\n\n"
+            f"\n[firmware roadrunner]\nsource: {tree}\nbuilder: cmake\n"
+            f"flashers: bootsel\n"
+            + ("helper: roadrunner\n" if helper else "")
+            + "\n"
             f"[type {name}]\nchipset: rp2040\nfirmware: roadrunner\n"
             f"cmake_target: roadrunner_v1_i2c_rgb\n"
+            + (
+                "serials:\n" + "".join(f"    {serial}\n" for serial in serials)
+                if serials
+                else ""
+            )
         )
+    if staged:
+        os.makedirs(paths.artifact_dir(name), exist_ok=True)
+        artifact = paths.uf2_file(name, RR)
+        with open(artifact, "wb") as fh:
+            fh.write(b"UF2")
+        if provenance:
+            stat = os.stat(artifact)
+            with open(paths.sidecar_file(name, RR), "w", encoding="utf-8") as fh:
+                json.dump(
+                    {
+                        "provider": "cmake",
+                        "sha": "deadbee",
+                        "version": "v1.2.0-3-gdeadbee",
+                        "dirty": False,
+                        "bin_sha256": hashlib.sha256(b"UF2").hexdigest(),
+                        "bin_size": stat.st_size,
+                        "bin_mtime": stat.st_mtime,
+                        "digest_algorithm": uf2.DIGEST_CRC32_ISO_HDLC,
+                        "digest": 0xBBE38AA9,
+                        "image_start": 0x10000000,
+                        "image_length": 600,
+                    },
+                    fh,
+                )
     return tree
 
 
@@ -156,7 +204,7 @@ def _declare_display(paths, name="knomi_toolchanger") -> str:
     tree = os.path.join(paths.home, "knomi_serial")
     os.makedirs(os.path.join(tree, ".pio", "build", name), exist_ok=True)
     with open(paths.main_config, "a", encoding="utf-8") as fh:
-        fh.write(f"\n[type {name}]\nchipset: esp32\nfirmware: knomi_serial\nenv: {name}\n")
+        fh.write(f"\n[type {name}]\nchipset: esp32\nfirmware: knomi_serial\nplatformio_env: {name}\n")
     return tree
 
 
@@ -379,9 +427,10 @@ def test_a_display_with_no_source_tree_is_skipped_but_never_silently(bulk, paths
     _save_config(paths, EBB)
     with open(paths.main_config, "a", encoding="utf-8") as fh:
         fh.write(
-            "\n[firmware knomi_missing]\nsource: /nope/not/here\nbuilder: platformio\n\n"
+            "\n[firmware knomi_missing]\nsource: /nope/not/here\nbuilder: platformio\n"
+            "helper: knomi_serial\nflashers: esptool\n\n"
             "[type knomi_toolchanger]\nchipset: esp32\nfirmware: knomi_missing\n"
-            "env: knomi_toolchanger\n"
+            "platformio_env: knomi_toolchanger\n"
         )
 
     selection = bulk._build_targets(bulk._install(), "all")
@@ -504,6 +553,30 @@ def test_a_board_in_its_bootloader_is_selected(paths, live_registry_text, fake_r
 
     boards = api._boards_to_flash(Registry.load(paths), "stale")
     assert [b["reason"] for b in boards] == ["in_bootloader"]
+
+
+def test_a_sha_less_board_uses_the_built_stamp_during_fleet_selection(
+    paths, live_registry_text, fake_root
+):
+    """Omitting built_version made bulk disagree with the panel and skip it."""
+    with open(paths.registry_file, "w", encoding="utf-8") as fh:
+        fh.write(live_registry_text)
+    _declare_cartographer(paths)
+    serial = "CARTO-1"
+    with Registry.mutate(paths, "track cartographer test board") as reg:
+        reg.get("carto_v4").serials = [serial]
+    os.makedirs(paths.artifact_dir("carto_v4"), exist_ok=True)
+    with open(paths.bin_file("carto_v4", "cartographer"), "wb") as fh:
+        fh.write(b"firmware")
+    with open(paths.sidecar_file("carto_v4", "cartographer"), "w", encoding="utf-8") as fh:
+        json.dump({"version": "CARTOGRAPHER v4 6.2.0"}, fh)
+    make_device(fake_root / "bus", "Klipper", "stm32g431xx", serial)
+    api = Api(paths, call=_moonraker({serial: "CARTOGRAPHER 6.2.0"}))
+
+    boards = api._boards_to_flash(Registry.load(paths), "stale")
+
+    assert [board["serial"] for board in boards] == [serial]
+    assert boards[0]["reason"] == "source_changed"
 
 
 def test_an_untracked_board_is_structurally_excluded(paths, live_registry_text, fake_root):
@@ -631,6 +704,46 @@ def test_a_batch_stops_klipper_once_not_once_per_board(bulk, paths, fake_root, m
     assert svc.actions == ["stop", "start"], "one stop for the whole batch"
 
 
+def _set_klipper_flashers(paths, value: str) -> None:
+    block = "[firmware klipper]\nsource: ~/klipper\nflashers: flashtool\n"
+    with open(paths.registry_file, encoding="utf-8") as fh:
+        text = fh.read()
+    assert block in text
+    with open(paths.registry_file, "w", encoding="utf-8") as fh:
+        fh.write(text.replace(block, block.replace("flashtool", value)))
+
+
+def test_a_board_its_family_cannot_write_is_a_failure_not_an_abort(
+    bulk, paths, fake_root, monkeypatch
+):
+    """Spec §8 step 1. Selection goes through the family's `flashers:`. A board
+    that nothing in the list can write shows up in the job's `failures[]` with
+    no flasher. It is not dropped, and Klipper is not stopped for it."""
+    svc = NullService()
+    monkeypatch.setattr("mcu_updater.service.make_controller", lambda *a, **k: svc)
+    _set_klipper_flashers(paths, "dfu_util")
+    _stage_artifact(paths, EBB)
+    make_device(fake_root / "bus", "Klipper", EBB_CHIPSET, EBB_A)
+    bulk._call = _moonraker({EBB_A: OLD_VERSION})
+    monkey_head(bulk, paths)
+    waited: list = []
+    bulk._await_klippy_ready = waited.append
+
+    res = bulk.dispatch("fw.flash_all", {})
+    assert [b["serial"] for b in res["boards"]] == [EBB_A]
+    assert bulk.runner.wait(timeout=60)
+
+    job = bulk.runner.get(res["job_id"])
+    assert job.params["count"] == len(res["boards"])
+    assert job.state == "succeeded", job.error
+    assert job.result["flashed"] == []
+    [failure] = job.result["failures"]
+    assert (failure["type"], failure["id"], failure["flasher"]) == (EBB, EBB_A, None)
+    assert "[firmware klipper] (flashers: dfu_util)" in failure["error"]
+    assert svc.actions == [], "nothing to write, so nothing to stop"
+    assert waited == []
+
+
 def test_a_build_failure_does_not_abandon_the_rest_of_the_fleet(bulk, paths, monkeypatch):
     """One type failing to compile is usually about that type."""
     from mcu_updater import build as build_mod
@@ -685,6 +798,29 @@ def test_update_all_builds_before_it_chooses_what_to_flash(bulk, paths, fake_roo
     assert job.state == "succeeded", job.error
     assert job.result["build"]["built"] == [{"type": EBB, "fw": "klipper", "provider": "kconfig_make"}]
     assert [f["serial"] for f in job.result["flash"]["flashed"]] == [EBB_A]
+
+
+def test_update_all_does_not_call_an_absent_fleet_current(
+    bulk, paths, fake_root, monkeypatch
+):
+    with open(paths.main_config, "w", encoding="utf-8") as fh:
+        fh.write("")
+    write_settings(paths, dry_run="true", service_backend="null", enable_flashing="true")
+    _declare_cmake(paths, fake_root, serials=[RR_SERIAL], helper=True, staged=True)
+    monkeypatch.setattr(
+        bulk,
+        "_do_build_all",
+        lambda ctx, targets: {"built": [], "failures": []},
+    )
+
+    res = bulk.dispatch("fw.update_all", {"scope": "all"})
+    assert bulk.runner.wait(timeout=60)
+    job = bulk.runner.get(res["job_id"])
+    lines, _, _ = job.log_since()
+
+    assert job.state == "succeeded", job.error
+    assert any(line.text == "No device was selected for flashing." for line in lines)
+    assert all(line.text != "No device needs flashing." for line in lines)
 
 
 def test_update_all_re_checks_the_printer_after_the_build(bulk, paths, fake_root, monkeypatch):
@@ -835,7 +971,7 @@ def monkey_head(api, paths):
     """
     import mcu_updater.build as build_mod
 
-    build_mod._head_cache[os.path.abspath(paths.fw_dir("klipper"))] = (
+    build_mod._head_cache[os.path.abspath(os.path.join(paths.home, "klipper"))] = (
         float("inf"),
         HEAD,
     )
@@ -923,49 +1059,162 @@ def test_an_unknown_type_still_reports_unknown_type(bulk):
     assert bulk.runner.current() is None
 
 
-def test_a_cmake_type_is_refused_by_name_not_as_a_typo(bulk, paths, fake_root):
-    """The bug this task exists to fix.
-
-    A configured Roadrunner used to come back as `unknown_type` - the type
-    exists, so that was simply false, and it sent operators looking for a
-    misspelling. Type-level flash cannot serve a CMake type yet; the refusal
-    now says so and points at the per-device path that does work.
-    """
-    _declare_cmake(paths, fake_root)
-
-    with pytest.raises(RpcError) as exc:
-        bulk.dispatch("fw.flash_all", {"name": "roadrunner"})
-
-    assert exc.value.data["code"] == "type_not_bulk_flashable"
-    assert exc.value.data["data"]["name"] == "roadrunner"
-    assert "fw.flash" in str(exc.value)
-    assert bulk.runner.current() is None
+# --------------------------------------------------------------------------
+# the third builder joins the loops
+# --------------------------------------------------------------------------
 
 
-def test_a_cmake_type_never_reports_a_successful_flash_of_nothing(
+def test_a_genuinely_stale_cmake_board_joins_the_flash_selection(
+    bulk, paths, fake_root, monkeypatch
+):
+    """A reported digest mismatch is selected by the same verdict the row shows."""
+    _declare_cmake(
+        paths,
+        fake_root,
+        serials=[RR_SERIAL],
+        helper=True,
+        staged=True,
+        provenance=True,
+    )
+    make_device(fake_root / "bus", "Vylyne", "Roadrunner", RR_SERIAL)
+    monkeypatch.setattr(
+        cmake,
+        "source_state",
+        lambda _source: cmake.SourceState(sha="deadbee"),
+    )
+    monkeypatch.setattr(
+        bulk,
+        "reported_images",
+        lambda _reporter, _serials: {
+            RR_SERIAL: device_info.DeviceInfo(
+                source=device_info.SOURCE_KLIPPER,
+                version="v1.2.0-3-gdeadbee",
+                digest_algorithm=uf2.DIGEST_CRC32_ISO_HDLC,
+                digest=0x12345678,
+                image_start=0x10000000,
+                image_length=600,
+            )
+        },
+    )
+
+    boards = bulk._cmake_boards_to_flash("stale")
+    panel = next(
+        target
+        for target in bulk.dispatch("fw.status")["targets"]
+        if target["name"] == RR
+    )
+
+    assert [board["serial"] for board in boards] == [RR_SERIAL]
+    assert panel["devices"][0]["reason"] == boards[0]["reason"] == "unexpected_image"
+
+
+def test_a_no_provenance_cmake_board_is_only_selected_by_scope_all(
     bulk, paths, fake_root
 ):
-    """Why the name is refused rather than accepted and enumerated.
+    """Unknown is not stale, but explicit operator intent still selects it."""
+    _declare_cmake(paths, fake_root, serials=[RR_SERIAL], helper=True, staged=True)
+    make_device(fake_root / "bus", "Klipper", RR_CHIPSET, RR_SERIAL)
 
-    `_boards_to_flash` walks the kconfig registry and has no CMake branch, so
-    accepting the name would select zero boards and report a clean sweep -
-    strictly worse than an error, because nothing was flashed and nothing said
-    so.
-    """
-    _declare_cmake(paths, fake_root)
-
-    with pytest.raises(RpcError):
-        bulk.dispatch("fw.flash_all", {"name": "roadrunner"})
-
-    reg = Registry.load(paths)
-    assert bulk._boards_to_flash(reg, "stale", "roadrunner") == []
+    assert bulk._cmake_boards_to_flash("stale") == []
+    assert [
+        board["serial"] for board in bulk._cmake_boards_to_flash("all")
+    ] == [RR_SERIAL]
 
 
-def test_update_all_refuses_a_cmake_type_the_same_way(bulk, paths, fake_root):
-    _declare_cmake(paths, fake_root)
+def test_a_cmake_board_carries_the_staged_uf2(bulk, paths, fake_root):
+    _declare_cmake(paths, fake_root, serials=[RR_SERIAL], helper=True, staged=True)
+    make_device(fake_root / "bus", "Klipper", RR_CHIPSET, RR_SERIAL)
 
-    with pytest.raises(RpcError) as exc:
-        bulk.dispatch("fw.update_all", {"name": "roadrunner"})
+    [board] = bulk._cmake_boards_to_flash("all")
 
-    assert exc.value.data["code"] == "type_not_bulk_flashable"
-    assert bulk.runner.current() is None
+    assert board["uf2_file"] == paths.uf2_file(RR, RR)
+
+
+def test_an_absent_cmake_board_is_never_selected(bulk, paths, fake_root):
+    _declare_cmake(paths, fake_root, serials=[RR_SERIAL], helper=True, staged=True)
+
+    assert bulk._cmake_boards_to_flash("stale") == []
+    assert bulk._cmake_boards_to_flash("all") == []
+
+
+def test_a_cmake_type_with_nothing_staged_is_never_selected(
+    bulk, paths, fake_root
+):
+    _declare_cmake(paths, fake_root, serials=[RR_SERIAL], helper=True)
+    make_device(fake_root / "bus", "Klipper", RR_CHIPSET, RR_SERIAL)
+
+    assert bulk._cmake_boards_to_flash("stale") == []
+    assert bulk._cmake_boards_to_flash("all") == []
+
+
+def test_scope_all_forces_a_cmake_board_and_says_so(bulk, paths, fake_root):
+    _declare_cmake(paths, fake_root, serials=[RR_SERIAL], helper=True, staged=True)
+    make_device(fake_root / "bus", "Klipper", RR_CHIPSET, RR_SERIAL)
+
+    [board] = bulk._cmake_boards_to_flash("all")
+
+    assert board["reason"] == "forced"
+
+
+def test_a_cmake_selection_covers_every_declared_serial(bulk, paths, fake_root):
+    _declare_cmake(
+        paths,
+        fake_root,
+        serials=[RR_SERIAL, RR_SERIAL_B],
+        helper=True,
+        staged=True,
+    )
+    make_device(fake_root / "bus", "Klipper", RR_CHIPSET, RR_SERIAL)
+    make_device(fake_root / "bus", "Klipper", RR_CHIPSET, RR_SERIAL_B)
+
+    assert cmake.load(paths)[RR].serials == [RR_SERIAL, RR_SERIAL_B]
+    boards = bulk._cmake_boards_to_flash("all")
+
+    assert sorted(board["serial"] for board in boards) == sorted(
+        [RR_SERIAL, RR_SERIAL_B]
+    )
+
+
+def test_a_named_type_narrows_the_cmake_selection_too(bulk, paths, fake_root):
+    _declare_cmake(paths, fake_root, serials=[RR_SERIAL], helper=True, staged=True)
+    make_device(fake_root / "bus", "Klipper", RR_CHIPSET, RR_SERIAL)
+
+    assert bulk._cmake_boards_to_flash("all", RR) != []
+    assert bulk._cmake_boards_to_flash("all", EBB) == []
+
+
+def test_flash_all_selects_cmake_boards_beside_the_others(bulk, paths, fake_root):
+    make_device(fake_root / "bus", "Klipper", EBB_CHIPSET, EBB_A)
+    _stage_artifact(paths, EBB)
+    _declare_cmake(paths, fake_root, serials=[RR_SERIAL], helper=True, staged=True)
+    make_device(fake_root / "bus", "Klipper", RR_CHIPSET, RR_SERIAL)
+
+    res = bulk.dispatch("fw.flash_all", {"scope": "all"})
+
+    assert RR_SERIAL in [board["serial"] for board in res["boards"]]
+    assert RR in [board["type"] for board in res["boards"]]
+    assert bulk.runner.wait(timeout=60)
+
+
+def test_a_cmake_type_is_no_longer_refused_by_name(bulk, paths, fake_root):
+    _declare_cmake(paths, fake_root, serials=[RR_SERIAL], helper=True, staged=True)
+    make_device(fake_root / "bus", "Klipper", RR_CHIPSET, RR_SERIAL)
+
+    res = bulk.dispatch("fw.flash_all", {"name": RR, "scope": "all"})
+
+    assert [board["serial"] for board in res["boards"]] == [RR_SERIAL]
+    assert bulk.runner.wait(timeout=60)
+
+
+def test_update_all_covers_a_cmake_type_end_to_end(bulk, paths, fake_root):
+    _declare_cmake(paths, fake_root, serials=[RR_SERIAL], helper=True, staged=True)
+    make_device(fake_root / "bus", "Klipper", RR_CHIPSET, RR_SERIAL)
+
+    res = bulk.dispatch("fw.update_all", {"scope": "all", "name": RR})
+
+    assert res["name"] == RR
+    assert bulk.runner.wait(timeout=60)
+    job = bulk.runner.get(res["job_id"])
+    assert [flashed["id"] for flashed in job.result["flash"]["flashed"]] == [
+        RR_SERIAL
+    ]

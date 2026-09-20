@@ -1,0 +1,35 @@
+{
+  "_comment": "A family names the flashers that may write it, checked when the config loads. A family with no flashers is a board nothing can write, discovered at flash time; an unknown flasher name is a typo that silently drops a device from every provider's targets(). What is deliberately NOT guarded here is a misspelt or missing helper: a misspelt one raises from helpers.for_name at the point a capability is asked for, not on the shared typelist.load path, so one typo costs a row rather than the whole panel - and a family with no helper at all is valid for every builder, with the accessors answering None for it.",
+  "file": "src/mcu_updater/typelist.py",
+  "command": ["python", "-m", "pytest", "tests/test_typelist.py", "tests/test_helpers.py", "tests/test_firmware.py", "-q"],
+  "mutations": [
+    {
+      "name": "a family with no flashers is refused",
+      "find": "    no_flashers = [family for family in families.values() if not family.flashers]",
+      "replace": "    no_flashers: list[firmware.FirmwareFamily] = []"
+    },
+    {
+      "name": "an unknown flasher name is refused",
+      "find": "        family.name: [name for name in family.flashers if name not in firmware.FLASHERS]",
+      "replace": "        family.name: [name for name in family.flashers if False]"
+    },
+    {
+      "name": "the flashers list is read from the section",
+      "file": "src/mcu_updater/firmware.py",
+      "find": "            flashers=tuple(doc.get_csv(section, \"flashers\") or ()),",
+      "replace": "            flashers=(\"flashtool\",),"
+    },
+    {
+      "name": "a bootloader family is suggested its ROM flashers",
+      "file": "src/mcu_updater/firmware.py",
+      "find": "    if family.bootloader:\n        return \"dfu_util, bootsel\"",
+      "replace": "    if False:\n        return \"dfu_util, bootsel\""
+    },
+    {
+      "name": "a helper without a capability does not get offered as one",
+      "file": "src/mcu_updater/helpers/__init__.py",
+      "find": "    return helper if isinstance(helper, BootselRequester) else None",
+      "replace": "    return helper  # type: ignore[return-value]"
+    }
+  ]
+}

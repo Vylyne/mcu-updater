@@ -30,13 +30,13 @@ it up in an error state; the last board of a batch would otherwise race the
 service restart. A screen has nothing to wait for, so it is a no-op there rather
 than an ``if kind ==``.
 
-**Selection is not here.** Which devices exist, where they are and which of them
-want firmware is the Inventory axis, and that stays deferred on its own
-criterion - each remains a *write*, never a *selection*. CAN and serial
-Katapult targets share `Flashtool`, while the agent still selects the identity
-and supplies it in `FlashTarget.detail`. Half-inventing selection inside this
-seam is how a deferral quietly stops being one. The agent selects; a flasher
-writes.
+**Selection is a question each flasher answers.** `supports(device, helper)`
+says whether this flasher can write a device given its family's helper, and
+`target()` turns that device into the `FlashTarget` it will write.
+`flashers.registry.select` walks the family's `flashers:` list in order and
+takes the first yes. Which devices exist and which of them want firmware stays
+the inventory's business: the caller brings a `Device`, the family decides who
+writes it, and the flasher writes.
 """
 
 from __future__ import annotations
@@ -44,11 +44,14 @@ from __future__ import annotations
 import dataclasses
 from collections.abc import Callable, Mapping
 from contextlib import AbstractContextManager
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol
 
 from ..paths import Paths
 from ..service import ServiceController
 from ..settings import Settings
+
+if TYPE_CHECKING:
+    from ..helpers.spec import Helper
 
 
 @dataclasses.dataclass(frozen=True)
@@ -68,13 +71,48 @@ class Bench:
     controller: Callable[[str | None], ServiceController]
 
 
+#: How a `Device` is addressed, which is most of what decides who can write it.
+#: A by-id serial.
+KIND_SERIAL = "serial"
+#: A CAN UUID. Its liveness is often unknown, and flashtool writes it anyway.
+KIND_CANBUS = "canbus_uuid"
+#: A PlatformIO device reached through its configured port.
+KIND_SCREEN = "screen"
+#: A board with no firmware of ours yet, in a ROM bootloader (DFU or BOOTSEL).
+KIND_BARE = "bare"
+
+
+@dataclasses.dataclass(frozen=True)
+class Device:
+    """One device a write is being chosen for.
+
+    What `Flasher.supports` reads and `Flasher.target` turns into a
+    `FlashTarget`. `type`, `id`, `chipset` and `state` are the facts selection
+    needs; `fw` is the family the device's `[type]` resolved to.
+
+    `detail` is the caller's selection payload, carried onto the target for
+    the flasher that ends up owning it: the board dict for flashtool,
+    `{"display", "screen"}` for esptool, `{"uf2_file"}` for bootsel,
+    `{"fw_bin"}` for dfu_util. Each caller builds the one payload its family's
+    flashers read, so no flasher has to be told which caller it is.
+    """
+
+    type: str
+    id: str
+    chipset: str
+    state: str
+    fw: str
+    kind: str = KIND_SERIAL
+    detail: Mapping[str, Any] = dataclasses.field(default_factory=dict)
+
+
 @dataclasses.dataclass(frozen=True)
 class FlashTarget:
     """One device to write, and who writes it.
 
     A key plus an envelope. `type` and `id` are the two facts every caller needs
     and are the same two slots `targets[].devices[]` already uses - the board's
-    `[mcu]` name and its serial, the display's `[display]` name and its
+    `[type]` name and its serial, the display's `[type]` name and its
     configured port.
 
     `detail` is the owning flasher's private payload and nothing else reads it.
@@ -85,7 +123,7 @@ class FlashTarget:
 
     #: Key into `flashers.FLASHERS`.
     flasher: str
-    #: The `[mcu ...]` or `[display ...]` section name.
+    #: The `[type ...]` section name.
     type: str
     #: What identifies the device: a serial for a board, a configured port for a
     #: screen.
@@ -97,11 +135,40 @@ class FlashTarget:
     #: so there is nothing to resolve.
     stop_services: tuple[str, ...] = ()
     detail: Mapping[str, Any] = dataclasses.field(default_factory=dict)
+    #: Overrides the flasher's `needs_services_stopped` for this one write when
+    #: set. `Bootsel` is why: a board already in BOOTSEL holds no port Klipper
+    #: could have open, while asking a running board to enter BOOTSEL goes over
+    #: exactly that port. One flasher, two answers, decided when the target is
+    #: built - the same way `stop_services` already is. Read it through
+    #: `flashers.registry.needs_services_stopped`, never directly.
+    needs_services_stopped: bool | None = None
 
     def to_json(self) -> dict[str, Any]:
         """The uniform slice. `detail` never goes on the wire - it holds live
         objects, and it is one flasher's business."""
         return {"type": self.type, "id": self.id, "flasher": self.flasher}
+
+
+@dataclasses.dataclass(frozen=True)
+class FlashRecord:
+    """What a completed write is worth remembering, in `FlashLog`'s vocabulary.
+
+    A flasher describes; `write_all` files. The three decisions a record used
+    to carry with it at four separate call sites - whether this run was a
+    rehearsal, where the ledger lives, and whether a lost write is worth
+    failing a good flash over - are the batch's, and there is one of each now.
+
+    `key` is what the entry is filed under and is *not* always `target.id`: a
+    screen's id is a port, which is not durable, so it files under
+    `build.display_key` of its hardware id instead.
+    """
+
+    key: str
+    mcu_type: str
+    fw: str
+    bin_sha256: str | None
+    fw_sha: str | None
+    version: str | None = None
 
 
 class Flasher(Protocol):
@@ -115,9 +182,7 @@ class Flasher(Protocol):
     #: `stm32*` part exposes the same protocol as any other, so this is prefixes
     #: rather than the two hundred exact names Klipper supports.
     #:
-    #: Together with `states`, this is the whole answer `flashers.registry.
-    #: select_for` matches against - there is no separate lookup table, so a
-    #: route registering a new flasher is a route selection already knows about.
+    #: An input to `supports`, through `chipset_matches`.
     chipsets: tuple[str, ...]
     #: Bus/device states (`devices.STATE_*`) this flasher answers to. A board
     #: already running Klipper and one sitting in Katapult are both states
@@ -144,6 +209,27 @@ class Flasher(Protocol):
     #: True.
     needs_services_stopped: bool
 
+    def supports(self, device: Device, helper: Helper | None) -> bool:
+        """Can this flasher write `device`, given its family's helper?
+
+        Pure: no bus access, no config reads. The family's list decides the
+        order these are asked in, so this answers only "could I", never
+        "should I".
+        """
+        ...
+
+    def target(
+        self,
+        paths: Paths,
+        device: Device,
+        helper: Helper | None,
+        *,
+        stop_services: tuple[str, ...],
+    ) -> FlashTarget:
+        """`device` as the target this flasher writes. Only called after
+        `supports` said yes."""
+        ...
+
     def prepared(
         self, bench: Bench, targets: list[FlashTarget], ctx: Any
     ) -> AbstractContextManager[Any]:
@@ -169,6 +255,26 @@ class Flasher(Protocol):
 
         Returns whatever is worth recording beside the uniform result - the chip
         esptool reported, a board's serial under the name it has always had.
+
+        A `"confidence"` key is special: `write_all` takes it off the result
+        and passes it to the ledger, so it never reaches the wire. How a board
+        was identified is known inside the write and nowhere else - the batch
+        cannot re-derive it afterwards, because the ports are no longer free.
+        """
+        ...
+
+    def record(self, bench: Bench, target: FlashTarget) -> FlashRecord | None:
+        """What was just written to this target, for the ledger.
+
+        Called only after a successful `write`, and never on a dry run - the
+        batch owns both of those conditions. `None` means there is nothing
+        durable to file this under: a bare board with no tracked serial, a
+        screen that would not say which one it is.
+
+        Reads the build record its own builder wrote. The two sidecar schemas
+        in this tree name the tree commit differently (`fw_sha` for kconfig,
+        `sha` for cmake), and the flasher that wrote the image is the one side
+        that knows which it is looking at.
         """
         ...
 
@@ -182,4 +288,9 @@ class Flasher(Protocol):
         ...
 
 
-__all__ = ["Bench", "FlashTarget", "Flasher"]
+def chipset_matches(flasher: Flasher, chipset: str) -> bool:
+    """Does `chipset` start with one of the flasher's chipset prefixes?"""
+    return any(chipset.startswith(prefix) for prefix in flasher.chipsets)
+
+
+__all__ = ["KIND_BARE", "KIND_CANBUS", "KIND_SCREEN", "KIND_SERIAL", "Bench", "Device", "FlashRecord", "FlashTarget", "Flasher", "chipset_matches"]

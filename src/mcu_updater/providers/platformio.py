@@ -61,7 +61,7 @@ class PlatformIO:
     def targets(self, install: Install) -> list[BuildTarget]:
         return [
             BuildTarget(self.name, name, display.firmware)
-            for name, display in install.displays.items()
+            for name, display in install.platformio.items()
         ]
 
     def blocked(self, install: Install, target: BuildTarget) -> str | None:
@@ -73,13 +73,13 @@ class PlatformIO:
         reason an unconfigured MCU type is - there is nothing the batch could do
         about it, and it should not take the fleet down with it.
         """
-        display = install.displays.get(target.name)
+        display = install.platformio.get(target.name)
         if display is None:
-            return f"no display type '{target.name}' is configured."
+            return f"no platformio type '{target.name}' is configured."
         return source_problem(display)
 
     def artifact_status(self, install: Install, target: BuildTarget) -> ArtifactStatus:
-        display = install.displays[target.name]
+        display = install.platformio[target.name]
         return pio_mod.artifact_status(
             install.paths, display, pio_mod.source_state(display.source)
         )
@@ -95,7 +95,7 @@ class PlatformIO:
         pio_mod.build(
             install.paths,
             install.settings,
-            install.displays[target.name],
+            install.platformio[target.name],
             reporter=reporter,
             cancel=cancel,
         )

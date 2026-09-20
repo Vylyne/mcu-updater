@@ -254,7 +254,7 @@ def test_configured_displays_appear_in_status(api, paths, fake_root, live_regist
     port = fake_root / "knomi_t0"
     port.write_text("", encoding="utf-8")
     with open(paths.main_config, "a", encoding="utf-8") as fh:
-        fh.write("\n[type knomi_toolchanger]\nchipset: esp32\nfirmware: knomi_serial\nenv: knomi_toolchanger\n")
+        fh.write("\n[type knomi_toolchanger]\nchipset: esp32\nfirmware: knomi_serial\nplatformio_env: knomi_toolchanger\n")
 
     api._call = _moonraker({"knomi_serial t0_knomi": {"serial": str(port)}})
     # live_registry_text's own [type knomi] shares knomi_serial too, so pick
@@ -274,8 +274,9 @@ def test_a_screen_carries_no_identity_history(api, paths, fake_root):
     port.write_text("", encoding="utf-8")
     with open(paths.main_config, "a", encoding="utf-8") as fh:
         fh.write(
-            f"\n[firmware knomi_serial]\nsource: {fake_root}\nbuilder: platformio\n\n"
-            f"[type knomi_toolchanger]\nfirmware: knomi_serial\nenv: knomi_toolchanger\n"
+            f"\n[firmware knomi_serial]\nsource: {fake_root}\nbuilder: platformio\n"
+            "helper: knomi_serial\nflashers: esptool\n\n"
+            f"[type knomi_toolchanger]\nfirmware: knomi_serial\nplatformio_env: knomi_toolchanger\n"
         )
 
     api._call = _moonraker({"knomi_serial t0_knomi": {"serial": str(port)}})
@@ -283,31 +284,6 @@ def test_a_screen_carries_no_identity_history(api, paths, fake_root):
 
     assert not {"mac", "flashed_at", "moved_from", "moved_at"} & set(screen)
     assert "device_id" in screen
-
-
-def test_screens_are_matched_to_their_type_by_klipper_section(api, paths, fake_root):
-    """Two display types with different klippy modules must not collect each
-    other's screens."""
-    for name in ("knomi_t0", "other_a"):
-        (fake_root / name).write_text("", encoding="utf-8")
-    with open(paths.main_config, "a", encoding="utf-8") as fh:
-        fh.write(
-            f"\n[firmware knomi_serial]\nsource: {fake_root}\nbuilder: platformio\n\n"
-            f"[type knomi_toolchanger]\nfirmware: knomi_serial\nenv: knomi_toolchanger\n"
-            f"[type otherscreen]\nfirmware: knomi_serial\nenv: otherscreen\n"
-            f"klipper_section: other_display\n"
-        )
-
-    api._call = _moonraker(
-        {
-            "knomi_serial t0_knomi": {"serial": str(fake_root / "knomi_t0")},
-            "other_display a": {"serial": str(fake_root / "other_a")},
-        }
-    )
-    by_env = {d["env"]: d for d in api.pio_status()}
-
-    assert [s["name"] for s in by_env["knomi_toolchanger"]["screens"]] == ["t0_knomi"]
-    assert [s["name"] for s in by_env["otherscreen"]["screens"]] == ["a"]
 
 
 # --------------------------------------------------------------------------
@@ -426,8 +402,9 @@ def _with_display_type(api, paths, fake_root):
     """pio_status short-circuits with no PlatformIO type - add one."""
     with open(paths.registry_file, "a", encoding="utf-8") as fh:
         fh.write(
-            f"\n[firmware knomi_serial]\nsource: {fake_root}\nbuilder: platformio\n\n"
-            f"[type knomi_toolchanger]\nfirmware: knomi_serial\nenv: knomi_toolchanger\n"
+            f"\n[firmware knomi_serial]\nsource: {fake_root}\nbuilder: platformio\n"
+            "helper: knomi_serial\nflashers: esptool\n\n"
+            f"[type knomi_toolchanger]\nfirmware: knomi_serial\nplatformio_env: knomi_toolchanger\n"
         )
 
 
@@ -667,8 +644,10 @@ def _declare_display(paths, env="knomi_toolchanger"):
         doc = CfgDocument(fh.read())
     doc.set("firmware knomi_serial", "source", "/nowhere")
     doc.set("firmware knomi_serial", "builder", "platformio")
+    doc.set("firmware knomi_serial", "flashers", "esptool")
+    doc.set("firmware knomi_serial", "helper", "knomi_serial")
     doc.set(f"type {env}", "firmware", "knomi_serial")
-    doc.set(f"type {env}", "env", env)
+    doc.set(f"type {env}", "platformio_env", env)
     with open(paths.main_config, "w", encoding="utf-8", newline="\n") as fh:
         fh.write(doc.render())
     return env
@@ -718,3 +697,21 @@ def test_the_map_file_mtime_is_reported(api, paths):
     api._call = _moonraker({}, reachable=False)
 
     assert api.device_list({})["watcher"][env]["updated"] is not None
+
+
+def test_the_watcher_block_never_asks_the_devices(api, paths, monkeypatch):
+    """`fw.device.list` rides along in every `fw.status` poll, and asking means
+    six seconds with every free port open. The handler takes `ask` for exactly
+    this: a status read passes False and gets the remembered answer or
+    nothing."""
+    from mcu_updater.helpers import knomi_serial as handler
+
+    env = _declare_display(paths)
+
+    def boom(*a, **kw):
+        raise AssertionError("opened the ports from a status read")
+
+    monkeypatch.setattr(handler, "discover", boom)
+    api._call = _moonraker({}, reachable=False)
+
+    assert api.device_list({})["watcher"][env]["devices"] == []

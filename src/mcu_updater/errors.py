@@ -81,6 +81,15 @@ class SerialTrackedElsewhereError(ConfigError):
     code = "serial_tracked_elsewhere"
 
 
+class UnprovisionedSerialError(ConfigError):
+    """A helper refused a serial because it is not a durable identity.
+
+    The firmware-named code is retained as a wire-compatibility constraint.
+    """
+
+    code = "roadrunner_unprovisioned"
+
+
 class UuidTrackedElsewhereError(ConfigError):
     """A CAN uuid already tracked under a different type.
 
@@ -143,6 +152,16 @@ class FlashError(UpdaterError):
 
 class DeviceNotFoundError(FlashError):
     code = "device_not_found"
+
+
+class NoFlasherError(FlashError):
+    """No flasher in a family's `flashers:` list can write this device.
+
+    A config fact, not a hardware one: the fix is the family's list, and the
+    message names it.
+    """
+
+    code = "no_flasher"
 
 
 class BootloaderTimeoutError(FlashError):

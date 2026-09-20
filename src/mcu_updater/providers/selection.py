@@ -18,8 +18,7 @@ agent.
 
 from __future__ import annotations
 
-from .. import firmware, sections
-from ..cfgdoc import CfgDocument
+from .. import typelist
 from ..config import Registry
 from ..errors import UnknownTypeError
 from ..paths import Paths
@@ -36,13 +35,14 @@ PIO_BUILDER = "platformio"
 def _declared_builders(paths: Paths) -> dict[str, str]:
     """Every declared type name -> the `builder:` of the family it names.
 
-    This re-derives the ownership rule that `pio.load()` and `cmake.load()`
-    each apply from their own side - "a type is ours if the family it declares
-    is built by us" - rather than calling those loads, and the duplication is
-    deliberate.
+    This applies the same ownership rule that `pio.load()` and `cmake.load()`
+    apply - "a type is ours if the family it declares is built by us" -
+    reading the same `typelist` walk those loads read, through its lenient
+    half rather than by calling those loads directly.
 
     Those loads *validate*: `cmake.load()` raises if a cmake type names no
-    `cmake_target:`, `pio.load()` raises if a PlatformIO type names no `env:`.
+    `cmake_target:`, `pio.load()` raises if a PlatformIO type names no
+    `platformio_env:`.
     Resolving one name must not depend on every other section being
     well-formed. Asking them would mean a malformed screen section breaking
     `flash -t <kconfig type>`, which is a wider blast radius than the question
@@ -52,24 +52,13 @@ def _declared_builders(paths: Paths) -> dict[str, str]:
     A section naming no family at all is absent from the result: both loads
     skip it, so neither provider claims it, and it falls through to the
     registry exactly as it does today.
+
+    Read through `typelist.read_config`, which never raises for an undeclared
+    family. Do not route this through `firmware.resolve()`: that refuses an
+    undeclared name, and one bad section must not break resolving another.
     """
-    try:
-        with open(paths.main_config, encoding="utf-8") as fh:
-            doc = CfgDocument(fh.read())
-    except OSError:
-        return {}
-
-    families_map = firmware.load_from_doc(doc)
-
-    out: dict[str, str] = {}
-    for declared in sections.read(doc):
-        declared_fws = doc.get_csv(declared.section, "firmware") or []
-        if not declared_fws:
-            continue
-        family = firmware.resolve(paths, declared_fws[0], families_map)
-        if family.builder:
-            out[declared.name] = family.builder
-    return out
+    entries, _ = typelist.read_config(paths)
+    return {entry.name: entry.builder for entry in entries if entry.builder}
 
 
 def provider_of(paths: Paths, name: str) -> str:

@@ -26,6 +26,8 @@ from mcu_updater.errors import (
 from mcu_updater.flashers import flash as flash_mod
 from mcu_updater.flashers.flash import flash_katapult_can
 
+from .conftest import seed_base_firmwares
+
 UUID = "bcb5346fc731"
 
 
@@ -53,6 +55,7 @@ def _with_interfaces(paths, fake_root, names):
 def ready(paths, settings, fake_root):
     """A staged firmware binary, an installed flashtool.py, and a real write
     (not dry-run) - the interface trial loop only matters once dry_run is off."""
+    seed_base_firmwares(paths)
     settings.dry_run = False
     (fake_root / "katapult" / "scripts").mkdir(parents=True, exist_ok=True)
     (fake_root / "katapult" / "scripts" / "flashtool.py").write_text("", encoding="utf-8")
@@ -87,12 +90,14 @@ def _script_run_streamed(monkeypatch, script: dict):
 
 
 def test_missing_flashtool_raises(paths, settings, fake_root):
+    seed_base_firmwares(paths)
     _stage_bin(paths)
     with pytest.raises(ToolMissingError):
         flash_katapult_can(paths, settings, "board", UUID)
 
 
 def test_missing_firmware_binary_raises(paths, settings, fake_root):
+    seed_base_firmwares(paths)
     (fake_root / "katapult" / "scripts").mkdir(parents=True)
     (fake_root / "katapult" / "scripts" / "flashtool.py").write_text("", encoding="utf-8")
     with pytest.raises(FlashError):
@@ -343,16 +348,11 @@ def test_a_known_native_node_never_writes_after_every_probe_fails(
 # --------------------------------------------------------------------------
 
 
-def test_a_real_flash_records_canbus_uuid_confidence(paths, ready, fake_root, monkeypatch):
-    from mcu_updater.build import FlashLog
-
+def test_a_real_can_flash_reports_canbus_uuid_confidence(paths, ready, fake_root, monkeypatch):
     ready_paths = _with_interfaces(paths, fake_root, ["can0"])
     _script_run_streamed(monkeypatch, {("can0", "write"): (0, [])})
 
-    flash_katapult_can(ready_paths, ready, "board", UUID)
-
-    record = FlashLog(paths).all()[UUID]
-    assert record["confidence"] == "canbus_uuid"
+    assert flash_katapult_can(ready_paths, ready, "board", UUID) == "canbus_uuid"
 
 
 # --------------------------------------------------------------------------
@@ -382,7 +382,7 @@ def test_flashtool_writes_a_can_target_and_returns_its_uuid(paths, ready, fake_r
     result = flashers.Flashtool().write(
         bench, None, target, flashers.PlainContext(lambda *a: None)
     )
-    assert result == {"uuid": UUID}
+    assert result == {"uuid": UUID, "confidence": "canbus_uuid"}
 
 
 def test_flashtool_settles_a_can_target_as_a_harmless_no_op(paths, settings):

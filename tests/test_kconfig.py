@@ -23,6 +23,8 @@ from mcu_updater.providers.kconfig import (
     load_kconfiglib,
 )
 
+from .conftest import seed_base_firmwares
+
 FIXTURES = pathlib.Path(__file__).resolve().parent / "fixtures"
 VENDORED = FIXTURES / "kconfiglib" / "kconfiglib.py"
 SAMPLE_KCONFIG = FIXTURES / "kconfig_tree" / "Kconfig"
@@ -298,6 +300,7 @@ def store(tmp_path, monkeypatch):
     (tmp_path / "printer_data" / "config" / "mcu-updater").mkdir(parents=True)
     (tmp_path / "printer_data" / "mcu-updater").mkdir(parents=True)
     paths = Paths.from_env(env={"MCU_UPDATER_HOME": str(tmp_path)})
+    seed_base_firmwares(paths)
     return SessionStore(paths)
 
 

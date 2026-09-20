@@ -96,7 +96,7 @@
       "name": "your own profile is not written into the vendor's tree",
       "file": "src/mcu_updater/paths.py",
       "find": "        return os.path.join(self.type_dir(mcu_type), f\"{fw}.custom.config\")",
-      "replace": "        return os.path.join(self.fw_dir(fw), \"config.custom\")"
+      "replace": "        return os.path.join(os.path.join(self.home, fw), \"config.custom\")"
     },
     {
       "name": "a derived config tracks the application config it came from",

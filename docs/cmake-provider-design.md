@@ -156,7 +156,7 @@ both wrong:
 
 - `config.py:388-394` skips a type from this registry when
   `builders == {"platformio"}`;
-- `config.py:472` — `Registry.save()` — calls `doc.remove_section()` for any
+- `config.py:472` — `Registry._save()` — calls `doc.remove_section()` for any
   declared type not in `self.types` **unless** `_is_platformio_only`.
 
 Both invert to: **this registry owns a type only when its builders are
@@ -164,7 +164,7 @@ Both invert to: **this registry owns a type only when its builders are
 asks — suggested `_is_foreign_builder`, returning True when a type belongs to
 some other provider.
 
-The `save()` half is the one that bites. Adding a cmake skip to `load()`
+The `_save()` half is the one that bites. Adding a cmake skip to `load()`
 without it means a `[type roadrunner]` section is excluded from `self.types`,
 `_is_platformio_only` returns False for it, and **the next save silently
 deletes the user's section.** Config data loss, in a file that lives in

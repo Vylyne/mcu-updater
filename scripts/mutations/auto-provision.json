@@ -1,0 +1,78 @@
+{
+  "_comment": "Auto-provisioning on appearance. Both helper capabilities identify a candidate, only the provision remedy is actionable, deployment policy gates the write, one serial is attempted once per sweep, busy retries, other updater failures do not, and a watcher retry does not re-emit an unchanged bus.",
+  "file": "src/mcu_updater/provisioning.py",
+  "command": [
+    "python",
+    "-m",
+    "pytest",
+    "tests/test_auto_provision.py",
+    "tests/test_typelist.py",
+    "-q"
+  ],
+  "mutations": [
+    {
+      "name": "a family that did not ask is left alone",
+      "find": "        if not family.auto_provision:\n            continue",
+      "replace": "        if False:\n            continue"
+    },
+    {
+      "name": "a trackable serial is not an auto-provision candidate",
+      "find": "            verdict = judge.is_trackable(serial)",
+      "replace": "            verdict = helpers.TrackVerdict(ok=False, remedy=\"provision\")"
+    },
+    {
+      "name": "only the provision remedy is actionable",
+      "find": "            if verdict.remedy != \"provision\":\n                continue",
+      "replace": "            if False:\n                continue"
+    },
+    {
+      "name": "deployment policy gates the unattended write",
+      "find": "            if not may_provision:\n                continue",
+      "replace": "            if False:\n                continue"
+    },
+    {
+      "name": "one serial is attempted only once per sweep",
+      "find": "            if serial in attempted_serials:\n                continue",
+      "replace": "            if False:\n                continue"
+    },
+    {
+      "name": "the service passes its shared hardware-write predicate",
+      "file": "src/mcu_updater/agent/service.py",
+      "find": "                may_provision=self.api._hardware_writes_allowed(),",
+      "replace": "                may_provision=True,"
+    },
+    {
+      "name": "a held lock asks again",
+      "find": "            except BusyError:\n                retry = True",
+      "replace": "            except BusyError:\n                retry = False"
+    },
+    {
+      "name": "a refused probe does not ask again",
+      "find": "            except UpdaterError as exc:\n                reporter(\"warn\", f\"{serial}: {exc}\")\n                continue",
+      "replace": "            except UpdaterError as exc:\n                reporter(\"warn\", f\"{serial}: {exc}\")\n                retry = True\n                continue"
+    },
+    {
+      "name": "provisioning holds the operation lock",
+      "find": "                with exclusive(paths, f\"auto-provision {serial}\"):\n                    provisioned = prov.provision(paths, serial)",
+      "replace": "                provisioned = prov.provision(paths, serial)"
+    },
+    {
+      "name": "a retry runs the handler on an unchanged bus",
+      "file": "src/mcu_updater/agent/events.py",
+      "find": "        if not changed and not self._retry:",
+      "replace": "        if not changed:"
+    },
+    {
+      "name": "a retry does not re-emit an unchanged bus",
+      "file": "src/mcu_updater/agent/events.py",
+      "find": "        if changed:\n            # A retry's payload is identical",
+      "replace": "        if True:\n            # A retry's payload is identical"
+    },
+    {
+      "name": "auto_provision is refused without both helper capabilities",
+      "file": "src/mcu_updater/typelist.py",
+      "find": "        if family.auto_provision and family.helper not in firmware.PROVISIONING_HELPERS",
+      "replace": "        if False"
+    }
+  ]
+}

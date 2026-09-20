@@ -125,11 +125,13 @@ None is load-bearing; all were reviewed and deliberately deferred.
 
 ## Helper-backed flashing
 
-The legacy chipset/state flasher selection is unchanged. CMake flashing does
-not use it: for an exactly declared serial, `fw.flash` resolves the family,
-requires its configured static helper, and constructs a `helper_bootsel` target
-for the staged UF2. This preserves the existing RP2040 flashtool route for
-boards that really do use Katapult.
+CMake boards are written through their family's `flashers:` list like every
+other board. For `[firmware roadrunner]` that list is `bootsel`, which writes a
+running board by asking the family's helper to put it into BOOTSEL, copying the
+staged UF2 to the volume matching the board's USB topology, and waiting for the
+helper to confirm the board came back. A board already sitting in BOOTSEL is
+written the same way without a helper. The RP2040 flashtool route is untouched
+for families that list `flashtool`.
 
 The Roadrunner helper confirms the provisioned serial over the admin protocol,
 captures the full serial `by-path` topology before `REBOOT_BOOTSEL`, and accepts
@@ -144,9 +146,11 @@ the board re-enumerates, its `by-id` symlink appears before its tty can
 reliably be opened.
 
 The target status includes every configured serial. Presence is determined by
-exact serial discovery; `version` and `needs_flash` remain unknown because the
-status poll deliberately does not open the Roadrunner admin port. Device flash
-actions and `extra.flashable: true` are offered only when a helper is configured.
+exact serial discovery; status reads device information through the family's
+helper and applies the common verdict to each board, so `version` and
+`needs_flash` are populated whenever the board supplies enough evidence. Device
+flash actions and `extra.flashable: true` are offered only when a helper is
+configured.
 
 This path is covered by host tests but has not yet been exercised as an
 end-to-end hardware flash. Manual first-install BOOTSEL behavior remains the

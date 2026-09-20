@@ -1,11 +1,9 @@
 # Provider selection seam Implementation Plan
 
-> **Superseded in part.** The section "Type-level flash stays refused,
-> honestly" below, and the plan's Global Constraint "No type-level CMake
-> flash", read a gap as a boundary. They are withdrawn by
-> `2026-09-11-cmake-provenance-design.md`. What shipped here is still
-> correct for the backend as it stands; the refusal is removed by that
-> spec's work, not by reverting this one.
+> **Superseded** by `docs/superpowers/specs/2026-09-14-one-pipeline-design.md`.
+> What shipped here stays in place until that work replaces it. Selection by
+> provider becomes one type list, and the type-level flash refusal is retired.
+> Kept as the record of what shipped; do not execute its remaining tasks.
 
 Spec: `docs/superpowers/specs/2026-09-10-provider-selection-seam-design.md`
 

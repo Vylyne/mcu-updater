@@ -1,0 +1,58 @@
+{
+  "_comment": "Provision-on-track. An unprovisioned serial must be provisioned before it is tracked, never tracked as-is; the op lock must cover the write and never be retried; the type must be checked before any board is; and a family with nothing to provision with must still refuse.",
+  "file": "src/mcu_updater/tracking.py",
+  "command": [
+    "python",
+    "-m",
+    "pytest",
+    "tests/test_provision_on_track.py",
+    "tests/test_cli.py",
+    "tests/test_agent_methods.py",
+    "-q"
+  ],
+  "mutations": [
+    {
+      "name": "an unprovisioned serial is provisioned first",
+      "find": "    if not verdict.ok:",
+      "replace": "    if False:"
+    },
+    {
+      "name": "an unknown trackability remedy is a refusal",
+      "find": "    if not verdict.ok:",
+      "replace": "    if not verdict.ok and verdict.remedy == \"provision\":"
+    },
+    {
+      "name": "what gets tracked is what provisioning returned",
+      "find": "        provisioned_from, serial = serial, provisioned",
+      "replace": "        provisioned_from = serial"
+    },
+    {
+      "name": "provisioning holds the op lock",
+      "find": "        with exclusive(paths, f\"provision {serial} for {name}\"):\n            provisioned = prov.provision(paths, serial)",
+      "replace": "        provisioned = prov.provision(paths, serial)"
+    },
+    {
+      "name": "a family with no provisioner still refuses the diagnostic serial",
+      "find": "        if verdict.remedy != \"provision\" or prov is None or not may_provision:",
+      "replace": "        if verdict.remedy != \"provision\" or not may_provision:"
+    },
+    {
+      "name": "the serial that was tracked is the one reported",
+      "file": "src/mcu_updater/agent/methods/registry.py",
+      "find": "            \"serial\": tracked.serial,",
+      "replace": "            \"serial\": serial,"
+    },
+    {
+      "name": "a moved handle is reported",
+      "file": "src/mcu_updater/agent/methods/registry.py",
+      "find": "        if tracked.provisioned_from is not None:",
+      "replace": "        if False:"
+    },
+    {
+      "name": "only a helper that can provision offers one",
+      "file": "src/mcu_updater/helpers/__init__.py",
+      "find": "    return helper if isinstance(helper, Provisioner) else None",
+      "replace": "    return helper"
+    }
+  ]
+}

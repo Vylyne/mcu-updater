@@ -16,6 +16,8 @@ import pytest
 from mcu_updater.errors import ConfigError, FlashError, SourceTreeMissingError
 from mcu_updater.providers import pio
 
+from .conftest import save_registry, with_base_firmwares
+
 # Captured verbatim from a successful `pio run -e knomi_toolchanger -t upload`
 # on the printer. Parsing invented output is how the dfu-util altsetting bug
 # happened, so the fixtures here are the real thing.
@@ -60,13 +62,16 @@ def display(tree):
 
 # --------------------------------------------------------------------------
 # config: a type belongs to this provider when the firmware family it
-# declares is platformio-built - there is no provider: key and no [display]
-# prefix any more.
+# declares is platformio-built - there is no provider: key and no legacy
+# `display` section prefix any more.
 # --------------------------------------------------------------------------
 
 #: One [firmware ...] section, reused by every test below that just needs
 #: some platformio-built family to point a [type ...] section at.
-_KNOMI_SERIAL_FAMILY = "[firmware knomi_serial]\nsource: ~/knomi_serial\nbuilder: platformio\n\n"
+_KNOMI_SERIAL_FAMILY = (
+    "[firmware knomi_serial]\nsource: ~/knomi_serial\nbuilder: platformio\n"
+    "helper: knomi_serial\nflashers: esptool\n\n"
+)
 
 
 def test_env_is_required_with_no_default(paths):
@@ -86,7 +91,7 @@ def test_an_env_can_be_named_separately_if_they_ever_diverge(paths):
     with open(paths.main_config, "w", encoding="utf-8") as fh:
         fh.write(
             _KNOMI_SERIAL_FAMILY
-            + "[type tool_screens]\nfirmware: knomi_serial\nenv: knomi_toolchanger\n"
+            + "[type tool_screens]\nfirmware: knomi_serial\nplatformio_env: knomi_toolchanger\n"
         )
     assert pio.load(paths)["tool_screens"].env == "knomi_toolchanger"
 
@@ -96,21 +101,21 @@ def test_a_shared_source_tree_is_the_default(paths, fake_root):
     with open(paths.main_config, "w", encoding="utf-8") as fh:
         fh.write(
             _KNOMI_SERIAL_FAMILY
-            + "[type knomi]\nfirmware: knomi_serial\nenv: knomi\n"
-            + "[type knomi_toolchanger]\nfirmware: knomi_serial\nenv: knomi_toolchanger\n"
+            + "[type knomi]\nfirmware: knomi_serial\nplatformio_env: knomi\n"
+            + "[type knomi_toolchanger]\nfirmware: knomi_serial\nplatformio_env: knomi_toolchanger\n"
         )
 
     found = pio.load(paths)
     assert {d.source for d in found.values()} == {str(fake_root / "knomi_serial")}
 
 
-def test_the_klipper_section_defaults_to_knomi_serial(paths):
-    """A second type sharing the same klippy extra needs no config at all;
-    one bringing its own module sets this."""
+def test_a_type_with_no_klipper_section_key_defaults_to_knomi_serial(paths):
+    """The key is no longer read from config at all - every type gets the
+    one klippy module's prefix, unconditionally."""
     with open(paths.main_config, "w", encoding="utf-8") as fh:
         fh.write(
             _KNOMI_SERIAL_FAMILY
-            + "[type knomi_toolchanger]\nfirmware: knomi_serial\nenv: knomi_toolchanger\n"
+            + "[type knomi_toolchanger]\nfirmware: knomi_serial\nplatformio_env: knomi_toolchanger\n"
         )
     assert pio.load(paths)["knomi_toolchanger"].klipper_section == "knomi_serial"
 
@@ -123,7 +128,7 @@ def test_an_absent_service_key_takes_the_default_watcher(paths):
     with open(paths.main_config, "w", encoding="utf-8") as fh:
         fh.write(
             _KNOMI_SERIAL_FAMILY
-            + "[type knomi_toolchanger]\nfirmware: knomi_serial\nenv: knomi_toolchanger\n"
+            + "[type knomi_toolchanger]\nfirmware: knomi_serial\nplatformio_env: knomi_toolchanger\n"
         )
     assert pio.load(paths)["knomi_toolchanger"].stop_services is None
 
@@ -136,7 +141,7 @@ def test_a_blank_legacy_service_key_still_stops_klipper(paths):
     with open(paths.main_config, "w", encoding="utf-8") as fh:
         fh.write(
             _KNOMI_SERIAL_FAMILY
-            + "[type knomi_toolchanger]\nfirmware: knomi_serial\nenv: knomi_toolchanger\n"
+            + "[type knomi_toolchanger]\nfirmware: knomi_serial\nplatformio_env: knomi_toolchanger\n"
             + "service:\n"
         )
     assert pio.load(paths)["knomi_toolchanger"].stop_services == ["klipper"]
@@ -150,7 +155,7 @@ def test_a_legacy_service_key_becomes_klipper_plus_the_named_unit(paths):
     with open(paths.main_config, "w", encoding="utf-8") as fh:
         fh.write(
             _KNOMI_SERIAL_FAMILY
-            + "[type knomi_toolchanger]\nfirmware: knomi_serial\nenv: knomi_toolchanger\n"
+            + "[type knomi_toolchanger]\nfirmware: knomi_serial\nplatformio_env: knomi_toolchanger\n"
             + "service: my_watcher\n"
         )
     assert pio.load(paths)["knomi_toolchanger"].stop_services == ["klipper", "my_watcher"]
@@ -162,7 +167,7 @@ def test_an_explicit_stop_services_key_wins_over_a_legacy_service_key(paths):
     with open(paths.main_config, "w", encoding="utf-8") as fh:
         fh.write(
             _KNOMI_SERIAL_FAMILY
-            + "[type knomi_toolchanger]\nfirmware: knomi_serial\nenv: knomi_toolchanger\n"
+            + "[type knomi_toolchanger]\nfirmware: knomi_serial\nplatformio_env: knomi_toolchanger\n"
             + "service: my_watcher\nstop_services: knomi_serial\n"
         )
     assert pio.load(paths)["knomi_toolchanger"].stop_services == ["knomi_serial"]
@@ -172,7 +177,7 @@ def test_stop_services_blank_means_stop_nothing(paths):
     with open(paths.main_config, "w", encoding="utf-8") as fh:
         fh.write(
             _KNOMI_SERIAL_FAMILY
-            + "[type knomi_toolchanger]\nfirmware: knomi_serial\nenv: knomi_toolchanger\n"
+            + "[type knomi_toolchanger]\nfirmware: knomi_serial\nplatformio_env: knomi_toolchanger\n"
             + "stop_services:\n"
         )
     assert pio.load(paths)["knomi_toolchanger"].stop_services == []
@@ -193,7 +198,7 @@ def test_pio_type_sections_do_not_disturb_the_mcu_registry(paths, live_registry_
             live_registry_text
             + "\n"
             + "[type knomi_toolchanger]\nchipset: esp32\nfirmware: knomi_serial\n"
-            "env: knomi_toolchanger\n"
+            "platformio_env: knomi_toolchanger\n"
         )
 
     assert "bttebb36" in Registry.load(paths).names()
@@ -203,8 +208,9 @@ def test_pio_type_sections_do_not_disturb_the_mcu_registry(paths, live_registry_
 def test_a_type_is_pio_when_its_declared_firmware_is_platformio_built(paths, fake_root):
     with open(paths.main_config, "w", encoding="utf-8") as fh:
         fh.write(
-            "[firmware knomi_serial]\nsource: ~/knomi_serial\nbuilder: platformio\n\n"
-            "[type knomi]\nchipset: esp32\nfirmware: knomi_serial\nenv: knomi\n"
+            "[firmware knomi_serial]\nsource: ~/knomi_serial\nbuilder: platformio\n"
+            "helper: knomi_serial\nflashers: esptool\n\n"
+            "[type knomi]\nchipset: esp32\nfirmware: knomi_serial\nplatformio_env: knomi\n"
         )
 
     found = pio.load(paths)
@@ -220,8 +226,9 @@ def test_a_new_style_pio_type_is_not_picked_up_by_the_mcu_registry(paths, fake_r
 
     with open(paths.main_config, "w", encoding="utf-8") as fh:
         fh.write(
-            "[firmware knomi_serial]\nsource: ~/knomi_serial\nbuilder: platformio\n\n"
-            "[type knomi]\nchipset: esp32\nfirmware: knomi_serial\nenv: knomi\n"
+            "[firmware knomi_serial]\nsource: ~/knomi_serial\nbuilder: platformio\n"
+            "helper: knomi_serial\nflashers: esptool\n\n"
+            "[type knomi]\nchipset: esp32\nfirmware: knomi_serial\nplatformio_env: knomi\n"
         )
 
     assert Registry.load(paths).names() == []
@@ -235,13 +242,16 @@ def test_saving_the_registry_does_not_delete_a_new_style_pio_type(paths, fake_ro
 
     with open(paths.main_config, "w", encoding="utf-8") as fh:
         fh.write(
-            "[firmware knomi_serial]\nsource: ~/knomi_serial\nbuilder: platformio\n\n"
-            "[type knomi]\nchipset: esp32\nfirmware: knomi_serial\nenv: knomi\n"
+            with_base_firmwares(
+                "[firmware knomi_serial]\nsource: ~/knomi_serial\nbuilder: platformio\n"
+                "helper: knomi_serial\nflashers: esptool\n\n"
+                "[type knomi]\nchipset: esp32\nfirmware: knomi_serial\nplatformio_env: knomi\n"
+            )
         )
 
     reg = Registry.load(paths)
     reg.add_type("board", "stm32f072xb")
-    reg.save(paths)
+    save_registry(reg, paths)
 
     assert "knomi" in pio.load(paths)
     text = open(paths.main_config, encoding="utf-8").read()
@@ -528,82 +538,16 @@ def test_resolve_port_survives_a_path_it_cannot_stat(monkeypatch):
     assert pio.resolve_port("/dev/knomi_t9") == "/dev/knomi_t9"
 
 
-# --------------------------------------------------------------------------
-# is the screen running the current source tree
-#
-# knomi-serial bakes the git short sha into the version the firmware reports,
-# so the device itself says which commit it was built from. That is a stronger
-# check than the MCU side gets: staleness there compares a built artifact
-# against its source, which says nothing about what is on the board.
-# --------------------------------------------------------------------------
-
-from mcu_updater.providers.pio import SourceState, device_status  # noqa: E402
-from mcu_updater.states import DEVICE_DIRTY, SOURCE_CHANGED, UNKNOWN_VERSION  # noqa: E402
-
-TREE = SourceState(head="d34db33", version="0.4.0", dirty=False, on_tag=False)
-
-
-def test_the_sha_in_the_reported_version_is_what_matches():
-    assert device_status("0.4.0+3.gd34db33", TREE).reason is None
-
-
-def test_an_older_commit_is_behind():
-    assert device_status("0.4.0+1.gbadc0de", TREE).reason == SOURCE_CHANGED
-
-
-def test_a_tagless_build_still_carries_its_sha():
-    """`0.4.0+gd34db33` - the tag does not exist yet, but the commit does."""
-    assert device_status("0.4.0+gd34db33", TREE).reason is None
-
-
-def test_short_shas_of_different_lengths_still_compare():
-    """git picks the length; it grows as a repo does, and a firmware built
-    months ago can carry a shorter one than HEAD reports today."""
-    assert device_status("0.4.0+2.gd34db3", TREE).reason is None
-    assert device_status("0.4.0+2.gd34db3399", TREE).reason is None
-
-
-def test_a_dirty_build_is_never_called_current():
-    """The tree it came from is not recoverable, so 'up to date' is unprovable -
-    not merely unknown. Saying it matches would be a lie even when the sha does."""
-    assert device_status("0.4.0+3.gd34db33.dirty", TREE).reason == DEVICE_DIRTY
-
-
-def test_a_release_build_matches_a_tree_still_sitting_on_that_tag():
-    """A clean tagged build reports a bare version with no sha to compare."""
-    tree = SourceState(head="d34db33", version="0.4.0", dirty=False, on_tag=True)
-    assert device_status("0.4.0", tree).reason is None
-
-
-def test_a_release_build_of_a_different_version_is_behind():
-    tree = SourceState(head="d34db33", version="0.5.0", dirty=False, on_tag=True)
-    assert device_status("0.4.0", tree).reason == SOURCE_CHANGED
-
-
-def test_a_release_build_against_a_moved_tree_is_behind():
-    """Bare version, but the tree has commits past the tag - so whatever is on
-    the screen predates them."""
-    tree = SourceState(head="d34db33", version="0.4.0", dirty=False, on_tag=False)
-    assert device_status("0.4.0", tree).reason == SOURCE_CHANGED
-
-
-def test_no_git_checkout_is_unknown_not_behind():
-    """A wrong 'behind' sends someone to reflash a healthy display."""
-    assert device_status("0.4.0+3.gd34db33", SourceState()).reason == UNKNOWN_VERSION
-
-
-def test_a_screen_that_reports_no_version_is_unknown():
-    """A knomi_serial older than get_status reports nothing at all."""
-    assert device_status(None, TREE).reason == UNKNOWN_VERSION
-    assert device_status("", TREE).reason == UNKNOWN_VERSION
-
-
 def test_source_state_survives_a_directory_that_is_not_a_checkout(tmp_path):
     from mcu_updater.providers.pio import source_state
 
     assert source_state(str(tmp_path)).head is None
     assert source_state(str(tmp_path / "nope")).head is None
     assert source_state("").head is None
+
+
+def test_running_sha_accepts_a_tagless_report_without_a_commit_count():
+    assert pio.running_sha("0.4.0+gd34db33") == "d34db33"
 
 
 # --------------------------------------------------------------------------
@@ -615,8 +559,15 @@ def test_source_state_survives_a_directory_that_is_not_a_checkout(tmp_path):
 # succeeds.
 # --------------------------------------------------------------------------
 
-from mcu_updater.providers.pio import artifact_status, record_build  # noqa: E402
-from mcu_updater.states import BUILT_DIRTY, NEVER_BUILT, NO_PROVENANCE  # noqa: E402
+from mcu_updater.providers.pio import SourceState, artifact_status, record_build  # noqa: E402
+from mcu_updater.states import (  # noqa: E402
+    BUILT_DIRTY,
+    NEVER_BUILT,
+    NO_PROVENANCE,
+    SOURCE_CHANGED,
+)
+
+TREE = SourceState(head="d34db33", version="0.4.0", dirty=False, on_tag=False)
 
 
 def _bin(display):
@@ -675,7 +626,7 @@ def test_a_rebuild_by_someone_else_invalidates_our_provenance(paths, display):
 
 def test_a_corrupt_sidecar_is_unknown_rather_than_an_exception(paths, display):
     _bin(display)
-    sidecar = paths.display_sidecar(display.env)
+    sidecar = paths.platformio_sidecar(display.env)
     os.makedirs(os.path.dirname(sidecar), exist_ok=True)
     with open(sidecar, "w", encoding="utf-8") as fh:
         fh.write("{not json")
@@ -692,8 +643,8 @@ def test_the_sidecar_stays_out_of_the_users_source_tree(paths, display):
     """.pio/build is PlatformIO's, and `pio run -t clean` owns it."""
     _bin(display)
     record_build(paths, display, TREE)
-    assert paths.display_sidecar(display.env).startswith(paths.data_dir)
-    assert ".pio" not in paths.display_sidecar(display.env)
+    assert paths.platformio_sidecar(display.env).startswith(paths.data_dir)
+    assert ".pio" not in paths.platformio_sidecar(display.env)
 
 
 def test_a_dry_run_build_records_no_provenance(paths, settings, display, monkeypatch):
@@ -704,4 +655,4 @@ def test_a_dry_run_build_records_no_provenance(paths, settings, display, monkeyp
 
     pio.build(paths, settings, display)
 
-    assert not os.path.exists(paths.display_sidecar(display.env))
+    assert not os.path.exists(paths.platformio_sidecar(display.env))

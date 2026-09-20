@@ -9,11 +9,23 @@ from __future__ import annotations
 
 import contextlib
 from collections.abc import Iterator
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from ..devices import STATE_KATAPULT, STATE_KLIPPER
 from ..paths import REENUMERATE_TIMEOUT
-from .spec import Bench, FlashTarget
+from .spec import (
+    KIND_CANBUS,
+    KIND_SERIAL,
+    Bench,
+    Device,
+    FlashRecord,
+    FlashTarget,
+    chipset_matches,
+)
+
+if TYPE_CHECKING:
+    from ..helpers.spec import Helper
+    from ..paths import Paths
 
 
 class Flashtool:
@@ -24,13 +36,37 @@ class Flashtool:
     #: Both states a board on the Klipper bus can be in - the write itself
     #: reboots it from one into the other, so this flasher owns both rather
     #: than needing to be told which it is starting from.
-    chipsets: tuple[str, ...] = ("stm32", "rp2040")
+    #: lpc176x boards run Katapult too (profiles.py), and flash-all has always
+    #: written them.
+    chipsets: tuple[str, ...] = ("stm32", "rp2040", "lpc176")
     states: tuple[str, ...] = (STATE_KLIPPER, STATE_KATAPULT)
     #: Not because the write needs it - by then the board is in Katapult and
     #: Klipper has long since let go. Because *getting* it there does: the
     #: reboot-into-bootloader request is sent over the serial port Klipper is
     #: holding open, and it goes nowhere while Klipper has it.
     needs_services_stopped = True
+
+    def supports(self, device: Device, helper: Helper | None) -> bool:
+        """A serial or CAN board whose chipset Katapult runs on.
+
+        Not narrowed by state. A board that is absent right now is still
+        flashtool's to write, and the write says `device_not_found`, which
+        names the fix; a CAN board's liveness is often unknown and has always
+        been written anyway.
+        """
+        return device.kind in (KIND_SERIAL, KIND_CANBUS) and chipset_matches(
+            self, device.chipset
+        )
+
+    def target(
+        self,
+        paths: Paths,
+        device: Device,
+        helper: Helper | None,
+        *,
+        stop_services: tuple[str, ...],
+    ) -> FlashTarget:
+        return target_for(dict(device.detail), stop_services=stop_services)
 
     @contextlib.contextmanager
     def prepared(
@@ -45,7 +81,7 @@ class Flashtool:
         from .flash import flash_katapult, flash_katapult_can
 
         if "uuid" in target.detail:
-            flash_katapult_can(
+            confidence = flash_katapult_can(
                 bench.paths,
                 bench.settings,
                 target.type,
@@ -56,9 +92,9 @@ class Flashtool:
                 bridge=target.detail.get("bridge"),
                 interface=target.detail.get("interface"),
             )
-            return {"uuid": target.id}
+            return {"uuid": target.id, "confidence": confidence}
 
-        flash_katapult(
+        confidence = flash_katapult(
             bench.paths,
             bench.settings,
             target.type,
@@ -73,7 +109,26 @@ class Flashtool:
         # `serial` as well as the uniform `id`, because that is what a board's
         # id has always been called on this wire and in the CLI. Same reason
         # `targets[].devices[]` carries both an `id` and a `name`.
-        return {"serial": target.id}
+        return {"serial": target.id, "confidence": confidence}
+
+    def record(self, bench: Bench, target: FlashTarget) -> FlashRecord | None:
+        from .. import firmware
+        from ..build import git_head, read_sidecar
+
+        fw = target.detail.get("fw") or "klipper"
+        side = read_sidecar(bench.paths, target.type, fw) or {}
+        return FlashRecord(
+            key=target.id,
+            mcu_type=target.type,
+            fw=fw,
+            bin_sha256=side.get("bin_sha256"),
+            # A sidecar from before the field existed, or a build this tool did
+            # not perform: the tree's head is the same answer one step less
+            # directly, and is what this path has always fallen back on.
+            fw_sha=side.get("fw_sha")
+            or git_head(firmware.resolve(bench.paths, fw).source_dir(bench.paths)),
+            version=side.get("version"),
+        )
 
     def settled(self, bench: Bench, target: FlashTarget, ctx: Any) -> None:
         """Wait for the board to come back as a Klipper device.

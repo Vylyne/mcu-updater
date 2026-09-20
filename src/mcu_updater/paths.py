@@ -27,9 +27,6 @@ from __future__ import annotations
 import dataclasses
 import os
 
-#: The two firmware trees this tool builds. Order matters for display only.
-FW_TARGETS = ("klipper", "katapult")
-
 #: Waiting for a board to come back after katapult's `-r` bootloader request.
 #: USB re-enumeration is fast; if it hasn't happened in 15s it isn't going to.
 REENUMERATE_TIMEOUT = 15
@@ -152,7 +149,7 @@ class Paths:
         """
         return os.path.join(self.data_dir, ".dfu-pairings.json")
 
-    def display_sidecar(self, env: str) -> str:
+    def platformio_sidecar(self, env: str) -> str:
         """Build provenance for one display env: which commit the image is from.
 
         In our data tree even though the image itself lives in the source repo's
@@ -170,20 +167,12 @@ class Paths:
     # --- external tools / trees ---
 
     @property
-    def flashtool(self) -> str:
-        return os.path.join(self.home, "katapult", "scripts", "flashtool.py")
-
-    @property
     def moonraker_sock(self) -> str:
         return os.path.join(self.printer_data, "comms", "moonraker.sock")
 
     @property
     def log_dir(self) -> str:
         return os.path.join(self.printer_data, "logs")
-
-    def fw_dir(self, fw: str) -> str:
-        """Source tree for a firmware target, e.g. ~/klipper."""
-        return os.path.join(self.home, fw)
 
     # --- per-type saved state ---
 

@@ -30,7 +30,13 @@ from mcu_updater.flashers.flash import (
 from mcu_updater.helpers import BootselHandoff
 from mcu_updater.service import NullService
 
-from .conftest import bootsel_device_node, cmd_tokens, make_device, mounted_bootsel_volume
+from .conftest import (
+    bootsel_device_node,
+    cmd_tokens,
+    make_device,
+    mounted_bootsel_volume,
+    seed_base_firmwares,
+)
 
 
 def _cmds(events: list) -> list[str]:
@@ -40,6 +46,7 @@ def _cmds(events: list) -> list[str]:
 @pytest.fixture
 def ready(paths, settings, fake_root):
     """A staged firmware binary and an installed flashtool.py."""
+    seed_base_firmwares(paths)
     settings.dry_run = True
     (fake_root / "katapult" / "scripts").mkdir(parents=True, exist_ok=True)
     (fake_root / "katapult" / "scripts" / "flashtool.py").write_text("", encoding="utf-8")
@@ -55,6 +62,7 @@ def _stage_bin(paths, mcu_type: str = "board") -> None:
 
 
 def test_missing_flashtool_raises(paths, settings, fake_root):
+    seed_base_firmwares(paths)
     _stage_bin(paths)
     with pytest.raises(ToolMissingError) as exc:
         flash_katapult(paths, settings, "board", "chipA", "S1")
@@ -75,6 +83,7 @@ def test_flashtool_path_overrides_the_katapult_convention(paths, settings, fake_
 
 
 def test_missing_firmware_binary_raises(paths, settings, fake_root):
+    seed_base_firmwares(paths)
     (fake_root / "katapult" / "scripts").mkdir(parents=True)
     (fake_root / "katapult" / "scripts" / "flashtool.py").write_text("", encoding="utf-8")
     with pytest.raises(FlashError) as exc:
@@ -473,13 +482,10 @@ def test_a_refusal_after_a_reboot_says_where_the_board_is(
     )
 
 
-def test_a_real_flash_records_unique_bus_id_confidence(paths, ready, fake_root, monkeypatch):
-    """The confirmed-at-write-time ledger a board gets: a by-id
-    sighting is die-derived, not remembered, so the FlashLog record for a real
-    write carries `unique_bus_id` - the board-side counterpart to a display's
-    `answered` after a listen pass."""
-    from mcu_updater.build import FlashLog
-
+def test_a_real_flash_reports_unique_bus_id_confidence(paths, ready, fake_root, monkeypatch):
+    """A by-id sighting is die-derived, not remembered, so a real write
+    *reports* `unique_bus_id` for the loop to file - the board-side counterpart
+    to a display's `answered` after a listen pass."""
     ready.dry_run = False
     make_device(fake_root / "bus", "katapult", "chipA", "S1")
     _write_sidecar(paths, "board", "klipper", app_address=0x08004000)
@@ -489,33 +495,7 @@ def test_a_real_flash_records_unique_bus_id_confidence(paths, ready, fake_root, 
         write=(0, ["Application Start: 0x8004000"]),
     )
 
-    flash_katapult(paths, ready, "board", "chipA", "S1")
-
-    record = FlashLog(paths).all()["S1"]
-    assert record["confidence"] == "unique_bus_id"
-
-
-def test_a_real_flash_records_the_sidecars_stamped_version(paths, ready, fake_root, monkeypatch):
-    """Cartographer's CONFIG_VERSION carries no commit, so this is what
-    `FlashLog.entry_for` has to fall back on for a board like this - see the
-    discard test in test_build.py's counterpart."""
-    from mcu_updater.build import FlashLog
-
-    ready.dry_run = False
-    make_device(fake_root / "bus", "katapult", "chipA", "S1")
-    _write_sidecar(
-        paths, "board", "klipper", app_address=0x08004000, version="CARTOGRAPHER 6.2.0"
-    )
-    _fake_run_streamed_by_call(
-        monkeypatch,
-        probe=(0, ["Application Start: 0x8004000"]),
-        write=(0, ["Application Start: 0x8004000"]),
-    )
-
-    flash_katapult(paths, ready, "board", "chipA", "S1")
-
-    record = FlashLog(paths).all()["S1"]
-    assert record["version"] == "CARTOGRAPHER 6.2.0"
+    assert flash_katapult(paths, ready, "board", "chipA", "S1") == "unique_bus_id"
 
 
 def test_a_version_only_record_is_discarded_when_the_stamp_disagrees(paths):
@@ -754,6 +734,7 @@ def test_missing_binary_for_dfu_raises(paths, ready):
 
 
 def test_stm32_dispatches_to_dfu(paths, ready, monkeypatch):
+    seed_base_firmwares(paths)
     called = {}
     monkeypatch.setattr(
         flash_mod,
@@ -769,6 +750,7 @@ def test_rp2040_dispatches_to_bootsel_when_a_uf2_was_built(paths, settings, tmp_
     `flash_initial_bootloader` used to build a DfuUtil-shaped target for every
     chipset, so handing one to Bootsel would `KeyError` on
     `target.detail["uf2_file"]` rather than copy anything."""
+    seed_base_firmwares(paths)
     root = tmp_path / "bootsel_root"
     vol = root / "RPI-RP2"
     vol.mkdir(parents=True)
@@ -808,6 +790,7 @@ def test_bootsel_copies_katapult_with_the_application_sector_erased(
     """Parity with DFU's mass-erase. Without it a board that last ran other
     firmware keeps that image at the application address, Katapult chain-loads
     it, and the board never comes back as Katapult."""
+    seed_base_firmwares(paths)
     from mcu_updater.uf2_erase import with_erased_sector
 
     root = tmp_path / "bootsel_root"
@@ -834,6 +817,7 @@ def test_bootsel_refuses_without_an_application_address(
 ):
     """No address, no erase - and no silent fallback to copying Katapult alone,
     which is exactly the write that leaves a board chain-loading old firmware."""
+    seed_base_firmwares(paths)
     root = tmp_path / "bootsel_root"
     vol = root / "RPI-RP2"
     vol.mkdir(parents=True)
@@ -850,6 +834,7 @@ def test_bootsel_refuses_without_an_application_address(
 
 
 def test_bootsel_refuses_with_no_katapult_config(paths, settings, tmp_path):
+    seed_base_firmwares(paths)
     uf2, _cfg = _katapult_uf2(tmp_path)
     with pytest.raises(FlashError) as exc:
         flash_initial_bootloader(paths, settings, "rp2040", "unused.bin", uf2_bin=uf2)
@@ -859,6 +844,7 @@ def test_bootsel_refuses_with_no_katapult_config(paths, settings, tmp_path):
 def test_bootsel_refuses_a_uf2_it_cannot_extend(paths, settings, tmp_path):
     """A corrupt artifact is a flash failure the caller can read, not a
     traceback out of the UF2 parser."""
+    seed_base_firmwares(paths)
     _uf2, cfg = _katapult_uf2(tmp_path)
     bad = tmp_path / "bad.uf2"
     bad.write_bytes(b"\0" * 8)
@@ -870,6 +856,7 @@ def test_bootsel_refuses_a_uf2_it_cannot_extend(paths, settings, tmp_path):
 
 
 def test_bootsel_reports_a_missing_uf2_as_a_flash_error(paths, settings, tmp_path):
+    seed_base_firmwares(paths)
     _uf2, cfg = _katapult_uf2(tmp_path)
     missing = str(tmp_path / "nope.uf2")
     with pytest.raises(FlashError) as exc:
@@ -882,49 +869,36 @@ def test_bootsel_reports_a_missing_uf2_as_a_flash_error(paths, settings, tmp_pat
 def test_rp2040_refuses_with_no_uf2_built(paths, settings):
     """A .bin copied to BOOTSEL mass storage is silently ignored - refusing
     outright is better than a write that appears to succeed and does nothing."""
+    seed_base_firmwares(paths)
     with pytest.raises(FlashError) as exc:
         flash_initial_bootloader(paths, settings, "rp2040", "x.bin")
     assert ".uf2" in str(exc.value)
 
 
 def test_an_unknown_chipset_is_reported_clearly(paths, ready):
+    seed_base_firmwares(paths)
     with pytest.raises(UnsupportedChipsetError) as exc:
         flash_initial_bootloader(paths, ready, "esp32", "x.bin")
     assert exc.value.data["chipset"] == "esp32"
 
 
-# --------------------------------------------------------------------------
-# select_for: the capability-match seam flash_initial_bootloader now goes
-# through, and the same one a batch's own flasher-per-target lookup uses.
-# --------------------------------------------------------------------------
+def test_first_install_writes_only_with_what_katapult_lists(paths, settings, tmp_path):
+    """A bare board's flasher comes from [firmware katapult]'s `flashers:`.
+    A katapult listing only dfu_util has nothing that writes an RP2040 in
+    BOOTSEL, and refuses it the way an unknown chipset is refused."""
+    seed_base_firmwares(paths)
+    with open(paths.main_config, encoding="utf-8") as fh:
+        text = fh.read()
+    assert "flashers: dfu_util, bootsel" in text
+    with open(paths.main_config, "w", encoding="utf-8") as fh:
+        fh.write(text.replace("flashers: dfu_util, bootsel", "flashers: dfu_util"))
+    uf2, cfg = _katapult_uf2(tmp_path)
 
-
-def test_select_for_matches_a_bare_stm32_to_dfu_util():
-    assert flashers.select_for("stm32f072xb", devices_mod.STATE_DFU).name == "dfu_util"
-
-
-def test_select_for_matches_a_tracked_board_to_flashtool_in_either_state():
-    """Flashtool owns both states on the Klipper bus - the write is what moves
-    a board from one to the other, not a precondition on which it starts in."""
-    assert flashers.select_for("stm32g431xx", devices_mod.STATE_KLIPPER).name == (
-        "flashtool"
-    )
-    assert flashers.select_for("rp2040", devices_mod.STATE_KATAPULT).name == "flashtool"
-
-
-def test_select_for_matches_a_display_to_esptool():
-    assert flashers.select_for("esp32", devices_mod.STATE_ESP_ROM).name == "esptool"
-
-
-def test_select_for_matches_a_bare_rp2040_to_bootsel():
-    assert flashers.select_for("rp2040", devices_mod.STATE_BOOTSEL).name == "bootsel"
-
-
-def test_select_for_refuses_an_impossible_chipset_state_pair():
-    """esp32 is a real, registered chipset (Esptool writes it) - just never in
-    a `klipper` bus state, which nothing claims to answer to."""
-    with pytest.raises(UnsupportedChipsetError):
-        flashers.select_for("esp32", devices_mod.STATE_KLIPPER)
+    with pytest.raises(UnsupportedChipsetError) as exc:
+        flash_initial_bootloader(
+            paths, settings, "rp2040", "unused.bin", uf2_bin=uf2, katapult_config=cfg
+        )
+    assert exc.value.data["chipset"] == "rp2040"
 
 
 # --------------------------------------------------------------------------
@@ -1048,9 +1022,9 @@ def test_a_volume_that_vanishes_after_the_last_byte_is_a_successful_write(
 def test_a_vanished_volume_reaches_flashed_so_provenance_can_record(
     paths, settings, tmp_path, monkeypatch
 ):
-    """`_cmake_flash` records the `FlashLog` off `result["flashed"]`, so the
-    batch has to count this write as one - a failure row would silence the
-    ledger for the most common successful ending there is."""
+    """`write_all` records the `FlashLog` off a successful write, so the batch
+    has to count this one as one - a failure row would silence the ledger for
+    the most common successful ending there is."""
     root, vol = mounted_bootsel_volume(tmp_path)
     rp_paths = dataclasses.replace(paths, bootsel_root=str(root))
     uf2 = tmp_path / "katapult.uf2"
@@ -1241,7 +1215,7 @@ def test_a_copy_that_dies_mid_write_is_a_structured_flash_failure(
     Unplugged mid-write, a full FAT volume, an I/O error on a board that reset
     early - all `OSError`. Raw, it escapes `write_all` entirely, past the
     Klipper readiness gate `on_ready` runs; the operator gets a traceback-shaped
-    failure instead of a `flash_failed` one, and for `HelperBootsel` that
+    failure instead of a `flash_failed` one, and for a helper-requested BOOTSEL that
     happens with Klipper's services still down.
     """
     root, vol = mounted_bootsel_volume(tmp_path)
@@ -1411,7 +1385,7 @@ def test_bootsel_refuses_more_than_one_mounted_volume(paths, settings, tmp_path,
     assert len(exc.value.data["mounts"]) == 2
 
 
-def test_helper_bootsel_requests_handoff_then_copies_only_to_matching_mount(
+def test_bootsel_handoff_requests_handoff_then_copies_only_to_matching_mount(
     paths, settings, tmp_path
 ):
     root = tmp_path / "bootsel_root"
@@ -1436,7 +1410,7 @@ def test_helper_bootsel_requests_handoff_then_copies_only_to_matching_mount(
     bench = flashers.Bench(
         paths=rp_paths, settings=settings, controller=lambda name=None: None
     )
-    target = flashers.helper_bootsel.target_for(
+    target = flashers.bootsel.target_for(
         str(uf2),
         type_name="roadrunner",
         serial="RR-0123456789ABCDEFGHJKMNPQRS",
@@ -1445,7 +1419,7 @@ def test_helper_bootsel_requests_handoff_then_copies_only_to_matching_mount(
         stop_services=("klipper",),
     )
 
-    result = flashers.HelperBootsel().write(
+    result = flashers.Bootsel().write(
         bench, None, target, flashers.PlainContext(lambda *a: None)
     )
 
@@ -1624,7 +1598,7 @@ def test_a_late_error_with_the_volume_still_there_warns_after_the_short_wait(
     )
 
 
-def test_helper_bootsel_waits_for_its_own_volume_not_a_bystander(
+def test_bootsel_handoff_waits_for_its_own_volume_not_a_bystander(
     paths, settings, tmp_path, monkeypatch
 ):
     root = tmp_path / "bootsel_root"
@@ -1649,7 +1623,7 @@ def test_helper_bootsel_waits_for_its_own_volume_not_a_bystander(
         settings=settings,
         controller=lambda name=None: None,
     )
-    target = flashers.helper_bootsel.target_for(
+    target = flashers.bootsel.target_for(
         str(uf2),
         type_name="roadrunner",
         serial="RR-0123456789ABCDEFGHJKMNPQRS",
@@ -1658,7 +1632,7 @@ def test_helper_bootsel_waits_for_its_own_volume_not_a_bystander(
     )
     events: list[tuple[str, str]] = []
 
-    flashers.HelperBootsel().write(
+    flashers.Bootsel().write(
         bench, None, target, flashers.PlainContext(lambda *a: events.append(a))
     )
 
@@ -1666,11 +1640,26 @@ def test_helper_bootsel_waits_for_its_own_volume_not_a_bystander(
     assert not any(level == "warn" for level, _text in events)
 
 
-def test_helper_bootsel_requires_services_stopped():
-    assert flashers.HelperBootsel.needs_services_stopped is True
+def test_bootsel_handoff_targets_require_services_stopped(tmp_path):
+    class Helper:
+        name = "test"
+
+    handoff = flashers.bootsel.target_for(
+        str(tmp_path / "rr.uf2"),
+        type_name="roadrunner",
+        serial="RR-0123456789ABCDEFGHJKMNPQRS",
+        chipset="rp2040",
+        helper=Helper(),
+        stop_services=("klipper",),
+    )
+    bare = flashers.bootsel.target_for(str(tmp_path / "k.uf2"), chipset="rp2040")
+
+    assert flashers.Bootsel.needs_services_stopped is False
+    assert flashers.needs_services_stopped(handoff) is True
+    assert flashers.needs_services_stopped(bare) is False
 
 
-def test_helper_bootsel_waits_for_helper_before_service_restart(
+def test_bootsel_handoff_waits_for_helper_before_service_restart(
     paths, settings, tmp_path
 ):
     root = tmp_path / "bootsel_root"
@@ -1706,7 +1695,7 @@ def test_helper_bootsel_waits_for_helper_before_service_restart(
     bench = flashers.Bench(
         paths=rp_paths, settings=settings, controller=lambda _name=None: service
     )
-    target = flashers.helper_bootsel.target_for(
+    target = flashers.bootsel.target_for(
         str(uf2),
         type_name="roadrunner",
         serial="RR-0123456789ABCDEFGHJKMNPQRS",
@@ -1727,7 +1716,7 @@ def test_helper_bootsel_waits_for_helper_before_service_restart(
 def test_a_whole_batch_still_succeeds_when_post_copy_readiness_fails(
     paths, settings, tmp_path
 ):
-    """The end-to-end shape of the ruling: real HelperBootsel, real write_all,
+    """The end-to-end shape of the ruling: real Bootsel handoff, real write_all,
     a helper whose readiness wait raises. A completed copy is reported as
     flashed, nothing lands in failures, and the operator gets a warning."""
     root = tmp_path / "bootsel_root"
@@ -1755,7 +1744,7 @@ def test_a_whole_batch_still_succeeds_when_post_copy_readiness_fails(
     bench = flashers.Bench(
         paths=rp_paths, settings=settings, controller=lambda _name=None: NullService()
     )
-    target = flashers.helper_bootsel.target_for(
+    target = flashers.bootsel.target_for(
         str(uf2),
         type_name="roadrunner",
         serial="RR-0123456789ABCDEFGHJKMNPQRS",
@@ -1776,7 +1765,7 @@ def test_a_whole_batch_still_succeeds_when_post_copy_readiness_fails(
     assert ("warn", "More than one Roadrunner matched that serial") in events
 
 
-def test_helper_bootsel_settled_warns_when_helper_readiness_times_out(
+def test_bootsel_handoff_settled_warns_when_helper_readiness_times_out(
     paths, settings
 ):
     class Helper:
@@ -1788,7 +1777,7 @@ def test_helper_bootsel_settled_warns_when_helper_readiness_times_out(
         def wait_ready(self, *_args, **_kwargs):
             raise BootloaderTimeoutError("Roadrunner did not become ready")
 
-    target = flashers.helper_bootsel.target_for(
+    target = flashers.bootsel.target_for(
         "roadrunner.uf2",
         type_name="roadrunner",
         serial="RR-0123456789ABCDEFGHJKMNPQRS",
@@ -1800,7 +1789,7 @@ def test_helper_bootsel_settled_warns_when_helper_readiness_times_out(
         paths=paths, settings=settings, controller=lambda _name=None: None
     )
 
-    flashers.HelperBootsel().settled(
+    flashers.Bootsel().settled(
         bench,
         target,
         flashers.PlainContext(lambda *event: events.append(event)),
@@ -1817,7 +1806,7 @@ def test_helper_bootsel_settled_warns_when_helper_readiness_times_out(
         FlashError("could not read serial by-path topology"),
     ],
 )
-def test_helper_bootsel_settled_warns_on_non_timeout_roadrunner_errors(
+def test_bootsel_handoff_settled_warns_on_non_timeout_roadrunner_errors(
     paths, settings, error
 ):
     """The UF2 is already on the board by the time `settled` runs.
@@ -1837,7 +1826,7 @@ def test_helper_bootsel_settled_warns_on_non_timeout_roadrunner_errors(
         def wait_ready(self, *_args, **_kwargs):
             raise error
 
-    target = flashers.helper_bootsel.target_for(
+    target = flashers.bootsel.target_for(
         "roadrunner.uf2",
         type_name="roadrunner",
         serial="RR-0123456789ABCDEFGHJKMNPQRS",
@@ -1849,14 +1838,14 @@ def test_helper_bootsel_settled_warns_on_non_timeout_roadrunner_errors(
         paths=paths, settings=settings, controller=lambda _name=None: None
     )
 
-    flashers.HelperBootsel().settled(
+    flashers.Bootsel().settled(
         bench, target, flashers.PlainContext(lambda *event: events.append(event))
     )
 
     assert events == [("warn", str(error))]
 
 
-def test_helper_bootsel_settled_still_honours_cancellation(paths, settings):
+def test_bootsel_handoff_settled_still_honours_cancellation(paths, settings):
     """Non-fatal covers readiness, not a cancelled job."""
 
     class Helper:
@@ -1868,7 +1857,7 @@ def test_helper_bootsel_settled_still_honours_cancellation(paths, settings):
         def wait_ready(self, *_args, **_kwargs):
             raise OperationCancelled("job cancelled")
 
-    target = flashers.helper_bootsel.target_for(
+    target = flashers.bootsel.target_for(
         "roadrunner.uf2",
         type_name="roadrunner",
         serial="RR-0123456789ABCDEFGHJKMNPQRS",
@@ -1880,7 +1869,7 @@ def test_helper_bootsel_settled_still_honours_cancellation(paths, settings):
     )
 
     with pytest.raises(OperationCancelled):
-        flashers.HelperBootsel().settled(
+        flashers.Bootsel().settled(
             bench, target, flashers.PlainContext(lambda *a: None)
         )
 
@@ -1910,6 +1899,9 @@ def test_a_failed_settle_is_never_counted_as_both_flashed_and_failed(
         def write(self, bench, session, target, ctx):
             return {"mount": "/media/x"}
 
+        def record(self, bench, target):
+            return None
+
         def settled(self, bench, target, ctx):
             raise FlashError("the board came back slowly")
 
@@ -1931,7 +1923,7 @@ def test_a_failed_settle_is_never_counted_as_both_flashed_and_failed(
     assert ("warn", "board-1: the board came back slowly") in events
 
 
-def test_helper_bootsel_settled_skips_helper_readiness_in_dry_run(paths, settings):
+def test_bootsel_handoff_settled_skips_helper_readiness_in_dry_run(paths, settings):
     settings.dry_run = True
     waits: list[object] = []
 
@@ -1944,7 +1936,7 @@ def test_helper_bootsel_settled_skips_helper_readiness_in_dry_run(paths, setting
         def wait_ready(self, *_args, **_kwargs):
             waits.append(True)
 
-    target = flashers.helper_bootsel.target_for(
+    target = flashers.bootsel.target_for(
         "roadrunner.uf2",
         type_name="roadrunner",
         serial="RR-0123456789ABCDEFGHJKMNPQRS",
@@ -1955,14 +1947,14 @@ def test_helper_bootsel_settled_skips_helper_readiness_in_dry_run(paths, setting
         paths=paths, settings=settings, controller=lambda _name=None: None
     )
 
-    flashers.HelperBootsel().settled(
+    flashers.Bootsel().settled(
         bench, target, flashers.PlainContext(lambda *a: None)
     )
 
     assert waits == []
 
 
-def test_helper_bootsel_dry_run_does_not_request_or_copy(
+def test_bootsel_handoff_dry_run_does_not_request_or_copy(
     paths, settings, tmp_path
 ):
     settings.dry_run = True
@@ -1977,7 +1969,7 @@ def test_helper_bootsel_dry_run_does_not_request_or_copy(
             requested.append(True)
             raise AssertionError("dry run must not reboot hardware")
 
-    target = flashers.helper_bootsel.target_for(
+    target = flashers.bootsel.target_for(
         str(uf2),
         type_name="roadrunner",
         serial="RR-0123456789ABCDEFGHJKMNPQRS",
@@ -1989,7 +1981,7 @@ def test_helper_bootsel_dry_run_does_not_request_or_copy(
         paths=paths, settings=settings, controller=lambda name=None: None
     )
 
-    result = flashers.HelperBootsel().write(
+    result = flashers.Bootsel().write(
         bench, None, target, flashers.PlainContext(lambda *event: events.append(event))
     )
 
@@ -1998,7 +1990,7 @@ def test_helper_bootsel_dry_run_does_not_request_or_copy(
     assert any("dry-run" in line for _level, line in events)
 
 
-def test_helper_bootsel_refuses_a_missing_uf2_before_requesting_bootsel(
+def test_bootsel_handoff_refuses_a_missing_uf2_before_requesting_bootsel(
     paths, settings, tmp_path
 ):
     requested: list[object] = []
@@ -2010,7 +2002,7 @@ def test_helper_bootsel_refuses_a_missing_uf2_before_requesting_bootsel(
             requested.append(True)
             raise AssertionError("a missing artifact must fail before BOOTSEL")
 
-    target = flashers.helper_bootsel.target_for(
+    target = flashers.bootsel.target_for(
         str(tmp_path / "missing.uf2"),
         type_name="roadrunner",
         serial="RR-0123456789ABCDEFGHJKMNPQRS",
@@ -2022,7 +2014,7 @@ def test_helper_bootsel_refuses_a_missing_uf2_before_requesting_bootsel(
     )
 
     with pytest.raises(FlashError, match="firmware image not found"):
-        flashers.HelperBootsel().write(
+        flashers.Bootsel().write(
             bench, None, target, flashers.PlainContext(lambda *a: None)
         )
 

@@ -1,0 +1,86 @@
+{
+  "_comment": "Spec §3: a KNOMI is behind a CH340K that reports no USB serial, so the only stable name it has is one its firmware will state if asked. Two failures live here. Writing firmware to the wrong screen, which is what a remembered path preferred over a broadcast produces. And a status poll that opens every free serial port, which is a six-second stall on a call that rides along in every fw.status - so `ask` is a required keyword and the guards that pass it False are as load-bearing as the ones that pass True.",
+  "file": "src/mcu_updater/helpers/knomi_serial.py",
+  "command": [
+    "python",
+    "-m",
+    "pytest",
+    "tests/test_helpers.py",
+    "tests/test_agent_targets.py",
+    "tests/test_agent_displays.py",
+    "tests/test_agent_display_jobs.py",
+    "tests/test_cli.py",
+    "-q"
+  ],
+  "mutations": [
+    {
+      "name": "a caller that did not free the ports is never asked to",
+      "find": "        if found or not ask:\n            return found",
+      "replace": "        if found:\n            return found"
+    },
+    {
+      "name": "the remembered answer is preferred to six seconds of held ports",
+      "find": "        if found or not ask:\n            return found",
+      "replace": "        if not ask:\n            return found"
+    },
+    {
+      "name": "asking is best effort, never a tool error from the fallback",
+      "find": "        except UpdaterError as exc:\n            reporter(\"warn\", f\"could not ask the devices ({exc})\")\n            return {}",
+      "replace": "        except UpdaterError:\n            raise"
+    },
+    {
+      "name": "a screen is addressed by its id wherever its config names one",
+      "file": "src/mcu_updater/agent/methods/status.py",
+      "find": "        if screen.get(\"addressed_by\") == \"device_id\":\n            return screen.get(\"device_id\")",
+      "replace": "        if False:\n            return screen.get(\"device_id\")"
+    },
+    {
+      "name": "a status read never asks the devices",
+      "file": "src/mcu_updater/agent/methods/status.py",
+      "find": "                    self.paths, settings, display, ask=False, reporter=null_reporter",
+      "replace": "                    self.paths, settings, display, ask=True, reporter=null_reporter"
+    },
+    {
+      "name": "the watcher block's mtime is the handler's own file",
+      "file": "src/mcu_updater/agent/methods/status.py",
+      "find": "                    _mtime(identify.remembered_at(self.paths, display))",
+      "replace": "                    None"
+    },
+    {
+      "name": "either spelling of a screen's identity is accepted",
+      "file": "src/mcu_updater/agent/methods/flash.py",
+      "find": "                or want.lower() in {i.lower() for i in (d[\"device_id\"], d[\"reported_id\"]) if i}",
+      "replace": "                or want.lower() in {i.lower() for i in (d[\"reported_id\"],) if i}"
+    },
+    {
+      "name": "a serial screen is accepted by its firmware-reported identity",
+      "file": "src/mcu_updater/agent/methods/flash.py",
+      "find": "                or want.lower() in {i.lower() for i in (d[\"device_id\"], d[\"reported_id\"]) if i}",
+      "replace": "                or want.lower() in {i.lower() for i in (d[\"device_id\"],) if i}"
+    },
+    {
+      "name": "the ports are free by here, so the devices are asked",
+      "file": "src/mcu_updater/cli.py",
+      "find": "        c.paths, c.settings, display, ask=True, reporter=stdout_reporter",
+      "replace": "        c.paths, c.settings, display, ask=False, reporter=stdout_reporter"
+    },
+    {
+      "name": "the CLI matches a firmware-reported identity case-insensitively",
+      "file": "src/mcu_updater/cli.py",
+      "find": "                or only_id.lower() == device.device_id.lower()",
+      "replace": "                or only_id == device.device_id"
+    },
+    {
+      "name": "a firmware that cannot identify its devices is refused",
+      "file": "src/mcu_updater/cli.py",
+      "find": "    if identify is None:",
+      "replace": "    if False:"
+    },
+    {
+      "name": "the refusal names the file the handler read",
+      "file": "src/mcu_updater/cli.py",
+      "find": "        where = identify.remembered_at(c.paths, display) or \"(nothing remembered)\"",
+      "replace": "        where = \"(nothing remembered)\""
+    }
+  ]
+}

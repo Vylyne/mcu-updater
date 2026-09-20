@@ -1,0 +1,30 @@
+{
+  "_comment": "Where flashtool.py is looked for. A wrong answer is a flash that reports katapult missing on a host that has it, or a flashtool run from a tree the user stopped using. And fw.canbus.scan answers rather than fails: an undeclared katapult is a message, never an RpcError that blanks the scan.",
+  "file": "src/mcu_updater/flashers/flash.py",
+  "command": [
+    "python",
+    "-m",
+    "pytest",
+    "tests/test_flashtool_path.py",
+    "tests/test_agent_canbus.py",
+    "-q"
+  ],
+  "mutations": [
+    {
+      "name": "a configured flashtool_path wins",
+      "find": "    if settings.flashtool_path:\n        return firmware.expand_home(settings.flashtool_path, paths.home)",
+      "replace": "    if False:\n        return firmware.expand_home(settings.flashtool_path, paths.home)"
+    },
+    {
+      "name": "the fallback is the declared katapult source, not ~/katapult",
+      "find": "    return os.path.join(katapult.source_dir(paths), \"scripts\", \"flashtool.py\")",
+      "replace": "    return os.path.join(paths.home, \"katapult\", \"scripts\", \"flashtool.py\")"
+    },
+    {
+      "name": "an undeclared katapult is reported by fw.canbus.scan, not raised",
+      "file": "src/mcu_updater/agent/methods/status.py",
+      "find": "        except ConfigCorruptError as exc:\n            out[\"message\"] = str(exc)\n            return out",
+      "replace": "        except OSError as exc:\n            out[\"message\"] = str(exc)\n            return out"
+    }
+  ]
+}

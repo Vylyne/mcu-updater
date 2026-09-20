@@ -1,4 +1,4 @@
-"""Which flashers exist, which chipset/state pairs each can write, and how a
+"""Which flashers exist, which one a family picks for a device, and how a
 batch splits around the Klipper stop.
 
 **Static, and not discovered** - for the same reason the provider registry is.
@@ -9,13 +9,20 @@ has NOPASSWD `systemctl` for Klipper. The tuple is the seam.
 
 from __future__ import annotations
 
-from ..errors import UnsupportedChipsetError
+from collections.abc import Iterable
+from typing import TYPE_CHECKING, Any
+
+from ..errors import NoFlasherError
 from .bootsel import Bootsel
 from .dfu_util import DfuUtil
 from .esptool import Esptool
 from .flashtool import Flashtool
-from .helper_bootsel import HelperBootsel
-from .spec import Flasher, FlashTarget
+from .spec import Device, Flasher, FlashTarget
+
+if TYPE_CHECKING:
+    from ..firmware import FirmwareFamily
+    from ..helpers.spec import Helper
+    from ..paths import Paths
 
 #: Every flasher. Order is not a batch order - a batch keeps the order its
 #: selection produced - so this is just the set.
@@ -25,7 +32,6 @@ FLASHERS: tuple[Flasher, ...] = (
     Esptool(),
     DfuUtil(),
     Bootsel(),
-    HelperBootsel(),
 )
 
 _BY_NAME: dict[str, Flasher] = {f.name: f for f in FLASHERS}
@@ -36,6 +42,13 @@ def by_name(name: str) -> Flasher:
     if flasher is None:
         raise KeyError(f"no flasher {name!r}; known: {sorted(_BY_NAME)}")
     return flasher
+
+
+def needs_services_stopped(target: FlashTarget) -> bool:
+    """The target's own answer when it has one, else its flasher's."""
+    if target.needs_services_stopped is not None:
+        return target.needs_services_stopped
+    return by_name(target.flasher).needs_services_stopped
 
 
 def group_by_stop(
@@ -51,9 +64,7 @@ def group_by_stop(
     stopped: list[FlashTarget] = []
     free: list[FlashTarget] = []
     for target in targets:
-        (stopped if by_name(target.flasher).needs_services_stopped else free).append(
-            target
-        )
+        (stopped if needs_services_stopped(target) else free).append(target)
     return stopped, free
 
 
@@ -92,27 +103,108 @@ def by_flasher(targets: list[FlashTarget]) -> list[tuple[Flasher, list[FlashTarg
 
 
 # --------------------------------------------------------------------------
-# selection: which flasher writes a chipset while it's in a given state
+# selection: the family's list, in order
 # --------------------------------------------------------------------------
 
 
-def select_for(chipset: str, state: str) -> Flasher:
-    """Which flasher writes a device of this chipset while it is in this state.
+def resolve(
+    family: FirmwareFamily, device: Device, helper: Helper | None
+) -> Flasher | None:
+    """The first flasher in `family.flashers` that supports `device`, or None.
 
-    A capability match against `FLASHERS` itself - each flasher's own
-    `chipsets`/`states` are the whole answer, so there is no separate table to
-    keep in step. First-time install is not special: it is a selection where
-    `state` happens to be `dfu` or `bootsel`, same as any other.
-
-    Raises `UnsupportedChipsetError` when nothing registered answers to this
-    chipset/state pair - the user's only recourse is to flash katapult
-    manually, then use 'add-serial' once it enumerates.
+    The family's order, not the registry's: the same RP2040 is flashtool's in
+    `[firmware klipper]` and bootsel's in `[firmware roadrunner]`, and a global
+    first match could only ever reach one of them.
     """
-    for f in FLASHERS:
-        if state in f.states and any(chipset.startswith(p) for p in f.chipsets):
-            return f
-    raise UnsupportedChipsetError(
-        f"don't know how to perform a first-time flash for chipset '{chipset}'. "
-        f"Flash katapult manually, then use 'add-serial' once it enumerates.",
-        chipset=chipset,
-    )
+    for name in family.flashers:
+        flasher = by_name(name)
+        if flasher.supports(device, helper):
+            return flasher
+    return None
+
+
+def select(
+    paths: Paths,
+    family: FirmwareFamily,
+    device: Device,
+    helper: Helper | None,
+    *,
+    stop_services: tuple[str, ...],
+) -> FlashTarget:
+    """The target that writes `device`, chosen by its family.
+
+    `stop_services` is required so no caller can forget it: a flasher that
+    needs Klipper down and gets an empty list stops nothing.
+
+    Raises `NoFlasherError` naming the family and its list when nothing in it
+    supports the device. A batch reports that as the device's failure; a
+    single-device call raises it.
+    """
+    flasher = resolve(family, device, helper)
+    if flasher is None:
+        listed = ", ".join(family.flashers) or "(none)"
+        raise NoFlasherError(
+            f"nothing in [firmware {family.name}] (flashers: {listed}) can write "
+            f"{device.type} {device.id or device.chipset} while it is "
+            f"{device.state}.",
+            family=family.name,
+            flashers=list(family.flashers),
+            type=device.type,
+            id=device.id,
+            chipset=device.chipset,
+            state=device.state,
+        )
+    return flasher.target(paths, device, helper, stop_services=stop_services)
+
+
+def select_device(
+    paths: Paths,
+    families: dict[str, FirmwareFamily],
+    device: Device,
+    *,
+    stop_services: tuple[str, ...],
+) -> FlashTarget:
+    """`select`, for a caller holding a device rather than its family.
+
+    `device.fw` names the family and the family names the helper, so every
+    caller asks the same two questions in the same order. Raises
+    `ConfigCorruptError` for an undeclared family and `NoFlasherError` as
+    `select` does.
+    """
+    from .. import firmware, helpers
+
+    family = firmware.resolve(paths, device.fw, families)
+    helper = helpers.for_name(family.helper, family=family.name)
+    return select(paths, family, device, helper, stop_services=stop_services)
+
+
+def refusal(device: Device, exc: NoFlasherError) -> dict[str, Any]:
+    """A device nothing could write, in a batch's `failures[]` shape.
+
+    The uniform slots `FlashTarget.to_json` has, with no flasher because none
+    was chosen, and the refusal's own sentence as the error.
+    """
+    return {"type": device.type, "id": device.id, "flasher": None, "error": str(exc)}
+
+
+def select_each(
+    paths: Paths,
+    families: dict[str, FirmwareFamily],
+    requests: Iterable[tuple[Device, tuple[str, ...]]],
+) -> tuple[list[FlashTarget], list[dict[str, Any]]]:
+    """Select a batch: (targets, refusals), each in request order.
+
+    A device nothing can write is a refusal, not an exception. Spec §8: it is
+    reported with the batch's failures and does not abort the rest. Hand the
+    refusals to `write_all(refused=...)`.
+    """
+    targets: list[FlashTarget] = []
+    refused: list[dict[str, Any]] = []
+    for device, units in requests:
+        try:
+            targets.append(
+                select_device(paths, families, device, stop_services=units)
+            )
+        except NoFlasherError as exc:
+            refused.append(refusal(device, exc))
+    return targets, refused

@@ -40,7 +40,7 @@ class ProfilesMixin(_Base):
         mcu = reg.get(name)
         families = firmware.load(self.paths)
         fw = str(args.get("fw") or mcu.application(families)).strip()
-        if fw not in families and fw not in firmware.BUILTIN:
+        if fw not in families:
             raise RpcError(
                 f"'fw' must be one of {', '.join(self._fw_names())}", ERR_INVALID_PARAMS
             )
@@ -129,7 +129,7 @@ class ProfilesMixin(_Base):
         mcu = reg.get(name)
         families = firmware.load(self.paths)
         fw = str(args.get("fw") or mcu.application(families)).strip()
-        if fw not in families and fw not in firmware.BUILTIN:
+        if fw not in families:
             raise RpcError(
                 f"'fw' must be one of {', '.join(self._fw_names())}", ERR_INVALID_PARAMS
             )

@@ -1,14 +1,8 @@
 """Firmware families: where a tree lives, and what it builds.
 
-Two conventions were baked into `paths`: the source tree is ``~/<fw>``, and the
-build drops ``out/<fw>.bin``. Both hold for klipper and katapult and both break
-on the first vendor fork - cartographer's firmware is a klipper fork in a
-differently named directory whose Makefile still emits ``klipper.bin``.
-
-The property these tests exist to hold is that **making them overridable
-changed nothing for anyone not overriding them.** Every default is the old
-hardcoded behaviour, and a config file with no [firmware] section at all must
-be indistinguishable from the code before this module existed.
+Every family is declared, klipper and katapult included. The properties these
+tests hold: an undeclared name is refused with the lines to add, a declared
+section's keys are each optional, and an override is never silently ignored.
 """
 
 from __future__ import annotations
@@ -20,8 +14,10 @@ import pytest
 from mcu_updater import firmware
 from mcu_updater.build import build
 from mcu_updater.config import Registry
-from mcu_updater.errors import SourceTreeMissingError
+from mcu_updater.errors import ConfigCorruptError, SourceTreeMissingError
 from mcu_updater.firmware import FirmwareFamily
+
+from .conftest import save_registry, seed_base_firmwares
 
 
 def _write_firmware(paths, name, **keys):
@@ -50,46 +46,53 @@ def _write_firmware(paths, name, **keys):
 # --------------------------------------------------------------------------
 
 
-def test_no_config_at_all_is_the_old_behaviour(paths):
-    """The whole compatibility claim, in one assertion."""
-    family = firmware.resolve(paths, "klipper")
-    assert family.source_dir(paths) == paths.fw_dir("klipper")
-    assert family.built_artifact(paths) == os.path.join(
-        paths.fw_dir("klipper"), "out", "klipper.bin"
+def test_an_undeclared_family_is_refused_with_the_lines_to_add(paths):
+    with pytest.raises(ConfigCorruptError) as exc:
+        firmware.resolve(paths, "klipper")
+    message = str(exc.value)
+    assert "[firmware klipper]" in message
+    assert "source: ~/klipper" in message
+    assert "flashers: flashtool" in message
+    assert "install.sh" in message
+    # Points at worked examples of every section, not just the one missing.
+    assert (
+        "Every section is shown, commented, in mcu-updater.cfg and README.md "
+        "in the mcu-updater checkout." in message
     )
-    assert family.built_artifact(paths, "uf2") == os.path.join(
-        paths.fw_dir("klipper"), "out", "klipper.uf2"
-    )
 
 
-def test_a_family_nobody_configured_still_resolves(paths):
-    """`resolve` never returns None, so no call site has to re-implement the
-    fallback - which is how two of them would eventually disagree."""
-    assert firmware.resolve(paths, "katapult").name == "katapult"
-    assert firmware.resolve(paths, "invented").source_dir(paths).endswith("invented")
-
-
-def test_a_missing_config_file_is_not_an_error(paths, fake_root):
-    if os.path.exists(paths.main_config):
-        os.remove(paths.main_config)
+def test_a_missing_config_file_declares_nothing(paths):
     assert firmware.load(paths) == {}
-    assert firmware.resolve(paths, "klipper").source_dir(paths) == paths.fw_dir("klipper")
+    assert firmware.names(paths) == ()
+
+
+def test_a_declared_family_with_no_source_builds_from_home(paths):
+    _write_firmware(paths, "klipper")
+    family = firmware.resolve(paths, "klipper")
+    assert family.source_dir(paths) == os.path.join(paths.home, "klipper")
+    assert family.built_artifact(paths) == os.path.join(paths.home, "klipper", "out", "klipper.bin")
+    assert family.built_artifact(paths, "uf2") == os.path.join(
+        paths.home, "klipper", "out", "klipper.uf2"
+    )
 
 
 def test_the_artifact_defaults_to_the_family_name(paths):
     assert FirmwareFamily(name="klipper").artifact_name() == "klipper"
 
 
-def test_every_family_defaults_to_kconfig_make(paths):
-    assert firmware.resolve(paths, "klipper").builder == "kconfig_make"
+def test_a_declared_family_defaults_to_kconfig_make(paths):
+    _write_firmware(paths, "invented")
     assert firmware.resolve(paths, "invented").builder == "kconfig_make"
 
 
-def test_katapult_defaults_to_being_a_bootloader_even_unconfigured(paths):
+def test_a_declared_katapult_is_a_bootloader_without_saying_so(paths):
+    _write_firmware(paths, "katapult")
     assert firmware.resolve(paths, "katapult").bootloader is True
 
 
-def test_every_other_family_defaults_to_not_being_a_bootloader(paths):
+def test_every_other_declared_family_is_not_a_bootloader(paths):
+    _write_firmware(paths, "klipper")
+    _write_firmware(paths, "invented")
     assert firmware.resolve(paths, "klipper").bootloader is False
     assert firmware.resolve(paths, "invented").bootloader is False
 
@@ -154,7 +157,7 @@ def test_source_and_artifact_are_independent(paths, fake_root):
 
     _write_firmware(paths, "katapult", artifact="renamed")
     katapult = firmware.resolve(paths, "katapult")
-    assert katapult.source_dir(paths) == paths.fw_dir("katapult")
+    assert katapult.source_dir(paths) == os.path.join(paths.home, "katapult")
     assert katapult.built_artifact(paths).endswith("renamed.bin")
 
 
@@ -185,12 +188,14 @@ def test_katapults_bootloader_status_can_still_be_turned_off_explicitly(paths, f
 
 
 def test_to_json_carries_builder_and_bootloader(paths):
+    _write_firmware(paths, "katapult")
     payload = firmware.resolve(paths, "katapult").to_json()
     assert payload["builder"] == "kconfig_make"
     assert payload["bootloader"] is True
 
 
 def test_stop_services_absent_by_default(paths):
+    _write_firmware(paths, "klipper")
     assert firmware.resolve(paths, "klipper").stop_services is None
 
 
@@ -236,9 +241,10 @@ def test_the_parsed_sections_can_be_passed_in_to_avoid_rereading(paths, fake_roo
 
 
 def _registry(paths) -> Registry:
+    seed_base_firmwares(paths)
     reg = Registry.load(paths)
     reg.add_type("board", "stm32f072xb")
-    reg.save(paths)
+    save_registry(reg, paths)
     return reg
 
 
@@ -288,40 +294,40 @@ def test_menuconfig_sessions_open_the_configured_tree(paths, fake_root):
 # --------------------------------------------------------------------------
 
 
-def test_the_builtin_families_are_always_there(paths):
-    """klipper is what a board runs and katapult is what puts it there. Enough
-    of this tool is about that pair that neither may be removed by editing a
-    config file."""
-    assert firmware.names(paths) == ("klipper", "katapult")
-
+def test_nothing_is_built_in(paths):
     _write_firmware(paths, "cartographer", artifact="klipper")
-    assert firmware.names(paths)[:2] == ("klipper", "katapult")
-
-
-def test_a_declared_family_joins_the_known_set(paths):
-    _write_firmware(paths, "cartographer", artifact="klipper")
-    assert firmware.names(paths) == ("klipper", "katapult", "cartographer")
+    assert firmware.names(paths) == ("cartographer",)
 
 
 def test_declared_families_are_ordered_independently_of_the_file(paths):
     """Otherwise the artifacts payload and the CLI listing reorder themselves
     depending on where somebody happened to add a section."""
     _write_firmware(paths, "zzz")
+    _write_firmware(paths, "klipper")
     _write_firmware(paths, "aaa")
-    assert firmware.names(paths) == ("klipper", "katapult", "aaa", "zzz")
+    assert firmware.names(paths) == ("aaa", "klipper", "zzz")
+
+
+def test_a_types_families_keep_their_declared_order(paths):
+    _write_firmware(paths, "cartographer", artifact="klipper", flashers="flashtool")
+    seed_base_firmwares(paths)
+    with open(paths.main_config, "a", encoding="utf-8", newline="\n") as fh:
+        fh.write("\n[type probe]\nchipset: stm32g431xx\nfirmware: katapult, cartographer\n")
+    assert Registry.load(paths).get("probe").fw_order() == ["katapult", "cartographer"]
 
 
 def test_a_declared_family_gets_its_own_per_type_keys(paths):
     """`<fw>_extra_args` is derived from the family name, so a new family has
     to be known - and declared on the type - before the registry round-trips
     its keys. A family a type does not declare is not read back on load."""
-    _write_firmware(paths, "cartographer", artifact="klipper")
+    _write_firmware(paths, "cartographer", artifact="klipper", flashers="flashtool")
+    seed_base_firmwares(paths)
 
     reg = Registry.load(paths)
     reg.add_type("carto_v4", "stm32g431xx")
     reg.get("carto_v4").firmwares = ["cartographer", "katapult"]
     reg.get("carto_v4").fw("cartographer").extra_args = "-DSCANNER"
-    reg.save(paths)
+    save_registry(reg, paths)
 
     reloaded = Registry.load(paths)
     assert reloaded.get("carto_v4").fw_get("cartographer").extra_args == "-DSCANNER"
@@ -329,11 +335,12 @@ def test_a_declared_family_gets_its_own_per_type_keys(paths):
 
 
 def test_a_declared_family_appears_in_a_types_own_ordering(paths):
-    _write_firmware(paths, "cartographer")
+    _write_firmware(paths, "cartographer", flashers="flashtool")
+    seed_base_firmwares(paths)
     reg = Registry.load(paths)
     reg.add_type("carto_v4", "stm32g431xx")
     reg.get("carto_v4").firmwares = ["klipper", "katapult", "cartographer"]
-    reg.save(paths)
+    save_registry(reg, paths)
 
     order = Registry.load(paths).get("carto_v4").fw_order()
     assert order[:2] == ["klipper", "katapult"]
@@ -348,10 +355,12 @@ def test_a_declared_family_builds_from_its_own_tree(paths, settings, fake_root):
         "cartographer",
         source=str(fake_root / "MCU-Firmware---Based-on-Klipper"),
         artifact="klipper",
+        flashers="flashtool",
     )
+    seed_base_firmwares(paths)
     reg = Registry.load(paths)
     reg.add_type("carto_v4", "stm32g431xx")
-    reg.save(paths)
+    save_registry(reg, paths)
     _write_saved_config(paths, "carto_v4", "cartographer")
 
     with pytest.raises(SourceTreeMissingError) as exc:
@@ -387,20 +396,22 @@ def test_a_relocated_tree_is_what_staleness_compares_against(paths, fake_root, m
 
 def test_a_type_runs_klipper_unless_it_says_otherwise(paths):
     """Every [mcu ...] section predating the key means what it always meant."""
+    seed_base_firmwares(paths)
     reg = Registry.load(paths)
     reg.add_type("bttebb36", "stm32g0b1xx", katapult_installed=False)
-    reg.save(paths)
+    save_registry(reg, paths)
     assert Registry.load(paths).get("bttebb36").application() == "klipper"
 
 
 def test_firmware_is_written_even_for_the_plain_klipper_default(paths):
     """Unlike katapult_installed / extra_args / makefile_patches, firmware: is
     never omitted as a restated default - load() requires it on every
-    type, so save() cannot leave it
+    type, so _save() cannot leave it
     implicit even when there is nothing else to distinguish this type."""
+    seed_base_firmwares(paths)
     reg = Registry.load(paths)
     reg.add_type("bttebb36", "stm32g0b1xx", katapult_installed=False)
-    reg.save(paths)
+    save_registry(reg, paths)
     assert "firmware: klipper" in open(paths.main_config, encoding="utf-8").read()
 
 
@@ -408,19 +419,21 @@ def test_a_bootloader_is_recorded_explicitly_now(paths):
     """Under the old model this was implicit (katapult_installed defaulting
     True); the list-based schema has nothing implicit left, so add_type's own
     default has to write it out."""
+    seed_base_firmwares(paths)
     reg = Registry.load(paths)
     reg.add_type("bttebb36", "stm32g0b1xx")  # katapult_installed defaults True
-    reg.save(paths)
+    save_registry(reg, paths)
     assert "firmware: klipper, katapult" in open(paths.main_config, encoding="utf-8").read()
     assert Registry.load(paths).get("bttebb36").firmwares == ["klipper", "katapult"]
 
 
 def test_a_declared_application_round_trips(paths):
-    _write_firmware(paths, "cartographer", artifact="klipper")
+    _write_firmware(paths, "cartographer", artifact="klipper", flashers="flashtool")
+    seed_base_firmwares(paths)
     reg = Registry.load(paths)
     reg.add_type("carto_v4", "stm32g431xx")
     reg.get("carto_v4").firmwares = ["cartographer", "katapult"]
-    reg.save(paths)
+    save_registry(reg, paths)
 
     assert Registry.load(paths).get("carto_v4").application() == "cartographer"
 
@@ -430,9 +443,10 @@ def test_a_misspelt_family_is_refused_rather_than_defaulted(paths):
     else - the exact mistake this key exists to prevent."""
     from mcu_updater.errors import ConfigCorruptError
 
+    seed_base_firmwares(paths)
     reg = Registry.load(paths)
     reg.add_type("carto_v4", "stm32g431xx")
-    reg.save(paths)
+    save_registry(reg, paths)
     text = open(paths.main_config, encoding="utf-8").read()
     with open(paths.main_config, "w", encoding="utf-8") as fh:
         fh.write(text.replace("[type carto_v4]", "[type carto_v4]\nfirmware: cartographr"))
@@ -444,11 +458,12 @@ def test_a_misspelt_family_is_refused_rather_than_defaulted(paths):
 
 
 def test_a_type_lists_only_the_families_it_uses(paths):
-    _write_firmware(paths, "cartographer", artifact="klipper")
+    _write_firmware(paths, "cartographer", artifact="klipper", flashers="flashtool")
+    seed_base_firmwares(paths)
     reg = Registry.load(paths)
     reg.add_type("carto_v4", "stm32g431xx")
     reg.get("carto_v4").firmwares = ["cartographer", "katapult"]
-    reg.save(paths)
+    save_registry(reg, paths)
 
     mcu = Registry.load(paths).get("carto_v4")
     assert mcu.families() == ["cartographer", "katapult"]
@@ -459,9 +474,10 @@ def test_a_type_lists_only_the_families_it_uses(paths):
 
 
 def test_a_board_with_no_bootloader_lists_only_its_application(paths):
+    seed_base_firmwares(paths)
     reg = Registry.load(paths)
     reg.add_type("bare", "stm32f072xb", katapult_installed=False)
-    reg.save(paths)
+    save_registry(reg, paths)
     assert Registry.load(paths).get("bare").families() == ["klipper"]
 
 
@@ -474,16 +490,20 @@ def test_cmake_args_is_read_from_the_section(paths):
             "source: ~/roadrunner/rp2040\n"
             "builder: cmake\n"
             "cmake_args: -DROADRUNNER_FIRMWARE_VERSION=${git_describe}\n"
+            "flashers: bootsel\n"
         )
     family = firmware.load(paths)["roadrunner"]
     assert family.builder == "cmake"
     assert family.cmake_args == "-DROADRUNNER_FIRMWARE_VERSION=${git_describe}"
 
 
-def test_cmake_args_defaults_to_empty_for_every_existing_family(paths):
-    """Optional, so no existing install changes shape."""
+def test_cmake_args_defaults_to_empty_for_every_declared_family(paths):
+    """Optional, so a section that says nothing about it changes nothing."""
     with open(paths.main_config, "w", encoding="utf-8") as fh:
-        fh.write("[firmware cartographer]\nsource: ~/cartographer-klipper\n")
+        fh.write(
+            "[firmware cartographer]\nsource: ~/cartographer-klipper\nflashers: flashtool\n\n"
+            "[firmware klipper]\nsource: ~/klipper\nflashers: flashtool\n"
+        )
     assert firmware.load(paths)["cartographer"].cmake_args == ""
     assert firmware.resolve(paths, "klipper").cmake_args == ""
 

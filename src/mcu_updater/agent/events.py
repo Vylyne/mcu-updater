@@ -18,7 +18,7 @@ has to carry on regardless.
 from __future__ import annotations
 
 import threading
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import Any
 
 from ..devices import BusDevice
@@ -252,15 +252,16 @@ class BusWatcher:
         idle_interval: float = 15.0,
         busy_interval: float = 2.0,
         logger: Any = None,
-        on_change: Callable[[], Any] | None = None,
+        on_change: Callable[[Mapping[str, Any]], Any] | None = None,
     ) -> None:
         self.paths = paths
         self.emitter = emitter
         self._serialize = serialize
-        #: Run when the set of devices changes, before the event goes out. Used
-        #: to adopt a board that has finally turned up from a bootloader install,
-        #: so the `bus` event already reflects it rather than showing it as
-        #: untracked for one poll and tracked the next.
+        #: Run when the set of devices changes, before the event goes out, with
+        #: the sweep keyed by serial. Used for late adoption and opted-in
+        #: provisioning. A truthy return asks to run again on the next poll,
+        #: even if the bus has not changed; the repeated handler run does not
+        #: cause an identical `bus` event.
         self._on_change = on_change
         self.idle_interval = idle_interval
         self.busy_interval = busy_interval
@@ -271,6 +272,7 @@ class BusWatcher:
         self._stop = threading.Event()
         self._thread: threading.Thread | None = None
         self._last: tuple | None = None
+        self._retry = False
 
     def set_busy(self, busy: bool) -> None:
         """Speed up polling while an operation is running."""
@@ -307,25 +309,35 @@ class BusWatcher:
         """
         self._last = None
 
-    def _loop(self) -> None:
+    def _poll(self) -> None:
+        """Run one bus sweep, handing it to the handler before any event."""
         from .. import devices as devices_mod
 
+        found = devices_mod.scan(self.paths)
+        # devices.scan() already uses the shared USB inventory to map by-id tty
+        # nodes to physical hardware serials. Fingerprinting every unrelated USB
+        # device would emit an unchanged bus payload.
+        fp = _fingerprint(found)
+        changed = fp != self._last
+        if not changed and not self._retry:
+            return
+        self._last = fp
+        self._retry = False
+        if self._on_change is not None:
+            try:
+                self._retry = bool(self._on_change({device.serial: device for device in found}))
+            except Exception as exc:  # noqa: BLE001 - never kill the watcher
+                if self._log is not None:
+                    self._log.warning(f"bus change handler failed: {exc}")
+        if changed:
+            # A retry's payload is identical, so clients cannot distinguish it
+            # from a bus change and must not receive it again.
+            self.emitter.emit("bus", {"devices": self._serialize(found)})
+
+    def _loop(self) -> None:
         while not self._stop.is_set():
             try:
-                found = devices_mod.scan(self.paths)
-                # devices.scan() already uses the shared USB inventory to map
-                # by-id tty nodes to physical hardware serials. Fingerprinting
-                # every unrelated USB device would emit an unchanged bus payload.
-                fp = _fingerprint(found)
-                if fp != self._last:
-                    self._last = fp
-                    if self._on_change is not None:
-                        try:
-                            self._on_change()
-                        except Exception as exc:  # noqa: BLE001 - never kill the watcher
-                            if self._log is not None:
-                                self._log.warning(f"bus change handler failed: {exc}")
-                    self.emitter.emit("bus", {"devices": self._serialize(found)})
+                self._poll()
             except Exception as exc:  # noqa: BLE001 - a watcher must not die
                 if self._log is not None:
                     self._log.warning(f"bus poll failed: {exc}")

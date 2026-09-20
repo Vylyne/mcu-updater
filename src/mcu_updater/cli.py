@@ -19,24 +19,38 @@ import os
 import sys
 from collections.abc import Sequence
 
-from . import __version__, firmware, flashers, profiles, providers, stop_services
-from .build import artifact_status, build, menuconfig_tty
+from . import (
+    __version__,
+    firmware,
+    flashers,
+    helpers,
+    inventory,
+    profiles,
+    providers,
+    stop_services,
+    tracking,
+    typelist,
+)
+from .build import build, menuconfig_tty
 from .config import Registry
 from .devices import (
     STATE_KATAPULT,
     STATE_KLIPPER,
+    STATE_OFFLINE,
     device_state,
+    find_device,
     find_untracked,
+    scan,
 )
 from .errors import (
     ConfigNotFoundError,
-    DuplicateTypeError,
+    NoFlasherError,
     UnknownSerialError,
     UpdaterError,
 )
 from .flashers.flash import adoptable_devices, flash_initial_bootloader
 from .lock import exclusive
-from .paths import FW_TARGETS, Paths
+from .paths import Paths
 from .service import (
     Journal,
     ServiceController,
@@ -46,6 +60,10 @@ from .service import (
 )
 from .settings import Settings, load_settings
 from .states import NEVER_BUILT
+
+#: What `status` prints under a type that tracks no board at all - no USB
+#: serial and no CAN uuid. One wording for every type, whatever builds it.
+NO_TRACKED_DEVICES = "  (no tracked devices)"
 
 # --------------------------------------------------------------------------
 # process-wide context
@@ -110,8 +128,14 @@ def add_mcu_type(args: argparse.Namespace) -> None:
             print("Aborting add.")
             return
 
-    try:
-        reg.add_type(
+    # The prompt above read without the lock, and must: a prompt must not hold
+    # the registry. The write re-reads under it, so an edit made to any other
+    # type while the prompt waited is kept. `overwrite` still replaces this
+    # type's own declaration, its serials included. The pre-check above sees
+    # only kconfig types; a name another builder declares is refused by
+    # `add_type` itself, under the lock.
+    with Registry.mutate(c.paths, f"add type {args.type}") as writable:
+        writable.add_type(
             args.type,
             args.chipset,
             klipper_args=args.klipper_args,
@@ -119,9 +143,6 @@ def add_mcu_type(args: argparse.Namespace) -> None:
             katapult_installed=not args.no_katapult,
             overwrite=True,
         )
-    except DuplicateTypeError:  # pragma: no cover - overwrite=True can't raise it
-        raise
-    reg.save(c.paths)
     print(f"Successfully added/updated MCU Type: {args.type}")
 
 
@@ -227,46 +248,53 @@ def apply_profile(args: argparse.Namespace) -> None:
 
 def add_serial(args: argparse.Namespace) -> None:
     c = ctx()
-    reg = c.registry()
-    reg.get(args.type)  # raises UnknownTypeError
-    if reg.add_serial(args.type, args.serial):
-        reg.save(c.paths)
-        print(f"Added serial {args.serial} to {args.type}")
+    tracked = tracking.add_serial(c.paths, args.type, args.serial)
+    if tracked.provisioned_from is not None:
+        print(f"Provisioned {tracked.provisioned_from} as {tracked.serial}")
+    if tracked.added:
+        print(f"Added serial {tracked.serial} to {args.type}")
     else:
-        print(f"Serial {args.serial} already exists under {args.type}")
+        print(f"Serial {tracked.serial} already exists under {args.type}")
 
 
 def remove_mcu_type(args: argparse.Namespace) -> None:
     c = ctx()
-    reg = c.registry()
-    mcu = reg.get(args.type)
+    n = len(c.registry().declared_serials(args.type))  # UnknownTypeError if absent
 
+    # Asked before the lock is taken: a prompt must not hold the registry.
     if not args.force:
-        n = len(mcu.serials)
         if not _confirm(f"Remove type '{args.type}' and its {n} tracked serial(s)?"):
             print("Aborted.")
             return
 
-    reg.remove_type(args.type)
-    reg.save(c.paths)
+    tracking.remove_type(c.paths, args.type)
     print(f"Removed MCU Type: {args.type}")
 
 
 def remove_serial(args: argparse.Namespace) -> None:
     c = ctx()
-    reg = c.registry()
-    reg.get(args.type)
-    if reg.remove_serial(args.type, args.serial):
-        reg.save(c.paths)
+    if tracking.remove_serial(c.paths, args.type, args.serial):
         print(f"Removed serial {args.serial} from {args.type}")
     else:
         print(f"Serial {args.serial} isn't tracked under {args.type} - nothing to do.")
 
 
+def _device_label(state: str) -> str:
+    """How `status` describes one tracked board's inventory state."""
+    if state == inventory.STATE_UNKNOWN:
+        # Every CAN row: the inventory never guesses a CAN node's state, and
+        # status does not query tracked nodes - "online (unknown)" would claim
+        # something nothing looked at.
+        return "state unknown (CAN nodes are not queried)"
+    return {
+        STATE_KLIPPER: "online (klipper)",
+        STATE_KATAPULT: "online (katapult/bootloader)",
+    }.get(state, "offline" if state == STATE_OFFLINE else f"online ({state})")
+
+
 def status_cmd(args: argparse.Namespace) -> None:
     """Read-only overview. Promoted from menu-only to a real subcommand."""
     c = ctx()
-    reg = c.registry()
     if getattr(args, "can", False):
         from .discovery import canbus
 
@@ -297,40 +325,55 @@ def status_cmd(args: argparse.Namespace) -> None:
             print("  No CAN interfaces found.")
         elif not result.sightings and not result.failures:
             print("  No unclaimed CAN devices answered.")
-    if not reg:
+
+    entries = typelist.load(c.paths)
+    if not entries:
         print("No MCU types configured yet.")
         return
 
-    for name in reg.names():
-        mcu = reg.get(name)
-        print(f"\n{name}  (chipset={mcu.chipset or '?'})")
+    install = providers.Install.load(c.paths, c.settings)
+    targets_by_type: dict[str, list[providers.BuildTarget]] = {}
+    for provider in providers.PROVIDERS:
+        for target in provider.targets(install):
+            targets_by_type.setdefault(target.name, []).append(target)
+    rows = inventory.index(inventory.build(entries, inventory.Sweep(byid=tuple(scan(c.paths)))))
 
-        # What this type actually uses, not every family that exists. A board
-        # running cartographer carries klipper config keys too, and listing them
-        # as "not built" is noise about firmware nobody intends to build for it.
-        for fw in mcu.families():
-            status = artifact_status(
-                c.paths, name, fw, extra_repos=mcu.fw_get(fw).extra_repos
-            )
+    for entry in entries:
+        print(f"\n{entry.name}  (chipset={entry.chipset or '?'})")
+
+        # What this type builds, from its own provider - not every family that
+        # exists, which would be noise about firmware nobody builds for it.
+        for target in targets_by_type.get(entry.name, []):
+            # A bootloader is built on demand, never by a sweep, so "not
+            # built" would be noise on every kconfig type.
+            if target.on_demand:
+                continue
+            label = target.fw or target.provider
+            try:
+                status = providers.by_name(target.provider).artifact_status(install, target)
+            except UpdaterError as exc:
+                print(f"  {label}: unknown ({exc})")
+                continue
             if status.reason == NEVER_BUILT:
-                print(f"  {fw}: not built")
+                print(f"  {label}: not built")
             elif not status.is_current:
-                print(f"  {fw}: STALE ({status.reason})")
+                print(f"  {label}: STALE ({status.reason})")
             else:
-                print(f"  {fw}: up to date")
+                print(f"  {label}: up to date")
 
-        if not mcu.serials:
-            print("  (no tracked serials)")
+        if not entry.serials and not entry.canbus_uuids:
+            print(NO_TRACKED_DEVICES)
             continue
-        for serial in mcu.serials:
-            state, _ = device_state(c.paths, mcu.chipset, serial)
-            label = {
-                STATE_KLIPPER: "online (klipper)",
-                STATE_KATAPULT: "online (katapult/bootloader)",
-            }.get(state, "offline" if state == "offline" else f"online ({state})")
-            print(f"  - {serial}: {label}")
+        for serial in entry.serials:
+            row = rows.get((entry.name, inventory.SERIAL, serial))
+            state = row.state if row is not None else STATE_OFFLINE
+            print(f"  - {serial}: {_device_label(state)}")
+        for uuid in entry.canbus_uuids:
+            row = rows.get((entry.name, inventory.CANBUS_UUID, uuid))
+            state = row.state if row is not None else STATE_OFFLINE
+            print(f"  - {uuid} (CAN): {_device_label(state)}")
 
-    untracked = find_untracked(c.paths, reg.all_serials())
+    untracked = find_untracked(c.paths, {s for e in entries for s in e.serials})
     if untracked:
         print("\nUntracked devices on the bus:")
         for dev in untracked:
@@ -383,8 +426,8 @@ def build_fw_cmd(args: argparse.Namespace) -> None:
     # A PlatformIO type's own env already names the board, the partition table
     # and the flags, so `-f` is not merely optional there, it is meaningless,
     # and there is no menuconfig to fall back to.
-    if args.type in install.displays:
-        display = install.displays[args.type]
+    if args.type in install.platformio:
+        display = install.platformio[args.type]
         target = providers.BuildTarget(
             providers.PlatformIO.name, args.type, display.firmware
         )
@@ -438,7 +481,7 @@ def _target_for(
     order, so a caller that only needs "which provider is this" does not have
     to repeat them. None means no provider claims the name.
     """
-    display = install.displays.get(name)
+    display = install.platformio.get(name)
     if display is not None:
         return providers.BuildTarget(providers.PlatformIO.name, name, display.firmware)
     entry = install.cmake.get(name)
@@ -509,8 +552,9 @@ def _bench(c: Context) -> flashers.Bench:
 
 def _board_targets(
     c: Context, mcu_type: str, serials: list[str], *, force: bool = False
-) -> list:
-    """Tracked boards of one kconfig type, as things a batch can write.
+) -> tuple[list, list]:
+    """Tracked boards of one kconfig type, selected through their family:
+    `(targets, refused)` for `_run_batch`.
 
     `force` overrides a refused bootloader offset check (flash_katapult's own
     `force` parameter) and defaults off - a caller flashing more than one board
@@ -519,60 +563,92 @@ def _board_targets(
     the only caller that sets it.
     """
     mcu = c.registry().get(mcu_type)
-    application = mcu.application()
-    units = stop_services.for_mcu(c.paths, mcu, c.settings)
-    return [
-        flashers.flashtool.target_for(
-            {
-                "type": mcu_type,
-                "serial": serial,
-                "chipset": mcu.chipset,
-                "fw": application,
-                "force": force,
-            },
-            stop_services=units,
-        )
-        for serial in serials
-    ]
+    families = firmware.load(c.paths)
+    application = mcu.application(families)
+    units = stop_services.for_mcu(c.paths, mcu, c.settings, families)
+    return flashers.select_each(
+        c.paths,
+        families,
+        [
+            (
+                flashers.Device(
+                    type=mcu_type,
+                    id=serial,
+                    chipset=mcu.chipset,
+                    state=device_state(c.paths, mcu.chipset, serial)[0],
+                    fw=application,
+                    detail={
+                        "type": mcu_type,
+                        "serial": serial,
+                        "chipset": mcu.chipset,
+                        "fw": application,
+                        "force": force,
+                    },
+                ),
+                units,
+            )
+            for serial in serials
+        ],
+    )
 
 
-def _canbus_targets(c: Context, mcu_type: str, uuids: list[str]) -> list:
+def _canbus_targets(c: Context, mcu_type: str, uuids: list[str]) -> tuple[list, list]:
     """CAN-uuid counterpart to `_board_targets`, for a type's `canbus_uuids:`.
 
     Same resolved `stop_services` as this same type's by-id boards. The CLI
     has no Klipper mapping, so the flasher discovers the current interface at
-    write time; `canbus_uuids:` stores no interface.
+    write time; `canbus_uuids:` stores no interface, and liveness is unknown.
     """
     mcu = c.registry().get(mcu_type)
-    application = mcu.application()
-    units = stop_services.for_mcu(c.paths, mcu, c.settings)
-    return [
-        flashers.flashtool.target_for(
-            {"type": mcu_type, "uuid": uuid, "chipset": mcu.chipset, "fw": application},
-            stop_services=units,
-        )
-        for uuid in uuids
-    ]
+    families = firmware.load(c.paths)
+    application = mcu.application(families)
+    units = stop_services.for_mcu(c.paths, mcu, c.settings, families)
+    return flashers.select_each(
+        c.paths,
+        families,
+        [
+            (
+                flashers.Device(
+                    type=mcu_type,
+                    id=uuid,
+                    chipset=mcu.chipset,
+                    state=inventory.STATE_UNKNOWN,
+                    fw=application,
+                    kind=flashers.KIND_CANBUS,
+                    detail={
+                        "type": mcu_type,
+                        "uuid": uuid,
+                        "chipset": mcu.chipset,
+                        "fw": application,
+                    },
+                ),
+                units,
+            )
+            for uuid in uuids
+        ],
+    )
 
 
-def _cmake_targets(c: Context, mcu_type: str, serial: str) -> list:
+def _cmake_targets(c: Context, mcu_type: str, serial: str) -> tuple[list, list]:
     """One CMake-built board, as a thing the batch can write.
 
     The same selection the agent's `_cmake_flash` makes: the type's declared
-    firmware family names the helper that puts the board into BOOTSEL, and the
-    UF2 the build staged is what gets copied onto it. Both refusals here are
-    setup the operator has to fix before any write is possible, so they are said
-    plainly rather than discovered as a missing-file error two layers down.
+    firmware family names the flashers that may write it, and the UF2 the
+    build staged is what gets copied onto it. The missing-artifact refusal here
+    is setup the operator has to fix before any write is possible, so it is
+    said plainly rather than discovered as a missing-file error two layers
+    down.
 
-    `stop_services.for_cmake` is the only resolver that applies: `for_display`
+    `stop_services.for_cmake` is the only resolver that applies: `for_platformio`
     indexes the PlatformIO map - which is the `KeyError: 'roadrunner'` this
     whole change exists to remove - and `for_mcu` wants a kconfig `McuType`.
 
     No `FlashLog` record and no attachment check, matching the CLI's other flash
-    paths: provenance is recorded inside the flashers, and the helper performs
-    its own protocol confirmation once the services have released the port.
+    paths: the family's `flashers:` list picks the writer (`flashers.select_each`),
+    and a family that cannot write the board becomes a named refusal. The
+    helper performs its own protocol confirmation once the services have
+    released the port.
     """
-    from . import helpers
     from .providers import cmake as cmake_mod
 
     # `.get`, not `[...]`: `provider_of` proved membership a moment ago, but it
@@ -583,78 +659,80 @@ def _cmake_targets(c: Context, mcu_type: str, serial: str) -> list:
         raise UpdaterError(f"CMake type '{mcu_type}' is no longer configured.")
     families = firmware.load(c.paths)
     family = firmware.resolve(c.paths, target_type.firmware, families)
-    helper = helpers.for_name(family.helper, family=family.name)
-    if helper is None:
-        raise UpdaterError(
-            f"CMake type '{mcu_type}' has no firmware helper configured, so "
-            f"nothing here can put the board into BOOTSEL mode."
-        )
 
     fw_bin = c.paths.uf2_file(mcu_type, target_type.firmware)
     if not os.path.exists(fw_bin):
         raise UpdaterError(f"no built firmware for {mcu_type} at {fw_bin}. Build it first.")
 
-    return [
-        flashers.helper_bootsel.target_for(
-            fw_bin,
-            type_name=mcu_type,
-            serial=serial,
-            chipset=target_type.chipset,
-            helper=helper,
-            stop_services=stop_services.for_cmake(
-                c.paths, target_type, c.settings, families
+    present = find_device(c.paths, "", serial)
+    return flashers.select_each(
+        c.paths,
+        families,
+        [
+            (
+                flashers.Device(
+                    type=mcu_type,
+                    id=serial,
+                    chipset=target_type.chipset,
+                    state=present.state if present is not None else STATE_OFFLINE,
+                    fw=family.name,
+                    detail={"uf2_file": fw_bin},
+                ),
+                stop_services.for_cmake(c.paths, target_type, c.settings, families),
             ),
-        )
-    ]
+        ],
+    )
 
 
 def _pio_targets(
     c: Context,
     name: str,
     only_id: str | None = None,
-    *,
-    allow_discovery: bool = False,
-) -> list:
-    """Devices of one PlatformIO type: the watcher's map, or ask them ourselves.
+) -> tuple[list, list]:
+    """Devices of one PlatformIO type, from the firmware that knows them.
 
     **Not from Klipper.** The agent reads its list from the klippy module's own
     printer objects, and the CLI has no Moonraker to ask.
 
-    So, in order of what it costs: the watcher's `id -> port` map, which answers
-    instantly and is the source written for exactly this moment; and failing
-    that, `pio.discover`, which is the *authoritative* one - each device
-    broadcasts its id every couple of seconds unprompted, so this opens the free
-    ports and reads what answered. Their own docs are explicit that identity
-    belongs at flash time rather than to a remembered path, and the map is a
-    remembered path.
+    So it asks the firmware's own identity handler, which knows the two
+    sources this firmware has and what each costs: the watcher's `id -> port`
+    map, written for exactly this moment, and failing that the broadcast
+    listen pass, which is the *authoritative* one - each device announces its
+    id every couple of seconds unprompted. Their own docs are explicit that
+    identity belongs at flash time rather than to a remembered path, and the
+    map is a remembered path.
 
-    Discovery needs the ports free, which is why `allow_discovery` exists rather
-    than it simply always being tried: the caller has to have stopped Klipper and
-    paused the watcher first. `services_stopped` is idempotent per unit, so the
-    batch's own stop inside that one correctly no-ops.
+    Asking needs the ports free. Both callers of this function are inside
+    `_ports_free`, which is why `ask=True` is passed unconditionally rather
+    than through a flag: a caller that had not stopped the services would be
+    a caller in the wrong place, not a caller with the wrong argument.
+    `services_stopped` is idempotent per unit, so the batch's own stop inside
+    that one correctly no-ops.
 
-    An empty answer from both is reported as "cannot tell", not as "no devices".
-    Flashing nothing and calling it success is the failure this whole area exists
-    to prevent.
+    An empty answer from both is reported as "cannot tell", not as "no
+    devices". Flashing nothing and calling it success is the failure this
+    whole area exists to prevent.
     """
     from .providers import pio
 
     display = pio.load(c.paths)[name]
-    found = pio.read_device_map(c.paths, display)
-    if not found and allow_discovery:
-        # The ports are free by now, which is the one moment this is possible.
-        print(f"No device map for '{name}' - asking the devices which they are...")
-        try:
-            found = pio.discover(c.paths, c.settings, display, reporter=stdout_reporter)
-        except UpdaterError as exc:
-            # Best effort, as it is in the esptool flasher: discovery needs
-            # pyserial and the source tree, and a host missing either should get
-            # the message below naming both sources rather than a tool error
-            # from the fallback.
-            stdout_reporter("warn", f"could not ask the devices ({exc})")
-    units = stop_services.for_display(c.paths, display, c.settings)
+    families = firmware.load(c.paths)
+    family = firmware.resolve(c.paths, display.firmware, families)
+    identify = helpers.identifier(helpers.for_name(family.helper, family=family.name))
+    if identify is None:
+        raise UpdaterError(
+            f"firmware family '{family.name}' names no helper that can identify "
+            f"its devices, and a PlatformIO type is not yet joined against the "
+            f"by-id sweep - so there is no way to tell which device of '{name}' "
+            f"is which, and writing to a guessed port is what this refuses to do."
+        )
+
+    found = identify.identify(
+        c.paths, c.settings, display, ask=True, reporter=stdout_reporter
+    )
+    units = stop_services.for_platformio(c.paths, display, c.settings)
     if not found:
-        where = pio.device_map_path(c.paths, display) or "(no device_map configured)"
+        where = identify.remembered_at(c.paths, display) or "(nothing remembered)"
         own_watcher = [u for u in units if u != "klipper"]
         watcher = f"the '{own_watcher[0]}' watcher" if own_watcher else "a watcher"
         raise UpdaterError(
@@ -663,21 +741,40 @@ def _pio_targets(
             f"is not running and nothing answered on the free ports, or there is "
             f"nothing plugged in."
         )
-    return [
-        flashers.esptool.target_for(
-            display,
-            {
-                "name": device.device_id,
-                "section": f"{display.klipper_section} {device.device_id}",
-                "configured_path": device.port,
-                "device_id": device.device_id,
-                "present": device.present,
-            },
-            stop_services=units,
-        )
-        for device in sorted(found.values(), key=lambda d: d.port)
-        if device.present and (only_id is None or only_id in (device.port, device.device_id))
-    ]
+    return flashers.select_each(
+        c.paths,
+        families,
+        [
+            (
+                flashers.Device(
+                    type=display.name,
+                    id=device.port,
+                    chipset="",
+                    state=inventory.STATE_UNKNOWN,
+                    fw=display.firmware,
+                    kind=flashers.KIND_SCREEN,
+                    detail={
+                        "display": display,
+                        "screen": {
+                            "name": device.device_id,
+                            "section": f"{display.klipper_section} {device.device_id}",
+                            "configured_path": device.port,
+                            "device_id": device.device_id,
+                            "present": device.present,
+                        },
+                    },
+                ),
+                units,
+            )
+            for device in sorted(found.values(), key=lambda d: d.port)
+            if device.present
+            and (
+                only_id is None
+                or only_id == device.port
+                or only_id.lower() == device.device_id.lower()
+            )
+        ],
+    )
 
 
 @contextlib.contextmanager
@@ -701,7 +798,7 @@ def _ports_free(c: Context, names: Sequence[str], label: str):
     displays = pio.load(c.paths)
     units: list[str] = []
     for name in names:
-        for unit in stop_services.for_display(c.paths, displays[name], c.settings):
+        for unit in stop_services.for_platformio(c.paths, displays[name], c.settings):
             if unit not in units:
                 units.append(unit)
 
@@ -714,7 +811,7 @@ def _ports_free(c: Context, names: Sequence[str], label: str):
         yield
 
 
-def _run_batch(c: Context, targets: list, label: str) -> int:
+def _run_batch(c: Context, targets: list, label: str, refused: list | tuple = ()) -> int:
     """Write a batch and print what happened. Returns an exit code.
 
     The same `flashers.write_all` the agent submits as a job, with a context that
@@ -722,15 +819,18 @@ def _run_batch(c: Context, targets: list, label: str) -> int:
     Moonraker whether klippy really came back and will issue a FIRMWARE_RESTART,
     and the CLI has nobody to ask - `services_stopped` restarting the units is
     the whole of its answer.
+
+    `refused` is what selection could not give a flasher. The batch reports
+    each as a failure.
     """
     result = flashers.write_all(
-        _bench(c), targets, flashers.PlainContext(stdout_reporter)
+        _bench(c), targets, flashers.PlainContext(stdout_reporter), refused=refused
     )
     for failure in result["failures"]:
         print(f"ERROR: {failure['id']}: {failure['error']}", file=sys.stderr)
     if result["failures"]:
         print(
-            f"\n{len(result['flashed'])} of {len(targets)} written; "
+            f"\n{len(result['flashed'])} of {len(targets) + len(refused)} written; "
             f"{len(result['failures'])} failed.",
             file=sys.stderr,
         )
@@ -753,17 +853,6 @@ def flash_fw_cmd(args: argparse.Namespace) -> None:
     # and indexed the PlatformIO map with a name that is not in it.
     owner = providers.provider_of(c.paths, args.type) if args.type else None
 
-    # Before the confirmation, not after: this is deferred work with its own
-    # spec, and there is nothing to warn about a flash that will not happen.
-    # The same refusal `fw.bulk_flash` makes, worded for this caller.
-    if owner == providers.Cmake.name and not args.serial:
-        print(
-            f"ERROR: type-level flash is not available for CMake-built type "
-            f"'{args.type}'. Flash its boards individually with -s <serial>.",
-            file=sys.stderr,
-        )
-        sys.exit(1)
-
     if not args.yes and not _confirm(
         "Flashing requires stopping the affected service(s) "
         "(aborts any active print!). Continue?"
@@ -777,13 +866,31 @@ def flash_fw_cmd(args: argparse.Namespace) -> None:
     if owner == providers.PlatformIO.name:
         with exclusive(c.paths, f"flash type {args.type}"):
             with _ports_free(c, [args.type], f"flash {args.type}"):
-                targets = _pio_targets(
-                    c, args.type, only_id=args.serial, allow_discovery=True
-                )
-                if not targets:
+                targets, refused = _pio_targets(c, args.type, only_id=args.serial)
+                if not targets and not refused:
                     print(f"No device is reachable for '{args.type}'.", file=sys.stderr)
                     sys.exit(1)
-                code = _run_batch(c, targets, f"flash {args.type}")
+                code = _run_batch(c, targets, f"flash {args.type}", refused)
+        sys.exit(code)
+
+    # A CMake type: its boards are the `serials:` its own `[type]` section
+    # declares, each written over BOOTSEL by the family's helper.
+    if owner == providers.Cmake.name and not args.serial:
+        from .providers import cmake as cmake_mod
+
+        entry = cmake_mod.load(c.paths).get(args.type)
+        if entry is None or not entry.serials:
+            print(f"No serials tracked under '{args.type}'.", file=sys.stderr)
+            sys.exit(1)
+
+        with exclusive(c.paths, f"flash type {args.type}"):
+            targets = []
+            refused = []
+            for serial in entry.serials:
+                serial_targets, serial_refused = _cmake_targets(c, args.type, serial)
+                targets += serial_targets
+                refused += serial_refused
+            code = _run_batch(c, targets, f"flash {args.type}", refused)
         sys.exit(code)
 
     # Whole type: flash every tracked board under it - by-id serials and CAN
@@ -797,10 +904,11 @@ def flash_fw_cmd(args: argparse.Namespace) -> None:
             sys.exit(1)
 
         with exclusive(c.paths, f"flash type {args.type}"):
-            targets = _board_targets(c, args.type, mcu.serials) + _canbus_targets(
-                c, args.type, mcu.canbus_uuids
+            boards, refused = _board_targets(c, args.type, mcu.serials)
+            can, can_refused = _canbus_targets(c, args.type, mcu.canbus_uuids)
+            code = _run_batch(
+                c, boards + can, f"flash {args.type}", refused + can_refused
             )
-            code = _run_batch(c, targets, f"flash {args.type}")
         sys.exit(code)
 
     # Single device. Identity, not build semantics: `resolve_serial` reads the
@@ -818,14 +926,26 @@ def flash_fw_cmd(args: argparse.Namespace) -> None:
             ):
                 print("Aborted.")
                 sys.exit(1)
-            # The declared-section writer, which delegates to `add_serial` for a
-            # kconfig type and edits the type's own section for any other - so a
-            # CMake type gains an identity without the kconfig registry claiming
-            # its build.
-            reg.add_declared_serial(args.type, args.serial)
-            reg.save(c.paths)
-            print(f"Added serial {args.serial} to {args.type}")
+            # Asked above, written here: the prompt holds no lock. `add-serial`'s
+            # own path, so the write re-checks under the registry lock what the
+            # read before the prompt could not promise still holds - tracked
+            # under no other type, not an unprovisioned Roadrunner's diagnostic
+            # identity - and a CMake type gains an identity without the kconfig
+            # registry claiming its build. The flash below reads the registry
+            # afresh, so the stale `reg` is not consulted again.
+            tracked = tracking.add_serial(c.paths, args.type, args.serial)
+            if tracked.provisioned_from is not None:
+                print(f"Provisioned {tracked.provisioned_from} as {tracked.serial}")
+            if tracked.added:
+                print(f"Added serial {tracked.serial} to {args.type}")
+            else:
+                print(f"Serial {tracked.serial} is already tracked under {args.type}")
             mcu_type = args.type
+            # Provisioning renames the board (its diagnostic identity is never
+            # tracked - see `tracking.add_serial`), so every use of the serial
+            # below - the flash targets and the lock label - must follow that
+            # rename rather than keep flashing a serial the board no longer has.
+            args.serial = tracked.serial
     else:
         mcu_type = reg.resolve_declared_serial(args.serial)
         owner = providers.provider_of(c.paths, mcu_type)
@@ -839,17 +959,15 @@ def flash_fw_cmd(args: argparse.Namespace) -> None:
             # had taken effect.
             print("Note: --force does not apply to helper-BOOTSEL writes.")
         with exclusive(c.paths, f"flash {mcu_type}/{args.serial}"):
-            code = _run_batch(
-                c, _cmake_targets(c, mcu_type, args.serial), f"flash {args.serial}"
-            )
+            targets, refused = _cmake_targets(c, mcu_type, args.serial)
+            if refused:
+                raise NoFlasherError(refused[0]["error"])
+            code = _run_batch(c, targets, f"flash {args.serial}")
         sys.exit(code)
 
     with exclusive(c.paths, f"flash {mcu_type}/{args.serial}"):
-        code = _run_batch(
-            c,
-            _board_targets(c, mcu_type, [args.serial], force=args.force),
-            f"flash {args.serial}",
-        )
+        targets, refused = _board_targets(c, mcu_type, [args.serial], force=args.force)
+        code = _run_batch(c, targets, f"flash {args.serial}", refused)
     sys.exit(code)
 
 
@@ -866,7 +984,7 @@ def update_all(args: argparse.Namespace) -> None:
     """
     c = ctx()
     install = providers.Install.load(c.paths, c.settings)
-    if not install.registry and not install.displays:
+    if install.empty:
         print("No types configured.", file=sys.stderr)
         sys.exit(1)
 
@@ -906,31 +1024,55 @@ def update_all(args: argparse.Namespace) -> None:
         # Selected after building, because a build is what makes a device stale -
         # and inside the stop, because with no Moonraker to ask, asking the
         # devices themselves is how a PlatformIO family gets enumerated.
-        with _ports_free(c, sorted(install.displays), "update-all"):
+        with _ports_free(c, sorted(install.platformio), "update-all"):
             targets: list = []
+            refused: list = []
             for name in sorted(install.registry.names()):
                 reg_mcu = install.registry.get(name)
-                targets += _board_targets(c, name, reg_mcu.serials)
-                targets += _canbus_targets(c, name, reg_mcu.canbus_uuids)
-            for name in sorted(install.displays):
+                boards, boards_refused = _board_targets(c, name, reg_mcu.serials)
+                can, can_refused = _canbus_targets(c, name, reg_mcu.canbus_uuids)
+                targets += boards + can
+                refused += boards_refused + can_refused
+            for name in sorted(install.platformio):
                 try:
-                    targets += _pio_targets(c, name, allow_discovery=True)
+                    screens, screens_refused = _pio_targets(c, name)
                 except UpdaterError as exc:
                     # Not fatal: the boards are still worth writing, and a host with
                     # no watcher running is a configuration gap rather than a fault.
                     print(f"SKIP {name}: {exc}", file=sys.stderr)
                     failures.append((name, "no devices found"))
+                    continue
+                targets += screens
+                refused += screens_refused
+            for name in sorted(install.cmake):
+                for serial in install.cmake[name].serials:
+                    try:
+                        cmake_targets, cmake_refused = _cmake_targets(c, name, serial)
+                        if cmake_refused:
+                            raise NoFlasherError(cmake_refused[0]["error"])
+                        targets += cmake_targets
+                    except UpdaterError as exc:
+                        # Not fatal, and not silent: the rest of the fleet is
+                        # still worth writing while this configuration gap is fixed.
+                        print(f"SKIP {name}: {exc}", file=sys.stderr)
+                        failures.append((name, serial))
 
-            if not targets:
+            if not targets and not refused:
                 print("\nNothing to write.")
             else:
                 result = flashers.write_all(
-                    _bench(c), targets, flashers.PlainContext(stdout_reporter)
+                    _bench(c),
+                    targets,
+                    flashers.PlainContext(stdout_reporter),
+                    refused=refused,
                 )
                 for failure in result["failures"]:
                     print(f"ERROR: {failure['id']}: {failure['error']}", file=sys.stderr)
                     failures.append((failure["type"], failure["id"]))
-                print(f"\nWrote {len(result['flashed'])} of {len(targets)} device(s).")
+                print(
+                    f"\nWrote {len(result['flashed'])} of "
+                    f"{len(targets) + len(refused)} device(s)."
+                )
 
     if failures:
         print("\nCompleted with failures:")
@@ -976,15 +1118,28 @@ def add_mcu(args: argparse.Namespace) -> None:
         )
         return
 
-    reg = c.registry()
+    refused = False
     for dev in candidates:
         if _confirm(
             f"Found unassigned Katapult device: {dev.serial} ({dev.path}). "
             f"Add it to '{args.type}'?"
         ):
-            if reg.add_serial(args.type, dev.serial):
-                reg.save(c.paths)
-                print(f"Added serial {dev.serial} to {args.type}")
+            # One refused board (tracked under another type, an unprovisioned
+            # identity, the registry busy) says why and moves on: the rest were
+            # just flashed too, and each still deserves its own prompt. Reported
+            # the way `main` reports it, and in the exit code once all are asked.
+            try:
+                tracked = tracking.add_serial(c.paths, args.type, dev.serial)
+            except UpdaterError as exc:
+                print(f"ERROR: {exc}", file=sys.stderr)
+                refused = True
+                continue
+            if tracked.provisioned_from is not None:
+                print(f"Provisioned {tracked.provisioned_from} as {tracked.serial}")
+            if tracked.added:
+                print(f"Added serial {tracked.serial} to {args.type}")
+    if refused:
+        sys.exit(1)
 
 
 # --------------------------------------------------------------------------
@@ -996,11 +1151,11 @@ def build_parser(fw_choices: Sequence[str] | None = None) -> argparse.ArgumentPa
     """The CLI. `fw_choices` is what `--fw` will accept.
 
     Passed in rather than read here because a declared `[firmware x]` family is
-    a legitimate target, and argparse needs the list at construction time. It
-    defaults to the built-ins so a caller without a Paths - every test that
-    builds a parser to check wiring - still gets a working one.
+    a legitimate target, and argparse needs the list at construction time.
+    `None` accepts any name; an undeclared one is refused when it is resolved,
+    with the section to add.
     """
-    choices = list(fw_choices) if fw_choices else list(FW_TARGETS)
+    choices = list(fw_choices) if fw_choices else None
     parser = argparse.ArgumentParser(
         description="Klipper/Katapult Firmware Management Utility"
     )

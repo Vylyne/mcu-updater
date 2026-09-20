@@ -58,7 +58,7 @@ def api(paths, live_registry_text, fake_root, screens):
         fh.write(live_registry_text)
     write_settings(paths, dry_run="true", service_backend="null", enable_flashing="true")
     with open(paths.main_config, "a", encoding="utf-8") as fh:
-        fh.write(f"\n[type {ENV}]\nchipset: esp32\nfirmware: knomi_serial\nenv: {ENV}\n")
+        fh.write(f"\n[type {ENV}]\nchipset: esp32\nfirmware: knomi_serial\nplatformio_env: {ENV}\n")
 
     runner = JobRunner(
         paths,
@@ -103,7 +103,7 @@ def test_flashing_displays_needs_it_enabled(paths, live_registry_text, fake_root
         fh.write(live_registry_text)
     write_settings(paths, dry_run="true", service_backend="null")
     with open(paths.registry_file, "a", encoding="utf-8") as fh:
-        fh.write(f"\n[type {ENV}]\nchipset: esp32\nfirmware: knomi_serial\nenv: {ENV}\n")
+        fh.write(f"\n[type {ENV}]\nchipset: esp32\nfirmware: knomi_serial\nplatformio_env: {ENV}\n")
     runner = JobRunner(paths, lambda: __import__(
         "mcu_updater.settings", fromlist=["load_settings"]
     ).load_settings(paths.settings_file))
@@ -276,7 +276,7 @@ def test_a_build_touches_no_display_and_needs_no_flash_permission(
         fh.write(live_registry_text)
     write_settings(paths, dry_run="true", service_backend="null")
     with open(paths.main_config, "a", encoding="utf-8") as fh:
-        fh.write(f"\n[type {ENV}]\nchipset: esp32\nfirmware: knomi_serial\nenv: {ENV}\n")
+        fh.write(f"\n[type {ENV}]\nchipset: esp32\nfirmware: knomi_serial\nplatformio_env: {ENV}\n")
 
     runner = JobRunner(paths, lambda: __import__(
         "mcu_updater.settings", fromlist=["load_settings"]
@@ -465,7 +465,7 @@ def screens_port(screens: dict, which: str) -> str:
 
 
 def _found(**by_id):
-    from mcu_updater.providers.pio import WatcherDevice
+    from mcu_updater.discovery.knomi_serial import WatcherDevice
 
     return {
         i: WatcherDevice(device_id=i, port=p, present=True) for i, p in by_id.items()
@@ -490,6 +490,85 @@ def _discover_only_for(name, **by_id):
 def _with_ids(screens, **ids):
     """The live get_status half, giving each section a reported id."""
     return {f"knomi_serial {name}": {"reported_id": i} for name, i in ids.items()}
+
+
+def test_a_screen_can_be_flashed_by_its_device_id(api, paths, fake_root):
+    """Ruling 18: either spelling of the one identity. A caller reading
+    `targets[].devices[].id` off the wire hands it back without knowing
+    whether the section it came from named a path or an id.
+
+    Overrides the call channel rather than using the `screens` fixture: that
+    fixture builds two `serial:` sections, and the case here is the other kind
+    of section entirely - `device_id:`, whose path Klipper's own discovery
+    resolved and reported back.
+    """
+    port = fake_root / "knomi_discovered"
+    port.write_text("", encoding="utf-8")
+    api._call = serve_klipper(
+        display_objects(
+            {"knomi_serial t0_knomi": {"device_id": "aaa111"}},
+            {"knomi_serial t0_knomi": {"port": str(port)}},
+        )
+    )
+
+    res = api.flash({"name": ENV, "id": "aaa111"})  # the spelling a caller may pick
+
+    assert [d["configured_path"] for d in res["displays"]] == [str(port)]
+
+
+def test_a_serial_screen_can_be_flashed_by_its_reported_id(
+    api, no_pio, screens
+):
+    api._call = serve_klipper(
+        display_objects(screens, _with_ids(screens, t0_knomi="19aa44"))
+    )
+
+    for slot in ("id", "port"):
+        res = api.flash({"name": ENV, slot: "19aa44"})
+
+        assert [d["configured_path"] for d in res["displays"]] == [
+            screens_port(screens, "t0")
+        ]
+        assert api.runner.wait(timeout=30)
+        assert api.runner.get(res["job_id"]).state == "succeeded"
+
+
+def test_a_configured_device_id_is_matched_case_insensitively(
+    api, fake_root
+):
+    port = fake_root / "knomi_discovered"
+    port.write_text("", encoding="utf-8")
+    api._call = serve_klipper(
+        display_objects(
+            {"knomi_serial t0_knomi": {"device_id": "19AA44"}},
+            {"knomi_serial t0_knomi": {"port": str(port)}},
+        )
+    )
+
+    res = api.flash({"name": ENV, "id": "19aa44"})
+
+    assert [d["configured_path"] for d in res["displays"]] == [str(port)]
+    assert "job_id" in res
+
+
+def test_a_serial_path_is_matched_case_sensitively(api, monkeypatch):
+    import os
+
+    configured = "/dev/ttyUSB0"
+    api._call = serve_klipper(
+        display_objects({"knomi_serial t0_knomi": {"serial": configured}})
+    )
+    real_exists = os.path.exists
+    monkeypatch.setattr(
+        "mcu_updater.agent.methods.status.os.path.exists",
+        lambda path: path == configured or real_exists(path),
+    )
+
+    with pytest.raises(RpcError) as exc:
+        api.flash({"name": ENV, "port": "/dev/TTYUSB0"})
+
+    assert exc.value.data["code"] == "nothing_to_do"
+    assert api.runner.current() is None
 
 
 def test_a_screen_is_written_where_it_answered_not_where_it_was(

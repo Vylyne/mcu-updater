@@ -85,7 +85,7 @@ API; the prose is not. Most come from `errors.py`: `config_corrupt`,
 `unknown_type`, `invalid_type_name`, `duplicate_type`, `unknown_serial`,
 `ambiguous_serial`, `serial_tracked_elsewhere`, `source_missing`,
 `no_saved_config`, `build_failed`, `tty_required`, `flash_failed`,
-`device_not_found`, `bootloader_timeout`, `ambiguous_dfu`,
+`device_not_found`, `no_flasher`, `bootloader_timeout`, `ambiguous_dfu`,
 `dfu_permission_denied`, `bootsel_not_mounted`, `tool_missing`,
 `unsupported_chipset`, `service_control`, `flashing_disabled`, `busy`,
 `print_in_progress`, `cancelled`, `profile`, `profile_not_found`,
@@ -115,25 +115,25 @@ application error (see `data.code`), `-32603` internal.
 | `fw.ping` | — | version/capability handshake |
 | `fw.status` | — | everything the panel needs, in one call |
 | `fw.type.list` | — | `{types: [TypeStatus]}` |
-| `fw.type.add` | `name`, `chipset` (required), `firmware?`, `<fw>_extra_args?`, `<fw>_extra_repos?`, `<fw>_makefile_patches?`, `katapult_extra_args?`, `katapult_installed?` | `{name, chipset, firmware, warnings?}` — declares a board model, no hardware required; `<fw>` is `klipper` or `katapult` |
+| `fw.type.add` | `name`, `chipset` (required), `firmware?`, `<fw>_extra_args?`, `<fw>_extra_repos?`, `<fw>_makefile_patches?`, `katapult_extra_args?`, `katapult_installed?` | `{name, chipset, firmware, warnings?}` — declares a board model, no hardware required; `<fw>` is `klipper` or `katapult`; a name another builder's type already declares is refused with `duplicate_type` |
 | `fw.type.update` | `name` (required), any of the `fw.type.add` fields | `{name, chipset, firmware, warnings}` — only the keys supplied are touched; `<fw>` ranges over the type's own `firmware:` list |
 | `fw.type.remove` | `name` (required), `force?` | `{name, removed_serials, kept_config_dir}` — refuses while boards are still tracked unless forced |
 | `fw.target.get` | `name`, `provider` (required) | `{provider, target}` — one `targets[]` entry's full detail |
 | `fw.bus.scan` | `only_untracked?`, `chipset?` | `{devices: [BusDevice]}` |
-| `fw.bus.ignore` | `serial` (required) | `{serial, ignored: true}` — hide a bus device from the "new board?" flow; idempotent, flag not filter |
-| `fw.bus.unignore` | `serial` (required) | `{serial, ignored: false}` — reverse `fw.bus.ignore`; idempotent |
+| `fw.bus.ignore` | `serial` (required) | `{serial, ignored: true}` — hide a bus device from the "new board?" flow; idempotent, flag not filter; `busy` / `config` as for `fw.settings.set` |
+| `fw.bus.unignore` | `serial` (required) | `{serial, ignored: false}` — reverse `fw.bus.ignore`; idempotent; `busy` / `config` as for `fw.settings.set` |
 | `fw.dfu.scan` | — | `{devices, count, ready, reason, message}` — read-only |
 | `fw.bootsel.scan` | — | `{devices, count, mounts, mount_count, ready, reason, message}` — read-only |
 | `fw.canbus.scan` | — | `{interfaces, devices, failures, count, message}` — read-only, run only when called |
-| `fw.canbus.ignore` | `uuid` (required) | `{uuid, ignored: true}` — hide every sighting of a CAN UUID from the "new board?" flow; idempotent, flag not filter |
-| `fw.canbus.unignore` | `uuid` (required) | `{uuid, ignored: false}` — reverse `fw.canbus.ignore`; idempotent |
+| `fw.canbus.ignore` | `uuid` (required) | `{uuid, ignored: true}` — hide every sighting of a CAN UUID from the "new board?" flow; idempotent, flag not filter; `busy` / `config` as for `fw.settings.set` |
+| `fw.canbus.unignore` | `uuid` (required) | `{uuid, ignored: false}` — reverse `fw.canbus.ignore`; idempotent; `busy` / `config` as for `fw.settings.set` |
 | `fw.add_mcu.start` | `name`, `dfu_serial?` (STM32 only) | `{job_id, job, dfu_serial, bootsel_id}` — **off by default** |
 | `fw.roadrunner.provision` | `serial` (required) | `{serial, prior_serial, state: "provisioned"}` - explicit direct-USB provisioning of one confirmed, untracked Roadrunner — **off by default** |
 | `fw.roadrunner.clear` | `serial` (required) | `{serial, prior_serial, state: "unprovisioned"}` - explicit direct-USB identity clear of one confirmed, untracked Roadrunner — **off by default** |
 | `fw.artifacts` | `name` (required) | `{<fw>: Artifact, ...}`, one key per family the type declares |
 | `fw.settings.get` | — | `{settings: Settings}` |
 | `fw.settings.set` | `settings` (required, non-empty) | `{settings: Settings, changed: [key]}` — only the `SETTABLE` keys |
-| `fw.serial.add` | `name`, `serial` (required) | `{name, serial, added, chipset}` — track a bus device under any declared type; its provider still owns builds |
+| `fw.serial.add` | `name`, `serial` (required) | `{name, serial, added, chipset, prior_serial?}` — track a bus device under any declared type; its provider still owns builds. Always dispatched, but its provisioning branch (see `fw.roadrunner.provision` below) is gated exactly like that call, even though this method itself is not **off by default** |
 | `fw.serial.remove` | `name`, `serial` (required) | `{name, serial, removed}` — untrack a serial from a type; non-destructive, keeps its firmware and saved config |
 | `fw.canbus.add` | `name`, `uuid` (required) | `{name, uuid, added, chipset}` — track a CAN-addressed board under any declared type; parallel to `fw.serial.add`, not an overload of it |
 | `fw.canbus.remove` | `name`, `uuid` (required) | `{name, uuid, removed}` — untrack a CAN uuid from a type; non-destructive, same as `fw.serial.remove` |
@@ -185,14 +185,46 @@ or a different device now sitting on that port - and its `data` carries
 `roadrunner_timeout` is reserved for the case where nothing on that topology
 was ever seen again.
 
-A related code, `roadrunner_unprovisioned`, is not raised by either of these
-two methods - `fw.serial.add` (see the "Methods" table above) raises it when
-asked to track an `RR-UNPROVISIONED-<flash-id>` serial, refusing to let the
-diagnostic identity (whose trailing hex is literally the RP2040 flash UID) get
-persisted into a type's tracked serials.
+A related legacy code, `roadrunner_unprovisioned`, is not raised by either of
+these two methods. `fw.serial.add` (see the "Methods" table above) can also raise
+`config_corrupt`: a `helper:` name declared in `[firmware ...]` but not
+registered is refused loudly, by name, rather than silently treated as "no
+provisioning capability" - the same misconfiguration `fw.type.add`/`update`
+already refuse with that code elsewhere. `fw.serial.add` asks the requested
+type's firmware helper whether the serial is a durable identity. A helper with
+no trackability capability has no opinion and the serial is tracked normally.
+A refusal carries the helper's operator-facing reason. If its machine-readable
+remedy is `provision`, the family can provision, and the caller's hardware-write
+policy allows it, the same op-locked write as `fw.roadrunner.provision` runs and
+the durable serial that comes back is tracked. An unknown remedy, a missing
+provisioner, or a caller that withholds provisioning refuses with
+`roadrunner_unprovisioned`; that firmware-named code is retained for wire
+compatibility even though the verdict mechanism is generic.
 
-Neither call is ever triggered automatically - `fw.bus.scan`/`fw.status`
-identify a Roadrunner from its ordinary `BusDevice` fields alone (its
+`fw.serial.add`'s `serial` is the serial that was tracked, which is not always
+the one that was requested. When the helper rejects a serial with remedy
+`provision` and the family can apply it, the board is provisioned first and the
+durable serial is tracked; the request's serial comes back as `prior_serial`.
+`prior_serial` is absent when nothing moved.
+
+Provisioning holds the operation lock. A lock held elsewhere refuses with
+`busy` and does not retry — this is the one call under `fw.serial.add` that
+writes to hardware. A helper refusal that cannot be remedied here still returns
+the helper's reason with `roadrunner_unprovisioned`.
+
+Because that write is irreversible in exactly the same way
+`fw.roadrunner.provision` is, `fw.serial.add` withholds it under the same
+gate: a read-only agent (no job runner) or one with `enable_flashing` off
+refuses with `roadrunner_unprovisioned` rather than performing it, even
+though `fw.serial.add` itself is not **off by default** and stays dispatched
+for every other request. If tracking then fails *after* a successful
+provision - a config write racing the lock, for instance - the raised error
+keeps its own type and code but has its `message` rewritten to name the new
+serial, and carries it again under `data.provisioned_serial`, so a caller
+does not lose track of a board that already changed identity.
+
+Neither RPC method is called automatically. `fw.bus.scan`/`fw.status` identify
+a Roadrunner from its ordinary `BusDevice` fields alone (its
 `usb-Vylyne_Roadrunner_...-if00` descriptor gives `fw: "Vylyne"`,
 `chipset: "Roadrunner"`, and its serial already carries the
 `RR-UNPROVISIONED-...`/`RR-...` shape - discovery stays entirely read-only,
@@ -205,6 +237,19 @@ other new board until it is separately adopted with `fw.serial.add`. The
 names are read back only for that prompt; the agent never writes either one
 to the registry. The helper this uses needs nothing beyond `python3-serial`
 (the same package `flashtool.py` already requires) - no extra system package.
+
+Separately, `auto_provision: true` (default `false`) on a `[firmware ...]`
+family asks the bus watcher to provision a board of that family that appears
+with an unprovisioned identity. It is refused at config load unless the named
+`helper:` can both judge trackability and provision. The write runs inline on
+the watcher's poll, never from `fw.status`, and only when the deployment's
+`enable_flashing` policy allows hardware writes. A board skipped because the
+operation lock was held is tried again on the next poll; a policy refusal and
+other updater errors are not retried. Late adoption still runs because it is a
+registry write completing an operation already requested. Auto-provisioning
+attempts each serial at most once per watcher sweep, even when multiple
+families claim it. It does not track the resulting board; `fw.serial.add` does
+that and performs its own provisioning when needed (reported as `prior_serial`).
 
 ### `fw.ping`
 
@@ -318,6 +363,30 @@ stamped rather than the source tree: `"version_only"` (amber, `needs_flash:
 null`) when the stamp matches but no believable flash record backs it,
 `"source_changed"` when it does not match, or the ordinary green/`null` verdict
 once a record does back it.
+
+`reason` can also be `"unexpected_image"` (attention, `needs_flash: true`). A
+board that can measure the image it is running - today the Roadrunner, through
+its klippy extra's `firmware_image` - reports a digest and the byte range it
+covers, and this host compares them field for field against the build's own
+record of the artifact on disk. A disagreement is not "behind": it means we do
+not know what is on the board, and flashing is what makes it known. The
+comparison outranks every version check, including a matching commit and a
+matching release string, because a digest is a measurement of the running image
+and a version string is a claim about it. It is equally decisive the other way:
+a board whose digest matches the artifact is up to date even when its version
+reads as older, and even when this tool's own flash record names a different
+binary. Absence on either side - a board too old to report one, a board that
+answers algorithm `0`, an artifact this host could not parse - falls through to
+the version comparison untouched and is never reported as a mismatch.
+
+CMake type rows carry real device verdicts. Until now every `devices[]` entry
+under a CMake target reported `version: null`, `confidence: null` and a fixed
+`unknown_version`/`offline`, whatever the board was doing; they now use the same
+`DeviceStatus` vocabulary, the same `confidence` field and the same rules as
+every other row. A build sidecar participates only after artifact provenance
+shows that it describes the staged image; `no_provenance` leaves an online
+device at `unknown_version` rather than letting stale build evidence prove it
+current.
 
 `confidence` is a `discovery.spec.Confidence.reason` string (`"unique_bus_id"`,
 `"answered"`, ...), or `null`. It is this tool's own record of how the board's
@@ -495,6 +564,17 @@ a type can be offline while its neighbour waits in Katapult. `fw.flash` writes
 both kinds now — a board's action carries `serial`, a screen's carries `port` —
 so the reader never has to branch on which it is holding.
 
+**A screen's `id` is how it is addressed, not where it was found.** A
+`[knomi_serial ...]` section says one of two things. `serial:` names a path
+and carries no id, so the path is the identity and `id` is that path.
+`device_id:` names the screen's own burned-in id and no path at all — the path
+is whatever Klipper's discovery found this boot — so `id` is that id, and the
+tty is reported as `path` beside it. Before this, a `device_id:` screen had
+`id: null` until discovery ran. The device's own flash action carries the same
+value, in the `port` param it has always used, and `fw.flash` accepts either
+spelling in either `port` or `id` — so a value read off this row can always be
+handed straight back, whichever slot you read it from.
+
 For an MCU target, `devices` contains both tracked USB serials and tracked CAN
 UUIDs. A CAN device's flash action carries `uuid` (rather than `serial`), and a
 UUID whose liveness cannot be established is reported as `state: "unknown"`,
@@ -541,6 +621,18 @@ for a different reason: they are device lists, not behaviour preferences, and go
 JSON array as "must be a whole number". They are read and written through
 their dedicated `fw.bus.*` and `fw.canbus.*` ignore methods instead.
 
+Settings live in the same file as the `[type ...]` sections, so every settings
+write (`fw.settings.set` and the four ignore methods) takes the registry's own
+lock, as a type or serial edit does. The lock is held for milliseconds and is
+not queued for: a write that finds it held retries once after 50ms, then fails
+with `busy`, and nothing is written, so the call can simply be retried. The
+settings are read under that lock, so back-to-back writes - a
+`fw.settings.set` and a `fw.bus.ignore` from two tabs, say - both survive
+rather than the later one restoring what the earlier replaced; two whose lock
+windows truly collide get one `busy`. An
+`[updater]` section that does not parse refuses the write with `config`, rather
+than the defaults `fw.settings.get` falls back to being written over it.
+
 `ui_accent_color` is the one `SETTABLE` key that isn't a behaviour preference
 at all - the agent never reads it, only stores and serves it back, so every
 browser pointed at this printer agrees on the same accent colour rather than
@@ -562,15 +654,14 @@ should say so rather than hand over a button that fails.
 ```json
 {"name": "cartographer", "source": "/home/biqu/MCU-Firmware---Based-on-Klipper",
  "artifact": "klipper", "builder": "kconfig_make", "cmake_args": "",
- "bootloader": false, "present": true, "configurable": true, "builtin": false}
+ "bootloader": false, "present": true, "configurable": true}
 ```
 
 Every firmware family this install knows about, for a picker to offer. `present`
 and `configurable` are separate answers: a declared family whose tree has not
 been cloned yet is a real state — it is what every install looks like between
 adding the section and running `git clone` — and it wants "check out the source",
-not "unknown family". `builtin` marks `klipper` and `katapult`, which cannot be
-removed by editing a config file.
+not "unknown family".
 
 `builder` is `[firmware ...]`'s own `builder:` key (default `kconfig_make`) —
 how a tree compiles is a property of the tree, not of a type that happens to
@@ -657,16 +748,22 @@ real explanation instead of a job that dies a second later. In order:
 | serial resolves to a type | `unknown_serial` / `ambiguous_serial` / `serial_tracked_elsewhere` |
 | firmware has been built | `no_artifact` |
 | board is on the bus | `device_not_found` |
+| the family's `flashers:` can write it | `no_flasher` |
 | printer idle | `print_in_progress` (bypass with `force: true`) |
 
+A failed write fails the job with the write's own error (`offset_mismatch`,
+`device_not_found`, `tool_missing`, …), as it always has.
+
 For a `builder: cmake` type, the same `fw.flash {name?, serial, force?}` method
-uses the type's declared serial identity and the firmware family's configured
-helper instead of the legacy chipset/state flasher selection. Resolution spans
-all configured providers: an unknown serial, a duplicate declaration, or a
-`name` that points at a different owner fails as
-`unknown_serial`/`ambiguous_serial`/`serial_tracked_elsewhere` before a job is
-created. The named type must have a staged UF2 and a registered helper; the only
-currently registered helper is selected with `helper: roadrunner`.
+uses the type's declared serial identity, and the firmware family's
+`flashers:` list picks the writer. Resolution spans all configured providers:
+an unknown serial, a duplicate declaration, or a `name` that points at a
+different owner fails as `unknown_serial`/`ambiguous_serial`/
+`serial_tracked_elsewhere` before a job is created. The named type must have a
+staged UF2, and a family whose flashers cannot write the board (for Roadrunner,
+`flashers: bootsel` with `helper: roadrunner`) fails with `no_flasher`, whose
+`data` carries `family`, `flashers`, `type`, `id`, `chipset` and `state`. The
+write reports `"flasher": "bootsel"`.
 
 That helper confirms the exact Roadrunner protocol identity, captures the full
 USB serial topology before requesting BOOTSEL, and writes only when exactly one
@@ -679,14 +776,19 @@ after that is a warning, not a failure. Only then does the job wait for the same
 serial and Roadrunner INFO response before stopped services restart. That wait is non-fatal in every outcome: once
 the UF2 has been copied the job reports success, and a slow return, an
 unanswered probe, an identity that came back wrong, or two devices answering to
-one serial are all reported as a readiness warning on the job's log. A copy
-that completed is recorded in `flash.json` before any failure is reported,
-unless restarting stopped services itself fails: that restart failure
-propagates before the record is written, so a completed copy can go
-unrecorded. Short of that, a warning never looks like a board that still
-needs flashing. Every refusal above is pre-copy.
-The closed loop is host-test-only so far, not an end-to-end hardware-verified
-claim.
+one serial are all reported as a readiness warning on the job's log.
+A copy that completed is recorded in `flash.json` the moment the write returns
+— before the readiness wait, before stopped services are restarted, and before
+any later failure is reported. Nothing that happens after the copy can lose
+that record. If the record cannot be built because its configuration became
+unreadable between the copy and the ledger entry, the flash still succeeds and
+the job logs a warning. If `flash.json` itself cannot be written, the entry is
+lost silently rather than failing a successful flash. Every refusal above is
+pre-copy; after a copy, readiness problems are warnings and never make the board
+look like it still needs flashing.
+The closed loop is verified end to end on hardware. Bystander volumes are
+handled by the by-path mount layout rather than by the refusal, which is now
+the backstop for the older shared-path udev rule and is host-test-only.
 
 **`uuid` is a third identity form**, alongside `serial`/`port` - `{uuid, name?,
 force?}` flashes a CAN-addressed board instead of a by-id one. Same ordering,
@@ -917,6 +1019,19 @@ than a single instant by-id check:
    Slower than the by-id scan's instant presence check, and an accepted cost
    rather than a reason to leave a tracked CAN board out of a fleet operation.
 
+**A cmake type's declared `serials:` are included too**, judged by the same
+verdict the panel row shows and selected by the same two tests as a kconfig
+board: something staged to write, and the board on the by-id bus. Its board
+dict carries `uf2_file` beside the usual keys, because a BOOTSEL write copies an
+image rather than driving a bootloader protocol. A board already *in* BOOTSEL is
+not selected - it has no by-id entry while its volume is mounted, so its verdict
+is `offline` - and `fw.flash` with its serial still writes it.
+
+A cmake type with no `helper:` cannot be put into BOOTSEL by anything here. It
+is not dropped from the selection: it appears in `boards[]` and then in the
+job's `failures[]` as a refusal naming the family, the same as any other device
+its family's `flashers:` cannot write.
+
 `fw.bus.scan` stays USB-by-id-specific, as it is today — CAN's own "on bus"
 view is `fw.canbus.scan`, not a merge into this one.
 
@@ -956,6 +1071,19 @@ Two keys rather than one merged list: the selections answer with different facts
 and flattening them would invent nulls for half of each. The *batch* is uniform;
 the confirmation is not, because a human reading it wants the real names.
 
+Selection goes through each device's `[firmware]` `flashers:` list. A device
+that nothing in the list can write is not dropped, and it does not stop the
+batch. It appears in the job's `failures[]` with `"flasher": null` and an
+`error` naming the family and its list:
+
+```json
+{"type": "bttebb36", "id": "2900...", "flasher": null,
+ "error": "nothing in [firmware klipper] (flashers: dfu_util) can write bttebb36 2900... while it is klipper."}
+```
+
+A refused board is still listed in `boards`. A refused screen is not listed in
+`displays`. A batch made only of refusals stops no service.
+
 #### Failures do not abandon the batch
 
 One type failing to compile is usually about that type, so the loop continues and
@@ -978,6 +1106,13 @@ write — because "bttmmbv1 failed" stopped being enough once a type can build m
 than one family and a host can write with more than one tool. `id` is the uniform
 slot: a board's serial, a screen's configured port. `serial` rides along on a
 flashtool result because that is what a board's id has always been called here.
+
+For a screen, that "configured port" is deliberately still the port, and from
+here on it can differ from the `id` the screen's `targets[]` row reports. This
+half of the wire says what esptool actually wrote to; a `device_id:` screen is
+addressed by an id and written to a tty. The row's `path` carries that same
+tty, which is how a caller correlates the two. A screen's flash *action* is the
+row's side of that line, not this one: it carries the identity, in `port`.
 
 #### Grouped by requirement, not by kind
 
@@ -1284,9 +1419,8 @@ builder: platformio
 [type knomi_toolchanger]
 chipset: esp32
 firmware: knomi_serial
-env: knomi_toolchanger            # REQUIRED - no default
+platformio_env: knomi_toolchanger  # REQUIRED - no default
 # source: ~/knomi_serial          defaults to the firmware family's source
-# klipper_section: knomi_serial   which [<prefix> X] sections are this type's
 # service: knomi_serial           port watcher to pause while flashing
 ```
 
@@ -1386,6 +1520,11 @@ opened this row's detail"; do not poll it per row.
                   "build_variant": "knomi"}]}}}
 ```
 
+The block itself is about the watcher — is this display family's own watcher
+service up, and when did it last write. What it *found* comes through the
+firmware's identity handler with asking disabled: this method rides along in
+every `fw.status` poll, and asking means six seconds with every free port open.
+
 **This is the case flashing actually needs.** esptool wants the port to itself,
 so Klipper has to be stopped — and stopping Klipper is precisely what removes
 the `configfile.settings` source everything else here depends on.
@@ -1437,10 +1576,11 @@ with a mismatched config.
 ### Flashing a display
 
 Reached through `fw.flash` — `name` resolving to a PlatformIO type is what
-routes there instead of the board path above, so the call is `{name, port?,
-force?}` rather than `{serial, name?, force?}`. (`fw.display.flash` was a
-separate method for this until API_VERSION 2 retired it;
-nothing called it once `fw.flash` grew the same routing.)
+routes there instead of the board path above, so the call is `{name, port?, id?,
+force?}` — either slot, spelled as the configured path or as the screen's own
+device id — rather than `{serial, name?, force?}`. (`fw.display.flash` was a
+separate method for this until API_VERSION 2 retired it; nothing called it once
+`fw.flash` grew the same routing.)
 
 Two properties carry the risk, and both are enforced rather than documented.
 
@@ -1495,7 +1635,8 @@ could be skipped.
 This runs the same batch machinery `fw.flash_all` does — one flasher, one stop,
 the watcher paused and the screens rediscovered inside it — and projects the
 result back onto the shape above. `flashed` gained the uniform `type`/`id`/
-`flasher` slots; `failures` is unchanged.
+`flasher` slots; `failures` is unchanged. A screen its family's `flashers:`
+cannot write is listed here too, with the refusal as its `error`.
 
 **Which screen is on which port is not tracked**, deliberately. It used to be:
 every upload recorded the eFuse MAC esptool prints against the port it wrote to,

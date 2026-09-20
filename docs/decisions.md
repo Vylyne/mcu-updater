@@ -571,6 +571,7 @@ the UI and invisible to the CLI was that drift, reported as a bug.
 Configuration never chooses which Python module gets imported. Every helper is
 named in `helpers.registry.HELPERS` and every flasher in the flashers registry,
 by hand, because a helper can stop services and write firmware. A misspelt
-`helper:` or `flashers:` refuses the config when it loads, naming the known
-values - the one place in this design where the answer to a wrong name is a
-refusal rather than a fallback.
+`flashers:` refuses the config when it loads, naming the known values; a
+misspelt `helper:` resolves lazily when that family's capability is asked for,
+so it costs one family rather than the whole panel. Both refuse rather than
+falling back.

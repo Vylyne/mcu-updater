@@ -146,9 +146,11 @@ the board re-enumerates, its `by-id` symlink appears before its tty can
 reliably be opened.
 
 The target status includes every configured serial. Presence is determined by
-exact serial discovery; `version` and `needs_flash` remain unknown because the
-status poll deliberately does not open the Roadrunner admin port. Device flash
-actions and `extra.flashable: true` are offered only when a helper is configured.
+exact serial discovery; status reads device information through the family's
+helper and applies the common verdict to each board, so `version` and
+`needs_flash` are populated whenever the board supplies enough evidence. Device
+flash actions and `extra.flashable: true` are offered only when a helper is
+configured.
 
 This path is covered by host tests but has not yet been exercised as an
 end-to-end hardware flash. Manual first-install BOOTSEL behavior remains the

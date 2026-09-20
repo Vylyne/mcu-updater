@@ -80,7 +80,6 @@ watch(menuOpen, (open) => {
 const bulkOperation = ref<BulkOperation | null>(null);
 const typeDialogOpen = ref(false);
 const addMcuOpen = ref(false);
-const refreshing = ref(false);
 
 function openBulk(operation: BulkOperation): void {
   bulkOperation.value = operation;
@@ -98,9 +97,7 @@ function openAddMcu(): void {
 }
 
 async function onRefresh(): Promise<void> {
-  refreshing.value = true;
   await refresh();
-  refreshing.value = false;
 }
 </script>
 
@@ -179,7 +176,7 @@ async function onRefresh(): Promise<void> {
         type="button"
         class="btn-icon btn-icon--primary"
         title="Refresh"
-        :disabled="refreshing"
+        :disabled="state.refreshing"
         @click="onRefresh"
       >
         <UiIcon :path="mdiRefresh" size="small" />

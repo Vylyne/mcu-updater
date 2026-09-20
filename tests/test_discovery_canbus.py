@@ -180,10 +180,18 @@ def test_query_parses_the_fake_subprocess_output(paths, settings, monkeypatch):
     _fake_flashtool(paths)
 
     def fake_run_streamed(
-        cmd, *, cwd=None, reporter=None, dry_run=False, fake_delay=0.0, cancel=None
+        cmd,
+        *,
+        cwd=None,
+        reporter=None,
+        dry_run=False,
+        fake_delay=0.0,
+        cancel=None,
+        timeout=None,
     ):
         assert "-i" in cmd and "can0" in cmd
         assert "--query" in cmd
+        assert timeout == 10.0
         if reporter is not None:
             reporter("stdout", "Detected UUID: bcb5346fc731, Application: Klipper")
             reporter("stdout", "CANBus UUID Query Complete")
@@ -272,7 +280,14 @@ def test_query_with_nothing_unclaimed_returns_an_empty_list(paths, settings, mon
     _fake_flashtool(paths)
 
     def fake_run_streamed(
-        cmd, *, cwd=None, reporter=None, dry_run=False, fake_delay=0.0, cancel=None
+        cmd,
+        *,
+        cwd=None,
+        reporter=None,
+        dry_run=False,
+        fake_delay=0.0,
+        cancel=None,
+        timeout=None,
     ):
         if reporter is not None:
             reporter("stdout", "CANBus UUID Query Complete")
@@ -297,7 +312,14 @@ def test_scan_all_sweeps_every_interface_and_merges(paths, settings, fake_root, 
     _fake_flashtool(fake_paths)
 
     def fake_run_streamed(
-        cmd, *, cwd=None, reporter=None, dry_run=False, fake_delay=0.0, cancel=None
+        cmd,
+        *,
+        cwd=None,
+        reporter=None,
+        dry_run=False,
+        fake_delay=0.0,
+        cancel=None,
+        timeout=None,
     ):
         interface = cmd[cmd.index("-i") + 1]
         uuid = f"bcb5346fc73{interface[-1]}"

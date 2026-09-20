@@ -1247,8 +1247,10 @@ Runs **only** when called — never from `fw.status`, never swept into
 `discovery.confirm`'s USB-flash sources, never on a timer. The standalone panel
 starts it alongside `fw.status` on initial connection and manual refresh. The
 results stay independent, so USB status is displayed as soon as it arrives even
-when CAN queries are slow or fail. Older scan responses cannot replace a newer
-refresh.
+when CAN queries are slow or fail. Panel refreshes are single-flight, and the
+agent refuses a concurrent `fw.canbus.scan` with `busy`, so another tab or API
+client cannot multiply flashtool subprocesses. Each per-interface query has a
+ten-second deadline.
 
 Mirrors `fw.dfu.scan`/`fw.bootsel.scan`'s report-don't-raise shape:
 describing the situation *is* the work here, so this never throws for
@@ -1682,6 +1684,13 @@ event:
 
 Without this a streaming log silently lies after a dropped frame, a page reload,
 or a Moonraker restart mid-build.
+
+On initial connection or reconnect, restore the job embedded in `fw.status` and
+fetch its retained log with `fw.job.get {job_id, log_from: 0}` before relying on
+new `log` events. If no job is running, the standalone panel does the same for
+the newest entry in `recent` only when it finished within the last 15 minutes;
+older history is not reopened in a fresh tab. Merge a live batch that arrives
+while this fetch is in flight by line index rather than replacing it.
 
 `fw.job.get` returns `log_from` — the first index it could *actually* serve. That
 may be higher than you asked for, because the log is a ring buffer (default 2000

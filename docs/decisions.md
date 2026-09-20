@@ -137,8 +137,12 @@ collector supplies the reusable data path; the old split is no longer a reason
 to defer topology or CAN support.
 
 The standalone UI runs `fw.status` and the explicit `fw.canbus.scan` together
-on refresh. Their results are stored independently, and a generation guard
-prevents an older overlapping CAN scan from replacing a newer result.
+on refresh. Their results are stored independently, but the refresh itself is
+single-flight: initial load, reconnect, event reactions and the toolbar all
+share the same in-progress pair rather than starting overlapping scans. The
+agent independently refuses a second concurrent CAN scan, protecting it from
+multiple tabs and non-UI clients, and each flashtool query has a ten-second
+deadline so an abandoned browser request cannot strand a subprocess.
 
 ### New firmware-specific code goes behind the helper seam
 

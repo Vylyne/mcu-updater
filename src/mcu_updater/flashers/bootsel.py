@@ -355,7 +355,19 @@ class Bootsel:
             return None
         side = cmake_mod.read_sidecar(bench.paths, target_type) or {}
         uf2 = target.detail["uf2_file"]
-        if side.get("dirty") or not cmake_mod.sidecar_describes_image(side, uf2, os.stat(uf2)):
+        try:
+            ours = not side.get("dirty") and cmake_mod.sidecar_describes_image(side, uf2, os.stat(uf2))
+        except OSError:
+            # The staged image went away between the copy and this read. Filing
+            # the ledger is best effort by design - `write_all` catches an
+            # `UpdaterError` here and warns "flashed, but its ledger record
+            # could not be filed", precisely so a board that *was* written is
+            # never reported unwritten and never stops the boards behind it.
+            # A raw OSError would escape that handler and do both. Unprovable
+            # is the honest answer anyway: without the bytes there is nothing
+            # to check the sidecar against.
+            ours = False
+        if not ours:
             side = {}
         return FlashRecord(
             key=target.id,

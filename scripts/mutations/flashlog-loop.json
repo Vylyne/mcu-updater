@@ -47,10 +47,10 @@
     },
     {
       "name": "bootsel files only provenance that describes the staged image",
-      "_comment": "Protect the ownership and clean-tree checks so rejected CMake evidence cannot return through the flash ledger.",
+      "_comment": "Protect the ownership and clean-tree checks so rejected CMake evidence cannot return through the flash ledger. Trusting the sidecar unconditionally also skips the stat, so this catches the vanished-image case in the same breath.",
       "file": "src/mcu_updater/flashers/bootsel.py",
-      "find": "        if side.get(\"dirty\") or not cmake_mod.sidecar_describes_image(side, uf2, os.stat(uf2)):",
-      "replace": "        if False:"
+      "find": "            ours = not side.get(\"dirty\") and cmake_mod.sidecar_describes_image(side, uf2, os.stat(uf2))",
+      "replace": "            ours = True"
     },
     {
       "name": "a bare board has nothing to file",

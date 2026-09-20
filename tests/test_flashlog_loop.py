@@ -330,6 +330,16 @@ def test_bootsel_records_the_board_when_no_sidecar_exists(bench, paths, cmake_ty
     _assert_cmake_record_without_provenance(flashers.Bootsel().record(bench, target))
 
 
+def test_bootsel_files_the_board_when_the_staged_image_is_gone(bench, paths, cmake_type):
+    """The board was written; only the evidence vanished. Filing the ledger is
+    best effort, so an unreadable staged image withholds provenance rather than
+    raising past `write_all`'s handler and stopping the boards behind it."""
+    target = _cmake_bootsel_target(paths, sidecar={})
+    os.unlink(target.detail["uf2_file"])
+
+    _assert_cmake_record_without_provenance(flashers.Bootsel().record(bench, target))
+
+
 def test_bootsel_has_nothing_to_file_for_a_bare_board(bench, cmake_type, tmp_path):
     """First install: the `type` is a chipset string and there may be no serial
     at all, so there is no tracked device to file this under."""

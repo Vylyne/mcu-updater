@@ -173,11 +173,13 @@ def run_streamed(
     dry_run: bool = False,
     grace: float = 5.0,
     poll: float = 0.25,
+    timeout: float | None = None,
     fake_delay: float | None = None,
 ) -> int:
     """Run a command, forwarding each output line to `reporter` as it arrives.
 
-    Returns the exit code. Raises OperationCancelled if `cancel` was set.
+    Returns the exit code. Raises OperationCancelled if `cancel` was set, or
+    BuildError when `timeout` expires before the child exits.
 
     stderr is merged into stdout deliberately: splitting them reorders the log
     relative to the compile lines and makes a build failure much harder to read.
@@ -236,7 +238,12 @@ def run_streamed(
     pump.start()
 
     cancelled = False
+    timed_out = False
+    deadline = time.monotonic() + timeout if timeout is not None else None
     while True:
+        if deadline is not None and time.monotonic() >= deadline and not timed_out:
+            _terminate(proc, grace, reporter)
+            timed_out = True
         try:
             item = lines.get(timeout=poll)
         except queue.Empty:
@@ -258,6 +265,11 @@ def run_streamed(
 
     if cancelled:
         raise OperationCancelled("build cancelled")
+    if timed_out:
+        assert timeout is not None
+        raise BuildError(
+            f"'{cmd[0]}' timed out after {timeout:g}s", tool=cmd[0], timeout=timeout
+        )
     return rc
 
 

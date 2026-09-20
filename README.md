@@ -77,7 +77,7 @@ Interfaces:
 - [x] Moonraker agent (JSON-RPC over the unix socket)
 - [x] Bulk build / flash / update-all, covering every provider - kconfig, PlatformIO and cmake alike
 - [x] Guided first-time MCU setup over DFU and BOOTSEL
-- [x] Standalone embeddable UI
+- [x] Standalone embeddable UI, with single-flight refreshes and retained job-log restoration after reload
 
 ## TODO
 
@@ -92,7 +92,6 @@ of it. What is still open:
 - [ ] **BUG** A queued `fw.build_all` mixes two configuration snapshots. Targets are captured at submission (`bulk.py:508`), but `_do_build_all` reparses a fresh `Install` at job time (`bulk.py:421`), and the providers index that fresh config by the stale target name (`Cmake.artifact_status` and `Cmake.build` in `providers/cmake.py`, both `install.cmake[target.name]`). `Cmake.blocked` does use `.get()` and returns a named reason, but it is consulted during selection in `providers/registry.py`, never again at job time. Removing or renaming a type while the job waits makes that raw dictionary index raise `KeyError`, which is not an `UpdaterError`, so it escapes the per-target failure collector, aborts the batch and skips every later target. `_do_build_all`'s own docstring claims the batch "no longer answers two questions about two different configurations"; that claim is false as written because the targets came from the earlier snapshot. Fix the snapshot boundary and the misleading comment together.
 - [ ] **BUG** `FOREIGN_BUILD` is defined, mapped to `ARTIFACT_UNPROVABLE` and labelled "Rebuilt outside this tool" in `states.py`, but nothing in `src/` ever emits it. A CMake sidecar that exists while the staged bytes no longer match it - `_is_our_image` failing in `providers/cmake.py` - returns `NO_PROVENANCE` instead, which says "no evidence" when what we actually have is positive evidence that somebody rebuilt behind us. The resulting state is `ARTIFACT_UNPROVABLE` either way, so this is label accuracy rather than behaviour, and the same gap exists on the kconfig path in `build.py`.
 - [ ] **BUG** A Roadrunner flash reports `Could not confirm that the Roadrunner CDC device disappeared` on an otherwise successful write. `_await_disappearance` in [src/mcu_updater/discovery/roadrunner.py](src/mcu_updater/discovery/roadrunner.py) sets `unknown = True` when `_entry_candidates(paths, strict=True)` raises `OSError`, then treats "I could not look" as "the device is still there" and spins to `REENUMERATE_TIMEOUT`. The usual cause is `/dev/serial/by-id` disappearing entirely once the last CDC device leaves - which is evidence the board *did* go, not absence of evidence. Seen on the bench 2026-09-19; the flash itself succeeded.
-- [ ] **BUG** Pressing the UI's refresh button while a scan is still loading stops the host responding. Reported from the bench 2026-09-19. Not yet reproduced or traced; suspect a re-entrant inventory scan rather than anything in the flash path, since it needs no flash to trigger.
 
 ## Requirements
 

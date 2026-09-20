@@ -8,6 +8,7 @@ import { state } from "../store/agent";
 afterEach(() => {
   state.ping = null;
   state.status = null;
+  state.refreshing = false;
 });
 
 function makeTarget(provider: Target["provider"], name: string): Target {
@@ -72,6 +73,13 @@ describe("TargetsView", () => {
     expect(
       wrapper.find('[title="Flash everything that needs it"]').exists(),
     ).toBe(true);
+  });
+
+  it("disables refresh while any caller already has a refresh in flight", () => {
+    state.refreshing = true;
+    const wrapper = mount(TargetsView, { props: { targets: [] } });
+
+    expect(wrapper.get('[title="Refresh"]').attributes("disabled")).toBe("");
   });
 
   it("keeps the add-board wizard mounted after its menu closes", async () => {

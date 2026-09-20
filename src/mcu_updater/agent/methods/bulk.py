@@ -709,7 +709,7 @@ class BulkMixin(_Base):
             devices = board_targets + screens
             refused += screens_refused
             if not devices and not refused:
-                ctx.reporter("info", "No device needs flashing.")
+                ctx.reporter("info", "No device was selected for flashing.")
                 return {"build": build_result, "flash": {"flashed": [], "failures": []}}
 
             # Gate again. The check before submission was minutes ago - a whole

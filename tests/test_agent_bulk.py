@@ -800,6 +800,29 @@ def test_update_all_builds_before_it_chooses_what_to_flash(bulk, paths, fake_roo
     assert [f["serial"] for f in job.result["flash"]["flashed"]] == [EBB_A]
 
 
+def test_update_all_does_not_call_an_absent_fleet_current(
+    bulk, paths, fake_root, monkeypatch
+):
+    with open(paths.main_config, "w", encoding="utf-8") as fh:
+        fh.write("")
+    write_settings(paths, dry_run="true", service_backend="null", enable_flashing="true")
+    _declare_cmake(paths, fake_root, serials=[RR_SERIAL], helper=True, staged=True)
+    monkeypatch.setattr(
+        bulk,
+        "_do_build_all",
+        lambda ctx, targets: {"built": [], "failures": []},
+    )
+
+    res = bulk.dispatch("fw.update_all", {"scope": "all"})
+    assert bulk.runner.wait(timeout=60)
+    job = bulk.runner.get(res["job_id"])
+    lines, _, _ = job.log_since()
+
+    assert job.state == "succeeded", job.error
+    assert any(line.text == "No device was selected for flashing." for line in lines)
+    assert all(line.text != "No device needs flashing." for line in lines)
+
+
 def test_update_all_re_checks_the_printer_after_the_build(bulk, paths, fake_root, monkeypatch):
     """A fleet build takes minutes. The gate that passed before submission is
     stale by the time the flash starts, and this is the last moment before Klipper

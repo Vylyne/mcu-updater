@@ -55,8 +55,8 @@
     {
       "name": "a cmake type-level flash covers every serial it declares",
       "file": "src/mcu_updater/cli.py",
-      "find": "            for serial in entry.serials:\n                targets += _cmake_targets(c, args.type, serial)",
-      "replace": "            for serial in entry.serials[:1]:\n                targets += _cmake_targets(c, args.type, serial)"
+      "find": "            for serial in entry.serials:\n                serial_targets, serial_refused = _cmake_targets(c, args.type, serial)",
+      "replace": "            for serial in entry.serials[:1]:\n                serial_targets, serial_refused = _cmake_targets(c, args.type, serial)"
     },
     {
       "name": "update-all sweeps cmake types",

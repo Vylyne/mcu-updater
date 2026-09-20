@@ -722,6 +722,37 @@ def test_flashing_a_cmake_type_covers_every_serial_it_declares(
     assert [target.id for target in captured[0]] == [RR_SERIAL, RR_SERIAL_B]
 
 
+def test_flashing_a_cmake_type_writes_supported_serials_and_names_refusals(
+    c, fake_root, capsys, monkeypatch
+):
+    _cmake_flashable(c, fake_root, serials=(RR_SERIAL, RR_SERIAL_B))
+    monkeypatch.setattr(cli, "_confirm", lambda prompt: True)
+    monkeypatch.setattr(
+        flashers.Bootsel,
+        "supports",
+        lambda self, device, helper: device.id == RR_SERIAL,
+    )
+    written: list = []
+
+    def write_selected(bench, targets, ctx, *, refused=(), **kwargs):
+        written.extend(targets)
+        return {
+            "flashed": [target.to_json() for target in targets],
+            "failures": list(refused),
+        }
+
+    monkeypatch.setattr(flashers, "write_all", write_selected)
+
+    with pytest.raises(SystemExit) as exc:
+        cli.flash_fw_cmd(
+            argparse.Namespace(type="roadrunner", serial=None, yes=True, force=False)
+        )
+
+    assert exc.value.code == 1
+    assert [target.id for target in written] == [RR_SERIAL]
+    assert RR_SERIAL_B in capsys.readouterr().err
+
+
 def test_flashing_a_cmake_type_that_tracks_nothing_says_so(
     c, fake_root, captured, capsys, monkeypatch
 ):
@@ -1203,7 +1234,7 @@ def test_the_flash_prompt_provisions_an_unprovisioned_roadrunner_then_flashes_it
 
     def spy_cmake_targets(c, mcu_type, serial):
         targeted.append(serial)
-        return []
+        return [], []
 
     monkeypatch.setattr(cli, "_cmake_targets", spy_cmake_targets)
 

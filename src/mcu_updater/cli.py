@@ -44,6 +44,7 @@ from .devices import (
 )
 from .errors import (
     ConfigNotFoundError,
+    NoFlasherError,
     UnknownSerialError,
     UpdaterError,
 )
@@ -628,7 +629,7 @@ def _canbus_targets(c: Context, mcu_type: str, uuids: list[str]) -> tuple[list, 
     )
 
 
-def _cmake_targets(c: Context, mcu_type: str, serial: str) -> list:
+def _cmake_targets(c: Context, mcu_type: str, serial: str) -> tuple[list, list]:
     """One CMake-built board, as a thing the batch can write.
 
     The same selection the agent's `_cmake_flash` makes: the type's declared
@@ -643,12 +644,11 @@ def _cmake_targets(c: Context, mcu_type: str, serial: str) -> list:
     whole change exists to remove - and `for_mcu` wants a kconfig `McuType`.
 
     No `FlashLog` record and no attachment check, matching the CLI's other flash
-    paths: the family's `flashers:` list picks the writer (`flashers.select`),
-    and a family that cannot write the board refuses with `NoFlasherError`. The
+    paths: the family's `flashers:` list picks the writer (`flashers.select_each`),
+    and a family that cannot write the board becomes a named refusal. The
     helper performs its own protocol confirmation once the services have
     released the port.
     """
-    from . import helpers
     from .providers import cmake as cmake_mod
 
     # `.get`, not `[...]`: `provider_of` proved membership a moment ago, but it
@@ -659,31 +659,29 @@ def _cmake_targets(c: Context, mcu_type: str, serial: str) -> list:
         raise UpdaterError(f"CMake type '{mcu_type}' is no longer configured.")
     families = firmware.load(c.paths)
     family = firmware.resolve(c.paths, target_type.firmware, families)
-    helper = helpers.for_name(family.helper, family=family.name)
 
     fw_bin = c.paths.uf2_file(mcu_type, target_type.firmware)
     if not os.path.exists(fw_bin):
         raise UpdaterError(f"no built firmware for {mcu_type} at {fw_bin}. Build it first.")
 
     present = find_device(c.paths, "", serial)
-    return [
-        flashers.select(
-            c.paths,
-            family,
-            flashers.Device(
-                type=mcu_type,
-                id=serial,
-                chipset=target_type.chipset,
-                state=present.state if present is not None else STATE_OFFLINE,
-                fw=family.name,
-                detail={"uf2_file": fw_bin},
+    return flashers.select_each(
+        c.paths,
+        families,
+        [
+            (
+                flashers.Device(
+                    type=mcu_type,
+                    id=serial,
+                    chipset=target_type.chipset,
+                    state=present.state if present is not None else STATE_OFFLINE,
+                    fw=family.name,
+                    detail={"uf2_file": fw_bin},
+                ),
+                stop_services.for_cmake(c.paths, target_type, c.settings, families),
             ),
-            helper,
-            stop_services=stop_services.for_cmake(
-                c.paths, target_type, c.settings, families
-            ),
-        )
-    ]
+        ],
+    )
 
 
 def _pio_targets(
@@ -887,9 +885,12 @@ def flash_fw_cmd(args: argparse.Namespace) -> None:
 
         with exclusive(c.paths, f"flash type {args.type}"):
             targets = []
+            refused = []
             for serial in entry.serials:
-                targets += _cmake_targets(c, args.type, serial)
-            code = _run_batch(c, targets, f"flash {args.type}")
+                serial_targets, serial_refused = _cmake_targets(c, args.type, serial)
+                targets += serial_targets
+                refused += serial_refused
+            code = _run_batch(c, targets, f"flash {args.type}", refused)
         sys.exit(code)
 
     # Whole type: flash every tracked board under it - by-id serials and CAN
@@ -958,9 +959,10 @@ def flash_fw_cmd(args: argparse.Namespace) -> None:
             # had taken effect.
             print("Note: --force does not apply to helper-BOOTSEL writes.")
         with exclusive(c.paths, f"flash {mcu_type}/{args.serial}"):
-            code = _run_batch(
-                c, _cmake_targets(c, mcu_type, args.serial), f"flash {args.serial}"
-            )
+            targets, refused = _cmake_targets(c, mcu_type, args.serial)
+            if refused:
+                raise NoFlasherError(refused[0]["error"])
+            code = _run_batch(c, targets, f"flash {args.serial}")
         sys.exit(code)
 
     with exclusive(c.paths, f"flash {mcu_type}/{args.serial}"):
@@ -1045,7 +1047,10 @@ def update_all(args: argparse.Namespace) -> None:
             for name in sorted(install.cmake):
                 for serial in install.cmake[name].serials:
                     try:
-                        targets += _cmake_targets(c, name, serial)
+                        cmake_targets, cmake_refused = _cmake_targets(c, name, serial)
+                        if cmake_refused:
+                            raise NoFlasherError(cmake_refused[0]["error"])
+                        targets += cmake_targets
                     except UpdaterError as exc:
                         # Not fatal, and not silent: the rest of the fleet is
                         # still worth writing while this configuration gap is fixed.

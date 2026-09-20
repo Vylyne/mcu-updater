@@ -786,8 +786,9 @@ the job logs a warning. If `flash.json` itself cannot be written, the entry is
 lost silently rather than failing a successful flash. Every refusal above is
 pre-copy; after a copy, readiness problems are warnings and never make the board
 look like it still needs flashing.
-The closed loop is host-test-only so far, not an end-to-end hardware-verified
-claim.
+The closed loop is verified end to end on hardware. Bystander volumes are
+handled by the by-path mount layout rather than by the refusal, which is now
+the backstop for the older shared-path udev rule and is host-test-only.
 
 **`uuid` is a third identity form**, alongside `serial`/`port` - `{uuid, name?,
 force?}` flashes a CAN-addressed board instead of a by-id one. Same ordering,

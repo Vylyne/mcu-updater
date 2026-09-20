@@ -84,7 +84,6 @@ Interfaces:
 [docs/decisions.md](docs/decisions.md) for the standing decisions that came out
 of it. What is still open:
 
-- [ ] **BENCH** One pipeline is code-complete: one type list, one inventory, one flash loop, one verdict. Design: [docs/superpowers/specs/2026-09-14-one-pipeline-design.md](docs/superpowers/specs/2026-09-14-one-pipeline-design.md). What is left is hardware. A Roadrunner over usbserial, with a bystander RP2040 sitting in BOOTSEL during the write, to prove the topology match refuses the wrong volume - the one claim host tests cannot make. Until that runs, the closed BOOTSEL loop has host-test coverage only.
 - [ ] **TEST ERROR** Reproduce and fix the flaky teardown `RuntimeError` in `test_an_unknown_inbound_method_gets_an_error_not_silence`.
 - [ ] **NEEDS DESIGN** Run config migrations as the first step of agent startup, so that restarting the service migrates an existing install. First check the restrictions the service runs under.
 - [ ] **BUG** A CMake type's staged image is never compared against its `cmake_target:`. `cmake.record_build` writes `cmake_target` into the sidecar, but `artifact_status` never reads it back - its ladder runs missing file, no sidecar, not-our-image, `dirty`, then `sha` against HEAD - so changing `cmake_target:` without touching the source leaves the artifact reporting **current** while the previous target's `.uf2` stays staged. The panel shows up to date, `update-all` under the default `stale` scope will not select it, and since the target axes are transport and LED ordering, the board keeps running firmware for the wrong transport. Fix: compare `record["cmake_target"]` against the configured one before the `sha` check and return `ArtifactStatus(CONFIG_CHANGED)` on mismatch - that state, its `ARTIFACT_STALE` mapping and its "Config changed - rebuild" label all already exist in `states.py`. Only a re-stage is needed rather than a recompile, because the build runs bare `make` with no `--target` and every target's `.uf2` is already in the build directory.
@@ -92,6 +91,8 @@ of it. What is still open:
 - [ ] **NEEDS DESIGN** A family may declare a flasher that cannot consume its builder's artifact. `flashers: flashtool` on a CMake family passes config validation because flashtool is a real registry name, and `supports()` accepts it on kind and chipset alone, but CMake stages only a `.uf2` while flashtool asks for a `.bin`. The agent path says "Build it first"; the CLI path raises an uncaught `KeyError` because the CMake request detail carries only `uf2_file` while `target_for` indexes `serial`. [The CMake guide](docs/cmake-provider.md) advertises the route. Fix: design an artifact-kind agreement check between a family's builder and its declared flashers rather than patching either call site.
 - [ ] **BUG** A queued `fw.build_all` mixes two configuration snapshots. Targets are captured at submission (`bulk.py:508`), but `_do_build_all` reparses a fresh `Install` at job time (`bulk.py:421`), and the providers index that fresh config by the stale target name (`Cmake.artifact_status` and `Cmake.build` in `providers/cmake.py`, both `install.cmake[target.name]`). `Cmake.blocked` does use `.get()` and returns a named reason, but it is consulted during selection in `providers/registry.py`, never again at job time. Removing or renaming a type while the job waits makes that raw dictionary index raise `KeyError`, which is not an `UpdaterError`, so it escapes the per-target failure collector, aborts the batch and skips every later target. `_do_build_all`'s own docstring claims the batch "no longer answers two questions about two different configurations"; that claim is false as written because the targets came from the earlier snapshot. Fix the snapshot boundary and the misleading comment together.
 - [ ] **BUG** `FOREIGN_BUILD` is defined, mapped to `ARTIFACT_UNPROVABLE` and labelled "Rebuilt outside this tool" in `states.py`, but nothing in `src/` ever emits it. A CMake sidecar that exists while the staged bytes no longer match it - `_is_our_image` failing in `providers/cmake.py` - returns `NO_PROVENANCE` instead, which says "no evidence" when what we actually have is positive evidence that somebody rebuilt behind us. The resulting state is `ARTIFACT_UNPROVABLE` either way, so this is label accuracy rather than behaviour, and the same gap exists on the kconfig path in `build.py`.
+- [ ] **BUG** A Roadrunner flash reports `Could not confirm that the Roadrunner CDC device disappeared` on an otherwise successful write. `_await_disappearance` in [src/mcu_updater/discovery/roadrunner.py](src/mcu_updater/discovery/roadrunner.py) sets `unknown = True` when `_entry_candidates(paths, strict=True)` raises `OSError`, then treats "I could not look" as "the device is still there" and spins to `REENUMERATE_TIMEOUT`. The usual cause is `/dev/serial/by-id` disappearing entirely once the last CDC device leaves - which is evidence the board *did* go, not absence of evidence. Seen on the bench 2026-09-19; the flash itself succeeded.
+- [ ] **BUG** Pressing the UI's refresh button while a scan is still loading stops the host responding. Reported from the bench 2026-09-19. Not yet reproduced or traced; suspect a re-entrant inventory scan rather than anything in the flash path, since it needs no flash to trigger.
 
 ## Requirements
 
@@ -668,8 +669,15 @@ real verdict rather than the `unknown_version` stub it used to. A board whose
 declared serial is not on the bus is reported offline and skipped, exactly as a
 kconfig board is.
 
-This closed loop has host-test coverage but has not yet been verified end to
-end on hardware. The manual first-install path is unchanged: a bare board that
+This closed loop is verified end to end on hardware: a Roadrunner over
+usbserial, confirmed over its admin protocol, dropped to BOOTSEL, written at
+the mount its captured USB topology names, and waited for by the same identity
+before services restart. The current udev rule mounts each board at
+`BOOTSEL/by-path/<topology tag>`, so a second RP2040 sitting in BOOTSEL beside
+it takes a different tag and is never a candidate. The ambiguity refusal in
+`mount_for_topology` remains as the backstop for installs still on the older
+rule, which mounted every board at one shared `RPI-RP2` path; that refusal has
+host-test coverage only. The manual first-install path is unchanged: a bare board that
 is already in BOOTSEL has no provisioned serial or running helper to address,
 so hold `BOOT`, press and release `RESET`, release `BOOT`, and use the ordinary
 one-board-at-a-time BOOTSEL workflow.

@@ -815,7 +815,7 @@ def _ports_free(c: Context, names: Sequence[str], label: str):
 class _TypeFlashSource:
     """Provider-specific device enumeration behind one CLI selection call."""
 
-    select: Callable[[Context, providers.Install, str, str | None, bool], tuple[list, list]]
+    select: Callable[..., tuple[list, list]]
     needs_ports_free: bool = False
     empty_message: str = "No devices are tracked under '{name}'."
     empty_single_is_error: bool = False
@@ -824,28 +824,42 @@ class _TypeFlashSource:
 
 
 def _kconfig_type_targets(
-    c: Context, install: providers.Install, name: str, serial: str | None, force: bool
+    c: Context,
+    name: str,
+    serial: str | None,
+    force: bool,
+    install: providers.Install | None = None,
 ) -> tuple[list, list]:
     if serial is not None:
         return _board_targets(c, name, [serial], force=force)
-    mcu = install.registry.get(name)
+    mcu = (install.registry if install is not None else c.registry()).get(name)
     boards, refused = _board_targets(c, name, mcu.serials, force=force)
     can, can_refused = _canbus_targets(c, name, mcu.canbus_uuids)
     return boards + can, refused + can_refused
 
 
 def _platformio_type_targets(
-    c: Context, install: providers.Install, name: str, serial: str | None, force: bool
+    c: Context,
+    name: str,
+    serial: str | None,
+    force: bool,
+    install: providers.Install | None = None,
 ) -> tuple[list, list]:
-    # No lookup in the snapshot: a PlatformIO type's devices are live ports the
-    # firmware enumerates, not identities the config declares.
+    # Nothing to look up in either: a PlatformIO type's devices are live ports
+    # the firmware enumerates, not identities the config declares.
     return _pio_targets(c, name, only_id=serial)
 
 
 def _cmake_type_targets(
-    c: Context, install: providers.Install, name: str, serial: str | None, force: bool
+    c: Context,
+    name: str,
+    serial: str | None,
+    force: bool,
+    install: providers.Install | None = None,
 ) -> tuple[list, list]:
-    entry = install.cmake.get(name)
+    from .providers import cmake as cmake_mod
+
+    entry = (install.cmake if install is not None else cmake_mod.load(c.paths)).get(name)
     if entry is None:
         raise UpdaterError(f"CMake type '{name}' is no longer configured.")
     if force:
@@ -869,6 +883,9 @@ _TYPE_FLASH_SOURCES = {
     providers.PlatformIO.name: _TypeFlashSource(
         _platformio_type_targets,
         needs_ports_free=True,
+        # "reachable", not "tracked": these devices are live ports the firmware
+        # enumerates, so nothing was ever declared for them to be absent from.
+        empty_message="No device is reachable for '{name}'.",
         empty_single_is_error=True,
     ),
     providers.Cmake.name: _TypeFlashSource(
@@ -921,17 +938,19 @@ def _run_type_flash(
 ) -> int:
     """Flash one type, or one device of it, through that type's own source.
 
-    One config snapshot answers every question this write asks, for the reason
-    `providers.Install` exists: a caller that re-read between two of its own
-    questions could answer them about two different configurations.
+    Deliberately not a whole `Install`: this addresses one type and makes one
+    lookup, so there is no pair of questions for a mid-flight config edit to
+    answer differently - and `Install.load` runs the *validating* loads, which
+    would let a malformed screen section break `flash -t <kconfig type>`.
+    That is the blast radius `providers.selection` refuses for the same reason.
+    The fleet sweep is where one snapshot is load-bearing, and it has one.
     """
     source = _type_flash_source(c, name)
-    install = providers.Install.load(c.paths, c.settings)
     label = f"flash {serial or name}"
     ports = _ports_free(c, [name], label) if source.needs_ports_free else contextlib.nullcontext()
     with exclusive(c.paths, f"flash {name}" + (f"/{serial}" if serial else "")):
         with ports:
-            targets, refused = source.select(c, install, name, serial, force)
+            targets, refused = source.select(c, name, serial, force)
             if not targets and not refused and (
                 serial is None or source.empty_single_is_error
             ):
@@ -1073,7 +1092,7 @@ def update_all(args: argparse.Namespace) -> None:
             ):
                 try:
                     source = _type_flash_source(c, name)
-                    selected, rejected = source.select(c, install, name, None, False)
+                    selected, rejected = source.select(c, name, None, False, install)
                 except UpdaterError as exc:
                     # Not fatal: the rest of the fleet is still worth writing.
                     # A second slot that is not an id, because a type nothing

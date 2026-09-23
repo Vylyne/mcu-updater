@@ -1189,6 +1189,29 @@ def test_flash_refuses_a_serial_tracked_elsewhere_with_a_message(
     assert captured == []
 
 
+def test_a_malformed_cmake_section_does_not_break_a_kconfig_flash(
+    c, fake_root, captured, monkeypatch
+):
+    """Flashing one type reads that type's config, not every provider's
+    validating load - so a CMake section with no `cmake_target:` stays that
+    section's problem, the blast radius `providers.selection` refuses too."""
+    monkeypatch.setattr(cli, "_confirm", lambda prompt: True)
+    tree = fake_root / "broken" / "rp2040"
+    tree.mkdir(parents=True, exist_ok=True)
+    with open(c.paths.main_config, "a", encoding="utf-8", newline="\n") as fh:
+        fh.write(
+            f"\n[firmware broken]\nsource: {tree}\nbuilder: cmake\nflashers: bootsel\n"
+            "\n[type broken]\nchipset: rp2040\nfirmware: broken\n"
+        )
+
+    with pytest.raises(SystemExit):
+        cli.flash_fw_cmd(
+            argparse.Namespace(type="board", serial=None, yes=True, force=False)
+        )
+
+    assert [t.id for t in captured[0]] == ["AAAA-if00"]
+
+
 def test_the_flash_prompt_refuses_an_unprovisioned_roadrunner_serial(
     c, fake_root, captured, monkeypatch, capsys
 ):

@@ -77,6 +77,12 @@
       "replace": "                    failures.append((name, None))"
     },
     {
+      "name": "flashing one type never runs every provider's validating load",
+      "file": "src/mcu_updater/cli.py",
+      "find": "            targets, refused = source.select(c, name, serial, force)",
+      "replace": "            targets, refused = source.select(\n                c, name, serial, force, providers.Install.load(c.paths, c.settings)\n            )"
+    },
+    {
       "name": "a queued build uses the snapshot that selected its targets",
       "file": "src/mcu_updater/agent/methods/bulk.py",
       "find": "            return self._do_build_all(ctx, install, selection.build)",

@@ -780,6 +780,45 @@ def test_a_build_failure_does_not_abandon_the_rest_of_the_fleet(bulk, paths, mon
     ]
 
 
+def test_a_build_job_uses_the_configuration_snapshot_that_selected_its_targets(
+    bulk, paths, fake_root, monkeypatch
+):
+    """Renaming a type after submission must not mix a stale target key with
+    a newly parsed provider map and abort the rest of the batch."""
+    _declare_cmake(paths, fake_root)
+    built_targets: list[str] = []
+
+    def record_build(self, install, target, **kwargs):
+        built_targets.append(install.cmake[target.name].cmake_target)
+
+    monkeypatch.setattr(cmake.Cmake, "build", record_build)
+
+    class CapturingRunner:
+        fn = None
+
+        def submit(self, kind, params, fn):
+            self.fn = fn
+            return type(
+                "SubmittedJob",
+                (),
+                {"id": "captured", "to_dict": lambda self: {"id": self.id}},
+            )()
+
+    runner = CapturingRunner()
+    bulk.runner = runner
+    response = bulk.dispatch("fw.build_all", {"scope": "all"})
+    assert response["types"] == [RR]
+
+    with open(paths.main_config, "w", encoding="utf-8") as fh:
+        fh.write("")
+
+    result = runner.fn(_ctx())
+    assert built_targets == ["roadrunner_v1_i2c_rgb"]
+    assert result["built"] == [
+        {"type": RR, "fw": "roadrunner", "provider": "cmake"}
+    ]
+
+
 def test_update_all_builds_before_it_chooses_what_to_flash(bulk, paths, fake_root):
     """A build is what makes boards stale. Choosing the boards up front would use
     provenance the build is about to invalidate."""
@@ -810,7 +849,7 @@ def test_update_all_does_not_call_an_absent_fleet_current(
     monkeypatch.setattr(
         bulk,
         "_do_build_all",
-        lambda ctx, targets: {"built": [], "failures": []},
+        lambda ctx, install, targets: {"built": [], "failures": []},
     )
 
     res = bulk.dispatch("fw.update_all", {"scope": "all"})

@@ -809,6 +809,32 @@ def test_update_all_names_a_cmake_type_it_could_not_write(
     assert "SKIP roadrunner" in capsys.readouterr().err
 
 
+def test_update_all_does_not_call_a_selection_failure_a_build_failure(
+    c, fake_root, captured, capsys, monkeypatch
+):
+    """The failure summary's second slot is a device id. A type nothing could
+    select has none, and leaving it empty prints "(build failed)" - blaming a
+    build that ran fine for a device it never reached."""
+    _cmake_flashable(c, fake_root, staged=False)
+    monkeypatch.setattr(
+        "mcu_updater.providers.cmake.Cmake.build",
+        lambda self, install, target, **kw: None,
+    )
+    monkeypatch.setattr(
+        "mcu_updater.providers.kconfig_make.KconfigMake.build",
+        lambda self, install, target, **kw: None,
+    )
+
+    with pytest.raises(SystemExit) as exc:
+        cli.update_all(argparse.Namespace(yes=True, jobs=None))
+
+    out = capsys.readouterr()
+    assert exc.value.code == 1
+    assert "SKIP roadrunner" in out.err
+    assert "- roadrunner / no devices selected" in out.out
+    assert "(build failed)" not in out.out
+
+
 def test_a_cmake_type_with_no_helper_names_its_flashers(c, fake_root, captured, monkeypatch):
     """A family whose helper cannot request BOOTSEL leaves `bootsel` nothing to
     write a running board with, and the refusal names the list to fix."""

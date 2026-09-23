@@ -1112,8 +1112,9 @@ def test_a_cmake_device_projects_its_reported_image_verdict_and_record(
 def test_a_stale_cmake_sidecar_cannot_prove_its_old_image_current(
     paths, tmp_path, fake_root, monkeypatch
 ):
-    """A copied artifact with the previous build's sidecar is absence of
-    evidence, even when the board still reports the image that sidecar names."""
+    """Our own sidecar naming bytes that are not on disk is positive evidence
+    somebody rebuilt behind us, even when the board still reports the image
+    that sidecar names. Unprovable either way - the label is the difference."""
     serial = "RR-5K3DNTFCR1B3C9D0RZMYA3Y720"
     _cmake_config(paths, tmp_path, helper=True, serial=serial)
     os.makedirs(paths.artifact_dir("roadrunner"), exist_ok=True)
@@ -1156,7 +1157,7 @@ def test_a_stale_cmake_sidecar_cannot_prove_its_old_image_current(
     payload = api.cmake_status()[0]
     device = _targets(api, "cmake")["roadrunner"]["devices"][0]
 
-    assert payload["artifact_reason"] == "no_provenance"
+    assert payload["artifact_reason"] == "foreign_build"
     assert device["reason"] == "unknown_version"
     assert device["needs_flash"] is None
 

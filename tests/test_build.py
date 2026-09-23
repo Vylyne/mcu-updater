@@ -153,6 +153,37 @@ def test_artifact_status_detects_a_changed_config(paths, settings):
     assert artifact_status(paths, "board", "klipper").reason == "config_changed"
 
 
+def test_artifact_status_detects_an_image_rebuilt_outside_the_tool(paths, settings):
+    settings.dry_run = True
+    reg = _registry(paths)
+    _write_config(paths)
+    build(paths, reg, settings, "board", "klipper")
+
+    with open(paths.bin_file("board", "klipper"), "wb") as fh:
+        fh.write(b"somebody else's build")
+
+    assert artifact_status(paths, "board", "klipper").reason == "foreign_build"
+
+
+def test_a_sidecar_too_old_to_carry_a_hash_accuses_nobody(paths, settings):
+    """Same rule as the cmake ladder: `foreign_build` is an accusation, and a
+    record written before `bin_sha256` existed has no evidence for one."""
+    settings.dry_run = True
+    reg = _registry(paths)
+    _write_config(paths)
+    build(paths, reg, settings, "board", "klipper")
+
+    side_path = paths.sidecar_file("board", "klipper")
+    side = json.load(open(side_path, encoding="utf-8"))
+    del side["bin_sha256"]
+    with open(side_path, "w", encoding="utf-8") as fh:
+        json.dump(side, fh)
+    with open(paths.bin_file("board", "klipper"), "wb") as fh:
+        fh.write(b"somebody else's build")
+
+    assert artifact_status(paths, "board", "klipper").reason != "foreign_build"
+
+
 def test_artifact_status_detects_a_changed_source_tree(paths, settings):
     settings.dry_run = True
     reg = _registry(paths)

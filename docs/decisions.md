@@ -382,6 +382,22 @@ value wins over its flasher's. Do not turn it back into a class-only
 attribute: a board already in BOOTSEL would then stop Klipper for nothing, or a
 helper-requested one would write under a running Klipper.
 
+### Do not infer builder/flasher compatibility from the staged filename
+
+The family's `flashers:` list is configuration-authoritative. An artifact's
+extension can provide positive evidence for a mechanism - a staged UF2 is what
+BOOTSEL copies - but it cannot prove that another mechanism is incompatible.
+A `.bin` does not reveal whether it contains an application, a Katapult image,
+or something with a vendor-specific layout, and a filename is not an image
+contract.
+
+Do not add a builder-to-flasher compatibility matrix or reject a family from
+extensions alone. The configured flasher and its runtime requirements remain
+the authority; an administrator who pairs them is asserting knowledge the
+updater cannot derive from arbitrary firmware bytes. Add a validation rule only
+when a builder or image format supplies actual machine-readable evidence, not
+because today's known trees happen to use different suffixes.
+
 ### A device nothing can write is a failure, not an abort
 
 Spec §8 step 1. `flashers.select_each` turns a `NoFlasherError` into a

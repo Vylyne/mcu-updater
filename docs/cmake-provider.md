@@ -133,6 +133,14 @@ helper to confirm the board came back. A board already sitting in BOOTSEL is
 written the same way without a helper. The RP2040 flashtool route is untouched
 for families that list `flashtool`.
 
+That list is authoritative and is not checked against what the builder stages -
+see [decisions.md](decisions.md), "Do not infer builder/flasher compatibility
+from the staged filename". Today the pairing that does not fit crashes rather
+than refusing: a CMake family listing `flashtool` reaches `flashtool.target_for`
+with a request detail carrying only `uf2_file`, and the bare `KeyError` on
+`board["type"]` is not an `UpdaterError`, so `flashers.select_each` does not
+catch it. It is in the README ledger as its own bug.
+
 The Roadrunner helper confirms the provisioned serial over the admin protocol,
 captures the full serial `by-path` topology before `REBOOT_BOOTSEL`, and accepts
 only one `INFO_UF2.TXT`-bearing mount under the matching normalized topology.

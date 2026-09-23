@@ -19,7 +19,14 @@ import pytest
 from mcu_updater import providers
 from mcu_updater.errors import BuildError, ConfigError
 from mcu_updater.providers import Cmake, Install, cmake
-from mcu_updater.states import BUILT_DIRTY, NEVER_BUILT, NO_PROVENANCE, SOURCE_CHANGED
+from mcu_updater.states import (
+    BUILT_DIRTY,
+    CONFIG_CHANGED,
+    FOREIGN_BUILD,
+    NEVER_BUILT,
+    NO_PROVENANCE,
+    SOURCE_CHANGED,
+)
 
 from .conftest import cmd_tokens
 
@@ -920,6 +927,7 @@ def test_a_sidecar_another_provider_wrote_is_not_read_as_ours(paths, repo):
     record = {
         "sha": state.sha,
         "dirty": False,
+        "cmake_target": target.cmake_target,
         "bin_sha256": cmake.build_mod.sha256_file(path),
         "bin_size": stat.st_size,
         "bin_mtime": stat.st_mtime,
@@ -940,7 +948,7 @@ def test_a_sidecar_another_provider_wrote_is_not_read_as_ours(paths, repo):
     assert cmake.artifact_status(paths, target, state).is_current
 
 
-def test_an_image_somebody_else_rebuilt_has_no_provenance(paths, repo):
+def test_an_image_somebody_else_rebuilt_is_a_foreign_build(paths, repo):
     source = repo / "rp2040"
     target = _cmake_type(source)
     state = cmake.source_state(str(source))
@@ -948,7 +956,44 @@ def test_an_image_somebody_else_rebuilt_has_no_provenance(paths, repo):
     cmake.record_build(paths, target, state)
 
     _staged(paths, b"SOMETHING ELSE")
+    assert cmake.artifact_status(paths, target, state).reason == FOREIGN_BUILD
+
+
+def test_a_sidecar_too_old_to_carry_a_hash_accuses_nobody(paths, repo):
+    """`FOREIGN_BUILD` is an accusation, and a record written before
+    `bin_sha256` existed has no evidence for one. Drifted size and mtime with
+    no recorded hash is still absence of evidence."""
+    source = repo / "rp2040"
+    target = _cmake_type(source)
+    state = cmake.source_state(str(source))
+    path = _staged(paths)
+    cmake.record_build(paths, target, state)
+
+    sidecar = paths.sidecar_file(target.name, target.firmware)
+    with open(sidecar, encoding="utf-8") as fh:
+        record = json.load(fh)
+    del record["bin_sha256"]
+    record["bin_mtime"] = 0
+    with open(sidecar, "w", encoding="utf-8") as fh:
+        json.dump(record, fh)
+
+    assert os.stat(path).st_mtime != 0
     assert cmake.artifact_status(paths, target, state).reason == NO_PROVENANCE
+
+
+def test_changing_the_configured_target_makes_the_staged_image_stale(paths, repo):
+    source = repo / "rp2040"
+    built_target = _cmake_type(source)
+    state = cmake.source_state(str(source))
+    _staged(paths)
+    cmake.record_build(paths, built_target, state)
+
+    configured_target = dataclasses.replace(
+        built_target, cmake_target="roadrunner_v1_i2c_grb"
+    )
+    assert (
+        cmake.artifact_status(paths, configured_target, state).reason == CONFIG_CHANGED
+    )
 
 
 def test_a_build_from_a_dirty_subtree_is_built_dirty(paths, repo):

@@ -38,6 +38,8 @@ from ..paths import Paths
 from ..settings import Settings
 from ..states import (
     BUILT_DIRTY,
+    CONFIG_CHANGED,
+    FOREIGN_BUILD,
     NEVER_BUILT,
     NO_PROVENANCE,
     SOURCE_CHANGED,
@@ -697,11 +699,20 @@ def artifact_status(
     if record is None:
         return ArtifactStatus(NO_PROVENANCE)
     if not sidecar_describes_image(record, path, stat):
+        # Positive evidence needs a hash for the bytes on disk to contradict.
+        # With one, a mismatch says somebody rebuilt behind us and is named as
+        # such; without one - a record written before `bin_sha256` existed -
+        # drifted size and mtime can only say we no longer know. Both land on
+        # `ARTIFACT_UNPROVABLE`, so this is the label, never the verdict.
+        if record.get("bin_sha256"):
+            return ArtifactStatus(FOREIGN_BUILD)
         return ArtifactStatus(NO_PROVENANCE)
     if record.get("dirty"):
         # The tree it came from is not recoverable, so current is unprovable
         # rather than merely unknown.
         return ArtifactStatus(BUILT_DIRTY)
+    if record.get("cmake_target") != target.cmake_target:
+        return ArtifactStatus(CONFIG_CHANGED)
 
     built, head = record.get("sha"), state.sha
     if not built or not head:

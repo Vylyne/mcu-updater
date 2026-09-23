@@ -17,7 +17,7 @@ import dataclasses
 import json
 import os
 import sys
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 
 from . import (
     __version__,
@@ -811,6 +811,79 @@ def _ports_free(c: Context, names: Sequence[str], label: str):
         yield
 
 
+@dataclasses.dataclass(frozen=True)
+class _TypeFlashSource:
+    """Provider-specific device enumeration behind one CLI selection call."""
+
+    select: Callable[[Context, providers.Install, str, str | None, bool], tuple[list, list]]
+    needs_ports_free: bool = False
+    empty_message: str = "No devices are tracked under '{name}'."
+    empty_single_is_error: bool = False
+    refuse_single_before_batch: bool = False
+    refuse_fleet_before_batch: bool = False
+
+
+def _kconfig_type_targets(
+    c: Context, install: providers.Install, name: str, serial: str | None, force: bool
+) -> tuple[list, list]:
+    if serial is not None:
+        return _board_targets(c, name, [serial], force=force)
+    mcu = install.registry.get(name)
+    boards, refused = _board_targets(c, name, mcu.serials, force=force)
+    can, can_refused = _canbus_targets(c, name, mcu.canbus_uuids)
+    return boards + can, refused + can_refused
+
+
+def _platformio_type_targets(
+    c: Context, install: providers.Install, name: str, serial: str | None, force: bool
+) -> tuple[list, list]:
+    # No lookup in the snapshot: a PlatformIO type's devices are live ports the
+    # firmware enumerates, not identities the config declares.
+    return _pio_targets(c, name, only_id=serial)
+
+
+def _cmake_type_targets(
+    c: Context, install: providers.Install, name: str, serial: str | None, force: bool
+) -> tuple[list, list]:
+    entry = install.cmake.get(name)
+    if entry is None:
+        raise UpdaterError(f"CMake type '{name}' is no longer configured.")
+    if force:
+        print("Note: --force does not apply to helper-BOOTSEL writes.")
+    targets: list = []
+    refused: list = []
+    for device_id in [serial] if serial is not None else entry.serials:
+        selected, rejected = _cmake_targets(c, name, device_id)
+        targets += selected
+        refused += rejected
+    return targets, refused
+
+
+# Static for the same reason the provider and flasher registries are static:
+# adding a builder is one reviewed adapter and one line, never caller branches.
+_TYPE_FLASH_SOURCES = {
+    providers.KconfigMake.name: _TypeFlashSource(
+        _kconfig_type_targets,
+        empty_message="No serials or CAN uuids tracked under '{name}'.",
+    ),
+    providers.PlatformIO.name: _TypeFlashSource(
+        _platformio_type_targets,
+        needs_ports_free=True,
+        empty_single_is_error=True,
+    ),
+    providers.Cmake.name: _TypeFlashSource(
+        _cmake_type_targets,
+        empty_message="No serials tracked under '{name}'.",
+        refuse_single_before_batch=True,
+        refuse_fleet_before_batch=True,
+    ),
+}
+
+
+def _type_flash_source(c: Context, name: str) -> _TypeFlashSource:
+    return _TYPE_FLASH_SOURCES[providers.provider_of(c.paths, name)]
+
+
 def _run_batch(c: Context, targets: list, label: str, refused: list | tuple = ()) -> int:
     """Write a batch and print what happened. Returns an exit code.
 
@@ -839,6 +912,36 @@ def _run_batch(c: Context, targets: list, label: str, refused: list | tuple = ()
     return 0
 
 
+def _run_type_flash(
+    c: Context,
+    name: str,
+    serial: str | None,
+    *,
+    force: bool,
+) -> int:
+    """Flash one type, or one device of it, through that type's own source.
+
+    One config snapshot answers every question this write asks, for the reason
+    `providers.Install` exists: a caller that re-read between two of its own
+    questions could answer them about two different configurations.
+    """
+    source = _type_flash_source(c, name)
+    install = providers.Install.load(c.paths, c.settings)
+    label = f"flash {serial or name}"
+    ports = _ports_free(c, [name], label) if source.needs_ports_free else contextlib.nullcontext()
+    with exclusive(c.paths, f"flash {name}" + (f"/{serial}" if serial else "")):
+        with ports:
+            targets, refused = source.select(c, install, name, serial, force)
+            if not targets and not refused and (
+                serial is None or source.empty_single_is_error
+            ):
+                print(source.empty_message.format(name=name), file=sys.stderr)
+                return 1
+            if serial is not None and refused and source.refuse_single_before_batch:
+                raise NoFlasherError(refused[0]["error"])
+            return _run_batch(c, targets, label, refused)
+
+
 def flash_fw_cmd(args: argparse.Namespace) -> None:
     c = ctx()
     reg = c.registry()
@@ -847,12 +950,6 @@ def flash_fw_cmd(args: argparse.Namespace) -> None:
         print("ERROR: provide -s <serial>, -t <type>, or both.", file=sys.stderr)
         sys.exit(1)
 
-    # Which build system owns the name, asked once and asked first. Testing
-    # registry membership meant "PlatformIO" for exactly as long as there were
-    # two providers; a CMake name under that assumption reached `_ports_free`
-    # and indexed the PlatformIO map with a name that is not in it.
-    owner = providers.provider_of(c.paths, args.type) if args.type else None
-
     if not args.yes and not _confirm(
         "Flashing requires stopping the affected service(s) "
         "(aborts any active print!). Continue?"
@@ -860,56 +957,15 @@ def flash_fw_cmd(args: argparse.Namespace) -> None:
         print("Aborted.")
         return
 
-    # A PlatformIO type: its devices are ports, not tracked serials, and the
-    # batch knows how to write them. Nothing below this applies - there is no
-    # serial to resolve and no registry entry to add one to.
-    if owner == providers.PlatformIO.name:
-        with exclusive(c.paths, f"flash type {args.type}"):
-            with _ports_free(c, [args.type], f"flash {args.type}"):
-                targets, refused = _pio_targets(c, args.type, only_id=args.serial)
-                if not targets and not refused:
-                    print(f"No device is reachable for '{args.type}'.", file=sys.stderr)
-                    sys.exit(1)
-                code = _run_batch(c, targets, f"flash {args.type}", refused)
-        sys.exit(code)
-
-    # A CMake type: its boards are the `serials:` its own `[type]` section
-    # declares, each written over BOOTSEL by the family's helper.
-    if owner == providers.Cmake.name and not args.serial:
-        from .providers import cmake as cmake_mod
-
-        entry = cmake_mod.load(c.paths).get(args.type)
-        if entry is None or not entry.serials:
-            print(f"No serials tracked under '{args.type}'.", file=sys.stderr)
-            sys.exit(1)
-
-        with exclusive(c.paths, f"flash type {args.type}"):
-            targets = []
-            refused = []
-            for serial in entry.serials:
-                serial_targets, serial_refused = _cmake_targets(c, args.type, serial)
-                targets += serial_targets
-                refused += serial_refused
-            code = _run_batch(c, targets, f"flash {args.type}", refused)
-        sys.exit(code)
-
-    # Whole type: flash every tracked board under it - by-id serials and CAN
-    # uuids both, since a type may legitimately track either or both.
-    if args.type and not args.serial:
-        mcu = reg.get(args.type)
-        if not mcu.serials and not mcu.canbus_uuids:
-            print(
-                f"No serials or CAN uuids tracked under '{args.type}'.", file=sys.stderr
-            )
-            sys.exit(1)
-
-        with exclusive(c.paths, f"flash type {args.type}"):
-            boards, refused = _board_targets(c, args.type, mcu.serials)
-            can, can_refused = _canbus_targets(c, args.type, mcu.canbus_uuids)
-            code = _run_batch(
-                c, boards + can, f"flash {args.type}", refused + can_refused
-            )
-        sys.exit(code)
+    if args.type:
+        source = _type_flash_source(c, args.type)
+        # PlatformIO identities are live ports/device ids, not declared serials,
+        # so even a narrowed request goes straight through its registered source.
+        # `force` is never carried here: it overrides a bootloader offset check
+        # that only the single-device kconfig write has, and `--force`'s own
+        # help says it never applies to a whole type.
+        if source.needs_ports_free or not args.serial:
+            sys.exit(_run_type_flash(c, args.type, args.serial, force=False))
 
     # Single device. Identity, not build semantics: `resolve_serial` reads the
     # kconfig registry alone, which is why a serial configured under a CMake
@@ -948,27 +1004,9 @@ def flash_fw_cmd(args: argparse.Namespace) -> None:
             args.serial = tracked.serial
     else:
         mcu_type = reg.resolve_declared_serial(args.serial)
-        owner = providers.provider_of(c.paths, mcu_type)
         print(f"Resolved serial {args.serial} -> type '{mcu_type}'")
 
-    if owner == providers.Cmake.name:
-        if args.force:
-            # Accepted and ignored rather than refused: `--force` overrides
-            # flash_katapult's bootloader offset check, and a helper-BOOTSEL
-            # write has no such check to override. Silence would look like it
-            # had taken effect.
-            print("Note: --force does not apply to helper-BOOTSEL writes.")
-        with exclusive(c.paths, f"flash {mcu_type}/{args.serial}"):
-            targets, refused = _cmake_targets(c, mcu_type, args.serial)
-            if refused:
-                raise NoFlasherError(refused[0]["error"])
-            code = _run_batch(c, targets, f"flash {args.serial}")
-        sys.exit(code)
-
-    with exclusive(c.paths, f"flash {mcu_type}/{args.serial}"):
-        targets, refused = _board_targets(c, mcu_type, [args.serial], force=args.force)
-        code = _run_batch(c, targets, f"flash {args.serial}", refused)
-    sys.exit(code)
+    sys.exit(_run_type_flash(c, mcu_type, args.serial, force=args.force))
 
 
 def update_all(args: argparse.Namespace) -> None:
@@ -1027,35 +1065,30 @@ def update_all(args: argparse.Namespace) -> None:
         with _ports_free(c, sorted(install.platformio), "update-all"):
             targets: list = []
             refused: list = []
-            for name in sorted(install.registry.names()):
-                reg_mcu = install.registry.get(name)
-                boards, boards_refused = _board_targets(c, name, reg_mcu.serials)
-                can, can_refused = _canbus_targets(c, name, reg_mcu.canbus_uuids)
-                targets += boards + can
-                refused += boards_refused + can_refused
-            for name in sorted(install.platformio):
+            # Every configured name from the snapshot this command already
+            # holds, so a file saved mid-sweep belongs to the next run rather
+            # than to half of this one.
+            for name in sorted(
+                set(install.registry.names()) | set(install.platformio) | set(install.cmake)
+            ):
                 try:
-                    screens, screens_refused = _pio_targets(c, name)
+                    source = _type_flash_source(c, name)
+                    selected, rejected = source.select(c, install, name, None, False)
                 except UpdaterError as exc:
-                    # Not fatal: the boards are still worth writing, and a host with
-                    # no watcher running is a configuration gap rather than a fault.
+                    # Not fatal: the rest of the fleet is still worth writing.
+                    # A second slot that is not an id, because a type nothing
+                    # could select has none - and leaving it empty would print
+                    # "(build failed)" for a device the build never reached.
                     print(f"SKIP {name}: {exc}", file=sys.stderr)
-                    failures.append((name, "no devices found"))
+                    failures.append((name, "no devices selected"))
                     continue
-                targets += screens
-                refused += screens_refused
-            for name in sorted(install.cmake):
-                for serial in install.cmake[name].serials:
-                    try:
-                        cmake_targets, cmake_refused = _cmake_targets(c, name, serial)
-                        if cmake_refused:
-                            raise NoFlasherError(cmake_refused[0]["error"])
-                        targets += cmake_targets
-                    except UpdaterError as exc:
-                        # Not fatal, and not silent: the rest of the fleet is
-                        # still worth writing while this configuration gap is fixed.
-                        print(f"SKIP {name}: {exc}", file=sys.stderr)
-                        failures.append((name, serial))
+                targets += selected
+                if source.refuse_fleet_before_batch:
+                    for rejection in rejected:
+                        print(f"SKIP {name}: {rejection['error']}", file=sys.stderr)
+                        failures.append((name, rejection.get("id")))
+                else:
+                    refused += rejected
 
             if not targets and not refused:
                 print("\nNothing to write.")

@@ -9,7 +9,7 @@ import time
 import pytest
 
 from mcu_updater.build import classify_output, run_streamed
-from mcu_updater.errors import OperationCancelled
+from mcu_updater.errors import BuildError, OperationCancelled
 
 from .conftest import cmd_tokens
 
@@ -132,6 +132,20 @@ def test_cancel_is_responsive_even_when_the_child_is_silent(tmp_path):
             poll=0.1,
         )
     assert time.monotonic() - started < 15
+
+
+def test_timeout_terminates_a_silent_child(tmp_path):
+    started = time.monotonic()
+    with pytest.raises(BuildError, match="timed out after 0.3s"):
+        run_streamed(
+            [sys.executable, "-c", "import time; time.sleep(30)"],
+            cwd=str(tmp_path),
+            reporter=lambda s, line: None,
+            timeout=0.3,
+            poll=0.05,
+            grace=0.2,
+        )
+    assert time.monotonic() - started < 5
 
 
 def test_dry_run_never_launches_the_command(tmp_path):

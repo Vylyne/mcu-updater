@@ -6,6 +6,7 @@ import dataclasses
 import os
 import platform
 import secrets
+import threading
 import time
 from collections.abc import Callable, Iterable
 from typing import Any
@@ -33,6 +34,7 @@ from ...devices import (
     scan,
 )
 from ...errors import (
+    BusyError,
     ConfigCorruptError,
     UpdaterError,
 )
@@ -141,6 +143,7 @@ class StatusMixin(_Base):
         # version map. `status()` consumes it immediately, avoiding a second
         # identical configfile/mcu-object query just to project CAN UUIDs.
         self._latest_canbus_info: dict[str, dict[str, Any]] = {}
+        self._canbus_scan_lock = threading.Lock()
 
     # -- helpers -----------------------------------------------------------
 
@@ -1682,6 +1685,14 @@ class StatusMixin(_Base):
         return {"serial": result.serial, "prior_serial": serial, "state": "unprovisioned"}
 
     def canbus_scan(self, args: dict) -> dict[str, Any]:
+        if not self._canbus_scan_lock.acquire(blocking=False):
+            raise BusyError("a CAN scan is already running.")
+        try:
+            return self._canbus_scan(args)
+        finally:
+            self._canbus_scan_lock.release()
+
+    def _canbus_scan(self, args: dict) -> dict[str, Any]:
         """Unclaimed CAN boards on every discovered interface.
 
         The CAN counterpart to `bus_scan`'s untracked-USB-serial view -

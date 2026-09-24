@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import dataclasses
 import os
+import threading
 
 import pytest
 
@@ -46,7 +47,14 @@ def _make_flashtool(paths) -> None:
 
 def _fake_query_answering(uuid: str, application: str = "Klipper"):
     def fake_run_streamed(
-        cmd, *, cwd=None, reporter=None, dry_run=False, fake_delay=0.0, cancel=None
+        cmd,
+        *,
+        cwd=None,
+        reporter=None,
+        dry_run=False,
+        fake_delay=0.0,
+        cancel=None,
+        timeout=None,
     ):
         if reporter is not None:
             reporter("stdout", f"Detected UUID: {uuid}, Application: {application}")
@@ -95,6 +103,42 @@ def test_an_unclaimed_board_is_reported_untracked(api, fake_root, monkeypatch):
     assert device["state"] == "klipper"
     assert device["tracked_by"] is None
     assert device["ignored"] is False
+
+
+def test_a_second_can_scan_is_refused_while_one_is_running(
+    api, fake_root, monkeypatch
+):
+    net_root = _make_can_interface(fake_root, "can0")
+    api.paths = dataclasses.replace(api.paths, can_sysfs_net=net_root)
+    _make_flashtool(api.paths)
+    entered = threading.Event()
+    release = threading.Event()
+
+    def blocking_run_streamed(cmd, **kwargs):
+        entered.set()
+        assert release.wait(5)
+        reporter = kwargs["reporter"]
+        reporter("stdout", "CANBus UUID Query Complete")
+        return 0
+
+    monkeypatch.setattr(canbus_mod, "run_streamed", blocking_run_streamed)
+    first_result: list[dict] = []
+    first = threading.Thread(
+        target=lambda: first_result.append(api.dispatch("fw.canbus.scan"))
+    )
+    first.start()
+    assert entered.wait(5)
+
+    try:
+        with pytest.raises(RpcError, match="CAN scan is already running") as exc:
+            api.dispatch("fw.canbus.scan")
+        assert exc.value.data["code"] == "busy"
+    finally:
+        release.set()
+        first.join(5)
+
+    assert not first.is_alive()
+    assert first_result[0]["count"] == 0
 
 
 def test_canbus_scan_marks_a_foreign_provider_identity(paths, fake_root, monkeypatch, live_registry_text):
@@ -199,7 +243,14 @@ def test_nothing_unclaimed_answering_is_reported_not_raised(api, fake_root, monk
     _make_flashtool(api.paths)
 
     def fake_run_streamed(
-        cmd, *, cwd=None, reporter=None, dry_run=False, fake_delay=0.0, cancel=None
+        cmd,
+        *,
+        cwd=None,
+        reporter=None,
+        dry_run=False,
+        fake_delay=0.0,
+        cancel=None,
+        timeout=None,
     ):
         if reporter is not None:
             reporter("stdout", "CANBus UUID Query Complete")

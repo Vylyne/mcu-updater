@@ -8,15 +8,18 @@ provider owns - have their own tests saying why.
 from __future__ import annotations
 
 import dataclasses
+import hashlib
 import json
 import os
 import pathlib
 import shutil
 import subprocess
+import types
 
 import pytest
 
 from mcu_updater import providers
+from mcu_updater.artifacts import KIND_BIN
 from mcu_updater.errors import BuildError, ConfigError
 from mcu_updater.providers import Cmake, Install, cmake
 from mcu_updater.states import (
@@ -1254,3 +1257,110 @@ def test_a_build_records_its_uf2_under_artifacts(paths, settings, repo, monkeypa
     record = cmake.read_sidecar(paths, _cmake_type(source))
     assert record["artifacts"] == {"uf2": {"sha256": record["bin_sha256"]}}
     assert cmake.read_record(paths, "roadrunner", "roadrunner") == record
+
+
+def _links(source, name, *, raw=True):
+    """A run_streamed stand-in that links `name` the way pico-sdk does: the
+    .elf, then the .bin and .uf2 made from it."""
+
+    def fake_run(cmd, *, cwd, reporter, cancel=None, dry_run=False, **kw):
+        build = source / "build"
+        (build / f"{name}.elf").write_bytes(b"elf")
+        if raw:
+            (build / f"{name}.bin").write_bytes(f"{name} raw".encode())
+        (build / f"{name}.uf2").write_bytes(name.encode())
+        return 0
+
+    return fake_run
+
+
+def _build_with(paths, settings, repo, monkeypatch, fake_run):
+    source = repo / "rp2040"
+    (source / "build").mkdir(exist_ok=True)
+    monkeypatch.setattr(cmake.build_mod, "run_streamed", fake_run(source))
+    monkeypatch.setattr(cmake, "declared_targets", lambda source: {"all", "roadrunner_v1_i2c_rgb"})
+    cmake.build(paths, settings, _cmake_type(source))
+    return source
+
+
+def test_a_build_stages_the_bin_beside_the_uf2(paths, settings, repo, monkeypatch):
+    source = _build_with(
+        paths, settings, repo, monkeypatch, lambda source: _links(source, "roadrunner_v1_i2c_rgb")
+    )
+
+    with open(paths.bin_file("roadrunner", "roadrunner"), "rb") as fh:
+        assert fh.read() == b"roadrunner_v1_i2c_rgb raw"
+    record = cmake.read_sidecar(paths, _cmake_type(source))
+    assert record["artifacts"] == {
+        "bin": {"sha256": hashlib.sha256(b"roadrunner_v1_i2c_rgb raw").hexdigest()},
+        "uf2": {"sha256": record["bin_sha256"]},
+    }
+
+
+def test_a_built_bin_is_offered_to_a_family_that_lists_flashtool(paths, settings, repo, monkeypatch):
+    _build_with(paths, settings, repo, monkeypatch, lambda source: _links(source, "roadrunner_v1_i2c_rgb"))
+
+    family = types.SimpleNamespace(name="roadrunner")
+    artifact = cmake.staged(paths, "roadrunner", family).first_of((KIND_BIN,))
+
+    assert artifact is not None
+    assert artifact.path == paths.bin_file("roadrunner", "roadrunner")
+
+
+def test_a_build_without_a_bin_removes_a_stale_one(paths, settings, repo, monkeypatch):
+    """Review Focus 4: the record stops listing it, so leaving it would offer
+    flashtool an older image beside today's uf2 the moment the family lists it."""
+    os.makedirs(paths.artifact_dir("roadrunner"), exist_ok=True)
+    with open(paths.bin_file("roadrunner", "roadrunner"), "wb") as fh:
+        fh.write(b"an older build's bin")
+
+    source = _build_with(
+        paths, settings, repo, monkeypatch, lambda source: _links(source, "roadrunner_v1_i2c_rgb", raw=False)
+    )
+
+    assert not os.path.exists(paths.bin_file("roadrunner", "roadrunner"))
+    assert set(cmake.read_sidecar(paths, _cmake_type(source))["artifacts"]) == {"uf2"}
+
+
+def test_a_bin_older_than_its_elf_is_not_staged(paths, settings, repo, monkeypatch):
+    """cmake does not delete an output the tree stopped declaring, so a .bin
+    from before the tree dropped it survives in build/ - and predates the link."""
+    build = repo / "rp2040" / "build"
+    build.mkdir()
+    stale = build / "roadrunner_v1_i2c_rgb.bin"
+    stale.write_bytes(b"last month's bin")
+    os.utime(stale, (1_000_000, 1_000_000))
+
+    _build_with(
+        paths, settings, repo, monkeypatch, lambda source: _links(source, "roadrunner_v1_i2c_rgb", raw=False)
+    )
+
+    assert not os.path.exists(paths.bin_file("roadrunner", "roadrunner"))
+
+
+def test_a_dry_run_leaves_a_staged_bin_alone(paths, settings, repo, monkeypatch):
+    os.makedirs(paths.artifact_dir("roadrunner"), exist_ok=True)
+    with open(paths.bin_file("roadrunner", "roadrunner"), "wb") as fh:
+        fh.write(b"yesterday's bin")
+    rehearsal = dataclasses.replace(settings, dry_run=True)
+
+    _build_with(
+        paths, rehearsal, repo, monkeypatch, lambda source: _links(source, "roadrunner_v1_i2c_rgb", raw=False)
+    )
+
+    with open(paths.bin_file("roadrunner", "roadrunner"), "rb") as fh:
+        assert fh.read() == b"yesterday's bin"
+
+
+def test_a_cmake_bin_changed_behind_the_record_is_a_foreign_build(paths, settings, repo, monkeypatch):
+    """flashtool writes the bin without looking at the uf2, so a bin replaced
+    behind the record is foreign even while the uf2 still matches."""
+    source = _build_with(
+        paths, settings, repo, monkeypatch, lambda source: _links(source, "roadrunner_v1_i2c_rgb")
+    )
+    with open(paths.bin_file("roadrunner", "roadrunner"), "wb") as fh:
+        fh.write(b"somebody else's bin")
+
+    status = cmake.artifact_status(paths, _cmake_type(source), cmake.source_state(str(source)))
+
+    assert status.reason == FOREIGN_BUILD

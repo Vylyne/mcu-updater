@@ -21,6 +21,7 @@ is a fact about a repository and not about one directory in it.
 
 from __future__ import annotations
 
+import contextlib
 import dataclasses
 import json
 import os
@@ -282,6 +283,26 @@ def staged_uf2(source: str, cmake_target: str) -> str:
     return os.path.join(build_dir(source), f"{cmake_target}.uf2")
 
 
+def fresh_bin(source: str, cmake_target: str) -> str | None:
+    """This link's raw image, or None when it made none.
+
+    pico-sdk writes `<target>.bin` as a post-link step of `<target>.elf`, so a
+    `.bin` this link produced is never older than the `.elf`. One that is was
+    left by an earlier build of a tree that has since stopped making it -
+    cmake does not delete outputs it no longer declares - and staging it would
+    put an older image beside today's `.uf2`. No `.elf` means nothing to
+    compare against, which is also None: an image nobody can date is not
+    offered to a flasher.
+    """
+    base = os.path.join(build_dir(source), cmake_target)
+    try:
+        bin_mtime = os.stat(base + ".bin").st_mtime
+        elf_mtime = os.stat(base + ".elf").st_mtime
+    except OSError:
+        return None
+    return base + ".bin" if bin_mtime >= elf_mtime else None
+
+
 def _run(argv: list[str], cwd: str) -> str | None:
     """Capture a short command's stdout, or None if it could not answer."""
     try:
@@ -445,6 +466,11 @@ def record_build(paths: Paths, target: CmakeType, state: SourceState) -> None:
 
     uf2_sha256 = build_mod.sha256_file(path)
     hashes: dict[str, str | None] = {KIND_UF2: uf2_sha256}
+    bin_path = paths.bin_file(target.name, target.firmware)
+    if os.path.exists(bin_path):
+        # Only ever this build's: `build()` removes a staged `.bin` its link
+        # did not produce before it gets here.
+        hashes[KIND_BIN] = build_mod.sha256_file(bin_path)
     record = {
         # Which provider wrote this. The sidecar path is shared with
         # `kconfig_make`, whose record is a different schema in the same place
@@ -641,6 +667,19 @@ def build(
     shutil.copyfile(produced, staged)
     reporter("info", f"Staged {staged}")
 
+    # The raw image beside the uf2, when this link made one, so a family can
+    # list flashtool or dfu_util as well as bootsel. Removed when it made
+    # none, so an older build's `.bin` is never offered beside today's `.uf2`.
+    # Below the dry-run return above, so a rehearsal never removes one.
+    produced_bin = fresh_bin(source, target.cmake_target)
+    bin_staged = paths.bin_file(target.name, target.firmware)
+    if produced_bin is not None:
+        shutil.copyfile(produced_bin, bin_staged)
+        reporter("info", f"Staged {bin_staged}")
+    else:
+        with contextlib.suppress(FileNotFoundError):
+            os.remove(bin_staged)
+
     # After the copy, so the record describes the bytes that now exist - and
     # the two halves of that record are deliberately sampled at different
     # times, so do not "fix" one to match the other:
@@ -761,6 +800,13 @@ def artifact_status(
         if record.get("bin_sha256"):
             return ArtifactStatus(FOREIGN_BUILD)
         return ArtifactStatus(NO_PROVENANCE)
+    # The bin is a second image from the same link, and flashtool writes it
+    # without looking at the uf2 - so a bin replaced behind the record is a
+    # foreign build even while the uf2 still matches.
+    bin_path = paths.bin_file(target.name, target.firmware)
+    recorded_bin = recorded_sha256(record, KIND_BIN, primary=KIND_UF2)
+    if recorded_bin and os.path.exists(bin_path) and build_mod.sha256_file(bin_path) != recorded_bin:
+        return ArtifactStatus(FOREIGN_BUILD)
     if record.get("dirty"):
         # The tree it came from is not recoverable, so current is unprovable
         # rather than merely unknown.

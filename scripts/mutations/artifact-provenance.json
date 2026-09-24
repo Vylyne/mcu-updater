@@ -74,6 +74,30 @@
       "file": "src/mcu_updater/artifacts.py",
       "find": "    hashes: set[str] = set()\n    field = side.get(\"artifacts\")\n    if isinstance(field, dict):",
       "replace": "    hashes: set[str] = set()\n    field = side.get(\"artifacts\")\n    if False:"
+    },
+    {
+      "name": "a cmake bin that disagrees with its recorded hash is foreign",
+      "file": "src/mcu_updater/providers/cmake.py",
+      "find": "    if recorded_bin and os.path.exists(bin_path) and build_mod.sha256_file(bin_path) != recorded_bin:",
+      "replace": "    if False:"
+    },
+    {
+      "name": "a cmake build with no fresh bin removes the staged one",
+      "file": "src/mcu_updater/providers/cmake.py",
+      "find": "            os.remove(bin_staged)",
+      "replace": "            pass"
+    },
+    {
+      "name": "a bin older than its elf is not staged",
+      "file": "src/mcu_updater/providers/cmake.py",
+      "find": "    return base + \".bin\" if bin_mtime >= elf_mtime else None",
+      "replace": "    return base + \".bin\""
+    },
+    {
+      "name": "the cmake record hashes the staged bin",
+      "file": "src/mcu_updater/providers/cmake.py",
+      "find": "        hashes[KIND_BIN] = build_mod.sha256_file(bin_path)",
+      "replace": "        pass"
     }
   ]
 }

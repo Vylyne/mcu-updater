@@ -15,10 +15,14 @@ import os
 
 import pytest
 
-from mcu_updater import flashers, helpers
+from mcu_updater import firmware, flashers, helpers
+from mcu_updater.artifacts import KIND_BIN, KIND_UF2, Artifact
 from mcu_updater.build import FlashLog
+from mcu_updater.devices import STATE_KLIPPER
 from mcu_updater.errors import FlashError, UpdaterError
 from mcu_updater.settings import Settings
+
+from .conftest import seed_base_firmwares
 
 
 class _Fake:
@@ -29,6 +33,7 @@ class _Fake:
     chipsets: tuple[str, ...] = ("",)
     states: tuple[str, ...] = ()
     needs_services_stopped = False
+    accepts: tuple[str, ...] = ("bin",)
 
     def __init__(
         self, record=None, *, fails=(), record_fails=(), settled_raises=False, extra=None
@@ -43,10 +48,10 @@ class _Fake:
     def supports(self, device, helper) -> bool:
         return True
 
-    def target(self, paths, device, helper, *, stop_services):
+    def target(self, paths, device, helper, artifact, *, stop_services):
         return flashers.FlashTarget(
             flasher=self.name, type=device.type, id=device.id,
-            stop_services=stop_services,
+            stop_services=stop_services, artifact=artifact,
         )
 
     def prepared(self, bench, targets, ctx):
@@ -221,19 +226,29 @@ def test_a_record_failure_does_not_abort_the_batch(bench, monkeypatch):
 # --- what each flasher describes ----------------------------------------------
 
 
-def test_flashtool_describes_the_kconfig_sidecar(bench, paths):
+def _stage_kconfig(paths, data: bytes, *, fw_sha: str) -> str:
     os.makedirs(paths.artifact_dir("ebb36"), exist_ok=True)
+    bin_path = paths.bin_file("ebb36", "klipper")
+    with open(bin_path, "wb") as fh:
+        fh.write(data)
     with open(paths.sidecar_file("ebb36", "klipper"), "w", encoding="utf-8") as fh:
         json.dump(
             {
-                "fw_sha": "built-klipper-sha",
-                "bin_sha256": "built-bin-sha",
+                "fw_sha": fw_sha,
+                "bin_sha256": hashlib.sha256(data).hexdigest(),
                 "version": "CARTOGRAPHER 6.2.0",
             },
             fh,
         )
+    return bin_path
+
+
+def test_flashtool_describes_the_kconfig_sidecar(bench, paths):
+    seed_base_firmwares(paths)
+    bin_path = _stage_kconfig(paths, b"built", fw_sha="built-klipper-sha")
     target = flashers.flashtool.target_for(
-        {"type": "ebb36", "serial": "S1", "chipset": "stm32g0b1xx", "fw": "klipper"}
+        {"type": "ebb36", "serial": "S1", "chipset": "stm32g0b1xx", "fw": "klipper"},
+        artifact=Artifact(KIND_BIN, bin_path),
     )
 
     record = flashers.Flashtool().record(bench, target)
@@ -242,9 +257,85 @@ def test_flashtool_describes_the_kconfig_sidecar(bench, paths):
         key="S1",
         mcu_type="ebb36",
         fw="klipper",
-        bin_sha256="built-bin-sha",
+        bin_sha256=hashlib.sha256(b"built").hexdigest(),
         fw_sha="built-klipper-sha",
         version="CARTOGRAPHER 6.2.0",
+    )
+
+
+def test_the_record_describes_the_bytes_staged_when_it_is_filed(bench, paths):
+    """Review Focus 1: a rebuild between selection and the ledger. What was
+    written is what the staged path held at write time, so that is what the
+    record must describe - not a snapshot taken at selection."""
+    seed_base_firmwares(paths)
+    _stage_kconfig(paths, b"first build", fw_sha="first-sha")
+    target = flashers.select(
+        paths,
+        firmware.resolve(paths, "klipper"),
+        flashers.Device(
+            type="ebb36", id="S1", chipset="stm32g0b1xx", state=STATE_KLIPPER, fw="klipper"
+        ),
+        None,
+        stop_services=("klipper",),
+    )
+
+    _stage_kconfig(paths, b"second build", fw_sha="second-sha")
+    record = flashers.Flashtool().record(bench, target)
+
+    assert record is not None
+    assert record.bin_sha256 == hashlib.sha256(b"second build").hexdigest()
+    assert record.fw_sha == "second-sha"
+
+
+class _Requester:
+    name = "requester"
+
+    def request_bootsel(self, bench, *, serial, chipset, ctx):
+        return helpers.BootselHandoff(topology="platform-x.usb-usb-0:1.3:1.0")
+
+    def wait_ready(self, bench, *, serial, chipset, ctx, type_name="", fw=""):
+        return None
+
+
+def test_bootsel_files_the_uf2_hash_for_klipper(bench, paths):
+    """The ledger names the file that was written, and for Klipper through
+    BOOTSEL that is the .uf2 - not the .bin every older record described."""
+    seed_base_firmwares(paths)
+    os.makedirs(paths.artifact_dir("pico"), exist_ok=True)
+    staged = ((paths.bin_file("pico", "klipper"), b"bin"), (paths.uf2_file("pico", "klipper"), b"uf2"))
+    for path, data in staged:
+        with open(path, "wb") as fh:
+            fh.write(data)
+    with open(paths.sidecar_file("pico", "klipper"), "w", encoding="utf-8") as fh:
+        json.dump(
+            {
+                "fw_sha": "klipper-sha",
+                "bin_sha256": hashlib.sha256(b"bin").hexdigest(),
+                "artifacts": {
+                    "bin": {"sha256": hashlib.sha256(b"bin").hexdigest()},
+                    "uf2": {"sha256": hashlib.sha256(b"uf2").hexdigest()},
+                },
+            },
+            fh,
+        )
+    target = flashers.bootsel.target_for(
+        Artifact(KIND_UF2, paths.uf2_file("pico", "klipper")),
+        chipset="rp2040",
+        type_name="pico",
+        serial="P1",
+        fw="klipper",
+        helper=_Requester(),
+    )
+
+    record = flashers.Bootsel().record(bench, target)
+
+    assert record == flashers.FlashRecord(
+        key="P1",
+        mcu_type="pico",
+        fw="klipper",
+        bin_sha256=hashlib.sha256(b"uf2").hexdigest(),
+        fw_sha="klipper-sha",
+        version=None,
     )
 
 
@@ -274,6 +365,7 @@ def _cmake_bootsel_target(paths, *, sidecar: dict | None) -> flashers.FlashTarge
         chipset="rp2040",
         type_name="roadrunner",
         serial="RR-1",
+        fw="roadrunner",
         helper=helpers.for_name("roadrunner", family="roadrunner"),
     )
 
@@ -335,7 +427,7 @@ def test_bootsel_files_the_board_when_the_staged_image_is_gone(bench, paths, cma
     best effort, so an unreadable staged image withholds provenance rather than
     raising past `write_all`'s handler and stopping the boards behind it."""
     target = _cmake_bootsel_target(paths, sidecar={})
-    os.unlink(target.detail["uf2_file"])
+    os.unlink(target.artifact.path)
 
     _assert_cmake_record_without_provenance(flashers.Bootsel().record(bench, target))
 

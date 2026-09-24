@@ -33,7 +33,6 @@ on *now*. Only the USB path has this problem: CAN addresses a board as
 
 from __future__ import annotations
 
-import dataclasses
 import os
 import re
 import sys
@@ -920,9 +919,18 @@ def flash_initial_bootloader(
     refuses without it rather than copying Katapult alone.
     """
     from .. import flashers
+    from ..artifacts import KIND_BIN, KIND_UF2, Artifact, Staged
 
     state = STATE_BOOTSEL if chipset.startswith("rp2040") else STATE_DFU
     katapult = firmware.resolve(paths, "katapult")
+    if state == STATE_BOOTSEL and uf2_bin is None:
+        # Before selection, not after: with no uf2 staged, selection would
+        # pass bootsel over and blame the chipset instead of the build.
+        raise FlashError(
+            f"no .uf2 was built for {chipset}. BOOTSEL mass storage ignores "
+            f"a .bin - build again once the tree produces one.",
+            chipset=chipset,
+        )
     device = flashers.Device(
         type=chipset,
         id=target_serial or "",
@@ -930,34 +938,34 @@ def flash_initial_bootloader(
         state=state,
         fw=katapult.name,
         kind=flashers.KIND_BARE,
-        detail={"fw_bin": fw_bin},
     )
-    flasher = flashers.resolve(katapult, device, None)
-    if flasher is None:
+    # What the caller just built, as the staged set selection chooses from.
+    # Not `providers.staged`: a first install writes the image it was handed,
+    # which is not necessarily one this type's build left staged.
+    built = Staged(
+        fw=katapult.name,
+        artifacts=(Artifact(KIND_BIN, fw_bin),)
+        + ((Artifact(KIND_UF2, uf2_bin),) if uf2_bin else ()),
+    )
+    choice = flashers.resolve(katapult, device, None, built)
+    if choice is None:
         raise UnsupportedChipsetError(
             f"don't know how to perform a first-time flash for chipset '{chipset}'. "
             f"Flash katapult manually, then use 'add-serial' once it enumerates.",
             chipset=chipset,
         )
+    flasher, artifact = choice
 
     with tempfile.TemporaryDirectory(prefix="mcu-updater-bootsel-") as staging:
-        if state == STATE_BOOTSEL:
-            if uf2_bin is None:
-                raise FlashError(
-                    f"no .uf2 was built for {chipset}. BOOTSEL mass storage ignores "
-                    f"a .bin - build again once the tree produces one.",
-                    chipset=chipset,
-                )
-            staged = _stage_erasing_uf2(uf2_bin, katapult_config, staging, chipset)
+        if artifact.kind == KIND_UF2:
+            erasing = _stage_erasing_uf2(artifact.path, katapult_config, staging, chipset)
             reporter(
                 "info",
                 "Staged Katapult with the application sector erased, so the board "
                 "cannot chain-load whatever it ran before.",
             )
-            device = dataclasses.replace(
-                device, detail={**device.detail, "uf2_file": staged}
-            )
-        target = flasher.target(paths, device, None, stop_services=())
+            artifact = Artifact(KIND_UF2, erasing)
+        target = flasher.target(paths, device, None, artifact, stop_services=())
 
         bench = flashers.Bench(
             paths=paths,

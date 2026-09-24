@@ -17,9 +17,11 @@ import os
 
 import pytest
 
-from mcu_updater import device_info, flashers, uf2
+from mcu_updater import device_info, firmware, flashers, uf2
 from mcu_updater.agent.methods import Api
+from mcu_updater.agent.methods.bulk import _board_request
 from mcu_updater.agent.rpc import ERR_INVALID_PARAMS, RpcError
+from mcu_updater.artifacts import KIND_BIN, Artifact
 from mcu_updater.config import Registry
 from mcu_updater.jobs import IMMEDIATELY_CANCELLABLE, JobRunner
 from mcu_updater.providers import cmake
@@ -977,6 +979,7 @@ def _board(serial: str) -> flashers.FlashTarget:
             "reason": "x",
         },
         stop_services=("klipper",),
+        artifact=Artifact(KIND_BIN, f"/fake/{serial}.bin"),
     )
 
 
@@ -1160,13 +1163,18 @@ def test_a_no_provenance_cmake_board_is_only_selected_by_scope_all(
     ] == [RR_SERIAL]
 
 
-def test_a_cmake_board_carries_the_staged_uf2(bulk, paths, fake_root):
+def test_a_cmake_board_is_handed_its_staged_uf2_by_selection(bulk, paths, fake_root):
+    """The board dict names the board, not its file: selection asks the builder."""
     _declare_cmake(paths, fake_root, serials=[RR_SERIAL], helper=True, staged=True)
     make_device(fake_root / "bus", "Klipper", RR_CHIPSET, RR_SERIAL)
 
     [board] = bulk._cmake_boards_to_flash("all")
+    targets, refused = flashers.select_each(paths, firmware.load(paths), [_board_request(board)])
 
-    assert board["uf2_file"] == paths.uf2_file(RR, RR)
+    assert "uf2_file" not in board
+    assert refused == []
+    assert targets[0].artifact is not None
+    assert targets[0].artifact.path == paths.uf2_file(RR, RR)
 
 
 def test_an_absent_cmake_board_is_never_selected(bulk, paths, fake_root):

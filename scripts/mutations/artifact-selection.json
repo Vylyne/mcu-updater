@@ -1,0 +1,31 @@
+{
+  "_comment": "A flasher is handed only a file of a kind it accepts, a missing kind is refused by name, and cmake always offers the uf2 it built.",
+  "file": "src/mcu_updater/flashers/registry.py",
+  "command": [
+    "python",
+    "-m",
+    "pytest",
+    "tests/test_flasher_select.py",
+    "tests/test_artifacts.py",
+    "tests/test_flashlog_loop.py",
+    "-q"
+  ],
+  "mutations": [
+    {
+      "name": "a flasher is only handed a kind it accepts",
+      "find": "        artifact = staged.first_of(flasher.accepts)\n        if artifact is not None:",
+      "replace": "        artifact = staged.first_of(flasher.accepts)\n        if True:"
+    },
+    {
+      "name": "a missing kind is refused by name",
+      "find": "    if waiting:",
+      "replace": "    if False:"
+    },
+    {
+      "name": "cmake always offers the uf2 it built",
+      "file": "src/mcu_updater/providers/cmake.py",
+      "find": "    found = [Artifact(KIND_UF2, uf2_path, recorded_sha256(side, KIND_UF2, primary=KIND_UF2))]",
+      "replace": "    found: list[Artifact] = []"
+    }
+  ]
+}

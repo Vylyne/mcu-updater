@@ -17,8 +17,8 @@
     },
     {
       "name": "select refuses when nothing supports the device",
-      "find": "    if flasher is None:\n        listed = ",
-      "replace": "    if False:\n        listed = "
+      "find": "    if choice is None:\n        raise _refusal_error(",
+      "replace": "    if False:\n        raise _refusal_error("
     },
     {
       "name": "the target's own stop flag wins",

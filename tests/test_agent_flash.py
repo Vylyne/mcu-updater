@@ -458,7 +458,7 @@ def test_a_cmake_family_that_cannot_write_the_board_refuses_before_a_job(
 ):
     api = cmake_flash_factory(dry_run="false")
     monkeypatch.setattr(
-        "mcu_updater.flashers.registry.resolve", lambda family, device, helper: None
+        "mcu_updater.flashers.registry.resolve", lambda family, device, helper, staged: None
     )
 
     with pytest.raises(RpcError) as exc:

@@ -62,7 +62,7 @@
     {
       "name": "first install refuses what katapult's list cannot write",
       "file": "src/mcu_updater/flashers/flash.py",
-      "find": "    if flasher is None:\n        raise UnsupportedChipsetError(",
+      "find": "    if choice is None:\n        raise UnsupportedChipsetError(",
       "replace": "    if False:\n        raise UnsupportedChipsetError("
     }
   ]

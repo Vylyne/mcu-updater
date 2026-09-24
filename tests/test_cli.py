@@ -64,6 +64,19 @@ def c(paths, fake_root, monkeypatch):
     return context
 
 
+def _stage_board_bin(paths) -> None:
+    """A staged `.bin` for `c`'s "board" type, so flasher selection has a kind
+    to hand flashtool - the CLI's own flash paths now ask the same question
+    `fw.flash` does. Not part of `c` itself: `status_cmd` reads this same tree
+    to say "not built", which this staging would make untrue for every other
+    test sharing the fixture."""
+    import os
+
+    os.makedirs(paths.artifact_dir("board"), exist_ok=True)
+    with open(paths.bin_file("board", "klipper"), "wb") as fh:
+        fh.write(b"built")
+
+
 @pytest.fixture
 def pio_type(c, fake_root):
     """A PlatformIO type with a source tree, declared the new way."""
@@ -219,7 +232,8 @@ def test_update_all_confirmation_no_longer_claims_only_mcus(c, monkeypatch, caps
 # --------------------------------------------------------------------------
 
 
-def test_flashing_a_type_hands_its_boards_to_the_batch(c, captured, monkeypatch):
+def test_flashing_a_type_hands_its_boards_to_the_batch(c, paths, captured, monkeypatch):
+    _stage_board_bin(paths)
     monkeypatch.setattr(cli, "_confirm", lambda prompt: True)
 
     with pytest.raises(SystemExit):
@@ -230,9 +244,10 @@ def test_flashing_a_type_hands_its_boards_to_the_batch(c, captured, monkeypatch)
     assert {t.flasher for t in captured[0]} == {"flashtool"}
 
 
-def test_a_whole_type_never_carries_force_even_if_one_board_would(c, captured, monkeypatch):
+def test_a_whole_type_never_carries_force_even_if_one_board_would(c, paths, captured, monkeypatch):
     """A blanket override across a fleet is exactly what the offset check
     exists to prevent - --force only ever reaches a single-device flash."""
+    _stage_board_bin(paths)
     monkeypatch.setattr(cli, "_confirm", lambda prompt: True)
 
     with pytest.raises(SystemExit):
@@ -242,7 +257,8 @@ def test_a_whole_type_never_carries_force_even_if_one_board_would(c, captured, m
     assert all(t.detail.get("force") is False for t in captured[0])
 
 
-def test_a_single_device_flash_can_be_forced(c, captured, monkeypatch):
+def test_a_single_device_flash_can_be_forced(c, paths, captured, monkeypatch):
+    _stage_board_bin(paths)
     monkeypatch.setattr(cli, "_confirm", lambda prompt: True)
 
     with pytest.raises(SystemExit):
@@ -254,7 +270,8 @@ def test_a_single_device_flash_can_be_forced(c, captured, monkeypatch):
     assert captured[0][0].detail["force"] is True
 
 
-def test_a_single_device_flash_defaults_to_not_forced(c, captured, monkeypatch):
+def test_a_single_device_flash_defaults_to_not_forced(c, paths, captured, monkeypatch):
+    _stage_board_bin(paths)
     monkeypatch.setattr(cli, "_confirm", lambda prompt: True)
 
     with pytest.raises(SystemExit):
@@ -685,7 +702,8 @@ def test_the_cmake_target_carries_the_staged_uf2_and_its_stop_services(
         )
 
     target = captured[0][0]
-    assert target.detail["uf2_file"] == c.paths.uf2_file("roadrunner", "roadrunner")
+    assert target.artifact is not None
+    assert target.artifact.path == c.paths.uf2_file("roadrunner", "roadrunner")
     assert target.detail["chipset"] == "rp2040"
     assert target.detail["helper"].name == "roadrunner"
     assert "klipper" in target.stop_services
@@ -1190,11 +1208,12 @@ def test_flash_refuses_a_serial_tracked_elsewhere_with_a_message(
 
 
 def test_a_malformed_cmake_section_does_not_break_a_kconfig_flash(
-    c, fake_root, captured, monkeypatch
+    c, paths, fake_root, captured, monkeypatch
 ):
     """Flashing one type reads that type's config, not every provider's
     validating load - so a CMake section with no `cmake_target:` stays that
     section's problem, the blast radius `providers.selection` refuses too."""
+    _stage_board_bin(paths)
     monkeypatch.setattr(cli, "_confirm", lambda prompt: True)
     tree = fake_root / "broken" / "rp2040"
     tree.mkdir(parents=True, exist_ok=True)

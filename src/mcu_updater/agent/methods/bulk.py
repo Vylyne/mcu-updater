@@ -317,7 +317,6 @@ class BulkMixin(_Base):
             except ConfigCorruptError:
                 helper = None
             units = stop_services.for_cmake(self.paths, entry, settings, families)
-            uf2 = self.paths.uf2_file(name, payload["firmware"])
             for device in self._cmake_devices(payload, family, helper):
                 if not device["present"]:
                     continue
@@ -330,7 +329,6 @@ class BulkMixin(_Base):
                         "serial": device["serial"],
                         "chipset": payload["chipset"],
                         "fw": payload["firmware"],
-                        "uf2_file": uf2,
                         "stop_services": list(units),
                         "state": device["state"],
                         "reason": (

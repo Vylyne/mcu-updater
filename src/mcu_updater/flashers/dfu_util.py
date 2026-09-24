@@ -17,8 +17,17 @@ import contextlib
 from collections.abc import Iterator
 from typing import TYPE_CHECKING, Any
 
+from ..artifacts import KIND_BIN, Artifact
 from ..devices import STATE_DFU
-from .spec import KIND_BARE, Bench, Device, FlashRecord, FlashTarget, chipset_matches
+from .spec import (
+    KIND_BARE,
+    Bench,
+    Device,
+    FlashRecord,
+    FlashTarget,
+    artifact_path,
+    chipset_matches,
+)
 
 if TYPE_CHECKING:
     from ..helpers.spec import Helper
@@ -42,6 +51,7 @@ class DfuUtil:
     #: tool routes a board into DFU itself rather than asking - over the serial
     #: port Klipper may be holding - this becomes True.
     needs_services_stopped = False
+    accepts: tuple[str, ...] = (KIND_BIN,)
 
     def supports(self, device: Device, helper: Helper | None) -> bool:
         """A bare STM32 holding BOOT0."""
@@ -56,14 +66,11 @@ class DfuUtil:
         paths: Paths,
         device: Device,
         helper: Helper | None,
+        artifact: Artifact,
         *,
         stop_services: tuple[str, ...],
     ) -> FlashTarget:
-        return target_for(
-            device.detail["fw_bin"],
-            chipset=device.chipset,
-            dfu_serial=device.id or None,
-        )
+        return target_for(artifact, chipset=device.chipset, dfu_serial=device.id or None)
 
     @contextlib.contextmanager
     def prepared(
@@ -80,7 +87,7 @@ class DfuUtil:
         flash_dfu_stm32(
             bench.paths,
             bench.settings,
-            target.detail["fw_bin"],
+            artifact_path(target),
             reporter=ctx.reporter,
             target_serial=target.detail.get("dfu_serial"),
         )
@@ -103,7 +110,7 @@ class DfuUtil:
 
 
 def target_for(
-    fw_bin: str, *, chipset: str, dfu_serial: str | None = None
+    fw_bin: str | Artifact, *, chipset: str, dfu_serial: str | None = None
 ) -> FlashTarget:
     """A bare board, as a target.
 
@@ -111,9 +118,11 @@ def target_for(
     id - a DFU device has no `/dev/serial/by-id` name - and the write refuses
     rather than guessing whenever more than one board answers.
     """
+    artifact = fw_bin if isinstance(fw_bin, Artifact) else Artifact(KIND_BIN, fw_bin)
     return FlashTarget(
         flasher=DfuUtil.name,
         type=chipset,
         id=dfu_serial or "",
-        detail={"fw_bin": fw_bin, "dfu_serial": dfu_serial, "chipset": chipset},
+        detail={"dfu_serial": dfu_serial, "chipset": chipset},
+        artifact=artifact,
     )

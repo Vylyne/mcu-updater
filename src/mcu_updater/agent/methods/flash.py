@@ -158,7 +158,7 @@ class FlashMixin(_Base):
             return {
                 "type": mcu_type,
                 "serial": serial,
-                "fw_bin": fw_bin,
+                "fw_bin": flashers.artifact_path(target),
                 "klippy_state": state_holder.get("klippy_state"),
             }
 
@@ -229,7 +229,6 @@ class FlashMixin(_Base):
                 chipset=target_type.chipset,
                 state=present.state,
                 fw=family.name,
-                detail={"uf2_file": fw_bin},
             ),
             helper,
             stop_services=units,
@@ -263,7 +262,7 @@ class FlashMixin(_Base):
             return {
                 "type": mcu_type,
                 "serial": serial,
-                "fw_bin": fw_bin,
+                "fw_bin": flashers.artifact_path(target),
                 "klippy_state": state_holder.get("klippy_state"),
             }
 

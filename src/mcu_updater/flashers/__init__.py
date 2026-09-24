@@ -44,6 +44,8 @@ from .spec import (
     Flasher,
     FlashRecord,
     FlashTarget,
+    artifact_path,
+    staged_record,
 )
 
 __all__ = [
@@ -62,6 +64,7 @@ __all__ = [
     "Flasher",
     "Flashtool",
     "PlainContext",
+    "artifact_path",
     "by_flasher",
     "by_name",
     "group_by_stop",
@@ -71,6 +74,7 @@ __all__ = [
     "select",
     "select_device",
     "select_each",
+    "staged_record",
     "stop_services_union",
     "write_all",
 ]

@@ -79,8 +79,8 @@
     {
       "name": "BOOTSEL copies the erasing UF2, not Katapult alone",
       "file": "src/mcu_updater/flashers/flash.py",
-      "find": "                device, detail={**device.detail, \"uf2_file\": staged}",
-      "replace": "                device, detail={**device.detail, \"uf2_file\": uf2_bin}"
+      "find": "            artifact = Artifact(KIND_UF2, erasing)",
+      "replace": "            artifact = Artifact(KIND_UF2, artifact.path)"
     },
     {
       "name": "BOOTSEL refuses without an application address",

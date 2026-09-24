@@ -9,6 +9,7 @@
     "tests/test_flash.py",
     "tests/test_flash_can.py",
     "tests/test_agent_display_jobs.py",
+    "tests/test_artifacts.py",
     "-q"
   ],
   "mutations": [
@@ -35,28 +36,28 @@
     },
     {
       "name": "flashtool reads the kconfig sidecar's commit",
-      "file": "src/mcu_updater/flashers/flashtool.py",
-      "find": "            fw_sha=side.get(\"fw_sha\")",
-      "replace": "            fw_sha=side.get(\"sha\")"
+      "file": "src/mcu_updater/build.py",
+      "find": "        fw_sha=side.get(\"fw_sha\") or git_head(family.source_dir(paths)),",
+      "replace": "        fw_sha=side.get(\"sha\") or git_head(family.source_dir(paths)),"
     },
     {
       "name": "bootsel reads the cmake sidecar's commit",
-      "file": "src/mcu_updater/flashers/bootsel.py",
-      "find": "            fw_sha=side.get(\"sha\"),",
-      "replace": "            fw_sha=side.get(\"fw_sha\"),"
+      "file": "src/mcu_updater/providers/cmake.py",
+      "find": "        fw_sha=side.get(\"sha\"),",
+      "replace": "        fw_sha=side.get(\"fw_sha\"),"
     },
     {
       "name": "bootsel files only provenance that describes the staged image",
-      "_comment": "Protect the ownership and clean-tree checks so rejected CMake evidence cannot return through the flash ledger. Trusting the sidecar unconditionally also skips the stat, so this catches the vanished-image case in the same breath.",
-      "file": "src/mcu_updater/flashers/bootsel.py",
-      "find": "            ours = not side.get(\"dirty\") and cmake_mod.sidecar_describes_image(side, uf2, os.stat(uf2))",
-      "replace": "            ours = True"
+      "_comment": "Protect the ownership and clean-tree checks so rejected CMake evidence cannot return through the flash ledger.",
+      "file": "src/mcu_updater/providers/cmake.py",
+      "find": "    ours = bool(record) and not record.get(\"dirty\") and sidecar_describes_image(record, uf2_path, stat)",
+      "replace": "    ours = bool(record)"
     },
     {
       "name": "a bare board has nothing to file",
       "file": "src/mcu_updater/flashers/bootsel.py",
-      "find": "        if target_type is None:\n            return None",
-      "replace": "        if target_type is None:\n            target_type = next(iter(cmake_mod.load(bench.paths).values()))"
+      "find": "        if \"helper\" not in target.detail or not fw:\n            return None",
+      "replace": "        if False:\n            return None"
     },
     {
       "name": "a screen with no hardware id has nothing to file",

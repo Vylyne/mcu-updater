@@ -16,6 +16,7 @@ import os
 import pytest
 
 from mcu_updater import flashers
+from mcu_updater.artifacts import KIND_BIN, Artifact
 from mcu_updater.discovery.canbus import ARPHRD_CAN
 from mcu_updater.errors import (
     DeviceNotFoundError,
@@ -377,7 +378,8 @@ def test_flashtool_writes_a_can_target_and_returns_its_uuid(paths, ready, fake_r
 
     bench = flashers.Bench(paths=ready_paths, settings=ready, controller=lambda name=None: None)
     target = flashers.flashtool.target_for(
-        {"type": "board", "uuid": UUID, "chipset": "stm32g431xx", "fw": "klipper"}
+        {"type": "board", "uuid": UUID, "chipset": "stm32g431xx", "fw": "klipper"},
+        artifact=Artifact(KIND_BIN, paths.bin_file("board", "klipper")),
     )
     result = flashers.Flashtool().write(
         bench, None, target, flashers.PlainContext(lambda *a: None)

@@ -10,9 +10,12 @@ guessing.
 
 from __future__ import annotations
 
+import os
+
 import pytest
 
 from mcu_updater import flashers
+from mcu_updater.artifacts import KIND_BIN, KIND_UF2, Artifact, Staged
 from mcu_updater.devices import (
     STATE_BOOTSEL,
     STATE_DFU,
@@ -57,6 +60,11 @@ def _family(*names: str, name: str = "fam") -> FirmwareFamily:
     return FirmwareFamily(name=name, flashers=tuple(names))
 
 
+def _staged(fw: str = "fam", **by_kind: str) -> Staged:
+    """What a build staged, as `kind=path` pairs: `_staged(bin="/a.bin")`."""
+    return Staged(fw=fw, artifacts=tuple(Artifact(kind, path) for kind, path in by_kind.items()))
+
+
 def _device(
     *,
     chipset: str = "stm32f446xx",
@@ -77,24 +85,22 @@ def _device(
     )
 
 
-def _roadrunner(uf2: str = "/tmp/rr.uf2", *, chipset: str = "rp2040") -> Device:
+def _roadrunner(*, chipset: str = "rp2040") -> Device:
     return _device(
         chipset=chipset,
         state="roadrunner",
         type="roadrunner",
         id=RR_SERIAL,
-        detail={"uf2_file": uf2},
     )
 
 
-def _bare_rp2040(uf2: str = "/tmp/katapult.uf2") -> Device:
+def _bare_rp2040() -> Device:
     return _device(
         chipset="rp2040",
         state=STATE_BOOTSEL,
         kind=KIND_BARE,
         type="rp2040",
         id="",
-        detail={"uf2_file": uf2},
     )
 
 
@@ -193,28 +199,30 @@ def test_a_board_in_bootsel_still_needs_an_rp2040_chipset():
 def test_the_first_flasher_in_the_familys_order_wins():
     # A running RP2040 both flashers accept: flashtool by chipset, bootsel
     # through the helper.
-    device = _device(chipset="rp2040", type="roadrunner", id=RR_SERIAL, detail={"uf2_file": "x"})
+    device = _device(chipset="rp2040", type="roadrunner", id=RR_SERIAL)
     helper = _Requester()
+    staged = _staged(bin="/x.bin", uf2="/x.uf2")
 
-    assert flashers.resolve(_family("bootsel", "flashtool"), device, helper).name == "bootsel"
-    assert flashers.resolve(_family("flashtool", "bootsel"), device, helper).name == "flashtool"
+    assert flashers.resolve(_family("bootsel", "flashtool"), device, helper, staged)[0].name == "bootsel"
+    assert flashers.resolve(_family("flashtool", "bootsel"), device, helper, staged)[0].name == "flashtool"
 
 
 def test_first_install_goes_through_the_katapult_list():
     katapult = _family("dfu_util", "bootsel", name="katapult")
+    staged = _staged(bin="/x.bin", uf2="/x.uf2")
 
-    assert flashers.resolve(katapult, _bare_rp2040(), None).name == "bootsel"
+    assert flashers.resolve(katapult, _bare_rp2040(), None, staged)[0].name == "bootsel"
     dfu = _device(kind=KIND_BARE, state=STATE_DFU, id="")
-    assert flashers.resolve(katapult, dfu, None).name == "dfu_util"
+    assert flashers.resolve(katapult, dfu, None, staged)[0].name == "dfu_util"
 
 
 def test_a_flasher_the_family_does_not_list_is_never_chosen():
     """flashtool could write this board; the family did not list it."""
-    assert flashers.resolve(_family("esptool"), _device(), None) is None
+    assert flashers.resolve(_family("esptool"), _device(), None, _staged(bin="/x.bin", uf2="/x.uf2")) is None
 
 
 def test_a_family_with_no_list_resolves_nothing():
-    assert flashers.resolve(_family(), _device(), None) is None
+    assert flashers.resolve(_family(), _device(), None, _staged(bin="/x.bin", uf2="/x.uf2")) is None
 
 
 # --- select ------------------------------------------------------------------
@@ -225,7 +233,9 @@ def test_nothing_supporting_the_device_is_refused_by_name(paths):
     device = _device(type="ebb36", id="usb-Klipper_stm32g0b1xx_1-if00")
 
     with pytest.raises(NoFlasherError) as exc:
-        flashers.select(paths, family, device, None, stop_services=("klipper",))
+        flashers.select(
+            paths, family, device, None, stop_services=("klipper",), staged=_staged(bin="/x.bin")
+        )
 
     message = str(exc.value)
     assert "[firmware klipper]" in message
@@ -235,11 +245,14 @@ def test_nothing_supporting_the_device_is_refused_by_name(paths):
     assert exc.value.data["family"] == "klipper"
     assert exc.value.data["flashers"] == ["esptool"]
     assert exc.value.data["state"] == STATE_KLIPPER
+    assert exc.value.data["missing"] == []
 
 
 def test_a_family_with_no_flashers_says_so(paths):
     with pytest.raises(NoFlasherError) as exc:
-        flashers.select(paths, _family(), _device(), None, stop_services=())
+        flashers.select(
+            paths, _family(), _device(), None, stop_services=(), staged=_staged(bin="/x.bin")
+        )
     assert "flashers: (none)" in str(exc.value)
 
 
@@ -249,9 +262,10 @@ def test_the_helper_path_target_stops_services(paths):
     target = flashers.select(
         paths,
         _family("bootsel", name="roadrunner"),
-        _roadrunner("/tmp/rr.uf2"),
+        _roadrunner(),
         helper,
         stop_services=("klipper", "moonraker"),
+        staged=_staged(uf2="/tmp/rr.uf2"),
     )
 
     assert target.flasher == "bootsel"
@@ -261,7 +275,8 @@ def test_the_helper_path_target_stops_services(paths):
     assert flashers.needs_services_stopped(target) is True
     assert target.stop_services == ("klipper", "moonraker")
     assert target.detail["helper"] is helper
-    assert target.detail["uf2_file"] == "/tmp/rr.uf2"
+    assert target.artifact == Artifact(KIND_UF2, "/tmp/rr.uf2")
+    assert target.detail["fw"] == "fam"
     assert target.detail["chipset"] == "rp2040"
 
 
@@ -269,9 +284,10 @@ def test_a_board_already_in_bootsel_stops_nothing(paths):
     target = flashers.select(
         paths,
         _family("dfu_util", "bootsel", name="katapult"),
-        _bare_rp2040("/tmp/katapult.uf2"),
+        _bare_rp2040(),
         None,
         stop_services=("klipper",),
+        staged=_staged(uf2="/tmp/rr.uf2"),
     )
 
     assert target.flasher == "bootsel"
@@ -288,6 +304,7 @@ def test_a_board_already_in_bootsel_is_copied_not_asked(paths):
         _bare_rp2040(),
         _Requester(),
         stop_services=("klipper",),
+        staged=_staged(uf2="/tmp/rr.uf2"),
     )
 
     assert "helper" not in target.detail
@@ -299,26 +316,35 @@ def test_the_flashtool_target_carries_the_board_dict(paths):
     device = _device(type="ebb36", id="usb-x", chipset="stm32g0b1xx", detail=board)
 
     target = flashers.select(
-        paths, _family("flashtool"), device, None, stop_services=("klipper",)
+        paths,
+        _family("flashtool"),
+        device,
+        None,
+        stop_services=("klipper",),
+        staged=_staged(bin="/tmp/b.bin"),
     )
 
     assert target.flasher == "flashtool"
-    assert dict(target.detail) == board
+    assert dict(target.detail) == {**board, "fw": "fam"}
+    assert target.artifact == Artifact(KIND_BIN, "/tmp/b.bin")
     assert target.stop_services == ("klipper",)
     assert flashers.needs_services_stopped(target) is True
 
 
 def test_the_dfu_target_carries_the_image_and_serial(paths):
-    device = _device(
-        kind=KIND_BARE, state=STATE_DFU, id="DFU123", detail={"fw_bin": "/tmp/k.bin"}
-    )
+    device = _device(kind=KIND_BARE, state=STATE_DFU, id="DFU123")
 
     target = flashers.select(
-        paths, _family("dfu_util"), device, None, stop_services=("klipper",)
+        paths,
+        _family("dfu_util"),
+        device,
+        None,
+        stop_services=("klipper",),
+        staged=_staged(bin="/tmp/k.bin"),
     )
 
     assert target.flasher == "dfu_util"
-    assert target.detail["fw_bin"] == "/tmp/k.bin"
+    assert target.artifact == Artifact(KIND_BIN, "/tmp/k.bin")
     assert target.detail["dfu_serial"] == "DFU123"
     assert flashers.needs_services_stopped(target) is False
 
@@ -361,6 +387,9 @@ def test_a_batch_refuses_one_device_without_dropping_the_rest(paths):
         "klipper": _family("flashtool", name="klipper"),
         "knomi": _family("dfu_util", name="knomi"),
     }
+    os.makedirs(paths.artifact_dir("ebb36"), exist_ok=True)
+    with open(paths.bin_file("ebb36", "klipper"), "wb") as fh:
+        fh.write(b"built")
 
     targets, refused = flashers.select_each(
         paths,
@@ -375,6 +404,7 @@ def test_a_batch_refuses_one_device_without_dropping_the_rest(paths):
     assert entry["type"] == "knomi"
     assert entry["id"] == "/dev/ttyKNOMI"
     assert entry["flasher"] is None
+    assert entry["missing"] == []
     # Its own family, not whichever the batch happened to resolve first.
     assert "[firmware knomi] (flashers: dfu_util)" in entry["error"]
 
@@ -429,3 +459,175 @@ def test_the_target_flag_overrides_the_flasher_when_grouping():
 
     assert stopped == [goes_down, default_stopped]
     assert free == [stays_up, default_free]
+
+
+# --- by kind -----------------------------------------------------------------
+
+
+def _running_rp2040() -> Device:
+    return _device(chipset="rp2040", type="pico", id="usb-Klipper_rp2040_E66-if00")
+
+
+def test_the_flasher_is_handed_the_kind_it_accepts():
+    choice = flashers.resolve(
+        _family("flashtool", "bootsel"), _running_rp2040(), _Requester(), _staged(bin="/p.bin", uf2="/p.uf2")
+    )
+
+    assert choice is not None
+    flasher, artifact = choice
+    assert flasher.name == "flashtool"
+    assert artifact == Artifact(KIND_BIN, "/p.bin")
+
+
+def test_a_missing_kind_falls_through_to_the_next_listed_flasher():
+    """flashtool supports the board but was staged no bin; bootsel takes the uf2."""
+    choice = flashers.resolve(
+        _family("flashtool", "bootsel"), _running_rp2040(), _Requester(), _staged(uf2="/p.uf2")
+    )
+
+    assert choice is not None
+    assert choice[0].name == "bootsel"
+    assert choice[1] == Artifact(KIND_UF2, "/p.uf2")
+
+
+def test_a_missing_kind_is_refused_by_name(paths):
+    with pytest.raises(NoFlasherError) as exc:
+        flashers.select(
+            paths,
+            _family("bootsel", name="klipper"),
+            _running_rp2040(),
+            _Requester(),
+            stop_services=("klipper",),
+            staged=_staged(fw="klipper", bin="/p.bin"),
+        )
+
+    message = str(exc.value)
+    assert "bootsel could write pico" in message
+    assert "[firmware klipper] staged no uf2" in message
+    assert "build it first" in message
+    assert exc.value.data["missing"] == ["uf2"]
+
+
+def test_an_unlisted_uf2_is_refused_as_missing(paths):
+    """Review Focus 3, end to end: a .uf2 beside a sidecar from before
+    `artifacts` is not offered, so `flashers: bootsel` asks for a rebuild
+    rather than writing an image nobody can vouch for."""
+    os.makedirs(paths.artifact_dir("pico"), exist_ok=True)
+    for path in (paths.bin_file("pico", "klipper"), paths.uf2_file("pico", "klipper")):
+        with open(path, "wb") as fh:
+            fh.write(b"image")
+    with open(paths.sidecar_file("pico", "klipper"), "w", encoding="utf-8") as fh:
+        fh.write('{"fw_sha": "abc", "bin_sha256": "legacy"}')
+    families = {"klipper": _family("bootsel", name="klipper")}
+    device = Device(
+        type="pico", id="usb-Klipper_rp2040_E66-if00", chipset="rp2040",
+        state=STATE_BOOTSEL, fw="klipper", kind=KIND_BARE,
+    )
+
+    with pytest.raises(NoFlasherError) as exc:
+        flashers.select_device(paths, families, device, stop_services=())
+
+    assert exc.value.data["missing"] == ["uf2"]
+
+
+def test_every_missing_kind_is_listed_in_the_familys_order(paths):
+    with pytest.raises(NoFlasherError) as exc:
+        flashers.select(
+            paths,
+            _family("flashtool", "bootsel", name="klipper"),
+            _running_rp2040(),
+            _Requester(),
+            stop_services=(),
+            staged=_staged(fw="klipper"),
+        )
+
+    assert exc.value.data["missing"] == ["bin", "uf2"]
+    assert str(exc.value).startswith("flashtool could write")
+
+
+def test_a_refusal_carries_its_missing_kinds_into_the_batch():
+    exc = NoFlasherError("no", missing=["uf2"])
+
+    assert flashers.refusal(_running_rp2040(), exc)["missing"] == ["uf2"]
+
+
+def test_a_klipper_board_in_bootsel_goes_to_bootsel_with_its_uf2(paths):
+    """flashtool is not narrowed by state, but a bare board is not its kind."""
+    board = _device(chipset="rp2040", state=STATE_BOOTSEL, kind=KIND_BARE, type="pico", id="")
+
+    target = flashers.select(
+        paths,
+        _family("flashtool", "bootsel", name="klipper"),
+        board,
+        None,
+        stop_services=("klipper",),
+        staged=_staged(fw="klipper", bin="/p.bin", uf2="/p.uf2"),
+    )
+
+    assert target.flasher == "bootsel"
+    assert target.artifact == Artifact(KIND_UF2, "/p.uf2")
+    assert flashers.needs_services_stopped(target) is False
+
+
+def test_a_cmake_family_listing_flashtool_gets_a_board_not_a_keyerror(paths):
+    """Regression: the CMake callers built `detail={"uf2_file": ...}`, and
+    flashtool's target read `detail["type"]` from it."""
+    device = Device(
+        type="roadrunner", id=RR_SERIAL, chipset="rp2040", state=STATE_KLIPPER, fw="roadrunner"
+    )
+
+    target = flashers.select(
+        paths,
+        _family("flashtool", name="roadrunner"),
+        device,
+        None,
+        stop_services=("klipper",),
+        staged=_staged(fw="roadrunner", bin="/rr.bin", uf2="/rr.uf2"),
+    )
+
+    assert target.flasher == "flashtool"
+    assert target.type == "roadrunner"
+    assert target.id == RR_SERIAL
+    assert target.detail["serial"] == RR_SERIAL
+    assert target.detail["chipset"] == "rp2040"
+    assert target.detail["fw"] == "roadrunner"
+    assert target.artifact == Artifact(KIND_BIN, "/rr.bin")
+
+
+def test_a_cmake_family_listing_flashtool_without_a_bin_is_refused(paths):
+    device = Device(
+        type="roadrunner", id=RR_SERIAL, chipset="rp2040", state=STATE_KLIPPER, fw="roadrunner"
+    )
+
+    with pytest.raises(NoFlasherError) as exc:
+        flashers.select(
+            paths,
+            _family("flashtool", name="roadrunner"),
+            device,
+            None,
+            stop_services=(),
+            staged=_staged(fw="roadrunner", uf2="/rr.uf2"),
+        )
+
+    assert exc.value.data["missing"] == ["bin"]
+
+
+def test_select_device_reads_what_the_familys_builder_staged(paths):
+    families = {"klipper": _family("flashtool", name="klipper")}
+    os.makedirs(paths.artifact_dir("ebb36"), exist_ok=True)
+    bin_path = paths.bin_file("ebb36", "klipper")
+    with open(bin_path, "wb") as fh:
+        fh.write(b"built")
+
+    target = flashers.select_device(paths, families, _board_device(), stop_services=())
+
+    assert target.artifact == Artifact(KIND_BIN, bin_path)
+
+
+def test_select_device_refuses_a_board_whose_build_staged_nothing(paths):
+    families = {"klipper": _family("flashtool", name="klipper")}
+
+    with pytest.raises(NoFlasherError) as exc:
+        flashers.select_device(paths, families, _board_device(), stop_services=())
+
+    assert exc.value.data["missing"] == ["bin"]

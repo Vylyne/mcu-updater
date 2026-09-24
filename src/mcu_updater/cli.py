@@ -676,7 +676,6 @@ def _cmake_targets(c: Context, mcu_type: str, serial: str) -> tuple[list, list]:
                     chipset=target_type.chipset,
                     state=present.state if present is not None else STATE_OFFLINE,
                     fw=family.name,
-                    detail={"uf2_file": fw_bin},
                 ),
                 stop_services.for_cmake(c.paths, target_type, c.settings, families),
             ),

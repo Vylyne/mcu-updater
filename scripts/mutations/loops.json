@@ -55,20 +55,38 @@
     {
       "name": "a cmake type-level flash covers every serial it declares",
       "file": "src/mcu_updater/cli.py",
-      "find": "            for serial in entry.serials:\n                serial_targets, serial_refused = _cmake_targets(c, args.type, serial)",
-      "replace": "            for serial in entry.serials[:1]:\n                serial_targets, serial_refused = _cmake_targets(c, args.type, serial)"
+      "find": "    for device_id in [serial] if serial is not None else entry.serials:",
+      "replace": "    for device_id in [serial] if serial is not None else entry.serials[:1]:"
     },
     {
-      "name": "update-all sweeps cmake types",
+      "name": "update-all sweeps every configured type",
       "file": "src/mcu_updater/cli.py",
-      "find": "            for name in sorted(install.cmake):",
+      "find": "            for name in sorted(\n                set(install.registry.names()) | set(install.platformio) | set(install.cmake)\n            ):",
       "replace": "            for name in ():"
     },
     {
       "name": "update-all names a cmake type it could not write",
       "file": "src/mcu_updater/cli.py",
-      "find": "                        print(f\"SKIP {name}: {exc}\", file=sys.stderr)\n                        failures.append((name, serial))",
-      "replace": "                        pass"
+      "find": "                if source.refuse_fleet_before_batch:\n                    for rejection in rejected:",
+      "replace": "                if False and source.refuse_fleet_before_batch:\n                    for rejection in rejected:"
+    },
+    {
+      "name": "a type nothing could select is not reported as a build failure",
+      "file": "src/mcu_updater/cli.py",
+      "find": "                    failures.append((name, \"no devices selected\"))",
+      "replace": "                    failures.append((name, None))"
+    },
+    {
+      "name": "flashing one type never runs every provider's validating load",
+      "file": "src/mcu_updater/cli.py",
+      "find": "            targets, refused = source.select(c, name, serial, force)",
+      "replace": "            targets, refused = source.select(\n                c, name, serial, force, providers.Install.load(c.paths, c.settings)\n            )"
+    },
+    {
+      "name": "a queued build uses the snapshot that selected its targets",
+      "file": "src/mcu_updater/agent/methods/bulk.py",
+      "find": "            return self._do_build_all(ctx, install, selection.build)",
+      "replace": "            return self._do_build_all(ctx, self._install(), selection.build)"
     },
     {
       "name": "a host whose only type is cmake is configured",

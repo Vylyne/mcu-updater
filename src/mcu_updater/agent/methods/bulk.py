@@ -399,7 +399,10 @@ class BulkMixin(_Base):
         return flashers.select_each(self.paths, families, requests)
 
     def _do_build_all(
-        self, ctx: Any, targets: list[providers.BuildTarget]
+        self,
+        ctx: Any,
+        install: providers.Install,
+        targets: list[providers.BuildTarget],
     ) -> dict[str, Any]:
         """Build each target in turn, reporting failures rather than stopping.
 
@@ -412,14 +415,11 @@ class BulkMixin(_Base):
         screens - rather than one build system for everything and silence about
         whatever did not fit.
 
-        The config is parsed once for the batch rather than once per target.
-        Still at job time, not submission time, so a setting changed while this
-        sat queued is honoured; what it no longer does is answer two questions
-        about two different configurations because somebody saved a file
-        mid-build.
+        The same config snapshot selects and builds the targets. A change made
+        after submission belongs to the next operation; mixing its fresh maps
+        with target keys captured from the earlier snapshot can abort the batch
+        with a bare KeyError before later targets run.
         """
-        install = self._install()
-
         built: list[dict[str, str | None]] = []
         failures: list[dict[str, str | None]] = []
         total = len(targets)
@@ -505,7 +505,8 @@ class BulkMixin(_Base):
             if fw not in known:
                 raise RpcError(f"'fw' must be one of {list(known)}", ERR_INVALID_PARAMS)
 
-        selection = self._build_targets(self._install(), scope, fw=fw)
+        install = self._install()
+        selection = self._build_targets(install, scope, fw=fw)
         if not selection.build:
             detail = f" running {fw}" if fw else ""
             hint = "" if scope == "all" else " Use scope 'all' to rebuild regardless."
@@ -527,7 +528,7 @@ class BulkMixin(_Base):
             )
 
         def run(ctx) -> dict[str, Any]:
-            return self._do_build_all(ctx, selection.build)
+            return self._do_build_all(ctx, install, selection.build)
 
         # `types` stays a list of names for the panel, which shows what is being
         # worked on rather than how many compiles that is. `builds` carries the
@@ -686,7 +687,7 @@ class BulkMixin(_Base):
 
         def run(ctx) -> dict[str, Any]:
             build_result = (
-                self._do_build_all(ctx, targets)
+                self._do_build_all(ctx, install, targets)
                 if targets
                 else {"built": [], "failures": []}
             )

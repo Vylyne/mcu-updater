@@ -1,0 +1,41 @@
+{
+  "_comment": "Artifact provenance must distinguish missing evidence, changed bytes, and changed CMake target configuration - and must only accuse when it holds a recorded hash to accuse with. Run: python scripts/mutation_test.py scripts/mutations/artifact-provenance.json",
+  "file": "src/mcu_updater/providers/cmake.py",
+  "command": [
+    "python",
+    "-m",
+    "pytest",
+    "tests/test_cmake.py",
+    "tests/test_build.py",
+    "-q"
+  ],
+  "mutations": [
+    {
+      "name": "changed CMake artifact bytes are positive foreign-build evidence",
+      "find": "        if record.get(\"bin_sha256\"):\n            return ArtifactStatus(FOREIGN_BUILD)\n        return ArtifactStatus(NO_PROVENANCE)",
+      "replace": "        if record.get(\"bin_sha256\"):\n            return ArtifactStatus(NO_PROVENANCE)\n        return ArtifactStatus(NO_PROVENANCE)"
+    },
+    {
+      "name": "a CMake sidecar with no recorded hash accuses nobody",
+      "find": "        if record.get(\"bin_sha256\"):\n            return ArtifactStatus(FOREIGN_BUILD)\n        return ArtifactStatus(NO_PROVENANCE)",
+      "replace": "        if True:\n            return ArtifactStatus(FOREIGN_BUILD)\n        return ArtifactStatus(NO_PROVENANCE)"
+    },
+    {
+      "name": "a changed cmake_target makes the staged image stale",
+      "find": "    if record.get(\"cmake_target\") != target.cmake_target:\n        return ArtifactStatus(CONFIG_CHANGED)",
+      "replace": "    if False and record.get(\"cmake_target\") != target.cmake_target:\n        return ArtifactStatus(CONFIG_CHANGED)"
+    },
+    {
+      "name": "changed kconfig artifact bytes are positive foreign-build evidence",
+      "file": "src/mcu_updater/build.py",
+      "find": "    if recorded_bin and sha256_file(paths.bin_file(mcu_type, fw)) != recorded_bin:\n        return ArtifactStatus(FOREIGN_BUILD)",
+      "replace": "    if recorded_bin and sha256_file(paths.bin_file(mcu_type, fw)) != recorded_bin:\n        return ArtifactStatus(NO_PROVENANCE)"
+    },
+    {
+      "name": "a kconfig sidecar with no recorded hash accuses nobody",
+      "file": "src/mcu_updater/build.py",
+      "find": "    if recorded_bin and sha256_file(paths.bin_file(mcu_type, fw)) != recorded_bin:\n        return ArtifactStatus(FOREIGN_BUILD)",
+      "replace": "    if sha256_file(paths.bin_file(mcu_type, fw)) != recorded_bin:\n        return ArtifactStatus(FOREIGN_BUILD)"
+    }
+  ]
+}

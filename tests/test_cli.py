@@ -809,6 +809,32 @@ def test_update_all_names_a_cmake_type_it_could_not_write(
     assert "SKIP roadrunner" in capsys.readouterr().err
 
 
+def test_update_all_does_not_call_a_selection_failure_a_build_failure(
+    c, fake_root, captured, capsys, monkeypatch
+):
+    """The failure summary's second slot is a device id. A type nothing could
+    select has none, and leaving it empty prints "(build failed)" - blaming a
+    build that ran fine for a device it never reached."""
+    _cmake_flashable(c, fake_root, staged=False)
+    monkeypatch.setattr(
+        "mcu_updater.providers.cmake.Cmake.build",
+        lambda self, install, target, **kw: None,
+    )
+    monkeypatch.setattr(
+        "mcu_updater.providers.kconfig_make.KconfigMake.build",
+        lambda self, install, target, **kw: None,
+    )
+
+    with pytest.raises(SystemExit) as exc:
+        cli.update_all(argparse.Namespace(yes=True, jobs=None))
+
+    out = capsys.readouterr()
+    assert exc.value.code == 1
+    assert "SKIP roadrunner" in out.err
+    assert "- roadrunner / no devices selected" in out.out
+    assert "(build failed)" not in out.out
+
+
 def test_a_cmake_type_with_no_helper_names_its_flashers(c, fake_root, captured, monkeypatch):
     """A family whose helper cannot request BOOTSEL leaves `bootsel` nothing to
     write a running board with, and the refusal names the list to fix."""
@@ -1161,6 +1187,29 @@ def test_flash_refuses_a_serial_tracked_elsewhere_with_a_message(
     assert err.startswith("ERROR: ") and "Traceback" not in err
     assert RR_SERIAL not in Registry.load(c.paths).declared_serials("board")
     assert captured == []
+
+
+def test_a_malformed_cmake_section_does_not_break_a_kconfig_flash(
+    c, fake_root, captured, monkeypatch
+):
+    """Flashing one type reads that type's config, not every provider's
+    validating load - so a CMake section with no `cmake_target:` stays that
+    section's problem, the blast radius `providers.selection` refuses too."""
+    monkeypatch.setattr(cli, "_confirm", lambda prompt: True)
+    tree = fake_root / "broken" / "rp2040"
+    tree.mkdir(parents=True, exist_ok=True)
+    with open(c.paths.main_config, "a", encoding="utf-8", newline="\n") as fh:
+        fh.write(
+            f"\n[firmware broken]\nsource: {tree}\nbuilder: cmake\nflashers: bootsel\n"
+            "\n[type broken]\nchipset: rp2040\nfirmware: broken\n"
+        )
+
+    with pytest.raises(SystemExit):
+        cli.flash_fw_cmd(
+            argparse.Namespace(type="board", serial=None, yes=True, force=False)
+        )
+
+    assert [t.id for t in captured[0]] == ["AAAA-if00"]
 
 
 def test_the_flash_prompt_refuses_an_unprovisioned_roadrunner_serial(

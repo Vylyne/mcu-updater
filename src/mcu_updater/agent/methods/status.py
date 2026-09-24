@@ -44,6 +44,7 @@ from ...lock import exclusive
 from ...paths import Paths
 from ...settings import Settings, load_settings
 from ...states import (
+    FOREIGN_BUILD,
     NEVER_BUILT,
     NO_PROVENANCE,
     OFFLINE,
@@ -1021,9 +1022,18 @@ class StatusMixin(_Base):
                     # the version it stamped, its `bin_sha256` and its digest
                     # fields. Read once per type here rather than once per
                     # board in the projection below.
+                    # Withheld whenever the record does not describe the bytes
+                    # on disk, because every device verdict below is drawn from
+                    # it: the stamp, the `bin_sha256`, the digest fields. A
+                    # record that names an image somebody replaced would judge a
+                    # board **current** against firmware that is not staged.
+                    # `BUILT_DIRTY` is not in this list on purpose - that record
+                    # does describe these bytes, it just cannot name the tree
+                    # they came from.
                     "sidecar": (
                         {}
-                        if status.reason in (NEVER_BUILT, NO_PROVENANCE)
+                        if status.reason
+                        in (NEVER_BUILT, NO_PROVENANCE, FOREIGN_BUILD)
                         else cmake_mod.read_sidecar(self.paths, entry) or {}
                     ),
                     "has_firmware": os.path.exists(

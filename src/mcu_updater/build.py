@@ -39,6 +39,7 @@ from .paths import Paths
 from .settings import Settings
 from .states import (
     CONFIG_CHANGED,
+    FOREIGN_BUILD,
     NEVER_BUILT,
     NO_PROVENANCE,
     SOURCE_CHANGED,
@@ -495,6 +496,14 @@ def artifact_status(
         # something is there, we just cannot say what produced it - which is
         # exactly the distinction the display side already drew.
         return ArtifactStatus(NO_PROVENANCE)
+
+    # Before every comparison below, because they all ask what produced these
+    # bytes and a rebuild behind us makes each of their answers meaningless.
+    # Guarded on the recorded hash for the same reason the cmake ladder is:
+    # a sidecar too old to carry one cannot accuse anybody.
+    recorded_bin = side.get("bin_sha256")
+    if recorded_bin and sha256_file(paths.bin_file(mcu_type, fw)) != recorded_bin:
+        return ArtifactStatus(FOREIGN_BUILD)
 
     cfg_hash = config_sha if config_sha is not None else sha256_file(
         paths.config_file(mcu_type, fw)

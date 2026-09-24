@@ -1,6 +1,59 @@
 # Typed artifacts: flashers choose files by kind
 
-Status: approved in conversation 2026-09-24, pending written-spec review.
+Status: approved 2026-09-24. Corrected while planning; the plan is
+[docs/superpowers/plans/2026-09-24-typed-artifacts.md](../plans/2026-09-24-typed-artifacts.md).
+
+## Corrections made while planning
+
+Reading the code for the plan changed these. Where this section disagrees
+with the text below it, this section wins. The text below has been edited to
+match where the edit was small.
+
+1. **The `klipper` helper's CAN refusal is unreachable, so it is dropped.**
+   `Bootsel.supports` takes the helper path only for a `KIND_SERIAL` device,
+   so a CAN RP2040 with `flashers: bootsel` and `helper: klipper` is refused
+   by selection itself: `NoFlasherError` with `missing == []`. A test pins
+   that; there is no CAN rule to write or guard.
+2. **`pio_env` is always staged for a configured env.** `pio run -t upload`
+   builds before it uploads, so an unbuilt env is still writable. Its
+   `sha256` is `None` when it is unbuilt or not ours.
+3. **"A board in BOOTSEL goes to bootsel" is about a `KIND_BARE` device.**
+   flashtool is not narrowed by state; it does not support a bare board.
+4. **`Artifact.path` is a `str`**, like every other path in the codebase, and
+   `sha256` defaults to `None`.
+5. **`record` re-reads what is staged when the ledger is filed** (through
+   `staged_record`), rather than a hash captured at selection. The bytes
+   written are the bytes at the staged path when the write ran.
+6. **`resolve` returns `(flasher, artifact)` or `None`**, and
+   `providers.staged` returns a `Staged` (the artifacts plus `fw_sha` and
+   `version`), not a bare tuple.
+7. **`BootselRequester.wait_ready` gains keyword arguments `type_name` and
+   `fw`**, so the klipper helper can read the staged `.config` to predict the
+   serial. Roadrunner's gets defaults.
+8. **For a board without Katapult, the README guidance is `flashers: bootsel`
+   with `helper: klipper`.**
+9. **An offset `uf2` onto a bare board does not reliably come back as
+   `RPI-RP2`.** The ROM falls back to BOOTSEL only when the start of flash
+   holds no valid boot stage. If an earlier no-offset image's start is still
+   there, what runs is the remains of that image. It is still recoverable by
+   holding BOOTSEL, so the warning stands and nothing becomes a refusal.
+10. **Klipper tries Katapult only when the running image has a bootloader
+    offset** and Katapult's signature is at the start of flash
+    (`try_request_canboot`). So "a board with Katapult lands in Katapult" is
+    true of a running board, whose Klipper must have the offset. Writing
+    Klipper through BOOTSEL onto a Katapult board happens only when the board
+    is held in BOOTSEL by hand.
+
+Also settled while planning:
+- A recorded hash is reported only when the bytes on disk still match it.
+- A stale staged file is removed by the build that stopped producing it. A
+  dry run never removes one.
+- A CMake `.bin` older than its `.elf` is not staged.
+- A kconfig `.uf2` is offered only once a sidecar lists it, so an image built
+  before this change waits for one rebuild.
+- The klipper helper's chipset refusal happens at write time, in
+  `request_bootsel`.
+- The Katapult-landing check compares USB topology.
 
 ## Problem
 
@@ -66,8 +119,8 @@ These were agreed in conversation.
 - **Klipper through BOOTSEL is opt-in, by list order.** There is no new
   config key.
 - **Bootsel gains no CAN rule of its own.** Whether a CAN device can reach
-  BOOTSEL is up to the family's helper. The `klipper` helper cannot, and says
-  so.
+  BOOTSEL is up to the family's helper. The `klipper` helper cannot, and
+  bootsel's serial-only helper path already refuses it (correction 1).
 
 ## Design
 
@@ -84,8 +137,8 @@ KIND_PIO_ENV = "pio_env"  # a built PlatformIO env; see below
 @dataclasses.dataclass(frozen=True)
 class Artifact:
     kind: str
-    path: Path
-    sha256: str | None
+    path: str
+    sha256: str | None = None
 ```
 
 What each builder reports, one `Artifact` per staged file:
@@ -94,7 +147,7 @@ What each builder reports, one `Artifact` per staged file:
 | --- | --- |
 | kconfig-make | `bin` always. Also `uf2` when `make` produced one: Klipper on RP2040, Katapult on RP2040. |
 | cmake | `uf2` and `bin`. Today it captures only the `uf2`. |
-| platformio | `pio_env`. Its `sha256` is the hash of `firmware.bin`, as the sidecar records today. |
+| platformio | `pio_env`, for every configured env, built or not. Its `sha256` is the hash of `firmware.bin` when that is ours, as the sidecar records today, and `None` otherwise. |
 
 **`pio_env` is the one builder-specific kind, on purpose.** The PlatformIO
 flasher runs `pio run -t upload`, which uploads from PlatformIO's own build
@@ -130,7 +183,7 @@ The `Flasher` protocol gains `accepts: tuple[str, ...]`:
 
 - `registry.select_device` already resolves the family. It now also asks that
   family's builder what is staged for the device's type:
-  `providers.staged(paths, type_name, family) -> tuple[Artifact, ...]`. It
+  `providers.staged(paths, type_name, family) -> Staged`. It
   reads the staged files and the sidecar.
 - This lives inside selection for the same reason `stop_services` is a
   required argument: no caller can forget it.
@@ -141,15 +194,16 @@ kind it `accepts`. For example, with `[firmware klipper] flashers: flashtool,
 bootsel`:
 
 - A board running Klipper goes to flashtool, with the `bin`.
-- A board in BOOTSEL is not a state flashtool handles, so it goes to bootsel,
-  with the `uf2`.
+- A bare board sitting in BOOTSEL is not a device flashtool supports, so it
+  goes to bootsel, with the `uf2`.
 
 **`target()` takes the chosen artifact.** Its signature becomes
 `target(paths, device, helper, artifact, *, stop_services)`.
 
 - `FlashTarget` carries the artifact.
-- `write` and `record` read the path and hash from the target, so `record` no
-  longer re-reads its builder's sidecar to find a hash.
+- `write` reads the path from the target. `record` reads what the family's
+  builder has staged when the ledger is filed, through one shared
+  `staged_record`, so every flasher files the hash of the kind it wrote.
 - `Device.detail` loses every file path (`uf2_file`, `fw_bin`) and keeps only
   addressing facts, such as the board dict flashtool needs for serial and CAN.
 - Callers stop building payloads that describe files.
@@ -226,11 +280,10 @@ the USB side of a CAN device (from its device info, for example) is free to
 offer the route.
 
 The `klipper` helper cannot. A BOOTSEL board is a USB volume, and a CAN
-address gives no port to find it on. flashtool's `-r` does work over CAN, but
-a board that enters BOOTSEL that way cannot be reached afterwards. So the
-helper's `request_bootsel` raises a named `FlashError` ("no BOOTSEL path from
-a CAN device") before it sends anything. A USB-to-CAN bridge board is not
-affected, because the bridge itself has a by-id serial.
+address gives no port to find it on. It needs no refusal of its own:
+bootsel's helper path is serial-only, so selection refuses a CAN device with
+`missing == []` (correction 1). A USB-to-CAN bridge board is not affected,
+because the bridge itself has a by-id serial.
 
 ### CMake
 
@@ -254,7 +307,7 @@ a board:
 | Case | Outcome |
 | --- | --- |
 | Offset `uf2` onto a board with Katapult | Works. Katapult is kept. |
-| Offset `uf2` onto a bare board | No valid boot stage at the start of flash, so the ROM falls back to BOOTSEL and the board comes back as `RPI-RP2`. Recoverable. |
+| Offset `uf2` onto a bare board | Nothing boots the new image. With no valid boot stage at the start of flash, the ROM falls back to BOOTSEL; with an older image's start still there, its remains run (correction 9). Recoverable by holding BOOTSEL. |
 | No-offset `uf2` onto a board with Katapult | Overwrites Katapult and boots Klipper directly. This is the "no Katapult" route. |
 | No-offset `bin` through Katapult | Katapult never overwrites itself. The image lands at the offset and does not run, and the board stays in Katapult, where it can be flashed again. |
 
@@ -270,7 +323,7 @@ whether it does.
 | --- | --- |
 | A flasher supports the device but its kind was not staged | `NoFlasherError`, naming the kind, with `missing` in its data. The batch reports it as a refusal. |
 | Nothing in the list supports the device | `NoFlasherError`, as today. |
-| The `klipper` helper is asked for BOOTSEL on a CAN device | Named `FlashError` ("no BOOTSEL path from a CAN device"), raised before anything is sent. |
+| A CAN device in a family with `flashers: bootsel` and `helper: klipper` | `NoFlasherError` from selection, with `missing == []`. Nothing is sent. |
 | The Klipper request lands in Katapult | Named `FlashError` from `request_bootsel`. Nothing is written. |
 | An offset `uf2` goes through BOOTSEL | Warning. The write proceeds. |
 | The new image presents a different serial | `wait_ready` waits for the predicted serial and reports the change. |
@@ -299,7 +352,7 @@ All of this goes on one branch, `feat/typed-artifacts`, in its own worktree.
    - callers no longer building payloads that describe files
    - the `missing` refusal
 3. **CMake stages its `bin`.**
-4. **The `klipper` helper.** This includes its refusal for CAN devices.
+4. **The `klipper` helper.**
 5. **Docs and the README TODO.**
 
 ## Testing
@@ -320,9 +373,9 @@ All of this goes on one branch, `feat/typed-artifacts`, in its own worktree.
   - A request that lands in Katapult raises the named error and writes
     nothing.
   - Serial prediction works with both a chip-ID serial and a hardcoded one.
-  - A CAN device raises the no-BOOTSEL-path error, and nothing is sent.
+  - A CAN device is refused at selection, with `missing == []`.
   - The offset-`uf2` warning.
-  - Tty-level tests are `posix_only`. CI's Linux run is the one that counts.
+  - Every hardware edge is monkeypatched, so none of these is `posix_only`.
 
 ### Mutation guards
 
@@ -331,7 +384,8 @@ A new `scripts/mutations/artifact-selection.json` guards:
 - the kind check in `resolve`
 - the missing-kind refusal
 - the Katapult-landing refusal
-- the `klipper` helper's CAN refusal
+- the `klipper` helper's chip-ID serial prediction
+- the offset-`uf2` warning
 
 Before each commit, grep `scripts/mutations/` for every source line the commit
 rewrites, and re-anchor any matching spec in the same commit. The bootsel and
@@ -344,6 +398,8 @@ On the bench board only, never the toolhead:
 - Klipper through BOOTSEL on a bare RP2040.
 - Klipper through BOOTSEL on an RP2040 that has Katapult, to confirm Katapult
   survives.
+
+The plan's "Bench checks" section is the full list.
 
 ## Out of scope: the PlatformIO flasher follow-on
 

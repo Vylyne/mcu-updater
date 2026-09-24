@@ -108,8 +108,9 @@ class Expected:
     #: No tree at all is "cannot tell" for this caller, whatever else it has.
     #: The screens' rule, and theirs alone.
     require_head: bool = False
-    #: `bin_sha256` of the artifact on disk now.
-    artifact_sha: str | None = None
+    #: Every hash `artifacts.recorded_hashes` returned for the sidecar on disk
+    #: now - one build's worth, whichever kind(s) it staged.
+    artifact_shas: frozenset[str] = frozenset()
     #: Our own `FlashLog` entry for this device - already discarded by
     #: `entry_for` if it disagrees with what the device reports running, so
     #: anything that arrives here is a record we still believe.
@@ -229,7 +230,7 @@ def _record_verdict(expected: Expected, *, absent_is: str | None) -> DeviceStatu
     if expected.record is None:
         return DeviceStatus(absent_is)
     flashed = expected.record.get("bin_sha256")
-    if flashed and expected.artifact_sha and flashed != expected.artifact_sha:
+    if flashed and expected.artifact_shas and flashed not in expected.artifact_shas:
         # Same commit, different binary: an edited makefile patch or a changed
         # .config builds differently from an identical tree, and only our own
         # record knows which build the board actually got.

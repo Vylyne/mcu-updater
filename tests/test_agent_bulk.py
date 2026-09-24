@@ -497,6 +497,40 @@ def test_only_boards_that_need_it_are_selected(paths, live_registry_text, fake_r
     assert boards[0]["reason"] == "source_changed"
 
 
+def test_a_board_flashed_from_a_non_primary_kind_is_not_picked_as_stale(
+    paths, live_registry_text, fake_root
+):
+    """I-1: the sidecar's build staged a .bin and a .uf2. The flash log holds
+    the .uf2 hash under the legacy `bin_sha256` key - a BOOTSEL write, say -
+    and that must still read as the current build, not a stale one."""
+    from mcu_updater.artifacts import KIND_UF2, sidecar_field
+    from mcu_updater.build import FlashLog
+
+    with open(paths.registry_file, "w", encoding="utf-8") as fh:
+        fh.write(live_registry_text)
+    bin_hash = "aa" * 32
+    uf2_hash = "bb" * 32
+    _stage_artifact(paths, EBB)
+    os.makedirs(paths.artifact_dir(EBB), exist_ok=True)
+    with open(paths.sidecar_file(EBB, "klipper"), "w", encoding="utf-8") as fh:
+        json.dump(
+            {
+                "artifacts": sidecar_field({KIND_BIN: bin_hash, KIND_UF2: uf2_hash}),
+                "bin_sha256": bin_hash,
+            },
+            fh,
+        )
+    FlashLog(paths).record(
+        EBB_A, mcu_type=EBB, fw="klipper", bin_sha256=uf2_hash, fw_sha=HEAD
+    )
+    make_device(fake_root / "bus", "Klipper", EBB_CHIPSET, EBB_A)
+
+    api = Api(paths, call=_moonraker({EBB_A: CURRENT_VERSION}))
+    monkey_head(api, paths)
+
+    assert api._boards_to_flash(Registry.load(paths), "stale") == []
+
+
 def test_scope_all_takes_every_online_board_of_a_built_type(paths, live_registry_text, fake_root):
     """The buffer-patch case: the source has not moved, so nothing looks stale,
     but you know the binary changed."""

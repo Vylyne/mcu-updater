@@ -23,6 +23,7 @@ from ... import (
     verdict,
 )
 from ... import inventory as inventory_mod
+from ...artifacts import recorded_hashes
 from ...build import null_reporter, read_sidecar
 from ...config import Registry
 from ...device_info import DeviceInfo
@@ -328,7 +329,7 @@ class StatusMixin(_Base):
 
         flashlog = FlashLog(self.paths)
         sidecar = read_sidecar(self.paths, name, application) or {}
-        artifact_sha = sidecar.get("bin_sha256")
+        artifact_shas = recorded_hashes(sidecar)
         built_version = sidecar.get("version")
 
         if rows is None:
@@ -345,7 +346,7 @@ class StatusMixin(_Base):
                     versions,
                     fw_head,
                     state=state,
-                    artifact_sha=artifact_sha,
+                    artifact_shas=artifact_shas,
                     flashlog=flashlog,
                     built_version=built_version,
                     reader=reader,
@@ -360,7 +361,7 @@ class StatusMixin(_Base):
                 uuid,
                 {uuid: cross} if cross is not None else {},
                 fw_head,
-                artifact_sha=artifact_sha,
+                artifact_shas=artifact_shas,
                 flashlog=flashlog,
                 built_version=built_version,
                 reader=reader,
@@ -1077,7 +1078,7 @@ class StatusMixin(_Base):
         )
         expected = verdict.Expected(
             stamp=sidecar.get("version"),
-            artifact_sha=sidecar.get("bin_sha256"),
+            artifact_shas=recorded_hashes(sidecar),
             digest=sidecar,
         )
 
@@ -2640,7 +2641,7 @@ class StatusMixin(_Base):
         fw_head: str | None,
         *,
         state: str | None = None,
-        artifact_sha: str | None = None,
+        artifact_shas: frozenset[str] = frozenset(),
         flashlog: Any | None = None,
         built_version: str | None = None,
         reader: DeviceInfoReader = device_info.KLIPPER,
@@ -2665,7 +2666,7 @@ class StatusMixin(_Base):
         # One lookup, two consumers. `version` is passed so a sha-less board's
         # record is governed by the same discard rule as its verdict: a
         # confidence read off a discarded record would be exactly as misleading
-        # as a stale `bin_sha256`.
+        # as a stale recorded hash.
         record = (
             flashlog.entry_for(serial, running, version=version)
             if flashlog is not None
@@ -2681,7 +2682,7 @@ class StatusMixin(_Base):
             verdict.Expected(
                 head=fw_head,
                 stamp=built_version,
-                artifact_sha=artifact_sha,
+                artifact_shas=artifact_shas,
                 record=record,
             ),
         )

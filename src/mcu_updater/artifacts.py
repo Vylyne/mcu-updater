@@ -81,6 +81,27 @@ def recorded_kinds(side: Mapping[str, Any]) -> set[str]:
     return set(field) if isinstance(field, dict) else set()
 
 
+def recorded_hashes(side: Mapping[str, Any]) -> frozenset[str]:
+    """Every hash this sidecar vouches for, one build's worth.
+
+    The flash log files the hash of whichever kind was written - a `.uf2`
+    through BOOTSEL, a `.bin` through Katapult - and both came out of the
+    build this sidecar describes, so either one means the board runs it.
+    The legacy `bin_sha256` is included, so a sidecar written before
+    `artifacts` existed still answers.
+    """
+    hashes: set[str] = set()
+    field = side.get("artifacts")
+    if isinstance(field, dict):
+        for entry in field.values():
+            if isinstance(entry, dict) and entry.get("sha256"):
+                hashes.add(str(entry["sha256"]))
+    legacy = side.get("bin_sha256")
+    if legacy:
+        hashes.add(str(legacy))
+    return frozenset(hashes)
+
+
 def recorded_sha256(side: Mapping[str, Any], kind: str, *, primary: str) -> str | None:
     """The hash a sidecar recorded for `kind`, or None.
 

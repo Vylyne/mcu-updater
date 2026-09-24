@@ -105,8 +105,8 @@
       "replace": "    return _record_verdict(expected, absent_is=None)"
     },
     {
-      "name": "a record naming another binary is not ignored",
-      "find": "    if flashed and expected.artifact_sha and flashed != expected.artifact_sha:",
+      "name": "a record naming a hash from another build is not ignored",
+      "find": "    if flashed and expected.artifact_shas and flashed not in expected.artifact_shas:",
       "replace": "    if False:"
     }
   ]

@@ -8,6 +8,7 @@
     "tests/test_cmake.py",
     "tests/test_build.py",
     "tests/test_artifacts.py",
+    "tests/test_verdict.py",
     "-q"
   ],
   "mutations": [
@@ -67,6 +68,12 @@
       "file": "src/mcu_updater/build.py",
       "find": "    if recorded and sha256_file(path) == recorded:\n        return recorded\n    return None",
       "replace": "    return recorded"
+    },
+    {
+      "name": "recorded_hashes vouches for every kind a build staged, not only the legacy slot",
+      "file": "src/mcu_updater/artifacts.py",
+      "find": "    hashes: set[str] = set()\n    field = side.get(\"artifacts\")\n    if isinstance(field, dict):",
+      "replace": "    hashes: set[str] = set()\n    field = side.get(\"artifacts\")\n    if False:"
     }
   ]
 }

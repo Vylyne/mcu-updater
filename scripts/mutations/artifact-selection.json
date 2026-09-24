@@ -12,9 +12,14 @@
   ],
   "mutations": [
     {
-      "name": "a flasher is only handed a kind it accepts",
+      "name": "a flasher with no staged file is passed over",
       "find": "        artifact = staged.first_of(flasher.accepts)\n        if artifact is not None:",
       "replace": "        artifact = staged.first_of(flasher.accepts)\n        if True:"
+    },
+    {
+      "name": "a flasher is only handed a kind it accepts",
+      "find": "        artifact = staged.first_of(flasher.accepts)",
+      "replace": "        artifact = staged.first_of((\"bin\", \"uf2\", \"pio_env\"))"
     },
     {
       "name": "a missing kind is refused by name",

@@ -19,6 +19,7 @@ from mcu_updater.artifacts import (
     KIND_UF2,
     Artifact,
     Staged,
+    recorded_hashes,
     recorded_kinds,
     recorded_sha256,
     sidecar_field,
@@ -86,6 +87,28 @@ def test_an_old_sidecar_vouches_only_for_its_primary_kind():
     assert recorded_sha256(old, KIND_UF2, primary=KIND_BIN) is None
     assert recorded_sha256(old, KIND_UF2, primary=KIND_UF2) == "legacy"
     assert recorded_kinds(old) == set()
+
+
+def test_recorded_hashes_of_a_legacy_sidecar_is_just_the_bin():
+    assert recorded_hashes({"bin_sha256": "legacy"}) == frozenset({"legacy"})
+
+
+def test_recorded_hashes_of_a_new_sidecar_is_both_kinds():
+    side = {"bin_sha256": "b", "artifacts": sidecar_field({KIND_BIN: "b", KIND_UF2: "u"})}
+
+    assert recorded_hashes(side) == frozenset({"b", "u"})
+
+
+def test_recorded_hashes_drops_a_none_hash():
+    side = {"artifacts": sidecar_field({KIND_BIN: None, KIND_UF2: "u"})}
+
+    assert recorded_hashes(side) == frozenset({"u"})
+
+
+def test_recorded_hashes_tolerates_a_malformed_artifacts_field():
+    assert recorded_hashes({"bin_sha256": "legacy", "artifacts": "not a dict"}) == frozenset(
+        {"legacy"}
+    )
 
 
 # --- kconfig -----------------------------------------------------------------

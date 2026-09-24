@@ -188,7 +188,7 @@ def test_a_digest_match_never_consults_the_flash_record():
         Expected(
             head="deadbee",
             digest=IMAGE,
-            artifact_sha="new" + "0" * 61,
+            artifact_shas=frozenset({"new" + "0" * 61}),
             record={"bin_sha256": "old" + "0" * 61},
         ),
     ).reason is None
@@ -260,7 +260,12 @@ def test_a_board_with_no_tree_falls_back_on_what_we_built():
     produced, and that is more than nothing."""
     assert decide(
         Evidence(state="klipper", version="v1.2.0-3-gdeadbee", running_sha="deadbee"),
-        Expected(head=None, stamp="v1.2.0-3-gdeadbee", record={"bin_sha256": "aa" * 32}, artifact_sha="aa" * 32),
+        Expected(
+            head=None,
+            stamp="v1.2.0-3-gdeadbee",
+            record={"bin_sha256": "aa" * 32},
+            artifact_shas=frozenset({"aa" * 32}),
+        ),
     ).reason is None
 
 
@@ -315,7 +320,7 @@ def test_a_matching_commit_with_no_record_is_taken_at_face_value():
     predates the log to "unknown" would be noise, not caution."""
     assert decide(
         Evidence(state="klipper", version="v0.13.0-711-gd7cea5bb", running_sha="d7cea5bb"),
-        Expected(head=HEAD, artifact_sha="aa" * 32, record=None),
+        Expected(head=HEAD, artifact_shas=frozenset({"aa" * 32}), record=None),
     ).reason is None
 
 
@@ -325,7 +330,11 @@ def test_the_same_commit_with_a_different_binary_is_artifact_changed():
     holding last week's firmware."""
     assert decide(
         Evidence(state="klipper", version="v0.13.0-711-gd7cea5bb", running_sha="d7cea5bb"),
-        Expected(head=HEAD, artifact_sha="new" + "0" * 61, record={"bin_sha256": "old" + "0" * 61}),
+        Expected(
+            head=HEAD,
+            artifact_shas=frozenset({"new" + "0" * 61}),
+            record={"bin_sha256": "old" + "0" * 61},
+        ),
     ).reason == ARTIFACT_CHANGED
 
 
@@ -334,8 +343,50 @@ def test_a_record_with_no_binary_recorded_invents_no_mismatch():
     mismatch, here as everywhere."""
     assert decide(
         Evidence(state="klipper", version="v0.13.0-711-gd7cea5bb", running_sha="d7cea5bb"),
-        Expected(head=HEAD, artifact_sha="new" + "0" * 61, record={"bin_sha256": None}),
+        Expected(
+            head=HEAD, artifact_shas=frozenset({"new" + "0" * 61}), record={"bin_sha256": None}
+        ),
     ).reason is None
+
+
+def test_a_board_written_from_a_non_primary_kind_still_reads_current():
+    """A kconfig board written by BOOTSEL files the .uf2 hash. The sidecar's
+    build staged both a .bin and a .uf2, so a record holding either one means
+    the board runs it - I-1's whole point."""
+    assert decide(
+        Evidence(state="klipper", version="v0.13.0-711-gd7cea5bb", running_sha="d7cea5bb"),
+        Expected(
+            head=HEAD,
+            artifact_shas=frozenset({"bb" * 32, "aa" * 32}),
+            record={"bin_sha256": "aa" * 32},
+        ),
+    ).reason is None
+
+
+def test_a_record_holding_the_legacy_slots_other_kind_still_reads_current():
+    """The legacy `bin_sha256` name is cmake's `.uf2` hash on a cmake
+    sidecar. A record holding the `.bin` hash from the same build must not
+    read as a mismatch just because the record's own key is spelled
+    `bin_sha256`."""
+    assert decide(
+        Evidence(state="klipper", version="v0.13.0-711-gd7cea5bb", running_sha="d7cea5bb"),
+        Expected(
+            head=HEAD,
+            artifact_shas=frozenset({"uf2" + "0" * 61, "bin" + "0" * 61}),
+            record={"bin_sha256": "bin" + "0" * 61},
+        ),
+    ).reason is None
+
+
+def test_a_record_holding_a_hash_from_neither_kind_is_still_artifact_changed():
+    assert decide(
+        Evidence(state="klipper", version="v0.13.0-711-gd7cea5bb", running_sha="d7cea5bb"),
+        Expected(
+            head=HEAD,
+            artifact_shas=frozenset({"bb" * 32, "aa" * 32}),
+            record={"bin_sha256": "cc" * 32},
+        ),
+    ).reason == ARTIFACT_CHANGED
 
 
 @pytest.mark.parametrize(
@@ -408,7 +459,12 @@ def test_a_matching_stamp_with_no_record_is_version_only():
 def test_a_matching_stamp_backed_by_a_record_is_up_to_date():
     assert decide(
         Evidence(state="klipper", version=CARTO),
-        Expected(head=HEAD, stamp=CARTO, artifact_sha="aa" * 32, record={"bin_sha256": "aa" * 32}),
+        Expected(
+            head=HEAD,
+            stamp=CARTO,
+            artifact_shas=frozenset({"aa" * 32}),
+            record={"bin_sha256": "aa" * 32},
+        ),
     ).reason is None
 
 
@@ -417,7 +473,12 @@ def test_a_matching_stamp_with_a_stale_binary_is_artifact_changed():
     on the commit path."""
     assert decide(
         Evidence(state="klipper", version=CARTO),
-        Expected(head=HEAD, stamp=CARTO, artifact_sha="new" + "0" * 61, record={"bin_sha256": "old" + "0" * 61}),
+        Expected(
+            head=HEAD,
+            stamp=CARTO,
+            artifact_shas=frozenset({"new" + "0" * 61}),
+            record={"bin_sha256": "old" + "0" * 61},
+        ),
     ).reason == ARTIFACT_CHANGED
 
 

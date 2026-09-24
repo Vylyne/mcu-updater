@@ -254,6 +254,7 @@ def test_a_whole_type_never_carries_force_even_if_one_board_would(c, paths, capt
         cli.flash_fw_cmd(argparse.Namespace(type="board", serial=None, yes=True))
 
     assert len(captured) == 1
+    assert captured[0]
     assert all(t.detail.get("force") is False for t in captured[0])
 
 

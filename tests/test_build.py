@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 
@@ -565,3 +566,60 @@ def _stage_config(paths, mcu_type: str, fw: str) -> None:
     os.makedirs(paths.type_dir(mcu_type), exist_ok=True)
     with open(paths.config_file(mcu_type, fw), "w", encoding="utf-8") as fh:
         fh.write("CONFIG_MACH_STM32=y\n")
+
+
+def test_a_build_records_a_hash_per_staged_kind(paths, settings, fake_root, monkeypatch):
+    reg = _registry(paths)
+    _write_config(paths)
+    out = fake_root / "klipper" / "out"
+    out.mkdir()
+    (out / "klipper.bin").write_bytes(b"firmware")
+    (out / "klipper.uf2").write_bytes(b"uf2 firmware")
+    monkeypatch.setattr("mcu_updater.build.run_streamed", lambda command, **kwargs: 0)
+
+    result = build(paths, reg, settings, "board", "klipper")
+
+    assert result.uf2_sha256 == hashlib.sha256(b"uf2 firmware").hexdigest()
+    side = read_sidecar(paths, "board", "klipper")
+    assert side["artifacts"] == {
+        "bin": {"sha256": hashlib.sha256(b"firmware").hexdigest()},
+        "uf2": {"sha256": hashlib.sha256(b"uf2 firmware").hexdigest()},
+    }
+    # Kept for every reader written before `artifacts` existed.
+    assert side["bin_sha256"] == hashlib.sha256(b"firmware").hexdigest()
+
+
+def test_a_build_without_a_uf2_removes_a_stale_one(paths, settings, fake_root, monkeypatch):
+    """Review Focus 4: the sidecar stops listing it, so leaving it would put an
+    image nobody can vouch for one config edit away from BOOTSEL."""
+    reg = _registry(paths)
+    _write_config(paths)
+    out = fake_root / "klipper" / "out"
+    out.mkdir()
+    (out / "klipper.bin").write_bytes(b"firmware")
+    os.makedirs(paths.artifact_dir("board"), exist_ok=True)
+    with open(paths.uf2_file("board", "klipper"), "wb") as fh:
+        fh.write(b"an older build's uf2")
+    monkeypatch.setattr("mcu_updater.build.run_streamed", lambda command, **kwargs: 0)
+
+    result = build(paths, reg, settings, "board", "klipper")
+
+    assert result.uf2_path is None
+    assert not os.path.exists(paths.uf2_file("board", "klipper"))
+    assert set(read_sidecar(paths, "board", "klipper")["artifacts"]) == {"bin"}
+
+
+def test_a_uf2_changed_behind_the_sidecar_is_a_foreign_build(paths, settings, fake_root, monkeypatch):
+    reg = _registry(paths)
+    _write_config(paths)
+    out = fake_root / "klipper" / "out"
+    out.mkdir()
+    (out / "klipper.bin").write_bytes(b"firmware")
+    (out / "klipper.uf2").write_bytes(b"uf2 firmware")
+    monkeypatch.setattr("mcu_updater.build.run_streamed", lambda command, **kwargs: 0)
+    build(paths, reg, settings, "board", "klipper")
+
+    with open(paths.uf2_file("board", "klipper"), "wb") as fh:
+        fh.write(b"somebody else's uf2")
+
+    assert artifact_status(paths, "board", "klipper").reason == "foreign_build"

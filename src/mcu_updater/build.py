@@ -26,6 +26,15 @@ from collections.abc import Callable, Iterator
 from typing import Any
 
 from . import firmware
+from .artifacts import (
+    KIND_BIN,
+    KIND_UF2,
+    Artifact,
+    Staged,
+    recorded_kinds,
+    recorded_sha256,
+    sidecar_field,
+)
 from .config import McuType, Registry
 from .errors import (
     BuildError,
@@ -414,6 +423,10 @@ class BuildResult:
     #: from the board's side. Comparing this against what was last flashed is what
     #: makes "only flash the stale ones" true rather than approximately true.
     bin_sha256: str | None = None
+    #: sha256 of the `.uf2` staged beside the binary, when `make` produced one.
+    #: Recorded per kind under `artifacts` so a flasher writing the `.uf2`
+    #: files the hash of what it wrote, not the `.bin`'s.
+    uf2_sha256: str | None = None
     #: True if `make` rewrote our .config (klipper runs olddefconfig when
     #: src/Kconfig is newer than the config, e.g. right after a git pull).
     config_rewritten: bool = False
@@ -439,10 +452,16 @@ class BuildResult:
     extra_repo_shas: dict[str, str | None] = dataclasses.field(default_factory=dict)
 
     def to_sidecar(self) -> dict[str, Any]:
+        hashes: dict[str, str | None] = {KIND_BIN: self.bin_sha256}
+        if self.uf2_path is not None:
+            hashes[KIND_UF2] = self.uf2_sha256
         return {
             "fw_sha": self.fw_sha,
             "config_sha256": self.config_sha256,
+            # Still written: every reader older than `artifacts` reads this,
+            # and it keeps meaning "the .bin's hash".
             "bin_sha256": self.bin_sha256,
+            "artifacts": sidecar_field(hashes),
             "duration": round(self.duration, 2),
             "timestamp": time.time(),
             "config_rewritten": self.config_rewritten,
@@ -505,6 +524,13 @@ def artifact_status(
     if recorded_bin and sha256_file(paths.bin_file(mcu_type, fw)) != recorded_bin:
         return ArtifactStatus(FOREIGN_BUILD)
 
+    # The same rule for the .uf2 beside it. Only a sidecar that recorded a uf2
+    # hash can accuse one, and only a .uf2 that is there can be accused.
+    uf2_path = paths.uf2_file(mcu_type, fw)
+    recorded_uf2 = recorded_sha256(side, KIND_UF2, primary=KIND_BIN)
+    if recorded_uf2 and os.path.exists(uf2_path) and sha256_file(uf2_path) != recorded_uf2:
+        return ArtifactStatus(FOREIGN_BUILD)
+
     cfg_hash = config_sha if config_sha is not None else sha256_file(
         paths.config_file(mcu_type, fw)
     )
@@ -523,6 +549,48 @@ def artifact_status(
             return ArtifactStatus(SOURCE_CHANGED)
 
     return ArtifactStatus()
+
+
+def _verified(path: str, recorded: str | None) -> str | None:
+    """`recorded`, while the file on disk still hashes to it."""
+    if recorded and sha256_file(path) == recorded:
+        return recorded
+    return None
+
+
+def staged(paths: Paths, mcu_type: str, family: firmware.FirmwareFamily) -> Staged:
+    """What a kconfig build left staged for `mcu_type`, by kind.
+
+    `bin` whenever the file exists: a sidecar older than `artifacts` still
+    vouches for it through `bin_sha256`. `uf2` only when the sidecar lists it:
+    a `.uf2` staged before sidecars recorded kinds may be older than the `.bin`
+    beside it, so it waits for one rebuild rather than being trusted.
+
+    A hash is reported only while the bytes still match it, so the ledger never
+    files a recorded hash against a file somebody replaced.
+    """
+    fw = family.name
+    side = read_sidecar(paths, mcu_type, fw) or {}
+    found: list[Artifact] = []
+    bin_path = paths.bin_file(mcu_type, fw)
+    if os.path.exists(bin_path):
+        found.append(
+            Artifact(KIND_BIN, bin_path, _verified(bin_path, recorded_sha256(side, KIND_BIN, primary=KIND_BIN)))
+        )
+    uf2_path = paths.uf2_file(mcu_type, fw)
+    if KIND_UF2 in recorded_kinds(side) and os.path.exists(uf2_path):
+        found.append(
+            Artifact(KIND_UF2, uf2_path, _verified(uf2_path, recorded_sha256(side, KIND_UF2, primary=KIND_BIN)))
+        )
+    return Staged(
+        fw=fw,
+        artifacts=tuple(found),
+        # A sidecar from before the field existed, or a build this tool did
+        # not perform: the tree's head is the same answer one step less
+        # directly, and is what the flashtool ledger has always fallen back on.
+        fw_sha=side.get("fw_sha") or git_head(family.source_dir(paths)),
+        version=side.get("version"),
+    )
 
 
 # --------------------------------------------------------------------------
@@ -781,6 +849,12 @@ def build(
             uf2_out = paths.uf2_file(mcu_type, fw)
             shutil.copyfile(compiled_uf2, uf2_out)
             reporter("info", f"Also staged {uf2_out}")
+        elif not dry_run:
+            # A .uf2 an earlier build left is not this build's, and the sidecar
+            # written below no longer lists it. Left in place it is an image
+            # nothing vouches for, one `flashers:` edit away from BOOTSEL.
+            with contextlib.suppress(FileNotFoundError):
+                os.remove(paths.uf2_file(mcu_type, fw))
 
         result = BuildResult(
             bin_path=bin_out,
@@ -789,6 +863,7 @@ def build(
             fw_sha=git_head(fw_dir),
             config_sha256=config_after,
             bin_sha256=sha256_file(bin_out),
+            uf2_sha256=sha256_file(uf2_out) if uf2_out else None,
             config_rewritten=rewritten,
             reseeded=reseeded,
             app_address=_read_app_address(config_file),

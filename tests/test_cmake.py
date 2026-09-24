@@ -1241,3 +1241,16 @@ def test_an_artifact_that_is_not_a_uf2_still_records_a_build(paths, repo):
     assert record is not None
     assert "digest" not in record
     assert cmake.artifact_status(paths, target, cmake.source_state(str(source))).is_current
+
+
+def test_a_build_records_its_uf2_under_artifacts(paths, settings, repo, monkeypatch):
+    source = repo / "rp2040"
+    (source / "build").mkdir()
+    monkeypatch.setattr(cmake.build_mod, "run_streamed", _leaves(source, "roadrunner_v1_i2c_rgb"))
+    monkeypatch.setattr(cmake, "declared_targets", lambda source: {"all", "roadrunner_v1_i2c_rgb"})
+
+    cmake.build(paths, settings, _cmake_type(source))
+
+    record = cmake.read_sidecar(paths, _cmake_type(source))
+    assert record["artifacts"] == {"uf2": {"sha256": record["bin_sha256"]}}
+    assert cmake.read_record(paths, "roadrunner", "roadrunner") == record

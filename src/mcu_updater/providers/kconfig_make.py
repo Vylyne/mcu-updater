@@ -18,7 +18,9 @@ import threading
 
 from .. import build as build_mod
 from .. import firmware
+from ..artifacts import Staged
 from ..build import Reporter
+from ..paths import Paths
 from ..states import ArtifactStatus
 from .spec import BuildTarget, Install
 
@@ -126,3 +128,6 @@ class KconfigMake:
                 f"family; every target it enumerates carries one."
             )
         return target.fw
+
+    def staged(self, paths: Paths, type_name: str, family: firmware.FirmwareFamily) -> Staged:
+        return build_mod.staged(paths, type_name, family)

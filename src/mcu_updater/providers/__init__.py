@@ -15,7 +15,7 @@ from __future__ import annotations
 from .cmake import Cmake, CmakeType
 from .kconfig_make import KconfigMake
 from .platformio import PlatformIO
-from .registry import PROVIDERS, Selection, by_name, select
+from .registry import PROVIDERS, Selection, by_name, select, staged
 from .selection import known_type_names, provider_of
 from .spec import BuildTarget, Install, Provider, Skipped
 
@@ -34,4 +34,5 @@ __all__ = [
     "known_type_names",
     "provider_of",
     "select",
+    "staged",
 ]

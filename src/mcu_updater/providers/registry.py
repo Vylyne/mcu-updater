@@ -15,11 +15,17 @@ part of it.
 from __future__ import annotations
 
 import dataclasses
+from typing import TYPE_CHECKING
 
 from .cmake import Cmake
 from .kconfig_make import KconfigMake
 from .platformio import PlatformIO
 from .spec import BuildTarget, Install, Provider, Skipped
+
+if TYPE_CHECKING:
+    from ..artifacts import Staged
+    from ..firmware import FirmwareFamily
+    from ..paths import Paths
 
 #: Every build system, in the order a batch works through them. kconfig first
 #: because that is the order MCU builds have always happened in, and a batch
@@ -34,6 +40,11 @@ def by_name(name: str) -> Provider:
     if provider is None:
         raise KeyError(f"no build provider {name!r}; known: {sorted(_BY_NAME)}")
     return provider
+
+
+def staged(paths: Paths, type_name: str, family: FirmwareFamily) -> Staged:
+    """What `family`'s builder staged for `type_name`."""
+    return by_name(family.builder).staged(paths, type_name, family)
 
 
 @dataclasses.dataclass(frozen=True)

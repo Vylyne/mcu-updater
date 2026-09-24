@@ -23,7 +23,10 @@ from __future__ import annotations
 import os
 import threading
 
+from .. import firmware
+from ..artifacts import Staged
 from ..build import Reporter
+from ..paths import Paths
 from ..states import ArtifactStatus
 from . import pio as pio_mod
 from .spec import BuildTarget, Install
@@ -107,3 +110,6 @@ class PlatformIO:
         # PlatformIO owns its own build directory under `.pio/` and manages
         # its staleness itself. Same answer as kconfig, same reason.
         return None
+
+    def staged(self, paths: Paths, type_name: str, family: firmware.FirmwareFamily) -> Staged:
+        return pio_mod.staged(paths, type_name, family)

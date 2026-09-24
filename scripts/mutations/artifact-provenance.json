@@ -7,6 +7,7 @@
     "pytest",
     "tests/test_cmake.py",
     "tests/test_build.py",
+    "tests/test_artifacts.py",
     "-q"
   ],
   "mutations": [
@@ -36,6 +37,36 @@
       "file": "src/mcu_updater/build.py",
       "find": "    if recorded_bin and sha256_file(paths.bin_file(mcu_type, fw)) != recorded_bin:\n        return ArtifactStatus(FOREIGN_BUILD)",
       "replace": "    if sha256_file(paths.bin_file(mcu_type, fw)) != recorded_bin:\n        return ArtifactStatus(FOREIGN_BUILD)"
+    },
+    {
+      "name": "a kconfig uf2 that disagrees with its recorded hash is foreign",
+      "file": "src/mcu_updater/build.py",
+      "find": "    if recorded_uf2 and os.path.exists(uf2_path) and sha256_file(uf2_path) != recorded_uf2:",
+      "replace": "    if False:"
+    },
+    {
+      "name": "a kconfig build with no uf2 removes the stale one",
+      "file": "src/mcu_updater/build.py",
+      "find": "                os.remove(paths.uf2_file(mcu_type, fw))",
+      "replace": "                pass"
+    },
+    {
+      "name": "an old sidecar vouches only for its primary kind",
+      "file": "src/mcu_updater/artifacts.py",
+      "find": "    if kind == primary:\n        legacy = side.get(\"bin_sha256\")",
+      "replace": "    if True:\n        legacy = side.get(\"bin_sha256\")"
+    },
+    {
+      "name": "a kconfig uf2 waits for a sidecar that lists it",
+      "file": "src/mcu_updater/build.py",
+      "find": "    if KIND_UF2 in recorded_kinds(side) and os.path.exists(uf2_path):",
+      "replace": "    if os.path.exists(uf2_path):"
+    },
+    {
+      "name": "a replaced file is flashed without the recorded hash",
+      "file": "src/mcu_updater/build.py",
+      "find": "    if recorded and sha256_file(path) == recorded:\n        return recorded\n    return None",
+      "replace": "    return recorded"
     }
   ]
 }

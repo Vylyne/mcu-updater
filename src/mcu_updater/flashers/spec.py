@@ -42,7 +42,7 @@ writes it, and the flasher writes.
 from __future__ import annotations
 
 import dataclasses
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, MutableMapping
 from contextlib import AbstractContextManager
 from typing import TYPE_CHECKING, Any, Protocol
 
@@ -122,6 +122,11 @@ class FlashTarget:
     That is deliberate: a chipset means nothing to esptool and a klippy section
     means nothing to flashtool, and inventing a union of the two would be a
     third description of a device to keep in step with the two that exist.
+    Mutable, deliberately: `write` and `settled` for the same target share one
+    `FlashTarget` instance, and `detail` is the one channel a flasher has to
+    carry something `write` only learns partway through (Bootsel's handoff
+    topology) to the `settled` call that follows it, without a batch-wide
+    cache keyed on anything.
     """
 
     #: Key into `flashers.FLASHERS`.
@@ -137,7 +142,7 @@ class FlashTarget:
     #: `needs_services_stopped` is `False`: the list is then never consulted,
     #: so there is nothing to resolve.
     stop_services: tuple[str, ...] = ()
-    detail: Mapping[str, Any] = dataclasses.field(default_factory=dict)
+    detail: MutableMapping[str, Any] = dataclasses.field(default_factory=dict)
     #: Overrides the flasher's `needs_services_stopped` for this one write when
     #: set. `Bootsel` is why: a board already in BOOTSEL holds no port Klipper
     #: could have open, while asking a running board to enter BOOTSEL goes over

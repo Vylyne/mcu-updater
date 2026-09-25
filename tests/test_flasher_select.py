@@ -47,7 +47,7 @@ class _Requester:
     def request_bootsel(self, bench, *, serial, chipset, ctx):
         return BootselHandoff(topology="platform-x.usb-usb-0:1.3:1.0")
 
-    def wait_ready(self, bench, *, serial, chipset, ctx, type_name="", fw=""):
+    def wait_ready(self, bench, *, serial, chipset, ctx, type_name="", fw="", topology=""):
         return None
 
 

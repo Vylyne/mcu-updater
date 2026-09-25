@@ -126,6 +126,33 @@ def _declare_cartographer(paths) -> None:
         fh.write("\n[type carto_v4]\nchipset: stm32g431xx\nfirmware: cartographer\n")
 
 
+def _fake_uf2(payload: bytes = b"UF2", *, address: int = 0x10000000) -> bytes:
+    """`payload` wrapped as a minimal, valid UF2 - `Bootsel.write` now reads
+    every image once before copying it (M-3), so a staged fixture has to be a
+    container `image_extent` can parse, even when the test has nothing to do
+    with the image's own content."""
+    import struct
+
+    chunk = 256
+    chunks = [payload[i : i + chunk] for i in range(0, len(payload), chunk)] or [b""]
+    out = bytearray()
+    for index, data in enumerate(chunks):
+        out += struct.pack(
+            "<IIIIIIII",
+            0x0A324655,
+            0x9E5D5157,
+            0x2000,
+            address + index * chunk,
+            chunk,
+            index,
+            len(chunks),
+            0xE48BFF56,
+        )
+        out += data.ljust(476, b"\x00")
+        out += struct.pack("<I", 0x0AB16F30)
+    return bytes(out)
+
+
 def _declare_cmake(
     paths,
     fake_root,
@@ -167,8 +194,9 @@ def _declare_cmake(
     if staged:
         os.makedirs(paths.artifact_dir(name), exist_ok=True)
         artifact = paths.uf2_file(name, RR)
+        image = _fake_uf2()
         with open(artifact, "wb") as fh:
-            fh.write(b"UF2")
+            fh.write(image)
         if provenance:
             stat = os.stat(artifact)
             with open(paths.sidecar_file(name, RR), "w", encoding="utf-8") as fh:
@@ -178,7 +206,7 @@ def _declare_cmake(
                         "sha": "deadbee",
                         "version": "v1.2.0-3-gdeadbee",
                         "dirty": False,
-                        "bin_sha256": hashlib.sha256(b"UF2").hexdigest(),
+                        "bin_sha256": hashlib.sha256(image).hexdigest(),
                         "bin_size": stat.st_size,
                         "bin_mtime": stat.st_mtime,
                         "digest_algorithm": uf2.DIGEST_CRC32_ISO_HDLC,

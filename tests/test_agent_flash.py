@@ -30,6 +30,33 @@ def _write_settings(paths, **extra) -> None:
     write_settings(paths, dry_run="true", service_backend="null", **extra)
 
 
+def _fake_uf2(payload: bytes = b"UF2-road-runner", *, address: int = 0x10000000) -> bytes:
+    """`payload` wrapped as a minimal, valid UF2 - `Bootsel.write` now reads
+    every image once before copying it (M-3), so a staged fixture has to be a
+    container `image_extent` can parse, even when the test has nothing to do
+    with the image's own content."""
+    import struct
+
+    chunk = 256
+    chunks = [payload[i : i + chunk] for i in range(0, len(payload), chunk)] or [b""]
+    out = bytearray()
+    for index, data in enumerate(chunks):
+        out += struct.pack(
+            "<IIIIIIII",
+            0x0A324655,
+            0x9E5D5157,
+            0x2000,
+            address + index * chunk,
+            chunk,
+            index,
+            len(chunks),
+            0xE48BFF56,
+        )
+        out += data.ljust(476, b"\x00")
+        out += struct.pack("<I", 0x0AB16F30)
+    return bytes(out)
+
+
 def _stage_artifact(paths, mcu_type=TRACKED_TYPE) -> str:
     os.makedirs(paths.artifact_dir(mcu_type), exist_ok=True)
     path = paths.bin_file(mcu_type, "klipper")
@@ -104,7 +131,7 @@ def cmake_flash_factory(paths, fake_root, tmp_path):
         if staged:
             os.makedirs(paths.artifact_dir("roadrunner"), exist_ok=True)
             with open(paths.uf2_file("roadrunner", "roadrunner"), "wb") as fh:
-                fh.write(b"UF2-road-runner")
+                fh.write(_fake_uf2())
         if attached:
             make_device(fake_root / "bus", "Vylyne", "Roadrunner", serial)
         runner = JobRunner(

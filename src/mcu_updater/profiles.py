@@ -767,7 +767,10 @@ def answer_lines(path: str) -> list[str]:
     try:
         with open(path, encoding="utf-8") as fh:
             return [line.strip() for line in fh if parse_answer(line) is not None]
-    except OSError:
+    except (OSError, ValueError):
+        # ValueError: a `.config` that is not valid UTF-8 (UnicodeDecodeError,
+        # a ValueError subclass) - treated the same as a missing file rather
+        # than raising out of a caller that did not write it.
         return []
 
 

@@ -65,28 +65,25 @@ def ensure_uf2(uf2: str) -> None:
 FLASH_BASE = 0x10000000
 
 
-def _warn_if_offset(uf2: str, ctx: Any) -> None:
-    """Say so when an image leaves the start of flash to a bootloader.
+def _image_start(uf2: str) -> int | None:
+    """The image's start address, read once for both the warn and refuse paths.
 
-    Not a refusal. A UF2 write replaces only the blocks it carries, so a board
-    with Katapult keeps it and chain-loads this image - which is the normal
-    case for a Klipper built with a bootloader offset. On a board without one,
-    the start of flash is left as it was and nothing boots this. Only the
-    board knows which it is.
+    `None` for a file the copy step will fail on anyway (missing, unreadable) -
+    `ensure_uf2` already ran, so only a race remains, and the copy reports that
+    on its own. A `Uf2Error` is different: the bytes were read and are not a
+    valid image, so this is the earliest point that can say so - ahead of any
+    request or write, on both the helper and no-helper paths.
     """
     try:
         with open(uf2, "rb") as fh:
-            start, _length = image_extent(fh.read())
-    except (OSError, Uf2Error):
-        return
-    if start > FLASH_BASE:
-        ctx.reporter(
-            "warn",
-            f"{os.path.basename(uf2)} starts at {start:#x}, above the start of flash, "
-            f"so it expects a bootloader below it. A board with Katapult keeps it and "
-            f"boots this image; a board without one will not boot it - build with no "
-            f"bootloader offset for that board.",
-        )
+            data = fh.read()
+    except OSError:
+        return None
+    try:
+        start, _length = image_extent(data)
+    except Uf2Error as exc:
+        raise FlashError(f"{uf2} is not a valid UF2 image: {exc}", path=uf2) from exc
+    return start
 
 
 _COPY_CHUNK = 1 << 20
@@ -355,8 +352,26 @@ class Bootsel:
     ) -> dict[str, Any]:
         uf2 = artifact_path(target)
         ensure_uf2(uf2)
-        _warn_if_offset(uf2, ctx)
         requester: BootselRequester | None = target.detail.get("helper")
+        start = _image_start(uf2)
+        if start is not None and start > FLASH_BASE:
+            if requester is not None:
+                raise FlashError(
+                    f"{uf2} starts at {start:#x}, after a bootloader offset, and a board "
+                    f"asked for BOOTSEL by its firmware has no bootloader below it to boot "
+                    f"it. Nothing was written. Rebuild with no bootloader offset "
+                    f"(Bootloader offset: No bootloader), or list flashtool before bootsel "
+                    f"to write the .bin through Katapult.",
+                    serial=target.id,
+                    type=target.type,
+                )
+            ctx.reporter(
+                "warn",
+                f"{os.path.basename(uf2)} starts at {start:#x}, above the start of flash, "
+                f"so it expects a bootloader below it. A board with Katapult keeps it and "
+                f"boots this image; a board without one will not boot it - build with no "
+                f"bootloader offset for that board.",
+            )
 
         if bench.settings.dry_run:
             if requester is None:
@@ -379,6 +394,7 @@ class Bootsel:
                 chipset=target.detail["chipset"],
                 ctx=ctx,
             )
+            target.detail["topology"] = handoff.topology
             mount = mount_for_topology(bench.paths, handoff.topology)
         copy_uf2(uf2, mount, ctx)
         return {"mount": mount}
@@ -415,6 +431,7 @@ class Bootsel:
                 ctx=ctx,
                 type_name=target.type,
                 fw=target.detail.get("fw", ""),
+                topology=target.detail.get("topology", ""),
             )
         except OperationCancelled:
             raise

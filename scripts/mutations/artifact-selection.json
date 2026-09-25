@@ -54,14 +54,26 @@
     {
       "name": "an image above the start of flash is warned about",
       "file": "src/mcu_updater/flashers/bootsel.py",
-      "find": "    if start > FLASH_BASE:",
-      "replace": "    if False:"
+      "find": "        if start is not None and start > FLASH_BASE:",
+      "replace": "        if False:"
+    },
+    {
+      "name": "an offset image is refused on the helper path, before the request",
+      "file": "src/mcu_updater/flashers/bootsel.py",
+      "find": "            if requester is not None:",
+      "replace": "            if False:"
     },
     {
       "name": "settled hands the helper the image's family",
       "file": "src/mcu_updater/flashers/bootsel.py",
       "find": "                fw=target.detail.get(\"fw\", \"\"),",
       "replace": "                fw=\"\","
+    },
+    {
+      "name": "the board is found by the port it was asked on",
+      "file": "src/mcu_updater/helpers/klipper.py",
+      "find": "                if bootsel.serial_topology_for(paths, dev.path) == topology:\n                    time.sleep(_TOPOLOGY_SETTLE)",
+      "replace": "                if True:\n                    time.sleep(_TOPOLOGY_SETTLE)"
     }
   ]
 }

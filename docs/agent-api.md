@@ -762,7 +762,11 @@ different owner fails as `unknown_serial`/`ambiguous_serial`/
 `serial_tracked_elsewhere` before a job is created. The named type must have a
 staged UF2, and a family whose flashers cannot write the board (for Roadrunner,
 `flashers: bootsel` with `helper: roadrunner`) fails with `no_flasher`, whose
-`data` carries `family`, `flashers`, `type`, `id`, `chipset` and `state`. The
+`data` carries `family`, `flashers`, `type`, `id`, `chipset`, `state`
+and `missing` - the kinds (`bin`, `uf2`, `pio_env`) a listed flasher could
+have written the board from, had the family's build staged one. Empty when
+no listed flasher could write the board at all; non-empty means "build it
+first", not "change the list". The
 write reports `"flasher": "bootsel"`.
 
 That helper confirms the exact Roadrunner protocol identity, captures the full
@@ -1021,9 +1025,9 @@ than a single instant by-id check:
 
 **A cmake type's declared `serials:` are included too**, judged by the same
 verdict the panel row shows and selected by the same two tests as a kconfig
-board: something staged to write, and the board on the by-id bus. Its board
-dict carries `uf2_file` beside the usual keys, because a BOOTSEL write copies an
-image rather than driving a bootloader protocol. A board already *in* BOOTSEL is
+board: something staged to write, and the board on the by-id bus. Its board dict has the same keys as a kconfig board's; which staged file a
+flasher writes is chosen by selection, from the kinds the family's build
+staged, never carried in the dict. A board already *in* BOOTSEL is
 not selected - it has no by-id entry while its volume is mounted, so its verdict
 is `offline` - and `fw.flash` with its serial still writes it.
 
@@ -1073,12 +1077,15 @@ the confirmation is not, because a human reading it wants the real names.
 
 Selection goes through each device's `[firmware]` `flashers:` list. A device
 that nothing in the list can write is not dropped, and it does not stop the
-batch. It appears in the job's `failures[]` with `"flasher": null` and an
-`error` naming the family and its list:
+batch. It appears in the job's `failures[]` with `"flasher": null`, an
+`error` naming the family and its list, and `missing` - the kinds a build
+would have to stage for a listed flasher to take it:
 
 ```json
-{"type": "bttebb36", "id": "2900...", "flasher": null,
+{"type": "bttebb36", "id": "2900...", "flasher": null, "missing": [],
  "error": "nothing in [firmware klipper] (flashers: dfu_util) can write bttebb36 2900... while it is klipper."}
+{"type": "pico", "id": "E661...", "flasher": null, "missing": ["uf2"],
+ "error": "bootsel could write pico E661... while it is klipper, but [firmware klipper] staged no uf2 - build it first."}
 ```
 
 A refused board is still listed in `boards`. A refused screen is not listed in

@@ -130,16 +130,16 @@ other board. For `[firmware roadrunner]` that list is `bootsel`, which writes a
 running board by asking the family's helper to put it into BOOTSEL, copying the
 staged UF2 to the volume matching the board's USB topology, and waiting for the
 helper to confirm the board came back. A board already sitting in BOOTSEL is
-written the same way without a helper. The RP2040 flashtool route is untouched
-for families that list `flashtool`.
+written the same way without a helper. A tree that also links a `.bin` has it staged beside the `.uf2` and recorded
+in the sidecar's `artifacts`, so a CMake family may list `flashtool` too:
+flashtool is handed the `.bin`, bootsel the `.uf2`. A `.bin` older than the
+`.elf` it came from is left out - cmake does not delete an output the tree
+stopped declaring - and the staged copy is removed when a build makes none.
 
-That list is authoritative and is not checked against what the builder stages -
-see [decisions.md](decisions.md), "Do not infer builder/flasher compatibility
-from the staged filename". Today the pairing that does not fit crashes rather
-than refusing: a CMake family listing `flashtool` reaches `flashtool.target_for`
-with a request detail carrying only `uf2_file`, and the bare `KeyError` on
-`board["type"]` is not an `UpdaterError`, so `flashers.select_each` does not
-catch it. It is in the README ledger as its own bug.
+That list is authoritative - see [decisions.md](decisions.md), "Do not infer
+builder/flasher compatibility from the staged filename". A listed flasher
+whose kind this build did not stage is passed over, and a family left with
+none is refused with the missing kind, never a crash.
 
 The Roadrunner helper confirms the provisioned serial over the admin protocol,
 captures the full serial `by-path` topology before `REBOOT_BOOTSEL`, and accepts

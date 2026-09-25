@@ -47,7 +47,8 @@ Flashing:
 - [x] `esptool` - ESP32, via PlatformIO
 - [x] RP2040 BOOTSEL - copy a `.uf2` to the mounted volume
 - [x] CAN - unified `flashtool.py` transport, with live interface discovery
-- [x] Per-firmware `flashers:` lists - a family declares which tools may write it, tried in order, and a device no tool supports is refused by name
+- [x] Per-firmware `flashers:` lists - a family declares which tools may write it, tried in order; each tool takes the first file its builder staged of a kind it accepts (`bin`, `uf2`, `pio_env`), and a device no tool can write is refused by name - naming the missing build when that is the reason
+- [x] Klipper through BOOTSEL - `helper: klipper` puts a running RP2040 into BOOTSEL with Katapult's `flashtool.py -r`, for boards without Katapult
 
 Firmware and boards:
 
@@ -86,7 +87,6 @@ of it. What is still open:
 
 - [ ] **TEST ERROR** Reproduce and fix the flaky teardown `RuntimeError` in `test_an_unknown_inbound_method_gets_an_error_not_silence`.
 - [ ] **NEEDS DESIGN** Run config migrations as the first step of agent startup, so that restarting the service migrates an existing install. First check the restrictions the service runs under.
-- [ ] **BUG** A family that declares a flasher its builder cannot feed crashes rather than refusing. `flashers: flashtool` on a CMake family passes config validation - flashtool is a real registry name and `supports()` accepts it on kind and chipset alone - and then `Flashtool.target` calls `flashtool.target_for` with the CMake request detail, which carries only `uf2_file`, so `board["type"]` raises a bare `KeyError`. That is not an `UpdaterError`, so `flashers.select_each` does not turn it into a named refusal and the whole batch dies. Whether such a pairing is *allowed* is settled - [decisions.md](docs/decisions.md) says the configured list is authoritative and image bytes cannot prove otherwise - so the fix is not a compatibility matrix. Make the unfittable request a refusal with a sentence naming the family and its list, the way `NoFlasherError` already reads.
 - [ ] **BUG** A Roadrunner flash reports `Could not confirm that the Roadrunner CDC device disappeared` on an otherwise successful write. `_await_disappearance` in [src/mcu_updater/discovery/roadrunner.py](src/mcu_updater/discovery/roadrunner.py) sets `unknown = True` when `_entry_candidates(paths, strict=True)` raises `OSError`, then treats "I could not look" as "the device is still there" and spins to `REENUMERATE_TIMEOUT`. The usual cause is `/dev/serial/by-id` disappearing entirely once the last CDC device leaves - which is evidence the board *did* go, not absence of evidence. Seen on the bench 2026-09-19; the flash itself succeeded.
 
 ## Requirements
@@ -309,13 +309,21 @@ Per-type keys:
   naming convention that belongs to one vendor's `CMakeLists.txt`. A mixed
   RGB/GRB fleet needs two `[type]` sections, since `cmake_target:` is per-type.
 - **`flashers`** - required on every `[firmware ...]`. The flashers that may write
-  this family, tried in order: `flashtool`, `esptool`, `dfu_util`, `bootsel`. A
-  section without one refuses the config with the line to add.
+  this family, tried in order: `flashtool`, `esptool`, `dfu_util`, `bootsel`.
+  Each takes one kind of staged file - `flashtool` and `dfu_util` a `.bin`,
+  `bootsel` a `.uf2`, `esptool` a PlatformIO env - and one whose file was not
+  staged is passed over for the next. So `flashtool, bootsel` writes a running
+  Klipper board through Katapult and one already in BOOTSEL from its `.uf2`.
+  A section without the key refuses the config with the line to add.
 - **`helper`** - optional on `[firmware ...]`. Names a reviewed, statically
   registered firmware helper; it is not a module path and configuration cannot
   import arbitrary Python. A helper-backed CMake family can use its running
   firmware to enter BOOTSEL and complete a normal `fw.flash`. Roadrunner uses
-  `helper: roadrunner`. A misspelt helper raises where a capability is asked
+  `helper: roadrunner`.
+  `helper: klipper` does the same for a Klipper RP2040 with no Katapult:
+  `flashers: bootsel` with `helper: klipper` asks the running board for
+  BOOTSEL and copies its `.uf2` (see "Klipper through BOOTSEL" below).
+  A misspelt helper raises where a capability is asked
   for, naming the registered helpers. The key is optional: a family names a
   helper when its hardware needs firmware-specific access or carries no
   identity of its own - a BTT KNOMI v2 names `helper: knomi_serial` because its
@@ -446,11 +454,11 @@ Both keys on `[firmware ...]` are optional, and so is the section itself -
 with none declared, every family resolves to the plain convention, which is
 every install predating this. `menuconfig -f`/`build -f` take `cartographer`
 exactly like `klipper` or `katapult`, and so do `cartographer_extra_args` /
-`cartographer_makefile_patches`. Which flasher writes the board is still
-chosen by chipset, not by family, since one firmware can need `dfu-util` on an
-STM32 board and BOOTSEL on an RP2040 one - there is no `flasher:` key
-anywhere; flashers declare which chipsets and device states they can write and
-selection is a capability match.
+`cartographer_makefile_patches`. Which flasher writes the board is the family's `flashers:` list, tried in
+order: the first one that can write the device *and* was staged a file it
+takes. A family whose builder made no file any listed flasher takes is
+refused with the kind it is missing - "bootsel could write ... but [firmware
+klipper] staged no uf2 - build it first".
 
 ### Profiles
 
@@ -647,6 +655,10 @@ serials:
     RR-ABCDEFGHIJKLMNOPQRSTUVWXYZ
 ```
 
+A tree that also links a `.bin` (pico-sdk's `pico_add_extra_outputs`) has it
+staged beside the `.uf2`, so a CMake family may list `flashtool` or
+`dfu_util` as well as `bootsel`.
+
 A mixed RGB/GRB fleet - or any fleet where boards need different targets out
 of the same tree - takes two `[type]` sections, since `cmake_target:` is
 per-type, not per-board. With `helper: roadrunner`, `fw.flash` selects one
@@ -676,6 +688,45 @@ host-test coverage only. The manual first-install path is unchanged: a bare boar
 is already in BOOTSEL has no provisioned serial or running helper to address,
 so hold `BOOT`, press and release `RESET`, release `BOOT`, and use the ordinary
 one-board-at-a-time BOOTSEL workflow.
+
+### Klipper through BOOTSEL
+
+An RP2040 that runs Klipper with no Katapult - because Katapult will not work
+on the board, or its owner would rather not use it - is written through
+BOOTSEL:
+
+```ini
+[firmware klipper]
+source: ~/klipper
+flashers: bootsel
+helper: klipper
+```
+
+Build it with no bootloader offset (`Bootloader offset: No bootloader` in
+menuconfig) so it produces a `klipper.uf2` that starts at the start of flash.
+A `.uf2` built for Katapult's offset is refused before the board is touched: a
+board asked for BOOTSEL by its own firmware has no Katapult below the image to
+boot it, so the write could only leave it needing a press of the physical
+BOOTSEL button. A board you put into BOOTSEL by hand is written with a warning
+instead, since it may still have Katapult. A file that is not a valid UF2 image
+is refused on either path, with nothing written.
+
+To flash, the helper stops Klipper and asks the running board for BOOTSEL with
+Katapult's `flashtool.py -r` (Katapult's source is still needed for its
+`flashtool.py`, not on the board). It copies the `.uf2` to the volume on the
+same USB port, then waits for the board to come back as Klipper. The helper waits for the board on the USB port it was asked on, so it is found
+whatever serial it comes back under. If that serial changed - a config that
+sets a literal `CONFIG_USB_SERIAL_NUMBER`, or one that goes back to the chip
+ID - the flash says so. Update `printer.cfg` to match.
+
+A board that has Katapult *and* runs a Klipper built for Katapult's offset
+lands in Katapult, not BOOTSEL, when asked. The flash refuses with nothing
+written. List `flashtool` before `bootsel`
+(`flashers: flashtool, bootsel`) and a board with Katapult is written through
+it from the `.bin`, while one already in BOOTSEL still gets the `.uf2`.
+
+USB only: a CAN board cannot be asked for BOOTSEL this way, and selection
+refuses it by name.
 
 ## Layout
 

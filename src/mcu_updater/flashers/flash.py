@@ -1016,7 +1016,13 @@ def flash_initial_bootloader(
         # pass bootsel over and blame the chipset instead of the build.
         raise FlashError(
             f"no .uf2 was built for {chipset}. BOOTSEL mass storage ignores "
-            f"a .bin - build again once the tree produces one.",
+            + (
+                "a .bin - build again once the tree produces one."
+                if family.bootloader
+                # An RP2040 Klipper build makes a .uf2 only with no offset.
+                else "a .bin - rebuild with no bootloader offset (Bootloader "
+                "offset: No bootloader), which is the build that makes a .uf2."
+            ),
             chipset=chipset,
         )
     if state == STATE_DFU and fw_bin is None:

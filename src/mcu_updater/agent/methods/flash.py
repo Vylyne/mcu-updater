@@ -916,15 +916,24 @@ class FlashMixin(_Base):
         uf2_bin = self.paths.uf2_file(name, install)
         artifact_path = uf2_bin if is_bootsel else fw_bin
         if not os.path.exists(artifact_path):
+            if family.bootloader:
+                advice = (
+                    "Build it first - this flow installs the bootloader, so the "
+                    "bootloader has to exist."
+                )
+            elif is_bootsel and os.path.exists(fw_bin):
+                # An RP2040 Klipper build makes a .bin only for an offset, so
+                # building again as configured makes the same .bin again.
+                advice = (
+                    f"Its build made a .bin, which an RP2040 build does only for a "
+                    f"bootloader offset. Rebuild {name} with no bootloader offset "
+                    f"(Bootloader offset: No bootloader)."
+                )
+            else:
+                advice = "Build it first."
             raise RpcError(
                 f"no built {install} {'.uf2' if is_bootsel else '.bin'} for "
-                f"{name}. Build it first"
-                + (
-                    " - this flow installs the bootloader, so the bootloader "
-                    "has to exist."
-                    if family.bootloader
-                    else "."
-                ),
+                f"{name}. {advice}",
                 data={
                     "code": "no_artifact",
                     "message": f"{install} has not been built for this type",

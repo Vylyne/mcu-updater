@@ -788,3 +788,23 @@ def test_a_type_with_no_katapult_and_nothing_built_names_klipper(adder, paths, m
     assert "no built klipper .bin" in str(exc.value)
     assert "bootloader has to exist" not in str(exc.value)
     assert adder.runner.current() is None
+
+
+def test_a_bin_only_rp2040_klipper_build_is_told_to_drop_the_offset(
+    adder, paths, fake_root
+):
+    """An RP2040 Klipper build makes a .bin only for a bootloader offset, so
+    "build it first" would make the same .bin again. The advice names the
+    setting instead."""
+    _bare_pico(adder, paths, fake_root, address=0x10000000)
+    os.remove(paths.uf2_file(BARE_PICO, "klipper"))
+    _stage_klipper_bin(paths, BARE_PICO, app_address=0x10004000)
+
+    with pytest.raises(RpcError) as exc:
+        adder.dispatch("fw.add_mcu.start", {"name": BARE_PICO})
+
+    assert exc.value.data["code"] == "no_artifact"
+    assert "no built klipper .uf2" in str(exc.value)
+    assert "No bootloader" in str(exc.value)
+    assert "Build it first" not in str(exc.value)
+    assert adder.runner.current() is None

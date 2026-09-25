@@ -914,6 +914,19 @@ def test_rp2040_refuses_with_no_uf2_built(paths, settings):
             paths, settings, "rp2040", "x.bin", fw="katapult", mcu_type="board"
         )
     assert ".uf2" in str(exc.value)
+    assert "No bootloader" not in str(exc.value)
+
+
+def test_a_klipper_first_install_with_no_uf2_is_told_to_drop_the_offset(paths, settings):
+    """An RP2040 Klipper build makes a .uf2 only with no bootloader offset, so
+    "build again" as configured would never produce one."""
+    seed_base_firmwares(paths)
+    with pytest.raises(FlashError) as exc:
+        flash_initial_bootloader(
+            paths, settings, "rp2040", "x.bin", fw="klipper", mcu_type="board"
+        )
+    assert "No bootloader" in str(exc.value)
+    assert "build again" not in str(exc.value)
 
 
 def test_dfu_refuses_with_no_bin_built(paths, settings):

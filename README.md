@@ -470,7 +470,10 @@ refused with the kind it is missing - "bootsel could write ... but [firmware
 klipper] staged no uf2 - build it first" when nothing was staged. When the
 build staged the other image, rebuilding as configured would only make it
 again, so the refusal names the bootloader offset that decides which image an
-RP2040 build makes instead.
+RP2040 build makes instead. For a staged `.uf2` it also names the config that
+would write it: bootsel reaches a running board only through a helper, so a
+family listing `bootsel` with no `helper:` is told to add `helper: klipper`
+(see [Klipper through BOOTSEL](#klipper-through-bootsel)).
 
 ### Profiles
 

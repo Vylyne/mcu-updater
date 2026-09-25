@@ -18,7 +18,7 @@ from .bootsel import Bootsel
 from .dfu_util import DfuUtil
 from .esptool import Esptool
 from .flashtool import Flashtool
-from .spec import Device, Flasher, FlashTarget
+from .spec import KIND_SERIAL, Device, Flasher, FlashTarget
 
 if TYPE_CHECKING:
     from ..firmware import FirmwareFamily
@@ -147,11 +147,42 @@ def _unstaged(
     ]
 
 
+def _bootsel_route(family: FirmwareFamily, device: Device, helper: Helper | None) -> str:
+    """The config that would let bootsel write a staged `.uf2` to `device`.
+
+    Only asked when bootsel was not chosen, so either it is unlisted or it
+    cannot reach a running board. Listing it alone does not do that: bootsel
+    writes a running board only through a helper that asks it for BOOTSEL,
+    so a family with no helper is told to add `helper: klipper` too. Empty
+    when no config would help: a CAN board cannot be asked for BOOTSEL, and a
+    family with some other helper cannot also name `klipper`.
+    """
+    from .. import helpers
+
+    if device.kind != KIND_SERIAL:
+        return ""
+    if helpers.bootsel_requester(helper) is not None:
+        return f", or add bootsel to [firmware {family.name}]'s flashers to write the .uf2"
+    if helper is not None:
+        return ""
+    if "bootsel" in family.flashers:
+        return (
+            f", or add `helper: klipper` to [firmware {family.name}] so bootsel can ask "
+            f"the running board for BOOTSEL and write the .uf2"
+        )
+    listed = ", ".join((*family.flashers, "bootsel"))
+    return (
+        f", or add `flashers: {listed}` and `helper: klipper` to "
+        f"[firmware {family.name}] to write the .uf2 through BOOTSEL"
+    )
+
+
 def _refusal_error(
     family: FirmwareFamily,
     device: Device,
     waiting: list[tuple[str, tuple[str, ...]]],
     staged: Staged,
+    helper: Helper | None,
 ) -> NoFlasherError:
     """Why nothing in the list writes `device`, naming what would fix it.
 
@@ -186,8 +217,8 @@ def _refusal_error(
                 f"{name} could write {subject}, but [firmware {family.name}] staged a .uf2 "
                 f"and no .bin, and rebuilding as configured will not make one: on an "
                 f"RP2040, only a build with a bootloader offset produces a .bin. Set the "
-                f"bootloader offset (16KiB for Katapult) and rebuild, or list bootsel to "
-                f"write the .uf2."
+                f"bootloader offset (16KiB for Katapult) and rebuild"
+                f"{_bootsel_route(family, device, helper)}."
             )
         else:
             message = (
@@ -238,7 +269,9 @@ def select(
         staged = providers.staged(paths, device.type, family)
     choice = resolve(family, device, helper, staged)
     if choice is None:
-        raise _refusal_error(family, device, _unstaged(family, device, helper), staged)
+        raise _refusal_error(
+            family, device, _unstaged(family, device, helper), staged, helper
+        )
     flasher, artifact = choice
     return flasher.target(paths, device, helper, artifact, stop_services=stop_services)
 

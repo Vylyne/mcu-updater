@@ -530,9 +530,71 @@ def test_a_uf2_staged_where_a_bin_is_wanted_names_the_offset(paths):
         "but [firmware klipper] staged a .uf2 and no .bin, and rebuilding as "
         "configured will not make one: on an RP2040, only a build with a "
         "bootloader offset produces a .bin. Set the bootloader offset (16KiB for "
-        "Katapult) and rebuild, or list bootsel to write the .uf2."
+        "Katapult) and rebuild, or add `flashers: flashtool, bootsel` and "
+        "`helper: klipper` to [firmware klipper] to write the .uf2 through BOOTSEL."
     )
     assert exc.value.data["missing"] == ["bin"]
+
+
+def test_a_listed_bootsel_with_no_helper_is_told_to_add_helper_klipper(paths):
+    """bootsel reaches a running board only through a helper, so listing it is
+    not enough: the refusal names the helper line that is missing."""
+    with pytest.raises(NoFlasherError) as exc:
+        flashers.select(
+            paths,
+            _family("flashtool", "bootsel", name="klipper"),
+            _running_rp2040(),
+            None,
+            stop_services=("klipper",),
+            staged=_staged(fw="klipper", uf2="/p.uf2"),
+        )
+
+    assert str(exc.value).endswith(
+        "Set the bootloader offset (16KiB for Katapult) and rebuild, or add "
+        "`helper: klipper` to [firmware klipper] so bootsel can ask the running "
+        "board for BOOTSEL and write the .uf2."
+    )
+
+
+def test_a_requesting_helper_is_told_only_to_list_bootsel(paths):
+    with pytest.raises(NoFlasherError) as exc:
+        flashers.select(
+            paths,
+            _family("flashtool", name="klipper"),
+            _running_rp2040(),
+            _Requester(),
+            stop_services=("klipper",),
+            staged=_staged(fw="klipper", uf2="/p.uf2"),
+        )
+
+    assert str(exc.value).endswith(
+        "and rebuild, or add bootsel to [firmware klipper]'s flashers to write the .uf2."
+    )
+
+
+@pytest.mark.parametrize(
+    "device, helper",
+    [
+        # A CAN board cannot be asked for BOOTSEL at all.
+        (_device(chipset="rp2040", kind=KIND_CANBUS, state="unknown", id="bcb5346fc731"), None),
+        # A family with its own helper cannot also name klipper's.
+        (None, _Plain()),
+    ],
+)
+def test_no_bootsel_route_is_offered_where_none_would_work(paths, device, helper):
+    with pytest.raises(NoFlasherError) as exc:
+        flashers.select(
+            paths,
+            _family("flashtool", name="klipper"),
+            device or _running_rp2040(),
+            helper,
+            stop_services=("klipper",),
+            staged=_staged(fw="klipper", uf2="/p.uf2"),
+        )
+
+    assert str(exc.value).endswith(
+        "Set the bootloader offset (16KiB for Katapult) and rebuild."
+    )
 
 
 def test_nothing_staged_still_says_build_it_first(paths):

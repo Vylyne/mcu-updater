@@ -440,7 +440,7 @@ def _helper_target(tmp_path, address: int):
 
 
 def test_an_offset_image_is_refused_on_the_helper_path_before_any_request(
-    bench, ctx, requested, paths, tmp_path
+    bench, ctx, requested, paths, tmp_path, monkeypatch
 ):
     """A board asked for BOOTSEL by its own firmware has no Katapult below it
     to boot an offset image - unlike a board already sitting in BOOTSEL,
@@ -454,21 +454,29 @@ def test_an_offset_image_is_refused_on_the_helper_path_before_any_request(
         bench, paths=dataclasses.replace(paths, bootsel_root=str(tmp_path / "empty"))
     )
     target = _helper_target(tmp_path, 0x10004000)
+    copied = []
+    monkeypatch.setattr(bootsel_flasher, "copy_uf2", lambda *a, **k: copied.append((a, k)))
 
     with pytest.raises(FlashError, match="bootloader offset"):
         bootsel_flasher.Bootsel().write(bench, None, target, ctx)
 
     assert requested == []
+    assert copied == []
 
 
-def test_an_offset_image_is_refused_on_the_helper_path_even_on_a_dry_run(bench, ctx, requested, tmp_path):
+def test_an_offset_image_is_refused_on_the_helper_path_even_on_a_dry_run(
+    bench, ctx, requested, tmp_path, monkeypatch
+):
     rehearsal = dataclasses.replace(bench, settings=dataclasses.replace(bench.settings, dry_run=True))
     target = _helper_target(tmp_path, 0x10004000)
+    copied = []
+    monkeypatch.setattr(bootsel_flasher, "copy_uf2", lambda *a, **k: copied.append((a, k)))
 
     with pytest.raises(FlashError, match="bootloader offset"):
         bootsel_flasher.Bootsel().write(rehearsal, None, target, ctx)
 
     assert requested == []
+    assert copied == []
 
 
 # --- a corrupt image, on both paths (M-3) -------------------------------------
@@ -500,7 +508,13 @@ def test_a_corrupt_image_is_refused_by_name_on_the_helper_path(bench, ctx, reque
     assert requested == []
 
 
-def test_a_corrupt_image_is_refused_by_name_on_the_no_helper_path(bench, ctx, tmp_path):
+def test_a_corrupt_image_is_refused_by_name_on_the_no_helper_path(bench, ctx, paths, tmp_path):
+    """Tmp-rooted like its three siblings above (M-5): if the `Uf2Error`
+    refusal ever regresses, the write must not fall through to a glob of the
+    real host's `/media/*`."""
+    bench = dataclasses.replace(
+        bench, paths=dataclasses.replace(paths, bootsel_root=str(tmp_path / "empty"))
+    )
     garbage = _garbage_uf2(tmp_path)
     target = bootsel_flasher.target_for(garbage, chipset="rp2040")
 

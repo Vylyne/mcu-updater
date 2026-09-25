@@ -52,7 +52,7 @@
       "replace": "        if False:"
     },
     {
-      "name": "an image above the start of flash is warned about",
+      "name": "an image above the start of flash is warned about, or refused on the helper path",
       "file": "src/mcu_updater/flashers/bootsel.py",
       "find": "        if start is not None and start > FLASH_BASE:",
       "replace": "        if False:"

@@ -46,9 +46,14 @@ class BootselRequester(Protocol):
     ) -> BootselHandoff: ...
 
     def wait_ready(
-        self, bench: Bench, *, serial: str, chipset: str, ctx: Any
+        self, bench: Bench, *, serial: str, chipset: str, ctx: Any, type_name: str, fw: str
     ) -> None:
-        """Wait until the flashed firmware confirms its durable identity."""
+        """Wait until the flashed firmware confirms its durable identity.
+
+        `type_name` and `fw` name the image just written, for a helper whose
+        board can come back under a serial that image chose (Klipper's
+        `CONFIG_USB_SERIAL_NUMBER`).
+        """
         ...
 
 

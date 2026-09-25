@@ -61,7 +61,7 @@ FLASHERS: tuple[str, ...] = ("bootsel", "dfu_util", "esptool", "flashtool")
 
 #: Every `helper:` value a registered helper answers to - `helpers.registry`'s
 #: names, for the same reason. A test holds the two equal.
-HELPERS: tuple[str, ...] = ("cartographer", "knomi_serial", "roadrunner")
+HELPERS: tuple[str, ...] = ("cartographer", "klipper", "knomi_serial", "roadrunner")
 
 #: Helpers that can both identify an auto-provision candidate and provision it.
 #: `typelist` must check `auto_provision:` without importing helper

@@ -37,6 +37,7 @@ from ..errors import (
     OperationCancelled,
     UpdaterError,
 )
+from ..uf2 import Uf2Error, image_extent
 from .spec import (
     KIND_SERIAL,
     Bench,
@@ -57,6 +58,35 @@ def ensure_uf2(uf2: str) -> None:
     """Refuse a missing image before a BOOTSEL transition is requested."""
     if not os.path.exists(uf2):
         raise FlashError(f"firmware image not found at {uf2}.", path=uf2)
+
+
+#: Where the RP2040 maps flash. An image that starts above it expects
+#: something below it - a bootloader - to jump into it.
+FLASH_BASE = 0x10000000
+
+
+def _warn_if_offset(uf2: str, ctx: Any) -> None:
+    """Say so when an image leaves the start of flash to a bootloader.
+
+    Not a refusal. A UF2 write replaces only the blocks it carries, so a board
+    with Katapult keeps it and chain-loads this image - which is the normal
+    case for a Klipper built with a bootloader offset. On a board without one,
+    the start of flash is left as it was and nothing boots this. Only the
+    board knows which it is.
+    """
+    try:
+        with open(uf2, "rb") as fh:
+            start, _length = image_extent(fh.read())
+    except (OSError, Uf2Error):
+        return
+    if start > FLASH_BASE:
+        ctx.reporter(
+            "warn",
+            f"{os.path.basename(uf2)} starts at {start:#x}, above the start of flash, "
+            f"so it expects a bootloader below it. A board with Katapult keeps it and "
+            f"boots this image; a board without one will not boot it - build with no "
+            f"bootloader offset for that board.",
+        )
 
 
 _COPY_CHUNK = 1 << 20
@@ -325,6 +355,7 @@ class Bootsel:
     ) -> dict[str, Any]:
         uf2 = artifact_path(target)
         ensure_uf2(uf2)
+        _warn_if_offset(uf2, ctx)
         requester: BootselRequester | None = target.detail.get("helper")
 
         if bench.settings.dry_run:
@@ -382,6 +413,8 @@ class Bootsel:
                 serial=target.id,
                 chipset=target.detail["chipset"],
                 ctx=ctx,
+                type_name=target.type,
+                fw=target.detail.get("fw", ""),
             )
         except OperationCancelled:
             raise

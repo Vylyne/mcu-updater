@@ -1688,7 +1688,7 @@ def test_bootsel_handoff_waits_for_helper_before_service_restart(
             order.append("request")
             return BootselHandoff(topology="platform-x.usb-usb-0:1.3:1.0")
 
-        def wait_ready(self, bench, *, serial, chipset, ctx):
+        def wait_ready(self, bench, *, serial, chipset, ctx, type_name="", fw=""):
             order.append("ready")
 
     service = Service()
@@ -1734,7 +1734,7 @@ def test_a_whole_batch_still_succeeds_when_post_copy_readiness_fails(
         def request_bootsel(self, bench, *, serial, chipset, ctx):
             return BootselHandoff(topology="platform-x.usb-usb-0:1.3:1.0")
 
-        def wait_ready(self, bench, *, serial, chipset, ctx):
+        def wait_ready(self, bench, *, serial, chipset, ctx, type_name="", fw=""):
             raise RoadrunnerError(
                 "More than one Roadrunner matched that serial",
                 serial=serial,

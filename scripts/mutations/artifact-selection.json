@@ -8,6 +8,7 @@
     "tests/test_flasher_select.py",
     "tests/test_artifacts.py",
     "tests/test_flashlog_loop.py",
+    "tests/test_klipper_helper.py",
     "-q"
   ],
   "mutations": [
@@ -31,6 +32,36 @@
       "file": "src/mcu_updater/providers/cmake.py",
       "find": "    found = [Artifact(KIND_UF2, uf2_path, recorded_sha256(side, KIND_UF2, primary=KIND_UF2))]",
       "replace": "    found: list[Artifact] = []"
+    },
+    {
+      "name": "a board that lands in katapult is refused",
+      "file": "src/mcu_updater/helpers/klipper.py",
+      "find": "        if _katapult_on(paths, topology):",
+      "replace": "        if False:"
+    },
+    {
+      "name": "a chip-id serial is kept, a literal one is followed",
+      "file": "src/mcu_updater/helpers/klipper.py",
+      "find": "    if answers.get(\"USB_SERIAL_NUMBER_CHIPID\", \"y\") != \"n\":\n        return current",
+      "replace": "    if False:\n        return current"
+    },
+    {
+      "name": "the klipper helper refuses a board already in katapult",
+      "file": "src/mcu_updater/helpers/klipper.py",
+      "find": "        if device.is_katapult:",
+      "replace": "        if False:"
+    },
+    {
+      "name": "an image above the start of flash is warned about",
+      "file": "src/mcu_updater/flashers/bootsel.py",
+      "find": "    if start > FLASH_BASE:",
+      "replace": "    if False:"
+    },
+    {
+      "name": "settled hands the helper the image's family",
+      "file": "src/mcu_updater/flashers/bootsel.py",
+      "find": "                fw=target.detail.get(\"fw\", \"\"),",
+      "replace": "                fw=\"\","
     }
   ]
 }

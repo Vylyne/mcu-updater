@@ -33,6 +33,7 @@ from mcu_updater.flashers import (
     Device,
 )
 from mcu_updater.helpers import BootselHandoff
+from mcu_updater.helpers.klipper import KlipperHelper
 from mcu_updater.settings import Settings
 
 RR_SERIAL = "RR-0123456789ABCDEFGHJKMNPQRS"
@@ -46,7 +47,7 @@ class _Requester:
     def request_bootsel(self, bench, *, serial, chipset, ctx):
         return BootselHandoff(topology="platform-x.usb-usb-0:1.3:1.0")
 
-    def wait_ready(self, bench, *, serial, chipset, ctx):
+    def wait_ready(self, bench, *, serial, chipset, ctx, type_name="", fw=""):
         return None
 
 
@@ -631,3 +632,21 @@ def test_select_device_refuses_a_board_whose_build_staged_nothing(paths):
         flashers.select_device(paths, families, _board_device(), stop_services=())
 
     assert exc.value.data["missing"] == ["bin"]
+
+
+def test_a_can_board_is_refused_by_the_klipper_helper_with_nothing_missing(paths):
+    """Spec correction 1: bootsel's helper path is serial-only, so a CAN
+    RP2040 is refused by selection itself - and no build would fix it."""
+    board = _device(chipset="rp2040", kind=KIND_CANBUS, type="pico", id="0e0d81e4210c")
+
+    with pytest.raises(NoFlasherError) as exc:
+        flashers.select(
+            paths,
+            _family("bootsel", name="klipper"),
+            board,
+            KlipperHelper(),
+            stop_services=("klipper",),
+            staged=_staged(fw="klipper", uf2="/p.uf2"),
+        )
+
+    assert exc.value.data["missing"] == []

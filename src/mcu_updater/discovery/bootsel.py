@@ -222,6 +222,15 @@ def mount_for_topology(
         time.sleep(poll)
 
 
+def mounts_on(paths: Paths, topology: str) -> list[str]:
+    """Every marker-bearing BOOTSEL mount on ``topology`` right now.
+
+    No waiting, for a caller that is watching for more than one outcome at
+    once - a volume, or the board turning up somewhere else instead.
+    """
+    return [mount for mount in bootsel_scan(paths) if _mount_matches_topology(mount, topology)]
+
+
 def bootsel_scan(paths: Paths) -> list[str]:
     """Mount path of every RPI-RP2 volume currently attached.
 

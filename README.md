@@ -319,12 +319,10 @@ Per-type keys:
   registered firmware helper; it is not a module path and configuration cannot
   import arbitrary Python. A helper-backed CMake family can use its running
   firmware to enter BOOTSEL and complete a normal `fw.flash`. Roadrunner uses
-  `helper: roadrunner`.
-  `helper: klipper` does the same for a Klipper RP2040 with no Katapult:
-  `flashers: bootsel` with `helper: klipper` asks the running board for
-  BOOTSEL and copies its `.uf2` (see "Klipper through BOOTSEL" below).
-  A misspelt helper raises where a capability is asked
-  for, naming the registered helpers. The key is optional: a family names a
+  `helper: roadrunner`. `helper: klipper` does the same for a Klipper RP2040
+  with no Katapult: `flashers: bootsel` with `helper: klipper` asks the running
+  board for BOOTSEL and copies its `.uf2` (see "Klipper through BOOTSEL"
+  below). A misspelt helper raises where a capability is asked for, naming the registered helpers. The key is optional: a family names a
   helper when its hardware needs firmware-specific access or carries no
   identity of its own - a BTT KNOMI v2 names `helper: knomi_serial` because its
   CH340K reports no USB serial - and a board that enumerates by-id names none.
@@ -454,7 +452,8 @@ Both keys on `[firmware ...]` are optional, and so is the section itself -
 with none declared, every family resolves to the plain convention, which is
 every install predating this. `menuconfig -f`/`build -f` take `cartographer`
 exactly like `klipper` or `katapult`, and so do `cartographer_extra_args` /
-`cartographer_makefile_patches`. Which flasher writes the board is the family's `flashers:` list, tried in
+`cartographer_makefile_patches`. Which flasher writes the board is the
+family's `flashers:` list, tried in
 order: the first one that can write the device *and* was staged a file it
 takes. A family whose builder made no file any listed flasher takes is
 refused with the kind it is missing - "bootsel could write ... but [firmware
@@ -714,8 +713,8 @@ is refused on either path, with nothing written.
 To flash, the helper stops Klipper and asks the running board for BOOTSEL with
 Katapult's `flashtool.py -r` (Katapult's source is still needed for its
 `flashtool.py`, not on the board). It copies the `.uf2` to the volume on the
-same USB port, then waits for the board to come back as Klipper. The helper waits for the board on the USB port it was asked on, so it is found
-whatever serial it comes back under. If that serial changed - a config that
+same USB port, then waits for the board to come back as Klipper on that port,
+so it is found whatever serial it comes back under. If that serial changed - a config that
 sets a literal `CONFIG_USB_SERIAL_NUMBER`, or one that goes back to the chip
 ID - the flash says so. Update `printer.cfg` to match.
 

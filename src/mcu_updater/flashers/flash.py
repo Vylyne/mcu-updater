@@ -890,7 +890,7 @@ def flash_initial_bootloader(
     paths: Paths,
     settings: Settings,
     chipset: str,
-    fw_bin: str,
+    fw_bin: str | None,
     *,
     uf2_bin: str | None = None,
     katapult_config: str | None = None,
@@ -908,7 +908,8 @@ def flash_initial_bootloader(
     `uf2_bin` is separate from `fw_bin`: BOOTSEL mass storage only accepts a
     `.uf2` - a `.bin` copied there is silently ignored - and a build only
     produces one when the tree does. DFU never looks at it; a caller flashing
-    an STM32 can leave it unset.
+    an STM32 can leave it unset. `fw_bin` is None when the build made only a
+    `.uf2`, which BOOTSEL does not need and DFU refuses.
 
     **Both routes erase what the board ran before.** DFU does it with
     `mass-erase`; BOOTSEL has no erase command, so the copied `.uf2` is
@@ -931,6 +932,14 @@ def flash_initial_bootloader(
             f"a .bin - build again once the tree produces one.",
             chipset=chipset,
         )
+    if state == STATE_DFU and fw_bin is None:
+        # The same reasoning for DFU: with no bin, selection would pass
+        # dfu_util over and blame the chipset instead of the build.
+        raise FlashError(
+            f"no .bin was built for {chipset}. DFU writes a .bin - build again "
+            f"once the tree produces one.",
+            chipset=chipset,
+        )
     device = flashers.Device(
         type=chipset,
         id=target_serial or "",
@@ -944,7 +953,7 @@ def flash_initial_bootloader(
     # which is not necessarily one this type's build left staged.
     built = Staged(
         fw=katapult.name,
-        artifacts=(Artifact(KIND_BIN, fw_bin),)
+        artifacts=((Artifact(KIND_BIN, fw_bin),) if fw_bin else ())
         + ((Artifact(KIND_UF2, uf2_bin),) if uf2_bin else ()),
     )
     choice = flashers.resolve(katapult, device, None, built)

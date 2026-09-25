@@ -314,8 +314,9 @@ Per-type keys:
   Each takes one kind of staged file - `flashtool` and `dfu_util` a `.bin`,
   `bootsel` a `.uf2`, `esptool` a PlatformIO env - and one whose file was not
   staged is passed over for the next. So `flashtool, bootsel` reaches bootsel,
-  through the family's helper, only when no `.bin` was staged (see "Klipper
-  through BOOTSEL" below).
+  through the family's helper, only when no `.bin` was staged - which, for an
+  RP2040 Klipper build, is exactly a build with no bootloader offset (see
+  "Klipper through BOOTSEL" below).
   A section without the key refuses the config with the line to add.
 - **`helper`** - optional on `[firmware ...]`. Names a reviewed, statically
   registered firmware helper; it is not a module path and configuration cannot
@@ -460,7 +461,10 @@ family's `flashers:` list, tried in
 order: the first one that can write the device *and* was staged a file it
 takes. A family whose builder made no file any listed flasher takes is
 refused with the kind it is missing - "bootsel could write ... but [firmware
-klipper] staged no uf2 - build it first".
+klipper] staged no uf2 - build it first" when nothing was staged. When the
+build staged the other image, rebuilding as configured would only make it
+again, so the refusal names the bootloader offset that decides which image an
+RP2040 build makes instead.
 
 ### Profiles
 
@@ -707,7 +711,10 @@ helper: klipper
 
 Build it with no bootloader offset (`Bootloader offset: No bootloader` in
 menuconfig) so it produces a `klipper.uf2` that starts at the start of flash.
-A `.uf2` built for Katapult's offset is refused before the board is touched: a
+Klipper's RP2040 build makes one image or the other, never both: with no
+offset only `klipper.uf2`, with Katapult's offset only `klipper.bin`. The
+build stages whichever it made, and removes the other kind's image from an
+earlier build. A `.uf2` built for Katapult's offset is refused before the board is touched: a
 board asked for BOOTSEL by its own firmware has no Katapult below the image to
 boot it, so the write could only leave it needing a press of the physical
 BOOTSEL button. A file that is not a valid UF2 image is refused the same way,
@@ -727,10 +734,24 @@ chip ID - the flash says so. Update `printer.cfg` to match.
 A board that has Katapult *and* runs a Klipper built for Katapult's offset
 lands in Katapult, not BOOTSEL, when asked. The flash refuses with nothing
 written. If the staged build has no bootloader offset, rebuild it with
-Katapult's 16 KiB offset first - flashtool would refuse an offset-less `.bin`
-too. Then list `flashtool` before `bootsel`
+Katapult's 16 KiB offset first - an offset-less build stages only a `.uf2`,
+which flashtool does not take. Then list `flashtool` before `bootsel`
 (`flashers: flashtool, bootsel`) and a board with Katapult is written through
 it from the `.bin`.
+
+So one family can serve both kinds of board, since the offset is each type's
+own menuconfig answer:
+
+```ini
+[firmware klipper]
+source: ~/klipper
+flashers: flashtool, bootsel
+helper: klipper
+```
+
+A type built with Katapult's offset stages a `.bin`, and flashtool writes it
+through Katapult. A type built with no offset stages only a `.uf2`, so
+flashtool is passed over and bootsel writes it through `helper: klipper`.
 
 USB only: a CAN board cannot be asked for BOOTSEL this way, and selection
 refuses it by name.
@@ -750,6 +771,7 @@ reasoning.
 
 ~/printer_data/mcu-updater/          generated, not backed up
     <type>/<fw>.bin                      built firmware
+    <type>/<fw>.uf2                      built firmware, as a UF2 (RP2040)
     <type>/<fw>.build.json               build provenance, for staleness checks
     <type>/<fw>.profile.json             what was seeded, for drift detection
 ```
@@ -759,8 +781,9 @@ editor. Firmware binaries deliberately don't: backup tools git-commit everything
 in that directory, so a `.bin` there means a binary churn commit after every
 build - and they're regenerable anyway.
 
-After a Kconfig build stages its `.bin`, optional `.uf2`, and provenance in the
-data tree, it runs `make clean` in the firmware source tree. This keeps
+After a Kconfig build stages whichever of its `.bin` and `.uf2` `make`
+produced (an RP2040 Klipper build makes one or the other) and its provenance
+in the data tree, it runs `make clean` in the firmware source tree. This keeps
 `~/klipper/out` and `~/katapult/out` from retaining an image that a standalone
 flasher could pick up later. Cleanup also runs after a failed or cancelled
 build. If cleanup itself fails after successful staging, the build is reported

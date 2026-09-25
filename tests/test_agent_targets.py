@@ -40,6 +40,7 @@ from .conftest import (
     make_device,
     read_main_config,
     serve_klipper,
+    stage_uf2_only,
     write_main_config,
     write_settings,
 )
@@ -531,6 +532,23 @@ def test_flash_is_blocked_with_something_built_but_nothing_connected(paths, live
     per_device = _action(target["devices"][0], "flash")["blocked"]
     assert per_device["code"] == Api.BLOCKED_NO_DEVICE
     assert target["devices"][0]["id"] in per_device["message"]
+
+
+def test_a_type_that_staged_only_a_uf2_is_built_for_its_flash_actions(
+    paths, live_registry_text
+):
+    """An offset-less RP2040 Klipper build stages a `.uf2` and no `.bin`. The
+    flash action must not say "build it first" - the panel's bulk path drops
+    any type blocked on `no_artifact`."""
+    with open(paths.registry_file, "w", encoding="utf-8") as fh:
+        fh.write(live_registry_text)
+    write_settings(paths, enable_flashing="true")
+    stage_uf2_only(paths, "OctopusMAXEZ")
+    api = Api(paths, runner=_runner())
+
+    target = _targets(api)["OctopusMAXEZ"]
+    assert _action(target, "flash")["blocked"]["code"] == Api.BLOCKED_NO_DEVICE
+    assert _action(target["devices"][0], "flash")["blocked"]["code"] == Api.BLOCKED_NO_DEVICE
 
 
 def test_build_is_blocked_without_saved_menuconfig_answers(paths, live_registry_text):

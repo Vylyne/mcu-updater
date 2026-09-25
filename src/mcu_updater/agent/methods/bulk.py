@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 from typing import Any
 
 from ... import device_info, firmware, flashers, helpers, inventory, providers, stop_services
@@ -139,9 +138,11 @@ class BulkMixin(_Base):
                 continue
             mcu = reg.get(name)
             application = mcu.application(families)
-            if not os.path.exists(self.paths.bin_file(name, application)):
-                continue
             family = firmware.resolve(self.paths, application, families)
+            # Built means staged anything: an offset-less RP2040 Klipper build
+            # stages only a .uf2. Which flasher takes it is selection's call.
+            if not providers.staged(self.paths, name, family).artifacts:
+                continue
             fw_head = git_head(family.source_dir(self.paths))
             reader = device_info.reader_for(family)
             # Once per type, not per serial - every board of this type shares
@@ -228,9 +229,11 @@ class BulkMixin(_Base):
             if not mcu.canbus_uuids:
                 continue
             application = mcu.application(families)
-            if not os.path.exists(self.paths.bin_file(name, application)):
-                continue
             family = firmware.resolve(self.paths, application, families)
+            # Built means staged anything: an offset-less RP2040 Klipper build
+            # stages only a .uf2. Which flasher takes it is selection's call.
+            if not providers.staged(self.paths, name, family).artifacts:
+                continue
             fw_head = git_head(family.source_dir(self.paths))
             reader = device_info.reader_for(family)
             units = stop_services.for_mcu(self.paths, mcu, settings, families)

@@ -27,7 +27,7 @@ from mcu_updater.jobs import IMMEDIATELY_CANCELLABLE, JobRunner
 from mcu_updater.providers import cmake
 from mcu_updater.service import NullService
 
-from .conftest import make_device, write_settings
+from .conftest import make_device, stage_uf2_only, write_settings
 
 EBB = "bttebb36"
 EBB_CHIPSET = "stm32g0b1xx"
@@ -604,6 +604,25 @@ def test_a_type_with_no_built_firmware_is_skipped(paths, live_registry_text, fak
     monkey_head(api, paths)
 
     assert api._boards_to_flash(Registry.load(paths), "all") == []
+
+
+def test_a_type_that_staged_only_a_uf2_is_not_skipped_as_unbuilt(
+    paths, live_registry_text, fake_root
+):
+    """An offset-less RP2040 Klipper build stages a `.uf2` and no `.bin`. It
+    was built; which flasher takes its file is selection's call, not this
+    pass's."""
+    with open(paths.registry_file, "w", encoding="utf-8") as fh:
+        fh.write(live_registry_text)
+    stage_uf2_only(paths, EBB)
+    make_device(fake_root / "bus", "Klipper", EBB_CHIPSET, EBB_A)
+
+    api = Api(paths, call=_moonraker({EBB_A: OLD_VERSION}))
+    monkey_head(api, paths)
+
+    boards = api._boards_to_flash(Registry.load(paths), "stale")
+    assert [b["serial"] for b in boards] == [EBB_A]
+    assert boards[0]["reason"] == "source_changed"
 
 
 def test_a_board_in_its_bootloader_is_selected(paths, live_registry_text, fake_root):

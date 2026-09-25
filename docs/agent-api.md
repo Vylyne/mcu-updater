@@ -424,6 +424,11 @@ see "Which screen is on which port is not tracked" below.
              "label": "Matches profile"}}
 ```
 
+`has_bin` and `has_uf2` each report their own file. A Kconfig build stages
+whichever of the two `make` produced - an RP2040 Klipper build makes one or
+the other, never both - so either one being true means the type is built, and
+`bin_mtime`/`bin_size` are `null` for a build that staged only a `.uf2`.
+
 `reason` ∈ `null` | `"never_built"` | `"config_changed"` | `"source_changed"` |
 `"built_dirty"` | `"foreign_build"` | `"no_provenance"`. Retired at
 API_VERSION 2: this used to be two fields, a three-value `stale`/
@@ -746,7 +751,7 @@ real explanation instead of a job that dies a second later. In order:
 | capability gate | `flashing_disabled` |
 | `serial` present | `-32602` |
 | serial resolves to a type | `unknown_serial` / `ambiguous_serial` / `serial_tracked_elsewhere` |
-| firmware has been built | `no_artifact` |
+| firmware has been built - anything staged, `.bin` or `.uf2` | `no_artifact` |
 | board is on the bus | `device_not_found` |
 | the family's `flashers:` can write it | `no_flasher` |
 | printer idle | `print_in_progress` (bypass with `force: true`) |
@@ -803,7 +808,7 @@ with two differences a CAN uuid's lack of a chipset-segment identity forces:
 | capability gate | `flashing_disabled` |
 | `uuid` present | `-32602` |
 | uuid resolves to a type | `unknown_uuid` / `ambiguous_uuid` / `uuid_tracked_elsewhere` |
-| firmware has been built | `no_artifact` |
+| firmware has been built - anything staged, `.bin` or `.uf2` | `no_artifact` |
 | **a CAN interface exists on this host at all** | `device_not_found` |
 | printer idle | `print_in_progress` (bypass with `force: true`) |
 

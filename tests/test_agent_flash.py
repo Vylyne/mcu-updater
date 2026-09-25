@@ -18,7 +18,7 @@ from mcu_updater.errors import ServiceControlError
 from mcu_updater.jobs import JobRunner
 from mcu_updater.service import Journal, NullService, services_stopped
 
-from .conftest import make_device, with_base_firmwares, write_settings
+from .conftest import make_device, stage_uf2_only, with_base_firmwares, write_settings
 
 TRACKED_SERIAL = "123456789012345678901"
 TRACKED_TYPE = "bttebb36"
@@ -500,6 +500,18 @@ def test_flashing_without_a_built_artifact_is_refused(flashable, paths):
     with pytest.raises(RpcError) as exc:
         flashable.dispatch("fw.flash", {"serial": TRACKED_SERIAL})
     assert exc.value.data["code"] == "no_artifact"
+    assert flashable.runner.current() is None, "no job should have been created"
+
+
+def test_a_build_that_staged_only_a_uf2_is_left_to_selection(flashable, paths):
+    """Built means "staged anything". A `.uf2` with no `.bin` is not
+    `no_artifact`: selection refuses it by kind, naming the fix."""
+    os.unlink(paths.bin_file(TRACKED_TYPE, "klipper"))
+    stage_uf2_only(paths, TRACKED_TYPE)
+    with pytest.raises(RpcError) as exc:
+        flashable.dispatch("fw.flash", {"serial": TRACKED_SERIAL})
+    assert exc.value.data["code"] == "no_flasher"
+    assert "staged a .uf2 and no .bin" in str(exc.value)
     assert flashable.runner.current() is None, "no job should have been created"
 
 

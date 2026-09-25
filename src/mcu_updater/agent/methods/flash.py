@@ -78,8 +78,12 @@ class FlashMixin(_Base):
         families = firmware.load(self.paths)
         application = mcu.application(families)
 
+        # Refused here only when the build staged nothing at all. A build that
+        # staged some other kind than a listed flasher takes is selection's to
+        # refuse, by kind and with the fix named.
         fw_bin = self.paths.bin_file(mcu_type, application)
-        if not os.path.exists(fw_bin):
+        family = firmware.resolve(self.paths, application, families)
+        if not providers.staged(self.paths, mcu_type, family).artifacts:
             raise RpcError(
                 f"no built firmware for {mcu_type} at {fw_bin}. Build it first.",
                 data={
@@ -295,8 +299,12 @@ class FlashMixin(_Base):
         families = firmware.load(self.paths)
         application = mcu.application(families)
 
+        # Refused here only when the build staged nothing at all. A build that
+        # staged some other kind than a listed flasher takes is selection's to
+        # refuse, by kind and with the fix named.
         fw_bin = self.paths.bin_file(mcu_type, application)
-        if not os.path.exists(fw_bin):
+        family = firmware.resolve(self.paths, application, families)
+        if not providers.staged(self.paths, mcu_type, family).artifacts:
             raise RpcError(
                 f"no built firmware for {mcu_type} at {fw_bin}. Build it first.",
                 data={

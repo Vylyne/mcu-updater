@@ -76,6 +76,16 @@ def _size(path: str) -> int | None:
         return None
 
 
+def _has_staged(artifact: dict[str, Any]) -> bool:
+    """Has this type's build staged anything, from an `artifact()` dict.
+
+    Either image counts: an offset-less RP2040 Klipper build stages only a
+    `.uf2`, and is built all the same. Which flasher takes it is selection's
+    call, made when the flash is asked for.
+    """
+    return bool(artifact.get("has_bin") or artifact.get("has_uf2"))
+
+
 #: The MCU object list only changes when Klipper restarts, so it is worth caching:
 #: it is a whole extra round trip and fw.status has a sub-second budget.
 MCU_NAMES_TTL = 60.0
@@ -778,7 +788,7 @@ class StatusMixin(_Base):
                             {"name": name, "serial": serial["serial"]},
                         ),
                         present=present,
-                        has_artifact=bool(artifact.get("has_bin")),
+                        has_artifact=_has_staged(artifact),
                         what=f"{fw} firmware",
                         label=serial["serial"],
                         extra=(
@@ -816,7 +826,7 @@ class StatusMixin(_Base):
                         allowed,
                         flash=("fw.flash", {"name": name, "uuid": can["uuid"]}),
                         present=True,
-                        has_artifact=bool(artifact.get("has_bin")),
+                        has_artifact=_has_staged(artifact),
                         what=f"{fw} firmware",
                         label=can["uuid"],
                         extra=(
@@ -894,7 +904,7 @@ class StatusMixin(_Base):
             self._flash_actions(
                 name=name,
                 allowed=allowed,
-                has_artifact=bool(artifact.get("has_bin")),
+                has_artifact=_has_staged(artifact),
                 flashable=[d for d in devices if d["present"]],
                 what=f"{fw} firmware",
             )

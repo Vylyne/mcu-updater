@@ -503,9 +503,52 @@ def test_a_missing_kind_is_refused_by_name(paths):
         )
 
     message = str(exc.value)
-    assert "bootsel could write pico" in message
-    assert "[firmware klipper] staged no uf2" in message
-    assert "build it first" in message
+    assert message == (
+        "bootsel could write pico usb-Klipper_rp2040_E66-if00 while it is klipper, "
+        "but [firmware klipper] staged a .bin and no .uf2, and rebuilding as "
+        "configured will not make one: on an RP2040, only a build with no "
+        "bootloader offset produces a .uf2. Set the bootloader offset to none and "
+        "rebuild, or list a flasher that takes the .bin."
+    )
+    assert exc.value.data["missing"] == ["uf2"]
+
+
+def test_a_uf2_staged_where_a_bin_is_wanted_names_the_offset(paths):
+    with pytest.raises(NoFlasherError) as exc:
+        flashers.select(
+            paths,
+            _family("flashtool", name="klipper"),
+            _running_rp2040(),
+            None,
+            stop_services=("klipper",),
+            staged=_staged(fw="klipper", uf2="/p.uf2"),
+        )
+
+    assert str(exc.value) == (
+        "flashtool could write pico usb-Klipper_rp2040_E66-if00 while it is klipper, "
+        "but [firmware klipper] staged a .uf2 and no .bin, and rebuilding as "
+        "configured will not make one: on an RP2040, only a build with a "
+        "bootloader offset produces a .bin. Set the bootloader offset (16KiB for "
+        "Katapult) and rebuild, or list bootsel to write the .uf2."
+    )
+    assert exc.value.data["missing"] == ["bin"]
+
+
+def test_nothing_staged_still_says_build_it_first(paths):
+    with pytest.raises(NoFlasherError) as exc:
+        flashers.select(
+            paths,
+            _family("bootsel", name="klipper"),
+            _running_rp2040(),
+            _Requester(),
+            stop_services=("klipper",),
+            staged=_staged(fw="klipper"),
+        )
+
+    assert str(exc.value) == (
+        "bootsel could write pico usb-Klipper_rp2040_E66-if00 while it is klipper, "
+        "but [firmware klipper] staged no uf2 - build it first."
+    )
     assert exc.value.data["missing"] == ["uf2"]
 
 
@@ -650,3 +693,57 @@ def test_a_can_board_is_refused_by_the_klipper_helper_with_nothing_missing(paths
         )
 
     assert exc.value.data["missing"] == []
+
+
+def _rp2040_build(paths, fake_root, monkeypatch, *, made: tuple[str, ...]) -> FirmwareFamily:
+    """A real kconfig build of an RP2040 type whose `make` left only `made`
+    in `out/`, and the family `flashers: flashtool, bootsel` + `helper: klipper`."""
+    from mcu_updater import firmware
+    from mcu_updater.build import build
+    from mcu_updater.config import Registry
+
+    from .conftest import save_registry, seed_base_firmwares
+
+    seed_base_firmwares(paths)
+    reg = Registry.load(paths)
+    reg.add_type("pico", "rp2040")
+    save_registry(reg, paths)
+    os.makedirs(paths.type_dir("pico"), exist_ok=True)
+    with open(paths.config_file("pico", "klipper"), "w", encoding="utf-8") as fh:
+        fh.write("CONFIG_MACH_RP2040=y\n")
+    out = fake_root / "klipper" / "out"
+    out.mkdir()
+    for ext in made:
+        (out / f"klipper.{ext}").write_bytes(f"{ext} firmware".encode())
+    monkeypatch.setattr("mcu_updater.build.run_streamed", lambda command, **kwargs: 0)
+    build(paths, reg, Settings(service_backend="null", clean_before_build=False), "pico", "klipper")
+    base = firmware.resolve(paths, "klipper")
+    return FirmwareFamily(
+        name=base.name, source=base.source, flashers=("flashtool", "bootsel"), helper="klipper"
+    )
+
+
+def test_an_offset_less_klipper_build_is_written_through_bootsel(paths, fake_root, monkeypatch):
+    """The bench case: no offset, so `make` made only `klipper.uf2`. The build
+    stages it, and `flashers: flashtool, bootsel` reaches bootsel with it."""
+    family = _rp2040_build(paths, fake_root, monkeypatch, made=("uf2",))
+
+    target = flashers.select(
+        paths, family, _running_rp2040(), KlipperHelper(), stop_services=("klipper",)
+    )
+
+    assert target.flasher == "bootsel"
+    assert target.artifact.kind == KIND_UF2
+    assert target.artifact.path == paths.uf2_file("pico", "klipper")
+
+
+def test_an_offset_klipper_build_is_written_through_flashtool(paths, fake_root, monkeypatch):
+    family = _rp2040_build(paths, fake_root, monkeypatch, made=("bin",))
+
+    target = flashers.select(
+        paths, family, _running_rp2040(), KlipperHelper(), stop_services=("klipper",)
+    )
+
+    assert target.flasher == "flashtool"
+    assert target.artifact.kind == KIND_BIN
+    assert target.artifact.path == paths.bin_file("pico", "klipper")

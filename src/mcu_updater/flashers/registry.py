@@ -12,7 +12,7 @@ from __future__ import annotations
 from collections.abc import Iterable
 from typing import TYPE_CHECKING, Any
 
-from ..artifacts import Artifact, Staged
+from ..artifacts import KIND_BIN, KIND_UF2, Artifact, Staged
 from ..errors import NoFlasherError
 from .bootsel import Bootsel
 from .dfu_util import DfuUtil
@@ -148,21 +148,44 @@ def _unstaged(
 
 
 def _refusal_error(
-    family: FirmwareFamily, device: Device, waiting: list[tuple[str, tuple[str, ...]]]
+    family: FirmwareFamily,
+    device: Device,
+    waiting: list[tuple[str, tuple[str, ...]]],
+    staged: Staged,
 ) -> NoFlasherError:
     """Why nothing in the list writes `device`, naming what would fix it.
 
     A flasher that could write the device but was staged nothing it takes is
-    a missing build, not a missing flasher, and the message says which.
+    a missing build, not a missing flasher, and the message says which. When
+    the build staged the *other* image, rebuilding as configured makes the
+    same one again, so the message names the setting that decides which image
+    an RP2040 build makes instead.
     """
     missing = list(dict.fromkeys(kind for _, kinds in waiting for kind in kinds))
     subject = f"{device.type} {device.id or device.chipset} while it is {device.state}"
+    kinds_staged = {artifact.kind for artifact in staged.artifacts}
     if waiting:
         name, kinds = waiting[0]
-        message = (
-            f"{name} could write {subject}, but [firmware {family.name}] staged "
-            f"no {' or '.join(kinds)} - build it first."
-        )
+        if KIND_BIN in kinds_staged and KIND_UF2 not in kinds_staged:
+            message = (
+                f"{name} could write {subject}, but [firmware {family.name}] staged a .bin "
+                f"and no .uf2, and rebuilding as configured will not make one: on an "
+                f"RP2040, only a build with no bootloader offset produces a .uf2. Set the "
+                f"bootloader offset to none and rebuild, or list a flasher that takes the .bin."
+            )
+        elif KIND_UF2 in kinds_staged and KIND_BIN not in kinds_staged:
+            message = (
+                f"{name} could write {subject}, but [firmware {family.name}] staged a .uf2 "
+                f"and no .bin, and rebuilding as configured will not make one: on an "
+                f"RP2040, only a build with a bootloader offset produces a .bin. Set the "
+                f"bootloader offset (16KiB for Katapult) and rebuild, or list bootsel to "
+                f"write the .uf2."
+            )
+        else:
+            message = (
+                f"{name} could write {subject}, but [firmware {family.name}] staged "
+                f"no {' or '.join(kinds)} - build it first."
+            )
     else:
         listed = ", ".join(family.flashers) or "(none)"
         message = f"nothing in [firmware {family.name}] (flashers: {listed}) can write {subject}."
@@ -207,7 +230,7 @@ def select(
         staged = providers.staged(paths, device.type, family)
     choice = resolve(family, device, helper, staged)
     if choice is None:
-        raise _refusal_error(family, device, _unstaged(family, device, helper))
+        raise _refusal_error(family, device, _unstaged(family, device, helper), staged)
     flasher, artifact = choice
     return flasher.target(paths, device, helper, artifact, stop_services=stop_services)
 

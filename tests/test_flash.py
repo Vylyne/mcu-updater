@@ -904,6 +904,15 @@ def test_rp2040_refuses_with_no_uf2_built(paths, settings):
     assert ".uf2" in str(exc.value)
 
 
+def test_dfu_refuses_with_no_bin_built(paths, settings):
+    """A Katapult build can stage only a `.uf2`. DFU writes a `.bin`, so the
+    first install names the missing build rather than the chipset."""
+    seed_base_firmwares(paths)
+    with pytest.raises(FlashError) as exc:
+        flash_initial_bootloader(paths, settings, "stm32f072xb", None, uf2_bin="x.uf2")
+    assert ".bin" in str(exc.value)
+
+
 def test_an_unknown_chipset_is_reported_clearly(paths, ready):
     seed_base_firmwares(paths)
     with pytest.raises(UnsupportedChipsetError) as exc:

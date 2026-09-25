@@ -46,10 +46,16 @@
       "replace": "    if False:"
     },
     {
-      "name": "a kconfig build with no uf2 removes the stale one",
+      "name": "a kconfig build removes each staged image it did not make",
       "file": "src/mcu_updater/build.py",
-      "find": "                os.remove(paths.uf2_file(mcu_type, fw))",
-      "replace": "                pass"
+      "find": "        os.remove(staged_path)",
+      "replace": "        pass"
+    },
+    {
+      "name": "a build that made only a uf2 is staged, not refused",
+      "file": "src/mcu_updater/build.py",
+      "find": "            if not (made_bin or made_uf2):",
+      "replace": "            if not made_bin:"
     },
     {
       "name": "an old sidecar vouches only for its primary kind",

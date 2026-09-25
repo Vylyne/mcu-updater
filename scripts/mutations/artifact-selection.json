@@ -40,7 +40,7 @@
       "replace": "        if False:"
     },
     {
-      "name": "a chip-id serial is kept, a literal one is followed",
+      "name": "predicted_serial defaults to the chip-id serial, not the literal one",
       "file": "src/mcu_updater/helpers/klipper.py",
       "find": "    if answers.get(\"USB_SERIAL_NUMBER_CHIPID\", \"y\") != \"n\":\n        return current",
       "replace": "    if False:\n        return current"
@@ -74,6 +74,18 @@
       "file": "src/mcu_updater/helpers/klipper.py",
       "find": "                if bootsel.serial_topology_for(paths, dev.path) == topology:\n                    time.sleep(_TOPOLOGY_SETTLE)",
       "replace": "                if True:\n                    time.sleep(_TOPOLOGY_SETTLE)"
+    },
+    {
+      "name": "a corrupt uf2 is refused, with nothing written",
+      "file": "src/mcu_updater/flashers/bootsel.py",
+      "find": "        raise FlashError(f\"{uf2} is not a valid UF2 image: {exc}\", path=uf2) from exc",
+      "replace": "        return None"
+    },
+    {
+      "name": "the klipper helper refuses a chip that is not an rp2040",
+      "file": "src/mcu_updater/helpers/klipper.py",
+      "find": "        if not chipset.startswith(\"rp2040\"):",
+      "replace": "        if False:"
     }
   ]
 }

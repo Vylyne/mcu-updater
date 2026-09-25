@@ -163,7 +163,9 @@ def _await_bootsel(paths: Paths, topology: str, *, serial: str) -> None:
                 f"{serial} rebooted into Katapult, not BOOTSEL: the running Klipper was "
                 f"built for Katapult, so its bootloader request goes to it. Nothing was written. "
                 f"Power-cycle the board to boot Klipper again, and list flashtool "
-                f"before bootsel in this family to write it through Katapult.",
+                f"before bootsel in this family to write it through Katapult. If the staged "
+                f"build has no bootloader offset, rebuild it with Katapult's 16KiB offset "
+                f"first, or flashtool will refuse it too.",
                 serial=serial,
                 topology=topology,
             )

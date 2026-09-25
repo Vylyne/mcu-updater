@@ -862,7 +862,11 @@ def _cmake_type_targets(
     if entry is None:
         raise UpdaterError(f"CMake type '{name}' is no longer configured.")
     if force:
-        print("Note: --force does not apply to helper-BOOTSEL writes.")
+        print(
+            "Note: --force has no effect on a CMake flash, through bootsel or "
+            "flashtool alike; it only overrides the kconfig family's "
+            "bootloader-offset check."
+        )
     targets: list = []
     refused: list = []
     for device_id in [serial] if serial is not None else entry.serials:

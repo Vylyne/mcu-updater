@@ -617,6 +617,7 @@ def _cmake_flashable(
     helper: bool = True,
     staged: bool = True,
     serials=(RR_SERIAL,),
+    flashers: str = "bootsel",
 ):
     """A CMake type a flash can actually reach: a helper and a built UF2.
 
@@ -633,7 +634,7 @@ def _cmake_flashable(
     with open(c.paths.main_config, "a", encoding="utf-8", newline="\n") as fh:
         fh.write(
             f"\n[firmware roadrunner]\nsource: {tree}\nbuilder: cmake\n{helper_line}"
-            "flashers: bootsel\n"
+            f"flashers: {flashers}\n"
             f"\n[type roadrunner]\nchipset: rp2040\nfirmware: roadrunner\n"
             "cmake_target: roadrunner_v1_i2c_rgb\n"
             + (
@@ -708,6 +709,42 @@ def test_the_cmake_target_carries_the_staged_uf2_and_its_stop_services(
     assert target.detail["chipset"] == "rp2040"
     assert target.detail["helper"].name == "roadrunner"
     assert "klipper" in target.stop_services
+
+
+def test_a_forced_cmake_flash_through_flashtool_says_force_has_no_effect(
+    c, fake_root, captured, monkeypatch, capsys
+):
+    """A cmake `Device` is built with no `detail` at all (`_cmake_targets`),
+    so `flashtool.py`'s own `target.detail.get("force", False)` never sees
+    `--force` - whether `bootsel` or `flashtool` ends up chosen. Stage a
+    `.bin` and a sidecar that lists it, so `flashtool` (first in the list,
+    not narrowed by state) is the one selection actually picks, and pin both
+    the note and that `force` never reached the target it printed about."""
+    import json
+    import os
+
+    _cmake_flashable(c, fake_root, flashers="flashtool, bootsel")
+    bin_path = c.paths.bin_file("roadrunner", "roadrunner")
+    os.makedirs(os.path.dirname(bin_path), exist_ok=True)
+    with open(bin_path, "wb") as fh:
+        fh.write(b"BIN")
+    with open(c.paths.sidecar_file("roadrunner", "roadrunner"), "w", encoding="utf-8") as fh:
+        json.dump(
+            {"provider": "cmake", "artifacts": {"uf2": {"sha256": None}, "bin": {"sha256": None}}},
+            fh,
+        )
+    monkeypatch.setattr(cli, "_confirm", lambda prompt: True)
+
+    with pytest.raises(SystemExit):
+        cli.flash_fw_cmd(
+            argparse.Namespace(type="roadrunner", serial=RR_SERIAL, yes=True, force=True)
+        )
+
+    out = capsys.readouterr().out
+    assert "--force has no effect on a CMake flash" in out
+    target = captured[0][0]
+    assert target.flasher == "flashtool"
+    assert "force" not in target.detail
 
 
 def test_flashing_a_cmake_type_by_name_alone_writes_its_boards(

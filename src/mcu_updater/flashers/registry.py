@@ -117,8 +117,10 @@ def resolve(
     The family's order, not the registry's: the same RP2040 is flashtool's in
     `[firmware klipper]` and bootsel's in `[firmware roadrunner]`, and a global
     first match could only ever reach one of them. A flasher whose kind was not
-    staged is passed over, so `flashers: flashtool, bootsel` writes a board
-    already in BOOTSEL from the `.uf2` without a second list.
+    staged is passed over, so `flashers: flashtool, bootsel` reaches bootsel,
+    through the family's helper, when no `.bin` was staged - flashtool is not
+    narrowed by state, so a running or offline board always goes to it first
+    when one was.
     """
     for name in family.flashers:
         flasher = by_name(name)

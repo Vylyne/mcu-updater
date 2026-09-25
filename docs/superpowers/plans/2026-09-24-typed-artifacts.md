@@ -3477,11 +3477,13 @@ bench RP2040, never the toolhead.
    beside `<target>.uf2`. If there is no `.bin`, a CMake family cannot list
    `flashtool` until the tree adds `pico_add_extra_outputs`. That is
    documented, not a bug.
-7. **An offset Klipper `.uf2` onto a Katapult RP2040 held in BOOTSEL by
+7. ~~**An offset Klipper `.uf2` onto a Katapult RP2040 held in BOOTSEL by
    hand**, with `flashers: flashtool, bootsel`. Check three things:
    - Selection picks bootsel, with the `.uf2`.
    - The offset warning appears.
    - The board comes back in Katapult or Klipper, with Katapult intact.
 
    This is the only route that writes Klipper through BOOTSEL onto a board
-   with Katapult. A running board is always asked through Katapult (item 2).
+   with Katapult. A running board is always asked through Katapult (item 2).~~
+   Unreachable, since a tracked Klipper board in BOOTSEL is never handed to
+   selection (ruled on in review, not in the original design).

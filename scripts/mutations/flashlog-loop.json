@@ -35,13 +35,13 @@
       "replace": "    return None"
     },
     {
-      "name": "flashtool reads the kconfig sidecar's commit",
+      "name": "the kconfig provider reads its sidecar's commit",
       "file": "src/mcu_updater/build.py",
       "find": "        fw_sha=side.get(\"fw_sha\") or git_head(family.source_dir(paths)),",
       "replace": "        fw_sha=side.get(\"sha\") or git_head(family.source_dir(paths)),"
     },
     {
-      "name": "bootsel reads the cmake sidecar's commit",
+      "name": "the cmake provider reads its sidecar's commit",
       "file": "src/mcu_updater/providers/cmake.py",
       "find": "        fw_sha=side.get(\"sha\"),",
       "replace": "        fw_sha=side.get(\"fw_sha\"),"

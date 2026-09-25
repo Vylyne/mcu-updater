@@ -161,9 +161,17 @@ def _refusal_error(
     same one again, so the message names the setting that decides which image
     an RP2040 build makes instead.
     """
+    from .. import firmware
+
     missing = list(dict.fromkeys(kind for _, kinds in waiting for kind in kinds))
     subject = f"{device.type} {device.id or device.chipset} while it is {device.state}"
-    kinds_staged = {artifact.kind for artifact in staged.artifacts}
+    # The offset is a Kconfig answer, so only a kconfig build is told to change
+    # it. A CMake tree's `.bin` comes from its own CMakeLists, not an offset.
+    kinds_staged = (
+        {artifact.kind for artifact in staged.artifacts}
+        if family.builder == firmware.DEFAULT_BUILDER
+        else set()
+    )
     if waiting:
         name, kinds = waiting[0]
         if KIND_BIN in kinds_staged and KIND_UF2 not in kinds_staged:

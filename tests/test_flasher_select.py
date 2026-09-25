@@ -10,6 +10,7 @@ guessing.
 
 from __future__ import annotations
 
+import dataclasses
 import os
 
 import pytest
@@ -550,6 +551,25 @@ def test_nothing_staged_still_says_build_it_first(paths):
         "but [firmware klipper] staged no uf2 - build it first."
     )
     assert exc.value.data["missing"] == ["uf2"]
+
+
+def test_a_cmake_family_is_not_told_to_change_a_bootloader_offset(paths):
+    """A CMake tree's `.bin` comes from its CMakeLists, not a Kconfig offset,
+    so a uf2-only CMake build keeps the plain message."""
+    family = dataclasses.replace(_family("flashtool", name="roadrunner"), builder="cmake")
+    with pytest.raises(NoFlasherError) as exc:
+        flashers.select(
+            paths,
+            family,
+            _running_rp2040(),
+            None,
+            stop_services=("klipper",),
+            staged=_staged(fw="roadrunner", uf2="/p.uf2"),
+        )
+
+    assert "bootloader offset" not in str(exc.value)
+    assert str(exc.value).endswith("staged no bin - build it first.")
+    assert exc.value.data["missing"] == ["bin"]
 
 
 def test_an_unlisted_uf2_is_refused_as_missing(paths):

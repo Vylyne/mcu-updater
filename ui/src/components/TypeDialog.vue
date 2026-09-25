@@ -46,7 +46,10 @@ interface TypeDetail {
   firmware: string;
   katapult_installed: boolean;
   katapult?: FamilyBlock;
-  artifacts?: Record<string, { has_bin?: boolean } | undefined>;
+  artifacts?: Record<
+    string,
+    { has_bin?: boolean; has_uf2?: boolean } | undefined
+  >;
   [family: string]: unknown;
 }
 
@@ -123,7 +126,10 @@ const nameError = computed(() =>
 const hasBinary = computed(() => {
   const family = detail.value?.firmware;
   if (!family || !detail.value?.artifacts) return false;
-  return detail.value.artifacts[family]?.has_bin === true;
+  // Either image is a build: an offset-less RP2040 Klipper build stages
+  // only a .uf2.
+  const staged = detail.value.artifacts[family];
+  return staged?.has_bin === true || staged?.has_uf2 === true;
 });
 
 // Staleness compares the source commit and a hash of the .config - neither

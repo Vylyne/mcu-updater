@@ -1382,6 +1382,46 @@ def test_add_mcu_adopts_a_new_board_through_tracking(c, fake_root, monkeypatch):
     assert Registry.load(c.paths).declared_serials("board") == ["AAAA-if00", "CCCC-if00"]
 
 
+@pytest.mark.parametrize(
+    ("katapult_installed", "install"), [(True, "katapult"), (False, "klipper")]
+)
+def test_add_mcu_builds_and_writes_the_types_first_image(
+    c, fake_root, monkeypatch, capsys, katapult_installed, install
+):
+    """Katapult when the type has it; with none, the type's own application,
+    with no Katapult config handed to the write."""
+    reg = Registry.load(c.paths)
+    reg.add_type("bare", "rp2040", katapult_installed=katapult_installed)
+    save_registry(reg, c.paths)
+    built: list[str] = []
+    written: list[dict] = []
+    monkeypatch.setattr(
+        cli,
+        "_build_interactive",
+        lambda c, t, fw: built.append(fw)
+        or types.SimpleNamespace(bin_path=None, uf2_path=f"{fw}.uf2"),
+    )
+    monkeypatch.setattr(
+        cli,
+        "flash_initial_bootloader",
+        lambda paths, settings, chipset, fw_bin, **kw: written.append(kw),
+    )
+    monkeypatch.setattr(cli, "adoptable_devices", lambda paths, before, chipset: [])
+
+    code = _main(fake_root, monkeypatch, ["add-mcu", "-t", "bare"])
+
+    out = capsys.readouterr().out
+    assert code == 0
+    assert built == [install]
+    assert [(w["fw"], w["mcu_type"], w["uf2_bin"]) for w in written] == [
+        (install, "bare", f"{install}.uf2")
+    ]
+    expected_config = c.paths.config_file("bare", "katapult") if katapult_installed else None
+    assert written[0]["katapult_config"] == expected_config
+    assert f"enumerate as {install}" in out
+    assert f"No new, unassigned {install} device" in out
+
+
 def test_add_mcu_refuses_to_adopt_a_board_tracked_under_another_type(
     c, fake_root, monkeypatch, capsys
 ):

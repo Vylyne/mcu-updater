@@ -95,10 +95,16 @@
       "replace": "    except ZeroDivisionError as exc:"
     },
     {
-      "name": "add_mcu.start passes Katapult's config",
+      "name": "add_mcu.start passes the bootloader's config",
       "file": "src/mcu_updater/agent/methods/flash.py",
-      "find": "                katapult_config=self.paths.config_file(name, \"katapult\"),",
-      "replace": "                katapult_config=None,"
+      "find": "        boot_config = self.paths.config_file(name, install) if family.bootloader else None",
+      "replace": "        boot_config = None"
+    },
+    {
+      "name": "only a bootloader's image is staged with an erased sector",
+      "file": "src/mcu_updater/flashers/flash.py",
+      "find": "        if artifact.kind == KIND_UF2 and family.bootloader:",
+      "replace": "        if artifact.kind == KIND_UF2:"
     }
   ]
 }

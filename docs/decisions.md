@@ -413,10 +413,11 @@ not grow `accepts` into a content check.
 Spec §8 step 1. `flashers.select_each` turns a `NoFlasherError` into a
 `failures[]` entry with `"flasher": null`, and `write_all` reports it with the
 writes that failed. A single-device RPC raises instead, before a job exists.
-First install asks `[firmware katapult]` the same question and keeps its
-`unsupported_chipset` refusal. The serial `fw.flash` job collects its write's
-exception (`write_all(errors=...)`) and re-raises it, because the job's error
-code was already on the wire.
+First install asks the type's install family the same question - its
+bootloader family, or its application family when it has none - and keeps its
+`unsupported_chipset` refusal, naming that family's `flashers:` line. The
+serial `fw.flash` job collects its write's exception (`write_all(errors=...)`)
+and re-raises it, because the job's error code was already on the wire.
 
 ### The batch loop is the only writer of the flash ledger
 

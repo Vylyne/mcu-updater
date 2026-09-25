@@ -741,7 +741,9 @@ def test_stm32_dispatches_to_dfu(paths, ready, monkeypatch):
         "flash_dfu_stm32",
         lambda *a, **kw: called.setdefault("yes", True),
     )
-    flash_initial_bootloader(paths, ready, "stm32f072xb", "x.bin")
+    flash_initial_bootloader(
+        paths, ready, "stm32f072xb", "x.bin", fw="katapult", mcu_type="board"
+    )
     assert called == {"yes": True}
 
 
@@ -760,7 +762,8 @@ def test_rp2040_dispatches_to_bootsel_when_a_uf2_was_built(paths, settings, tmp_
     uf2, cfg = _katapult_uf2(tmp_path)
 
     flash_initial_bootloader(
-        rp_paths, settings, "rp2040", "unused.bin", uf2_bin=uf2, katapult_config=cfg
+        rp_paths, settings, "rp2040", "unused.bin", fw="katapult", mcu_type="board",
+        uf2_bin=uf2, katapult_config=cfg
     )
 
     assert (vol / "katapult.uf2").exists()
@@ -832,7 +835,8 @@ def test_bootsel_copies_katapult_with_the_application_sector_erased(
         original = fh.read()
 
     flash_initial_bootloader(
-        rp_paths, settings, "rp2040", "unused.bin", uf2_bin=uf2, katapult_config=cfg
+        rp_paths, settings, "rp2040", "unused.bin", fw="katapult", mcu_type="board",
+        uf2_bin=uf2, katapult_config=cfg
     )
 
     assert (vol / "katapult.uf2").read_bytes() == with_erased_sector(original, 0x10004000)
@@ -856,7 +860,8 @@ def test_bootsel_refuses_without_an_application_address(
 
     with pytest.raises(FlashError) as exc:
         flash_initial_bootloader(
-            rp_paths, settings, "rp2040", "unused.bin", uf2_bin=uf2, katapult_config=cfg
+            rp_paths, settings, "rp2040", "unused.bin", fw="katapult", mcu_type="board",
+            uf2_bin=uf2, katapult_config=cfg
         )
     assert "LAUNCH_APP_ADDRESS" in str(exc.value)
     assert not (vol / "katapult.uf2").exists()
@@ -866,7 +871,10 @@ def test_bootsel_refuses_with_no_katapult_config(paths, settings, tmp_path):
     seed_base_firmwares(paths)
     uf2, _cfg = _katapult_uf2(tmp_path)
     with pytest.raises(FlashError) as exc:
-        flash_initial_bootloader(paths, settings, "rp2040", "unused.bin", uf2_bin=uf2)
+        flash_initial_bootloader(
+            paths, settings, "rp2040", "unused.bin", fw="katapult", mcu_type="board",
+            uf2_bin=uf2,
+        )
     assert "LAUNCH_APP_ADDRESS" in str(exc.value)
 
 
@@ -879,7 +887,8 @@ def test_bootsel_refuses_a_uf2_it_cannot_extend(paths, settings, tmp_path):
     bad.write_bytes(b"\0" * 8)
     with pytest.raises(FlashError) as exc:
         flash_initial_bootloader(
-            paths, settings, "rp2040", "unused.bin", uf2_bin=str(bad), katapult_config=cfg
+            paths, settings, "rp2040", "unused.bin", fw="katapult", mcu_type="board",
+            uf2_bin=str(bad), katapult_config=cfg
         )
     assert "UF2" in str(exc.value)
 
@@ -890,7 +899,8 @@ def test_bootsel_reports_a_missing_uf2_as_a_flash_error(paths, settings, tmp_pat
     missing = str(tmp_path / "nope.uf2")
     with pytest.raises(FlashError) as exc:
         flash_initial_bootloader(
-            paths, settings, "rp2040", "unused.bin", uf2_bin=missing, katapult_config=cfg
+            paths, settings, "rp2040", "unused.bin", fw="katapult", mcu_type="board",
+            uf2_bin=missing, katapult_config=cfg
         )
     assert missing in str(exc.value)
 
@@ -900,7 +910,9 @@ def test_rp2040_refuses_with_no_uf2_built(paths, settings):
     outright is better than a write that appears to succeed and does nothing."""
     seed_base_firmwares(paths)
     with pytest.raises(FlashError) as exc:
-        flash_initial_bootloader(paths, settings, "rp2040", "x.bin")
+        flash_initial_bootloader(
+            paths, settings, "rp2040", "x.bin", fw="katapult", mcu_type="board"
+        )
     assert ".uf2" in str(exc.value)
 
 
@@ -909,14 +921,19 @@ def test_dfu_refuses_with_no_bin_built(paths, settings):
     first install names the missing build rather than the chipset."""
     seed_base_firmwares(paths)
     with pytest.raises(FlashError) as exc:
-        flash_initial_bootloader(paths, settings, "stm32f072xb", None, uf2_bin="x.uf2")
+        flash_initial_bootloader(
+            paths, settings, "stm32f072xb", None, fw="katapult", mcu_type="board",
+            uf2_bin="x.uf2",
+        )
     assert ".bin" in str(exc.value)
 
 
 def test_an_unknown_chipset_is_reported_clearly(paths, ready):
     seed_base_firmwares(paths)
     with pytest.raises(UnsupportedChipsetError) as exc:
-        flash_initial_bootloader(paths, ready, "esp32", "x.bin")
+        flash_initial_bootloader(
+            paths, ready, "esp32", "x.bin", fw="katapult", mcu_type="board"
+        )
     assert exc.value.data["chipset"] == "esp32"
 
 
@@ -934,9 +951,139 @@ def test_first_install_writes_only_with_what_katapult_lists(paths, settings, tmp
 
     with pytest.raises(UnsupportedChipsetError) as exc:
         flash_initial_bootloader(
-            paths, settings, "rp2040", "unused.bin", uf2_bin=uf2, katapult_config=cfg
+            paths, settings, "rp2040", "unused.bin", fw="katapult", mcu_type="board",
+            uf2_bin=uf2, katapult_config=cfg
         )
     assert exc.value.data["chipset"] == "rp2040"
+
+
+def _klipper_writes_bare_boards(paths) -> None:
+    """`[firmware klipper]` with bootsel and dfu_util listed, as a type with no
+    Katapult needs for its first install."""
+    seed_base_firmwares(paths)
+    with open(paths.main_config, encoding="utf-8") as fh:
+        text = fh.read()
+    section = "[firmware klipper]\nsource: ~/klipper\nflashers: flashtool\n"
+    assert section in text
+    with open(paths.main_config, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(
+            text.replace(
+                section,
+                "[firmware klipper]\nsource: ~/klipper\n"
+                "flashers: flashtool, bootsel, dfu_util\n",
+            )
+        )
+
+
+def test_a_first_application_image_is_copied_as_built(paths, settings, tmp_path):
+    """No erased sector: an application starts at the start of flash and
+    overwrites what boots. No katapult_config is needed for it either."""
+    _klipper_writes_bare_boards(paths)
+    root, vol = mounted_bootsel_volume(tmp_path)
+    rp_paths = dataclasses.replace(paths, bootsel_root=str(root))
+    uf2 = tmp_path / "klipper.uf2"
+    image = _fake_uf2(b"\x01" * 32, address=0x10000000)
+    uf2.write_bytes(image)
+
+    flash_initial_bootloader(
+        rp_paths, settings, "rp2040", None, fw="klipper", mcu_type="board",
+        uf2_bin=str(uf2),
+    )
+
+    assert (vol / "klipper.uf2").read_bytes() == image
+
+
+def test_a_first_application_uf2_built_for_an_offset_is_refused(paths, settings, tmp_path):
+    """The backstop for the CLI, which has no pre-check of its own: nothing is
+    copied, and the refusal names the rebuild."""
+    from mcu_updater.errors import BareImageOffsetError
+
+    _klipper_writes_bare_boards(paths)
+    root, vol = mounted_bootsel_volume(tmp_path)
+    rp_paths = dataclasses.replace(paths, bootsel_root=str(root))
+    uf2 = tmp_path / "klipper.uf2"
+    uf2.write_bytes(_fake_uf2(b"\x01" * 32, address=0x10004000))
+
+    with pytest.raises(BareImageOffsetError) as exc:
+        flash_initial_bootloader(
+            rp_paths, settings, "rp2040", None, fw="klipper", mcu_type="board",
+            uf2_bin=str(uf2),
+        )
+
+    assert exc.value.code == "offset_mismatch"
+    assert "0x10004000" in str(exc.value)
+    assert "Rebuild board with no bootloader offset" in str(exc.value)
+    assert not (vol / "klipper.uf2").exists()
+
+
+def test_a_first_application_bin_is_checked_against_its_build_record(
+    paths, settings, monkeypatch
+):
+    """A .bin carries no address of its own, so the sidecar's app_address has to
+    say 0x08000000 - the address DFU writes at."""
+    import json
+
+    from mcu_updater.errors import BareImageOffsetError
+
+    _klipper_writes_bare_boards(paths)
+    written: list[str] = []
+    monkeypatch.setattr(
+        flash_mod, "flash_dfu_stm32", lambda p, s, fw_bin, **kw: written.append(fw_bin)
+    )
+    os.makedirs(paths.artifact_dir("board"), exist_ok=True)
+    fw_bin = paths.bin_file("board", "klipper")
+    with open(fw_bin, "wb") as fh:
+        fh.write(b"\0" * 16)
+    sidecar = paths.sidecar_file("board", "klipper")
+
+    for address in (0x08002000, None):
+        with open(sidecar, "w", encoding="utf-8") as fh:
+            json.dump({"app_address": address}, fh)
+        with pytest.raises(BareImageOffsetError):
+            flash_initial_bootloader(
+                paths, settings, "stm32g0b1xx", fw_bin, fw="klipper", mcu_type="board"
+            )
+    assert written == []
+
+    with open(sidecar, "w", encoding="utf-8") as fh:
+        json.dump({"app_address": 0x08000000}, fh)
+    flash_initial_bootloader(
+        paths, settings, "stm32g0b1xx", fw_bin, fw="klipper", mcu_type="board"
+    )
+    assert written == [fw_bin]
+
+
+def test_a_bootloader_first_image_is_not_offset_checked(paths, settings, monkeypatch):
+    """Katapult is linked at the start of flash and records no app_address -
+    the check is for an application with nothing below it, not for this."""
+    seed_base_firmwares(paths)
+    written: list[str] = []
+    monkeypatch.setattr(
+        flash_mod, "flash_dfu_stm32", lambda p, s, fw_bin, **kw: written.append(fw_bin)
+    )
+
+    flash_initial_bootloader(
+        paths, settings, "stm32g0b1xx", "katapult.bin", fw="katapult", mcu_type="board"
+    )
+    assert written == ["katapult.bin"]
+
+
+def test_no_bare_board_writer_on_the_family_names_the_line_to_add(paths, settings, tmp_path):
+    """Not "flash katapult manually": the fix is the install family's list."""
+    seed_base_firmwares(paths)
+    uf2 = tmp_path / "klipper.uf2"
+    uf2.write_bytes(_fake_uf2(address=0x10000000))
+
+    with pytest.raises(UnsupportedChipsetError) as exc:
+        flash_initial_bootloader(
+            paths, settings, "rp2040", None, fw="klipper", mcu_type="board",
+            uf2_bin=str(uf2),
+        )
+
+    assert "flashers: flashtool, bootsel" in str(exc.value)
+    assert "[firmware klipper]" in str(exc.value)
+    assert "katapult" not in str(exc.value).lower()
+    assert exc.value.data["fw"] == "klipper"
 
 
 # --------------------------------------------------------------------------

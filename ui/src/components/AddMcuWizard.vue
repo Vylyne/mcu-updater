@@ -1,9 +1,16 @@
 <script setup lang="ts">
 // docs/agent-api.md's "Setting up a brand-new board": fw.dfu.scan/
-// fw.bootsel.scan to see what's there, then fw.add_mcu.start to write
-// Katapult. Adopting the result (fw.serial.add) and putting Klipper on it
-// (fw.flash) are existing, separate flows - JobPanel's add_mcu result panel
-// is where the adopt step actually happens, once the job succeeds.
+// fw.bootsel.scan to see what's there, then fw.add_mcu.start to write the
+// type's first image - Katapult when the type has it, and otherwise its own
+// Klipper build. Adopting the result (fw.serial.add) and putting Klipper on a
+// board that got Katapult (fw.flash) are existing, separate flows - JobPanel's
+// add_mcu result panel is where the adopt step actually happens, once the job
+// succeeds.
+//
+// The button says "Install firmware", not which one: a `Target` carries only
+// the application family (`firmware`), nothing that says whether the type
+// has a bootloader, and a wire field just for this label is not worth adding.
+// The job's log and result (`fw`) name what was written.
 import { computed, ref, watch } from "vue";
 import { scanBareBoard, startAddMcu, state } from "../store/agent";
 import type { Target } from "../api/targets";
@@ -98,7 +105,9 @@ async function start(): Promise<void> {
     <template v-if="mechanism">
       <p class="muted">
         {{ mechanism === "dfu" ? "DFU (STM32)" : "BOOTSEL (RP2040)" }} - fit the
-        boot jumper (or hold BOOTSEL) and plug the board in, then scan.
+        boot jumper (or hold BOOTSEL) and plug the board in, then scan. This
+        writes Katapult if {{ chosenName }} has it, and otherwise its own
+        Klipper build, which must be built with no bootloader offset.
       </p>
       <button type="button" :disabled="scanning" @click="runScan">
         {{ scanning ? "Scanning…" : "Scan" }}
@@ -136,7 +145,7 @@ async function start(): Promise<void> {
           "
           @click="start"
         >
-          {{ starting ? "Starting…" : "Install Katapult" }}
+          {{ starting ? "Starting…" : "Install firmware" }}
         </button>
       </div>
     </template>

@@ -1,5 +1,5 @@
 {
-  "_comment": "Phase 6 guards. Each one refuses before a job exists, or picks the right board.",
+  "_comment": "Phase 6 guards. Each one refuses before a job exists, or picks the right board. A first install with no bootloader refuses an image built for an offset, before a job and again at the write.",
   "file": "src/mcu_updater/agent/methods/flash.py",
   "command": [
     "python",
@@ -8,6 +8,7 @@
     "tests/test_agent_add_mcu.py",
     "tests/test_agent_dfu.py",
     "tests/test_agent_bootsel.py",
+    "tests/test_flash.py",
     "-q"
   ],
   "mutations": [
@@ -17,7 +18,7 @@
       "replace": "        before = set()"
     },
     {
-      "name": "katapult artifact must exist",
+      "name": "the install family's artifact must exist",
       "find": "        if not os.path.exists(artifact_path):",
       "replace": "        if False:"
     },
@@ -45,6 +46,23 @@
       "name": "baseline is the whole bus, not untracked-only",
       "find": "        before = {d.serial for d in scan_bus(self.paths)}",
       "replace": "        _k = set(reg.all_serials())\n        before = _k | {d.serial for d in scan_bus(self.paths) if d.serial not in _k}"
+    },
+    {
+      "name": "an offset image is refused on a first install with no bootloader",
+      "file": "src/mcu_updater/flashers/flash.py",
+      "find": "    if start == base:\n        return",
+      "replace": "    if True:\n        return"
+    },
+    {
+      "name": "add_mcu.start refuses an offset application image before a job",
+      "find": "        if not family.bootloader:\n            # Nothing below an application boots it",
+      "replace": "        if False:\n            # Nothing below an application boots it"
+    },
+    {
+      "name": "the write refuses an offset application image too",
+      "file": "src/mcu_updater/flashers/flash.py",
+      "find": "    if not family.bootloader:\n        # Before the staging directory",
+      "replace": "    if False:\n        # Before the staging directory"
     }
   ]
 }

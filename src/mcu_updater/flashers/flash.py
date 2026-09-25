@@ -40,7 +40,7 @@ import tempfile
 import threading
 import time
 from collections.abc import Sequence
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from .. import firmware, profiles, uf2_erase
 from ..build import Reporter, null_reporter, run_streamed
@@ -60,6 +60,7 @@ from ..discovery.registry import SOURCES
 from ..discovery.spec import Confidence, Source, state_for_firmware
 from ..errors import (
     AmbiguousDfuError,
+    BareImageOffsetError,
     BootloaderTimeoutError,
     DeviceNotFoundError,
     FlashError,
@@ -72,6 +73,11 @@ from ..paths import HUMAN_ACTION_TIMEOUT, REENUMERATE_TIMEOUT, Paths
 from ..settings import Settings
 from .batch import PlainContext
 from .spec import Bench
+
+if TYPE_CHECKING:
+    from ..artifacts import Artifact
+    from ..config import McuType
+    from ..firmware import FirmwareFamily
 
 DFU_VID_PID = "0483:df11"
 
@@ -872,8 +878,8 @@ def flash_dfu_stm32(
             # The write itself already reported "File downloaded successfully".
             #
             # Deliberately not treated as fatal rather than suppressed: the caller
-            # then waits for the board to re-enumerate as Katapult, which is the
-            # real verdict on whether this worked. Raising here aborted *before*
+            # then waits for the board to re-enumerate running what was written,
+            # which is the real verdict on whether this worked. Raising here aborted *before*
             # that check, turning a good flash into a reported failure.
             reporter(
                 "warn",
@@ -883,7 +889,80 @@ def flash_dfu_stm32(
             )
         else:
             raise FlashError(f"dfu-util flashing failed (exit {rc}).", returncode=rc)
-    reporter("info", "Flash command sent. Device should reboot into Katapult shortly.")
+    reporter("info", "Flash command sent. Device should reboot into the new firmware shortly.")
+
+
+#: Where an STM32 maps flash, and where the DFU write lands (see
+#: `flash_dfu_stm32`). A first image with no bootloader below it has to start
+#: here, the RP2040's `bootsel.FLASH_BASE` counterpart.
+STM32_FLASH_BASE = 0x08000000
+
+
+def install_family(mcu: McuType, families: dict[str, Any] | None = None) -> str:
+    """The family a bare board of this type gets first: its bootloader if it
+    has one, and otherwise the application it runs.
+
+    One rule for every first install - the agent's `fw.add_mcu.start` and the
+    CLI's `add-mcu` both ask it - so a type with `katapult_installed: false`
+    gets its own firmware rather than a Katapult it never declared.
+    """
+    boot = mcu.bootloader(families)
+    return boot if boot is not None else mcu.application(families)
+
+
+def refuse_unbootable_first_image(
+    paths: Paths, mcu_type: str, fw: str, artifact: Artifact
+) -> None:
+    """Refuse an application image a board with no bootloader cannot boot.
+
+    Only for a first image that is *not* a bootloader: nothing sits below it,
+    so it has to start at the start of flash. A `.uf2` says where it starts
+    in its own blocks; a `.bin` does not, so its build record's
+    `app_address` (`CONFIG_FLASH_APPLICATION_ADDRESS`) has to say so. An
+    address that cannot be read is refused too - it cannot be proven
+    bootable, and so is a corrupt `.uf2` - both as `offset_mismatch`.
+    """
+    from ..artifacts import KIND_UF2
+    from ..build import read_sidecar
+    from .bootsel import FLASH_BASE, _image_start
+
+    path = artifact.path
+    start: int | None
+    if artifact.kind == KIND_UF2:
+        base, unknown = FLASH_BASE, "it could not be read"
+        try:
+            start = _image_start(path)
+        except FlashError as exc:
+            # Read but not a valid image: no start to check, so unknown.
+            start, unknown = None, str(exc)
+    else:
+        raw = (read_sidecar(paths, mcu_type, fw) or {}).get("app_address")
+        base, start = STM32_FLASH_BASE, raw if isinstance(raw, int) else None
+        unknown = "its build record has no application address"
+    if start == base:
+        return
+    if start is None:
+        message = (
+            f"{path} cannot be shown to start at the start of flash ({base:#x}): "
+            f"{unknown}, and a board with no bootloader boots only an image that "
+            f"does. Nothing was written. Rebuild {mcu_type} with no bootloader "
+            f"offset (Bootloader offset: No bootloader)."
+        )
+    else:
+        message = (
+            f"{path} was built for a bootloader offset ({start:#x}), and a board "
+            f"with no bootloader cannot boot it. Nothing was written. Rebuild "
+            f"{mcu_type} with no bootloader offset (Bootloader offset: No "
+            f"bootloader)."
+        )
+    raise BareImageOffsetError(
+        message,
+        type=mcu_type,
+        fw=fw,
+        path=path,
+        start=None if start is None else f"{start:#x}",
+        expected=f"{base:#x}",
+    )
 
 
 def flash_initial_bootloader(
@@ -892,18 +971,22 @@ def flash_initial_bootloader(
     chipset: str,
     fw_bin: str | None,
     *,
+    fw: str,
+    mcu_type: str,
     uf2_bin: str | None = None,
     katapult_config: str | None = None,
     reporter: Reporter = null_reporter,
     target_serial: str | None = None,
 ) -> None:
-    """Install a first bootloader on a bare board of this chipset.
+    """Write the first image onto a bare board of this chipset.
 
-    Which ROM bootloader a factory-bare board of this chipset speaks is a
-    single fact about the silicon, not a lookup table: every STM32 answers DFU,
-    every RP2040 answers BOOTSEL. What goes on the board is katapult, so
-    `[firmware katapult]`'s `flashers:` list picks the writer, through the same
-    `Flasher` protocol a batch uses.
+    `fw` is the install family (`install_family`): the type's bootloader
+    when it has one, and otherwise its application. Which ROM bootloader a
+    factory-bare board of this chipset speaks is a single fact about the
+    silicon, not a lookup table: every STM32 answers DFU, every RP2040 answers
+    BOOTSEL. `[firmware <fw>]`'s `flashers:` list picks the writer, through the
+    same `Flasher` protocol a batch uses, so a type with no bootloader needs
+    `bootsel` or `dfu_util` on its application's list.
 
     `uf2_bin` is separate from `fw_bin`: BOOTSEL mass storage only accepts a
     `.uf2` - a `.bin` copied there is silently ignored - and a build only
@@ -912,18 +995,22 @@ def flash_initial_bootloader(
     `.uf2`, which BOOTSEL does not need and DFU refuses.
 
     **Both routes erase what the board ran before.** DFU does it with
-    `mass-erase`; BOOTSEL has no erase command, so the copied `.uf2` is
-    Katapult plus the application's first sector as `0xff` pages (see
-    `uf2_erase`). Without that, a board that last ran other firmware keeps it
-    at the application address and Katapult chain-loads it. `katapult_config`
-    is Katapult's saved `.config`, which says where that address is; BOOTSEL
-    refuses without it rather than copying Katapult alone.
+    `mass-erase`. BOOTSEL has no erase command: a bootloader's `.uf2` is
+    copied as the bootloader plus the application's first sector as `0xff`
+    pages (see `uf2_erase`), since otherwise a board that last ran other
+    firmware keeps it at the application address and Katapult chain-loads it.
+    `katapult_config` is Katapult's saved `.config`, which says where that
+    address is; BOOTSEL refuses without it rather than copying Katapult alone.
+    An application image starts at the start of flash and overwrites what
+    boots, so it is copied as built, takes no `katapult_config`, and is refused
+    first if it was built for an offset (`refuse_unbootable_first_image`).
+    `mcu_type` is the type whose build record that check reads.
     """
     from .. import flashers
     from ..artifacts import KIND_BIN, KIND_UF2, Artifact, Staged
 
     state = STATE_BOOTSEL if chipset.startswith("rp2040") else STATE_DFU
-    katapult = firmware.resolve(paths, "katapult")
+    family = firmware.resolve(paths, fw)
     if state == STATE_BOOTSEL and uf2_bin is None:
         # Before selection, not after: with no uf2 staged, selection would
         # pass bootsel over and blame the chipset instead of the build.
@@ -945,28 +1032,33 @@ def flash_initial_bootloader(
         id=target_serial or "",
         chipset=chipset,
         state=state,
-        fw=katapult.name,
+        fw=family.name,
         kind=flashers.KIND_BARE,
     )
     # What the caller just built, as the staged set selection chooses from.
     # Not `providers.staged`: a first install writes the image it was handed,
     # which is not necessarily one this type's build left staged.
     built = Staged(
-        fw=katapult.name,
+        fw=family.name,
         artifacts=((Artifact(KIND_BIN, fw_bin),) if fw_bin else ())
         + ((Artifact(KIND_UF2, uf2_bin),) if uf2_bin else ()),
     )
-    choice = flashers.resolve(katapult, device, None, built)
+    choice = flashers.resolve(family, device, None, built)
     if choice is None:
         raise UnsupportedChipsetError(
-            f"don't know how to perform a first-time flash for chipset '{chipset}'. "
-            f"Flash katapult manually, then use 'add-serial' once it enumerates.",
+            _no_first_install_writer(family, chipset, state),
             chipset=chipset,
+            fw=family.name,
         )
     flasher, artifact = choice
+    if not family.bootloader:
+        # Before the staging directory, so nothing is written or even copied.
+        refuse_unbootable_first_image(paths, mcu_type, family.name, artifact)
 
     with tempfile.TemporaryDirectory(prefix="mcu-updater-bootsel-") as staging:
-        if artifact.kind == KIND_UF2:
+        # Only a bootloader's image is extended with an erased sector. An
+        # application image starts at the start of flash and replaces what boots.
+        if artifact.kind == KIND_UF2 and family.bootloader:
             erasing = _stage_erasing_uf2(artifact.path, katapult_config, staging, chipset)
             reporter(
                 "info",
@@ -987,6 +1079,30 @@ def flash_initial_bootloader(
         with flasher.prepared(bench, [target], PlainContext(reporter)) as session:
             flasher.write(bench, session, target, PlainContext(reporter))
             flasher.settled(bench, target, PlainContext(reporter))
+
+
+def _no_first_install_writer(family: FirmwareFamily, chipset: str, state: str) -> str:
+    """Why nothing on `family`'s list writes this bare board, and the line to add.
+
+    A bare board is in its ROM bootloader, which only `bootsel` (RP2040) or
+    `dfu_util` (STM32) writes. When the family lists that writer already, the
+    chipset is what it cannot write, and no list edit fixes that.
+    """
+    writer = "bootsel" if state == STATE_BOOTSEL else "dfu_util"
+    rom = "BOOTSEL" if state == STATE_BOOTSEL else "DFU"
+    section = f"[firmware {family.name}]"
+    if writer not in family.flashers:
+        line = ", ".join((*family.flashers, writer))
+        return (
+            f"nothing on {section}'s flashers: list writes a bare {chipset} in "
+            f"{rom}. Add {writer} to it - flashers: {line} - on {section}, then "
+            f"try again."
+        )
+    return (
+        f"don't know how to perform a first-time flash for chipset '{chipset}': "
+        f"{writer} on {section} does not write it. Flash {family.name} manually, "
+        f"then use 'add-serial' once it enumerates."
+    )
 
 
 def _stage_erasing_uf2(

@@ -502,6 +502,8 @@ def test_bootsel_flash_receives_the_uf2_path(adder, paths, fake_root, monkeypatc
         chipset,
         fw_bin,
         *,
+        fw,
+        mcu_type,
         uf2_bin=None,
         katapult_config=None,
         reporter=None,
@@ -511,6 +513,7 @@ def test_bootsel_flash_receives_the_uf2_path(adder, paths, fake_root, monkeypatc
             {
                 "chipset": chipset,
                 "fw_bin": fw_bin,
+                "fw": fw,
                 "uf2_bin": uf2_bin,
                 "katapult_config": katapult_config,
             }
@@ -523,6 +526,8 @@ def test_bootsel_flash_receives_the_uf2_path(adder, paths, fake_root, monkeypatc
     assert adder.runner.get(res["job_id"]).state == "succeeded"
     assert calls[0]["uf2_bin"] == uf2_path
     assert calls[0]["chipset"] == PICO_CHIPSET
+    # A type with Katapult still installs Katapult first.
+    assert calls[0]["fw"] == "katapult"
     # Without it BOOTSEL cannot erase the old application and refuses the write.
     assert calls[0]["katapult_config"] == paths.config_file(PICO, "katapult")
 
@@ -564,3 +569,222 @@ def test_bootsel_pairing_is_recorded_before_the_wait(adder, paths, fake_root, mo
     assert adder.runner.wait(timeout=30)
     assert res["bootsel_id"] == "E0C9125B0D9B"
     assert Pairings(adder.paths).type_for("E0C9125B0D9B") == PICO
+
+
+# --------------------------------------------------------------------------
+# a type with no Katapult: its own application is the first image
+# --------------------------------------------------------------------------
+
+BARE_PICO = "barepico"
+BARE_EBB = "bareebb"
+KLIPPER_SECTION = "[firmware klipper]\nsource: ~/klipper\nflashers: flashtool\n"
+
+
+def _klipper_flashers(paths, flashers: str) -> None:
+    """Rewrite only `[firmware klipper]`'s list. A plain replace of
+    `flashers: flashtool` would hit `[firmware cartographer]` too."""
+    with open(paths.main_config, encoding="utf-8") as fh:
+        text = fh.read()
+    assert KLIPPER_SECTION in text
+    text = text.replace(
+        KLIPPER_SECTION, f"[firmware klipper]\nsource: ~/klipper\nflashers: {flashers}\n"
+    )
+    with open(paths.main_config, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(text)
+
+
+def _no_katapult_type(adder, name: str, chipset: str) -> None:
+    adder.dispatch(
+        "fw.type.add", {"name": name, "chipset": chipset, "katapult_installed": False}
+    )
+    assert "katapult" not in Registry.load(adder.paths).get(name).firmwares
+
+
+def _uf2_image(address: int, payload: bytes = b"\x5a" * 256) -> bytes:
+    """One valid UF2 block of `payload` at `address`."""
+    import struct
+
+    block = struct.pack(
+        "<8I", 0x0A324655, 0x9E5D5157, 0x2000, address, 256, 0, 1, 0xE48BFF56
+    )
+    return block + payload.ljust(476, b"\0") + struct.pack("<I", 0x0AB16F30)
+
+
+def _stage_klipper_uf2(paths, name: str, address: int) -> str:
+    os.makedirs(paths.artifact_dir(name), exist_ok=True)
+    path = paths.uf2_file(name, "klipper")
+    with open(path, "wb") as fh:
+        fh.write(_uf2_image(address))
+    return path
+
+
+def _stage_klipper_bin(paths, name: str, app_address: int | None) -> str:
+    import json
+
+    os.makedirs(paths.artifact_dir(name), exist_ok=True)
+    path = paths.bin_file(name, "klipper")
+    with open(path, "wb") as fh:
+        fh.write(b"\0" * 512)
+    with open(paths.sidecar_file(name, "klipper"), "w", encoding="utf-8") as fh:
+        json.dump({"app_address": app_address}, fh)
+    return path
+
+
+def _bare_pico(adder, paths, fake_root, *, address: int, flashers: str = "flashtool, bootsel"):
+    """A no-Katapult RP2040 type, its klipper .uf2 staged, one board mounted."""
+    _no_katapult_type(adder, BARE_PICO, PICO_CHIPSET)
+    _klipper_flashers(paths, flashers)
+    uf2 = _stage_klipper_uf2(paths, BARE_PICO, address)
+    root, vol = mounted_bootsel_volume(fake_root)
+    bootsel_device_node(root)
+    adder.paths = dataclasses.replace(adder.paths, bootsel_root=str(root))
+    return uf2, vol
+
+
+def test_a_type_with_no_katapult_writes_its_klipper_uf2_over_bootsel(
+    adder, paths, fake_root, monkeypatch
+):
+    """The bug: the flow always wrote Katapult. A type with none has its own
+    application as its first image, and that image is what goes on the board -
+    unmodified, since it starts at flash base and overwrites what boots.
+
+    Not a dry run: the copy lands on the fake mounted volume, so the bytes on
+    it are what this checks."""
+    write_settings(paths, dry_run="false")
+    uf2, vol = _bare_pico(adder, paths, fake_root, address=0x10000000)
+    erased: list = []
+    monkeypatch.setattr(
+        "mcu_updater.flashers.flash._stage_erasing_uf2",
+        lambda *a, **k: erased.append(a) or a[0],
+    )
+
+    res = adder.dispatch("fw.add_mcu.start", {"name": BARE_PICO})
+    assert adder.runner.wait(timeout=30)
+    job = adder.runner.get(res["job_id"])
+
+    assert job.state == "succeeded", job.error
+    with open(uf2, "rb") as fh:
+        assert (vol / "klipper.uf2").read_bytes() == fh.read()
+    assert not (vol / "katapult.uf2").exists()
+    assert erased == [], "an application image is not staged with an erased sector"
+    assert job.result["fw"] == "klipper"
+    lines, _, _ = job.log_since(0)
+    text = "\n".join(line.text for line in lines)
+    assert "Flashing klipper onto the BOOTSEL board" in text
+
+
+def test_a_type_with_katapult_reports_katapult_as_its_fw(adder, paths, monkeypatch):
+    _stage_katapult(paths)
+    patch_dfu(monkeypatch, stdout=ONE_BOARD)
+    monkeypatch.setattr("mcu_updater.flashers.flash.flash_initial_bootloader", lambda *a, **k: None)
+
+    res = adder.dispatch("fw.add_mcu.start", {"name": EBB})
+    assert adder.runner.wait(timeout=30)
+    assert adder.runner.get(res["job_id"]).result["fw"] == "katapult"
+
+
+def test_an_offset_klipper_uf2_is_refused_before_a_job(adder, paths, fake_root):
+    """Nothing below it would boot it. Refused synchronously, like no_artifact,
+    so the panel can say why before anything is written."""
+    write_settings(paths, dry_run="false")
+    _uf2, vol = _bare_pico(adder, paths, fake_root, address=0x10004000)
+
+    with pytest.raises(RpcError) as exc:
+        adder.dispatch("fw.add_mcu.start", {"name": BARE_PICO})
+
+    assert exc.value.data["code"] == "offset_mismatch"
+    assert "0x10004000" in str(exc.value)
+    assert "No bootloader" in str(exc.value)
+    assert adder.runner.current() is None
+    assert sorted(p.name for p in vol.iterdir()) == ["INFO_UF2.TXT"]
+
+
+def test_a_corrupt_klipper_uf2_is_refused_before_a_job(adder, paths, fake_root):
+    uf2, _vol = _bare_pico(adder, paths, fake_root, address=0x10000000)
+    with open(uf2, "wb") as fh:
+        fh.write(b"\0" * 8)
+
+    with pytest.raises(RpcError) as exc:
+        adder.dispatch("fw.add_mcu.start", {"name": BARE_PICO})
+    assert exc.value.data["code"] == "offset_mismatch"
+    assert "not a valid UF2 image" in str(exc.value)
+    assert exc.value.data["data"]["start"] is None
+    assert adder.runner.current() is None
+
+
+def _bare_ebb(adder, paths, monkeypatch, *, app_address, flashers="flashtool, dfu_util"):
+    """A no-Katapult STM32 type, its klipper .bin and sidecar staged, one board
+    in DFU. The dfu-util write itself is recorded, never run."""
+    _no_katapult_type(adder, BARE_EBB, EBB_CHIPSET)
+    _klipper_flashers(paths, flashers)
+    fw_bin = _stage_klipper_bin(paths, BARE_EBB, app_address)
+    patch_dfu(monkeypatch, stdout=ONE_BOARD)
+    written: list[str] = []
+    monkeypatch.setattr(
+        "mcu_updater.flashers.flash.flash_dfu_stm32",
+        lambda paths, settings, fw_bin, **kw: written.append(fw_bin),
+    )
+    return fw_bin, written
+
+
+def test_a_type_with_no_katapult_writes_its_klipper_bin_over_dfu(adder, paths, monkeypatch):
+    fw_bin, written = _bare_ebb(adder, paths, monkeypatch, app_address=0x08000000)
+
+    res = adder.dispatch("fw.add_mcu.start", {"name": BARE_EBB})
+    assert adder.runner.wait(timeout=30)
+    job = adder.runner.get(res["job_id"])
+
+    assert job.state == "succeeded", job.error
+    assert written == [fw_bin]
+    assert job.result["fw"] == "klipper"
+
+
+@pytest.mark.parametrize("app_address", [0x08002000, None], ids=["offset", "unknown"])
+def test_a_klipper_bin_not_at_flash_base_is_refused_before_a_job(
+    adder, paths, monkeypatch, app_address
+):
+    """An address the sidecar cannot vouch for is refused too: it cannot be
+    proven bootable, and DFU writes at 0x08000000 regardless."""
+    _fw_bin, written = _bare_ebb(adder, paths, monkeypatch, app_address=app_address)
+
+    with pytest.raises(RpcError) as exc:
+        adder.dispatch("fw.add_mcu.start", {"name": BARE_EBB})
+
+    assert exc.value.data["code"] == "offset_mismatch"
+    assert "No bootloader" in str(exc.value)
+    assert adder.runner.current() is None
+    assert written == []
+
+
+def test_no_dfu_util_on_klipper_names_the_line_to_add(adder, paths, monkeypatch):
+    """Not "flash Katapult by hand": this type has no Katapult. The fix is the
+    install family's own list."""
+    _fw_bin, written = _bare_ebb(
+        adder, paths, monkeypatch, app_address=0x08000000, flashers="flashtool"
+    )
+
+    res = adder.dispatch("fw.add_mcu.start", {"name": BARE_EBB})
+    assert adder.runner.wait(timeout=30)
+    job = adder.runner.get(res["job_id"])
+
+    assert job.state == "failed"
+    assert job.error["code"] == "unsupported_chipset"
+    assert "[firmware klipper]" in job.error["message"]
+    assert "flashers: flashtool, dfu_util" in job.error["message"]
+    assert "katapult" not in job.error["message"].lower()
+    assert written == []
+
+
+def test_a_type_with_no_katapult_and_nothing_built_names_klipper(adder, paths, monkeypatch):
+    _no_katapult_type(adder, BARE_EBB, EBB_CHIPSET)
+    patch_dfu(monkeypatch, stdout=ONE_BOARD)
+
+    with pytest.raises(RpcError) as exc:
+        adder.dispatch("fw.add_mcu.start", {"name": BARE_EBB})
+
+    assert exc.value.data["code"] == "no_artifact"
+    assert exc.value.data["data"]["fw"] == "klipper"
+    assert exc.value.data["data"]["path"] == paths.bin_file(BARE_EBB, "klipper")
+    assert "no built klipper .bin" in str(exc.value)
+    assert "bootloader has to exist" not in str(exc.value)
+    assert adder.runner.current() is None

@@ -100,8 +100,8 @@ of it. What is still open:
   `flashtool_path` in `[updater]` if that is set
 - An ARM toolchain and `make`, i.e. whatever already builds Klipper for you
 - `python3-serial`- Katapult's `flashtool.py` imports it. `install.sh` offers to apt-install it. It is also the only system package the Roadrunner direct-USB provision/clear helper needs - no separate dependency to install for that feature.
-- `dfu-util`, only for installing Katapult onto a brand-new STM32 board
-- `systemd-mount`, only for installing Katapult onto a brand-new RP2040 board - it mounts the BOOTSEL mass-storage volume so `add-mcu` can copy the `.uf2` onto it without root; `install.sh` offers to add the udev rule that wires it up
+- `dfu-util`, only for the first install onto a brand-new STM32 board
+- `systemd-mount`, only for the first install onto a brand-new RP2040 board - it mounts the BOOTSEL mass-storage volume so `add-mcu` can copy the `.uf2` onto it without root; `install.sh` offers to add the udev rule that wires it up
 - Passwordless `sudo` for `systemctl {start,stop} klipper`(for cli)
 
 ## CLI Usage
@@ -125,7 +125,13 @@ of it. What is still open:
 | `build -t NAME -f FW [--no-reseed]` | Compile and stage the artifact, then clean source-tree outputs |
 | `flash -t NAME [-s SERIAL]` | Flash one board, or every board of a type |
 | `update-all` | Stop Klipper, rebuild and reflash everything, start Klipper |
-| `add-mcu -t NAME` | Guided first-time Katapult install on a new board |
+| `add-mcu -t NAME` | Guided first-time install on a new board: Katapult, or the type's own Klipper when it has none |
+
+`add-mcu` builds and writes the type's first image. A type with
+`katapult_installed: false` gets its Klipper build written directly, so build it
+with no bootloader offset (`Bootloader offset: No bootloader`) - one built for an
+offset is refused with nothing written - and list `bootsel` (RP2040) or
+`dfu_util` (STM32) on `[firmware klipper]`'s `flashers:`.
 
 `FW` is `klipper`, `katapult`, or the name of any declared [firmware
 family](#firmware-families). `apply-profile` defaults `-f` to whichever family

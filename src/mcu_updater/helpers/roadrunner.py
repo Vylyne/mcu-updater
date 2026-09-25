@@ -95,7 +95,15 @@ class RoadrunnerHelper:
         return BootselHandoff(topology=topology)
 
     def wait_ready(
-        self, bench: Bench, *, serial: str, chipset: str, ctx: Any
+        self,
+        bench: Bench,
+        *,
+        serial: str,
+        chipset: str,
+        ctx: Any,
+        type_name: str = "",
+        fw: str = "",
+        topology: str = "",
     ) -> None:
         roadrunner.wait_for_provisioned(bench.paths, serial)
 

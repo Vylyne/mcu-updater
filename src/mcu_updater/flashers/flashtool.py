@@ -11,6 +11,7 @@ import contextlib
 from collections.abc import Iterator
 from typing import TYPE_CHECKING, Any
 
+from ..artifacts import KIND_BIN, Artifact
 from ..devices import STATE_KATAPULT, STATE_KLIPPER
 from ..paths import REENUMERATE_TIMEOUT
 from .spec import (
@@ -20,7 +21,9 @@ from .spec import (
     Device,
     FlashRecord,
     FlashTarget,
+    artifact_path,
     chipset_matches,
+    staged_record,
 )
 
 if TYPE_CHECKING:
@@ -45,6 +48,7 @@ class Flashtool:
     #: reboot-into-bootloader request is sent over the serial port Klipper is
     #: holding open, and it goes nowhere while Klipper has it.
     needs_services_stopped = True
+    accepts: tuple[str, ...] = (KIND_BIN,)
 
     def supports(self, device: Device, helper: Helper | None) -> bool:
         """A serial or CAN board whose chipset Katapult runs on.
@@ -63,10 +67,23 @@ class Flashtool:
         paths: Paths,
         device: Device,
         helper: Helper | None,
+        artifact: Artifact,
         *,
         stop_services: tuple[str, ...],
     ) -> FlashTarget:
-        return target_for(dict(device.detail), stop_services=stop_services)
+        # The board dict every write below reads, built from the device so a
+        # caller whose detail carries none of it (a CMake family listing
+        # flashtool) is still a board. A caller's own dict wins key by key:
+        # its shape is on the wire, and `force` rides only there.
+        identity = "uuid" if device.kind == KIND_CANBUS else "serial"
+        board = {
+            "type": device.type,
+            identity: device.id,
+            "chipset": device.chipset,
+            "fw": device.fw,
+            **device.detail,
+        }
+        return target_for(board, stop_services=stop_services, artifact=artifact)
 
     @contextlib.contextmanager
     def prepared(
@@ -91,6 +108,7 @@ class Flashtool:
                 force=bool(target.detail.get("force", False)),
                 bridge=target.detail.get("bridge"),
                 interface=target.detail.get("interface"),
+                fw_bin=artifact_path(target),
             )
             return {"uuid": target.id, "confidence": confidence}
 
@@ -105,6 +123,7 @@ class Flashtool:
             # Absent for any caller that never sets it - a batch across more
             # than one board never should. See cli.py's _board_targets.
             force=bool(target.detail.get("force", False)),
+            fw_bin=artifact_path(target),
         )
         # `serial` as well as the uniform `id`, because that is what a board's
         # id has always been called on this wire and in the CLI. Same reason
@@ -112,23 +131,8 @@ class Flashtool:
         return {"serial": target.id, "confidence": confidence}
 
     def record(self, bench: Bench, target: FlashTarget) -> FlashRecord | None:
-        from .. import firmware
-        from ..build import git_head, read_sidecar
-
-        fw = target.detail.get("fw") or "klipper"
-        side = read_sidecar(bench.paths, target.type, fw) or {}
-        return FlashRecord(
-            key=target.id,
-            mcu_type=target.type,
-            fw=fw,
-            bin_sha256=side.get("bin_sha256"),
-            # A sidecar from before the field existed, or a build this tool did
-            # not perform: the tree's head is the same answer one step less
-            # directly, and is what this path has always fallen back on.
-            fw_sha=side.get("fw_sha")
-            or git_head(firmware.resolve(bench.paths, fw).source_dir(bench.paths)),
-            version=side.get("version"),
-        )
+        kind = target.artifact.kind if target.artifact is not None else KIND_BIN
+        return staged_record(bench, target, fw=target.detail.get("fw") or "klipper", kind=kind)
 
     def settled(self, bench: Bench, target: FlashTarget, ctx: Any) -> None:
         """Wait for the board to come back as a Klipper device.
@@ -164,7 +168,10 @@ class Flashtool:
 
 
 def target_for(
-    board: dict[str, Any], *, stop_services: tuple[str, ...] = ()
+    board: dict[str, Any],
+    *,
+    stop_services: tuple[str, ...] = (),
+    artifact: Artifact | None = None,
 ) -> FlashTarget:
     """One entry from the agent's board selection, as a target.
 
@@ -181,4 +188,5 @@ def target_for(
         id=board.get("uuid") or board["serial"],
         stop_services=stop_services,
         detail=board,
+        artifact=artifact,
     )

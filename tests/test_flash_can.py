@@ -16,6 +16,7 @@ import os
 import pytest
 
 from mcu_updater import flashers
+from mcu_updater.artifacts import KIND_BIN, Artifact
 from mcu_updater.discovery.canbus import ARPHRD_CAN
 from mcu_updater.errors import (
     DeviceNotFoundError,
@@ -377,12 +378,36 @@ def test_flashtool_writes_a_can_target_and_returns_its_uuid(paths, ready, fake_r
 
     bench = flashers.Bench(paths=ready_paths, settings=ready, controller=lambda name=None: None)
     target = flashers.flashtool.target_for(
-        {"type": "board", "uuid": UUID, "chipset": "stm32g431xx", "fw": "klipper"}
+        {"type": "board", "uuid": UUID, "chipset": "stm32g431xx", "fw": "klipper"},
+        artifact=Artifact(KIND_BIN, paths.bin_file("board", "klipper")),
     )
     result = flashers.Flashtool().write(
         bench, None, target, flashers.PlainContext(lambda *a: None)
     )
     assert result == {"uuid": UUID, "confidence": "canbus_uuid"}
+
+
+def test_flashtool_writes_the_artifact_it_was_handed_not_the_default_path(
+    paths, ready, fake_root, monkeypatch, tmp_path
+):
+    """M-1: nothing else pinned this. `write` must read the path off the
+    target's own artifact, not resolve `paths.bin_file(type, fw)` itself -
+    the whole point of routing through `artifact_path(target)`."""
+    ready_paths = _with_interfaces(paths, fake_root, ["can0"])
+    calls = _script_run_streamed(monkeypatch, {("can0", "write"): (0, [])})
+
+    other = tmp_path / "elsewhere.bin"
+    other.write_bytes(b"\0" * 16)
+    assert str(other) != paths.bin_file("board", "klipper")
+
+    bench = flashers.Bench(paths=ready_paths, settings=ready, controller=lambda name=None: None)
+    target = flashers.flashtool.target_for(
+        {"type": "board", "uuid": UUID, "chipset": "stm32g431xx", "fw": "klipper"},
+        artifact=Artifact(KIND_BIN, str(other)),
+    )
+    flashers.Flashtool().write(bench, None, target, flashers.PlainContext(lambda *a: None))
+
+    assert calls[0][calls[0].index("-f") + 1] == str(other)
 
 
 def test_flashtool_settles_a_can_target_as_a_harmless_no_op(paths, settings):

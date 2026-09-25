@@ -1754,7 +1754,7 @@ def test_an_older_commit_is_source_changed(api):
 def test_a_matching_commit_with_no_record_is_taken_at_face_value(api):
     """The flash log only ever *adds* confidence. Degrading every board that
     predates the log to "unknown" would be noise, not caution."""
-    state = api.flash_state("A", CURRENT, HEAD, state="klipper", artifact_sha="aa" * 32)
+    state = api.flash_state("A", CURRENT, HEAD, state="klipper", artifact_shas=frozenset({"aa" * 32}))
     assert state["needs_flash"] is False
     assert state["reason"] is None
 
@@ -1768,7 +1768,7 @@ def test_the_same_commit_with_a_different_binary_is_artifact_changed(api, paths)
     log = FlashLog(paths)
     log.record("A", mcu_type="t", fw="klipper", bin_sha256="old" + "0" * 61, fw_sha=HEAD)
 
-    state = api.flash_state("A", CURRENT, HEAD, state="klipper", artifact_sha="new" + "0" * 61, flashlog=log)
+    state = api.flash_state("A", CURRENT, HEAD, state="klipper", artifact_shas=frozenset({"new" + "0" * 61}), flashlog=log)
     assert state["needs_flash"] is True
     assert state["reason"] == "artifact_changed"
 
@@ -1779,7 +1779,7 @@ def test_the_same_binary_is_up_to_date(api, paths):
     log = FlashLog(paths)
     log.record("A", mcu_type="t", fw="klipper", bin_sha256="aa" * 32, fw_sha=HEAD)
 
-    state = api.flash_state("A", CURRENT, HEAD, state="klipper", artifact_sha="aa" * 32, flashlog=log)
+    state = api.flash_state("A", CURRENT, HEAD, state="klipper", artifact_shas=frozenset({"aa" * 32}), flashlog=log)
     assert state["needs_flash"] is False
     assert state["reason"] is None
 
@@ -1792,7 +1792,7 @@ def test_a_record_contradicted_by_the_board_is_ignored(api, paths):
     log = FlashLog(paths)
     log.record("A", mcu_type="t", fw="klipper", bin_sha256="old" + "0" * 61, fw_sha="ffffffff")
 
-    state = api.flash_state("A", CURRENT, HEAD, state="klipper", artifact_sha="new" + "0" * 61, flashlog=log)
+    state = api.flash_state("A", CURRENT, HEAD, state="klipper", artifact_shas=frozenset({"new" + "0" * 61}), flashlog=log)
     assert state["needs_flash"] is False, "a disbelieved record must not invent a mismatch"
 
 
@@ -1858,7 +1858,7 @@ def test_a_matching_stamp_backed_by_a_record_is_up_to_date(api, paths):
         CARTO_STAMP,
         HEAD,
         state="klipper",
-        artifact_sha="aa" * 32,
+        artifact_shas=frozenset({"aa" * 32}),
         flashlog=log,
         built_version="CARTOGRAPHER 6.2.0",
     )
@@ -1886,7 +1886,7 @@ def test_a_matching_stamp_with_a_stale_binary_is_artifact_changed(api, paths):
         CARTO_STAMP,
         HEAD,
         state="klipper",
-        artifact_sha="new" + "0" * 61,
+        artifact_shas=frozenset({"new" + "0" * 61}),
         flashlog=log,
         built_version="CARTOGRAPHER 6.2.0",
     )

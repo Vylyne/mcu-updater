@@ -42,10 +42,12 @@ writes it, and the flasher writes.
 from __future__ import annotations
 
 import dataclasses
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, MutableMapping
 from contextlib import AbstractContextManager
 from typing import TYPE_CHECKING, Any, Protocol
 
+from ..artifacts import Artifact
+from ..errors import FlashError
 from ..paths import Paths
 from ..service import ServiceController
 from ..settings import Settings
@@ -90,11 +92,12 @@ class Device:
     `FlashTarget`. `type`, `id`, `chipset` and `state` are the facts selection
     needs; `fw` is the family the device's `[type]` resolved to.
 
-    `detail` is the caller's selection payload, carried onto the target for
+    `detail` is the caller's addressing payload, carried onto the target for
     the flasher that ends up owning it: the board dict for flashtool,
-    `{"display", "screen"}` for esptool, `{"uf2_file"}` for bootsel,
-    `{"fw_bin"}` for dfu_util. Each caller builds the one payload its family's
-    flashers read, so no flasher has to be told which caller it is.
+    `{"display", "screen"}` for esptool. It never names a file. Which file a
+    flasher writes is selection's answer (`FlashTarget.artifact`), read from
+    what the family's builder staged, so no caller can hand a flasher a file
+    of a kind it cannot write.
     """
 
     type: str
@@ -119,6 +122,11 @@ class FlashTarget:
     That is deliberate: a chipset means nothing to esptool and a klippy section
     means nothing to flashtool, and inventing a union of the two would be a
     third description of a device to keep in step with the two that exist.
+    Mutable, deliberately: `write` and `settled` for the same target share one
+    `FlashTarget` instance, and `detail` is the one channel a flasher has to
+    carry something `write` only learns partway through (Bootsel's handoff
+    topology) to the `settled` call that follows it, without a batch-wide
+    cache keyed on anything.
     """
 
     #: Key into `flashers.FLASHERS`.
@@ -134,7 +142,7 @@ class FlashTarget:
     #: `needs_services_stopped` is `False`: the list is then never consulted,
     #: so there is nothing to resolve.
     stop_services: tuple[str, ...] = ()
-    detail: Mapping[str, Any] = dataclasses.field(default_factory=dict)
+    detail: MutableMapping[str, Any] = dataclasses.field(default_factory=dict)
     #: Overrides the flasher's `needs_services_stopped` for this one write when
     #: set. `Bootsel` is why: a board already in BOOTSEL holds no port Klipper
     #: could have open, while asking a running board to enter BOOTSEL goes over
@@ -142,6 +150,11 @@ class FlashTarget:
     #: built - the same way `stop_services` already is. Read it through
     #: `flashers.registry.needs_services_stopped`, never directly.
     needs_services_stopped: bool | None = None
+    #: The staged file this flasher writes, chosen by selection from what the
+    #: family's builder staged: the first of `Flasher.accepts` that exists.
+    #: `None` only for a target built by hand in a test. Read the path through
+    #: `artifact_path`, which names the problem instead of an AttributeError.
+    artifact: Artifact | None = None
 
     def to_json(self) -> dict[str, Any]:
         """The uniform slice. `detail` never goes on the wire - it holds live
@@ -208,6 +221,10 @@ class Flasher(Protocol):
     #: transition goes over a port Klipper may be holding and this flips to
     #: True.
     needs_services_stopped: bool
+    #: Artifact kinds (`artifacts.KIND_*`) this flasher can write, most
+    #: preferred first. Selection hands `target()` the first of these the
+    #: family's builder staged, and passes over a flasher with none of them.
+    accepts: tuple[str, ...]
 
     def supports(self, device: Device, helper: Helper | None) -> bool:
         """Can this flasher write `device`, given its family's helper?
@@ -223,11 +240,13 @@ class Flasher(Protocol):
         paths: Paths,
         device: Device,
         helper: Helper | None,
+        artifact: Artifact,
         *,
         stop_services: tuple[str, ...],
     ) -> FlashTarget:
-        """`device` as the target this flasher writes. Only called after
-        `supports` said yes."""
+        """`device` as the target this flasher writes, carrying `artifact`.
+        Only called after `supports` said yes and `artifact` is of a kind in
+        `accepts`."""
         ...
 
     def prepared(
@@ -271,10 +290,10 @@ class Flasher(Protocol):
         durable to file this under: a bare board with no tracked serial, a
         screen that would not say which one it is.
 
-        Reads the build record its own builder wrote. The two sidecar schemas
-        in this tree name the tree commit differently (`fw_sha` for kconfig,
-        `sha` for cmake), and the flasher that wrote the image is the one side
-        that knows which it is looking at.
+        Reads what the family's builder has staged *now*, through
+        `staged_record`, rather than anything captured at selection: the
+        bytes a write sent are the bytes at the staged path when it ran, and
+        the op lock keeps a build from landing between the write and this.
         """
         ...
 
@@ -293,4 +312,52 @@ def chipset_matches(flasher: Flasher, chipset: str) -> bool:
     return any(chipset.startswith(prefix) for prefix in flasher.chipsets)
 
 
-__all__ = ["KIND_BARE", "KIND_CANBUS", "KIND_SCREEN", "KIND_SERIAL", "Bench", "Device", "FlashRecord", "FlashTarget", "Flasher", "chipset_matches"]
+def artifact_path(target: FlashTarget) -> str:
+    """The file `target` writes, or a named refusal when it has none."""
+    if target.artifact is None:
+        raise FlashError(
+            f"no staged image was chosen for {target.type} {target.id} - it was "
+            f"not selected through its family.",
+            type=target.type,
+            id=target.id,
+        )
+    return target.artifact.path
+
+
+def staged_record(bench: Bench, target: FlashTarget, *, fw: str, kind: str) -> FlashRecord:
+    """The ledger entry for `target`, from what `fw`'s builder has staged.
+
+    `kind` is the kind that was written, so a board written from the `.uf2`
+    files the `.uf2`'s hash. A hash is only ever the one the build recorded
+    *and* the bytes still match (see `providers.staged`), so a file replaced
+    behind its sidecar files no hash rather than a wrong one.
+    """
+    from .. import firmware, providers
+
+    family = firmware.resolve(bench.paths, fw)
+    staged = providers.staged(bench.paths, target.type, family)
+    artifact = staged.first_of((kind,))
+    return FlashRecord(
+        key=target.id,
+        mcu_type=target.type,
+        fw=family.name,
+        bin_sha256=artifact.sha256 if artifact is not None else None,
+        fw_sha=staged.fw_sha,
+        version=staged.version,
+    )
+
+
+__all__ = [
+    "KIND_BARE",
+    "KIND_CANBUS",
+    "KIND_SCREEN",
+    "KIND_SERIAL",
+    "Bench",
+    "Device",
+    "FlashRecord",
+    "FlashTarget",
+    "Flasher",
+    "artifact_path",
+    "chipset_matches",
+    "staged_record",
+]

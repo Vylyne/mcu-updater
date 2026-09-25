@@ -64,6 +64,19 @@ def c(paths, fake_root, monkeypatch):
     return context
 
 
+def _stage_board_bin(paths) -> None:
+    """A staged `.bin` for `c`'s "board" type, so flasher selection has a kind
+    to hand flashtool - the CLI's own flash paths now ask the same question
+    `fw.flash` does. Not part of `c` itself: `status_cmd` reads this same tree
+    to say "not built", which this staging would make untrue for every other
+    test sharing the fixture."""
+    import os
+
+    os.makedirs(paths.artifact_dir("board"), exist_ok=True)
+    with open(paths.bin_file("board", "klipper"), "wb") as fh:
+        fh.write(b"built")
+
+
 @pytest.fixture
 def pio_type(c, fake_root):
     """A PlatformIO type with a source tree, declared the new way."""
@@ -219,7 +232,8 @@ def test_update_all_confirmation_no_longer_claims_only_mcus(c, monkeypatch, caps
 # --------------------------------------------------------------------------
 
 
-def test_flashing_a_type_hands_its_boards_to_the_batch(c, captured, monkeypatch):
+def test_flashing_a_type_hands_its_boards_to_the_batch(c, paths, captured, monkeypatch):
+    _stage_board_bin(paths)
     monkeypatch.setattr(cli, "_confirm", lambda prompt: True)
 
     with pytest.raises(SystemExit):
@@ -230,19 +244,22 @@ def test_flashing_a_type_hands_its_boards_to_the_batch(c, captured, monkeypatch)
     assert {t.flasher for t in captured[0]} == {"flashtool"}
 
 
-def test_a_whole_type_never_carries_force_even_if_one_board_would(c, captured, monkeypatch):
+def test_a_whole_type_never_carries_force_even_if_one_board_would(c, paths, captured, monkeypatch):
     """A blanket override across a fleet is exactly what the offset check
     exists to prevent - --force only ever reaches a single-device flash."""
+    _stage_board_bin(paths)
     monkeypatch.setattr(cli, "_confirm", lambda prompt: True)
 
     with pytest.raises(SystemExit):
         cli.flash_fw_cmd(argparse.Namespace(type="board", serial=None, yes=True))
 
     assert len(captured) == 1
+    assert captured[0]
     assert all(t.detail.get("force") is False for t in captured[0])
 
 
-def test_a_single_device_flash_can_be_forced(c, captured, monkeypatch):
+def test_a_single_device_flash_can_be_forced(c, paths, captured, monkeypatch):
+    _stage_board_bin(paths)
     monkeypatch.setattr(cli, "_confirm", lambda prompt: True)
 
     with pytest.raises(SystemExit):
@@ -254,7 +271,8 @@ def test_a_single_device_flash_can_be_forced(c, captured, monkeypatch):
     assert captured[0][0].detail["force"] is True
 
 
-def test_a_single_device_flash_defaults_to_not_forced(c, captured, monkeypatch):
+def test_a_single_device_flash_defaults_to_not_forced(c, paths, captured, monkeypatch):
+    _stage_board_bin(paths)
     monkeypatch.setattr(cli, "_confirm", lambda prompt: True)
 
     with pytest.raises(SystemExit):
@@ -599,6 +617,7 @@ def _cmake_flashable(
     helper: bool = True,
     staged: bool = True,
     serials=(RR_SERIAL,),
+    flashers: str = "bootsel",
 ):
     """A CMake type a flash can actually reach: a helper and a built UF2.
 
@@ -615,7 +634,7 @@ def _cmake_flashable(
     with open(c.paths.main_config, "a", encoding="utf-8", newline="\n") as fh:
         fh.write(
             f"\n[firmware roadrunner]\nsource: {tree}\nbuilder: cmake\n{helper_line}"
-            "flashers: bootsel\n"
+            f"flashers: {flashers}\n"
             f"\n[type roadrunner]\nchipset: rp2040\nfirmware: roadrunner\n"
             "cmake_target: roadrunner_v1_i2c_rgb\n"
             + (
@@ -685,10 +704,47 @@ def test_the_cmake_target_carries_the_staged_uf2_and_its_stop_services(
         )
 
     target = captured[0][0]
-    assert target.detail["uf2_file"] == c.paths.uf2_file("roadrunner", "roadrunner")
+    assert target.artifact is not None
+    assert target.artifact.path == c.paths.uf2_file("roadrunner", "roadrunner")
     assert target.detail["chipset"] == "rp2040"
     assert target.detail["helper"].name == "roadrunner"
     assert "klipper" in target.stop_services
+
+
+def test_a_forced_cmake_flash_through_flashtool_says_force_has_no_effect(
+    c, fake_root, captured, monkeypatch, capsys
+):
+    """A cmake `Device` is built with no `detail` at all (`_cmake_targets`),
+    so `flashtool.py`'s own `target.detail.get("force", False)` never sees
+    `--force` - whether `bootsel` or `flashtool` ends up chosen. Stage a
+    `.bin` and a sidecar that lists it, so `flashtool` (first in the list,
+    not narrowed by state) is the one selection actually picks, and pin both
+    the note and that `force` never reached the target it printed about."""
+    import json
+    import os
+
+    _cmake_flashable(c, fake_root, flashers="flashtool, bootsel")
+    bin_path = c.paths.bin_file("roadrunner", "roadrunner")
+    os.makedirs(os.path.dirname(bin_path), exist_ok=True)
+    with open(bin_path, "wb") as fh:
+        fh.write(b"BIN")
+    with open(c.paths.sidecar_file("roadrunner", "roadrunner"), "w", encoding="utf-8") as fh:
+        json.dump(
+            {"provider": "cmake", "artifacts": {"uf2": {"sha256": None}, "bin": {"sha256": None}}},
+            fh,
+        )
+    monkeypatch.setattr(cli, "_confirm", lambda prompt: True)
+
+    with pytest.raises(SystemExit):
+        cli.flash_fw_cmd(
+            argparse.Namespace(type="roadrunner", serial=RR_SERIAL, yes=True, force=True)
+        )
+
+    out = capsys.readouterr().out
+    assert "--force has no effect on a CMake flash" in out
+    target = captured[0][0]
+    assert target.flasher == "flashtool"
+    assert "force" not in target.detail
 
 
 def test_flashing_a_cmake_type_by_name_alone_writes_its_boards(
@@ -1190,11 +1246,12 @@ def test_flash_refuses_a_serial_tracked_elsewhere_with_a_message(
 
 
 def test_a_malformed_cmake_section_does_not_break_a_kconfig_flash(
-    c, fake_root, captured, monkeypatch
+    c, paths, fake_root, captured, monkeypatch
 ):
     """Flashing one type reads that type's config, not every provider's
     validating load - so a CMake section with no `cmake_target:` stays that
     section's problem, the blast radius `providers.selection` refuses too."""
+    _stage_board_bin(paths)
     monkeypatch.setattr(cli, "_confirm", lambda prompt: True)
     tree = fake_root / "broken" / "rp2040"
     tree.mkdir(parents=True, exist_ok=True)
@@ -1323,6 +1380,46 @@ def test_add_mcu_adopts_a_new_board_through_tracking(c, fake_root, monkeypatch):
 
     assert code == 0
     assert Registry.load(c.paths).declared_serials("board") == ["AAAA-if00", "CCCC-if00"]
+
+
+@pytest.mark.parametrize(
+    ("katapult_installed", "install"), [(True, "katapult"), (False, "klipper")]
+)
+def test_add_mcu_builds_and_writes_the_types_first_image(
+    c, fake_root, monkeypatch, capsys, katapult_installed, install
+):
+    """Katapult when the type has it; with none, the type's own application,
+    with no Katapult config handed to the write."""
+    reg = Registry.load(c.paths)
+    reg.add_type("bare", "rp2040", katapult_installed=katapult_installed)
+    save_registry(reg, c.paths)
+    built: list[str] = []
+    written: list[dict] = []
+    monkeypatch.setattr(
+        cli,
+        "_build_interactive",
+        lambda c, t, fw: built.append(fw)
+        or types.SimpleNamespace(bin_path=None, uf2_path=f"{fw}.uf2"),
+    )
+    monkeypatch.setattr(
+        cli,
+        "flash_initial_bootloader",
+        lambda paths, settings, chipset, fw_bin, **kw: written.append(kw),
+    )
+    monkeypatch.setattr(cli, "adoptable_devices", lambda paths, before, chipset: [])
+
+    code = _main(fake_root, monkeypatch, ["add-mcu", "-t", "bare"])
+
+    out = capsys.readouterr().out
+    assert code == 0
+    assert built == [install]
+    assert [(w["fw"], w["mcu_type"], w["uf2_bin"]) for w in written] == [
+        (install, "bare", f"{install}.uf2")
+    ]
+    expected_config = c.paths.config_file("bare", "katapult") if katapult_installed else None
+    assert written[0]["katapult_config"] == expected_config
+    assert f"enumerate as {install}" in out
+    assert f"No new, unassigned {install} device" in out
 
 
 def test_add_mcu_refuses_to_adopt_a_board_tracked_under_another_type(

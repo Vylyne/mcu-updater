@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from ..errors import ConfigCorruptError
 from .cartographer import CartographerHelper
+from .klipper import KlipperHelper
 from .knomi_serial import KnomiSerialHelper
 from .roadrunner import RoadrunnerHelper
 from .spec import Helper
@@ -15,7 +16,7 @@ from .spec import Helper
 #: Every firmware-specific helper. Add an implementation, one explicit entry
 #: here, and its name in `firmware.HELPERS`; configuration never controls which
 #: Python module gets imported.
-HELPERS: tuple[Helper, ...] = (CartographerHelper(), KnomiSerialHelper(), RoadrunnerHelper())
+HELPERS: tuple[Helper, ...] = (CartographerHelper(), KlipperHelper(), KnomiSerialHelper(), RoadrunnerHelper())
 
 _BY_NAME: dict[str, Helper] = {helper.name: helper for helper in HELPERS}
 

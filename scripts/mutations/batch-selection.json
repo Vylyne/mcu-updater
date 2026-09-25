@@ -1,5 +1,5 @@
 {
-  "_comment": "Every write selects through its family. A refusal must reach failures[] without aborting the batch, a device must be resolved against its own family, a batch of only refusals must not wait on a restart it never caused, the serial fw.flash job must keep its write's own error code, and first install must refuse what katapult's list cannot write.",
+  "_comment": "Every write selects through its family. A refusal must reach failures[] without aborting the batch, a device must be resolved against its own family, a batch of only refusals must not wait on a restart it never caused, the serial fw.flash job must keep its write's own error code, and first install must refuse what the install family's list cannot write.",
   "file": "src/mcu_updater/flashers/registry.py",
   "command": [
     "python",
@@ -60,9 +60,9 @@
       "replace": "        _bench(c), targets, flashers.PlainContext(stdout_reporter)"
     },
     {
-      "name": "first install refuses what katapult's list cannot write",
+      "name": "first install refuses what the install family's list cannot write",
       "file": "src/mcu_updater/flashers/flash.py",
-      "find": "    if flasher is None:\n        raise UnsupportedChipsetError(",
+      "find": "    if choice is None:\n        raise UnsupportedChipsetError(",
       "replace": "    if False:\n        raise UnsupportedChipsetError("
     }
   ]

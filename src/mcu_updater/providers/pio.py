@@ -36,6 +36,7 @@ import threading
 import time
 
 from .. import device_info, firmware, typelist
+from ..artifacts import KIND_PIO_ENV, Artifact, Staged, recorded_sha256, sidecar_field
 from ..build import Reporter, null_reporter, run_streamed, sha256_file
 from ..discovery.knomi_serial import source_dir as _source_dir
 from ..errors import BuildError, ConfigError, FlashError, ToolMissingError
@@ -319,14 +320,16 @@ def record_build(paths: Paths, display: PioType, state: SourceState) -> None:
     except OSError:
         return
 
+    bin_sha256 = sha256_file(path)
     record = {
         "sha": state.head,
         "version": state.version,
         "dirty": state.dirty,
         "at": time.time(),
-        "bin_sha256": sha256_file(path),
+        "bin_sha256": bin_sha256,
         "bin_size": stat.st_size,
         "bin_mtime": stat.st_mtime,
+        "artifacts": sidecar_field({KIND_PIO_ENV: bin_sha256}),
     }
     sidecar = paths.platformio_sidecar(display.env)
     os.makedirs(os.path.dirname(sidecar), exist_ok=True)
@@ -461,6 +464,32 @@ def firmware_bin(display: PioType) -> str:
     """Where PlatformIO leaves the image for this env."""
     return os.path.join(
         os.path.expanduser(display.source), ".pio", "build", display.env, "firmware.bin"
+    )
+
+
+def staged(paths: Paths, type_name: str, family: firmware.FirmwareFamily) -> Staged:
+    """This type's env, as the one artifact the PlatformIO flasher takes.
+
+    Offered for every configured env, built or not: `pio run -t upload` builds
+    before it uploads, so an unbuilt env is still writable, and refusing it
+    would refuse every screen nobody had built by hand. Provenance only when
+    the image on disk is the one we recorded.
+    """
+    display = load(paths).get(type_name)
+    if display is None:
+        return Staged(fw=family.name)
+    path = firmware_bin(display)
+    record = read_sidecar(paths, display) or {}
+    try:
+        ours = bool(record) and _is_our_image(record, path, os.stat(path))
+    except OSError:
+        ours = False
+    side = record if ours else {}
+    return Staged(
+        fw=family.name,
+        artifacts=(Artifact(KIND_PIO_ENV, path, recorded_sha256(side, KIND_PIO_ENV, primary=KIND_PIO_ENV)),),
+        fw_sha=side.get("sha"),
+        version=side.get("version"),
     )
 
 

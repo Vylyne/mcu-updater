@@ -44,6 +44,8 @@ from ..states import ArtifactStatus
 from . import pio as pio_mod
 
 if TYPE_CHECKING:
+    from ..artifacts import Staged
+    from ..firmware import FirmwareFamily
     from .cmake import CmakeType
 
 
@@ -237,5 +239,14 @@ class Provider(Protocol):
         The path rather than a bool, because the caller reports it: "removed
         ~/roadrunner/rp2040/build" is a sentence a user can check, and
         "cleaned" is not.
+        """
+        ...
+
+    def staged(self, paths: Paths, type_name: str, family: FirmwareFamily) -> Staged:
+        """What this builder left staged for `type_name`, by kind.
+
+        Read at selection and again when the ledger is filed, so it takes
+        `paths` rather than an `Install`: a single-device flash must not pay
+        for every provider's validating load to learn which file it writes.
         """
         ...

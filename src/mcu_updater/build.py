@@ -26,6 +26,15 @@ from collections.abc import Callable, Iterator
 from typing import Any
 
 from . import firmware
+from .artifacts import (
+    KIND_BIN,
+    KIND_UF2,
+    Artifact,
+    Staged,
+    recorded_kinds,
+    recorded_sha256,
+    sidecar_field,
+)
 from .config import McuType, Registry
 from .errors import (
     BuildError,
@@ -403,7 +412,10 @@ def sha256_file(path: str) -> str | None:
 
 @dataclasses.dataclass
 class BuildResult:
-    bin_path: str
+    #: The staged `.bin`, or None when `make` made only a `.uf2` - Klipper's
+    #: rp2040 Makefile makes one or the other, never both. At least one of the
+    #: two paths is set on every real build.
+    bin_path: str | None
     uf2_path: str | None
     duration: float
     fw_sha: str | None
@@ -413,7 +425,12 @@ class BuildResult:
     #: commit with different .config or makefile patches are indistinguishable
     #: from the board's side. Comparing this against what was last flashed is what
     #: makes "only flash the stale ones" true rather than approximately true.
+    #: None when no `.bin` was staged.
     bin_sha256: str | None = None
+    #: sha256 of the staged `.uf2`, when `make` produced one.
+    #: Recorded per kind under `artifacts` so a flasher writing the `.uf2`
+    #: files the hash of what it wrote, not the `.bin`'s.
+    uf2_sha256: str | None = None
     #: True if `make` rewrote our .config (klipper runs olddefconfig when
     #: src/Kconfig is newer than the config, e.g. right after a git pull).
     config_rewritten: bool = False
@@ -439,10 +456,20 @@ class BuildResult:
     extra_repo_shas: dict[str, str | None] = dataclasses.field(default_factory=dict)
 
     def to_sidecar(self) -> dict[str, Any]:
+        # Only the kinds this build staged: a kind listed here is one the
+        # build vouches for, and a `.bin` it did not make is not one of them.
+        hashes: dict[str, str | None] = {}
+        if self.bin_path is not None:
+            hashes[KIND_BIN] = self.bin_sha256
+        if self.uf2_path is not None:
+            hashes[KIND_UF2] = self.uf2_sha256
         return {
             "fw_sha": self.fw_sha,
             "config_sha256": self.config_sha256,
+            # Still written: every reader older than `artifacts` reads this,
+            # and it keeps meaning "the .bin's hash" - None when there is none.
             "bin_sha256": self.bin_sha256,
+            "artifacts": sidecar_field(hashes),
             "duration": round(self.duration, 2),
             "timestamp": time.time(),
             "config_rewritten": self.config_rewritten,
@@ -487,7 +514,12 @@ def artifact_status(
     silently skipped rather than flagged, same as an absent `fw_sha` - absence
     of evidence is not evidence.
     """
-    if not os.path.exists(paths.bin_file(mcu_type, fw)):
+    # Built means staged anything. An offset-less RP2040 Klipper build stages
+    # only a `.uf2`, and is no less built for it.
+    if not (
+        os.path.exists(paths.bin_file(mcu_type, fw))
+        or os.path.exists(paths.uf2_file(mcu_type, fw))
+    ):
         return ArtifactStatus(NEVER_BUILT)
 
     side = read_sidecar(paths, mcu_type, fw)
@@ -500,9 +532,17 @@ def artifact_status(
     # Before every comparison below, because they all ask what produced these
     # bytes and a rebuild behind us makes each of their answers meaningless.
     # Guarded on the recorded hash for the same reason the cmake ladder is:
-    # a sidecar too old to carry one cannot accuse anybody.
+    # a sidecar too old to carry one cannot accuse anybody - nor can one from a
+    # build that staged no `.bin`, which records None.
     recorded_bin = side.get("bin_sha256")
     if recorded_bin and sha256_file(paths.bin_file(mcu_type, fw)) != recorded_bin:
+        return ArtifactStatus(FOREIGN_BUILD)
+
+    # The same rule for the .uf2 beside it. Only a sidecar that recorded a uf2
+    # hash can accuse one, and only a .uf2 that is there can be accused.
+    uf2_path = paths.uf2_file(mcu_type, fw)
+    recorded_uf2 = recorded_sha256(side, KIND_UF2, primary=KIND_BIN)
+    if recorded_uf2 and os.path.exists(uf2_path) and sha256_file(uf2_path) != recorded_uf2:
         return ArtifactStatus(FOREIGN_BUILD)
 
     cfg_hash = config_sha if config_sha is not None else sha256_file(
@@ -523,6 +563,48 @@ def artifact_status(
             return ArtifactStatus(SOURCE_CHANGED)
 
     return ArtifactStatus()
+
+
+def _verified(path: str, recorded: str | None) -> str | None:
+    """`recorded`, while the file on disk still hashes to it."""
+    if recorded and sha256_file(path) == recorded:
+        return recorded
+    return None
+
+
+def staged(paths: Paths, mcu_type: str, family: firmware.FirmwareFamily) -> Staged:
+    """What a kconfig build left staged for `mcu_type`, by kind.
+
+    `bin` whenever the file exists: a sidecar older than `artifacts` still
+    vouches for it through `bin_sha256`. `uf2` only when the sidecar lists it:
+    a `.uf2` staged before sidecars recorded kinds may be older than the `.bin`
+    beside it, so it waits for one rebuild rather than being trusted.
+
+    A hash is reported only while the bytes still match it, so the ledger never
+    files a recorded hash against a file somebody replaced.
+    """
+    fw = family.name
+    side = read_sidecar(paths, mcu_type, fw) or {}
+    found: list[Artifact] = []
+    bin_path = paths.bin_file(mcu_type, fw)
+    if os.path.exists(bin_path):
+        found.append(
+            Artifact(KIND_BIN, bin_path, _verified(bin_path, recorded_sha256(side, KIND_BIN, primary=KIND_BIN)))
+        )
+    uf2_path = paths.uf2_file(mcu_type, fw)
+    if KIND_UF2 in recorded_kinds(side) and os.path.exists(uf2_path):
+        found.append(
+            Artifact(KIND_UF2, uf2_path, _verified(uf2_path, recorded_sha256(side, KIND_UF2, primary=KIND_BIN)))
+        )
+    return Staged(
+        fw=fw,
+        artifacts=tuple(found),
+        # A sidecar from before the field existed, or a build this tool did
+        # not perform: the tree's head is the same answer one step less
+        # directly, and is what the flashtool ledger has always fallen back on.
+        fw_sha=side.get("fw_sha") or git_head(family.source_dir(paths)),
+        version=side.get("version"),
+    )
 
 
 # --------------------------------------------------------------------------
@@ -585,6 +667,22 @@ def _read_app_address(config_file: str) -> int | None:
         return int(raw, 16)
     except ValueError:
         return None
+
+
+def _stage_or_remove(compiled: str, staged_path: str, made: bool) -> str | None:
+    """Copy `compiled` to `staged_path` when this build made it, else remove
+    whatever an earlier build staged there.
+
+    A leftover is not this build's, and the sidecar written after this no
+    longer lists it. Left in place it is an image nothing vouches for, one
+    `flashers:` edit away from being written.
+    """
+    if made:
+        shutil.copyfile(compiled, staged_path)
+        return staged_path
+    with contextlib.suppress(FileNotFoundError):
+        os.remove(staged_path)
+    return None
 
 
 @contextlib.contextmanager
@@ -753,34 +851,38 @@ def build(
         # Artifacts live outside the config tree, so this is a different directory
         # from the one holding the saved .config.
         os.makedirs(paths.artifact_dir(mcu_type), exist_ok=True)
-        bin_out = paths.bin_file(mcu_type, fw)
-        compiled = family.built_artifact(paths, "bin")
+        bin_out: str | None = paths.bin_file(mcu_type, fw)
+        uf2_out: str | None = None
 
         if dry_run:
             # A real (if inert) file, so artifact/staleness logic downstream is
             # exercised for real instead of being special-cased.
-            with open(bin_out, "wb") as fh:
+            with open(paths.bin_file(mcu_type, fw), "wb") as fh:
                 fh.write(b"\0" * 1024)
             reporter("info", f"[dry-run] wrote stub firmware to {bin_out}")
         else:
-            if not os.path.exists(compiled):
+            # Klipper's rp2040 Makefile makes one image or the other, never
+            # both: `klipper.uf2` with no bootloader offset, `klipper.bin` with
+            # Katapult's. Either is a build. RP2040 BOOTSEL mass storage only
+            # accepts the .uf2 - a .bin copied to the mount is accepted and
+            # silently ignored - so each is staged as its own kind.
+            compiled = family.built_artifact(paths, "bin")
+            compiled_uf2 = family.built_artifact(paths, "uf2")
+            made_bin = os.path.exists(compiled)
+            made_uf2 = os.path.exists(compiled_uf2)
+            if not (made_bin or made_uf2):
                 raise BuildError(
-                    f"make succeeded but {compiled} was not produced.",
+                    f"make succeeded but neither {compiled} nor {compiled_uf2} "
+                    f"was produced.",
                     type=mcu_type,
                     fw=fw,
-                    expected=compiled,
+                    expected=[compiled, compiled_uf2],
                 )
-            shutil.copyfile(compiled, bin_out)
-            reporter("info", f"Firmware built and copied to {bin_out}")
-
-        # RP2040 BOOTSEL mass storage only accepts .uf2 - a .bin copied to the mount
-        # is accepted and silently ignored - so stage it whenever the build made one.
-        uf2_out: str | None = None
-        compiled_uf2 = family.built_artifact(paths, "uf2")
-        if not dry_run and os.path.exists(compiled_uf2):
-            uf2_out = paths.uf2_file(mcu_type, fw)
-            shutil.copyfile(compiled_uf2, uf2_out)
-            reporter("info", f"Also staged {uf2_out}")
+            bin_out = _stage_or_remove(compiled, paths.bin_file(mcu_type, fw), made_bin)
+            uf2_out = _stage_or_remove(compiled_uf2, paths.uf2_file(mcu_type, fw), made_uf2)
+            for staged_path in (bin_out, uf2_out):
+                if staged_path is not None:
+                    reporter("info", f"Firmware built and copied to {staged_path}")
 
         result = BuildResult(
             bin_path=bin_out,
@@ -788,7 +890,8 @@ def build(
             duration=duration,
             fw_sha=git_head(fw_dir),
             config_sha256=config_after,
-            bin_sha256=sha256_file(bin_out),
+            bin_sha256=sha256_file(bin_out) if bin_out else None,
+            uf2_sha256=sha256_file(uf2_out) if uf2_out else None,
             config_rewritten=rewritten,
             reseeded=reseeded,
             app_address=_read_app_address(config_file),

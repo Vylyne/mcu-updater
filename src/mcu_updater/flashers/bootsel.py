@@ -27,6 +27,7 @@ from collections.abc import Iterator
 from typing import TYPE_CHECKING, Any
 
 from .. import helpers
+from ..artifacts import KIND_UF2, Artifact
 from ..devices import STATE_BOOTSEL, bootsel_devices, bootsel_id_for, bootsel_scan
 from ..discovery.bootsel import mount_for_topology
 from ..errors import (
@@ -36,7 +37,17 @@ from ..errors import (
     OperationCancelled,
     UpdaterError,
 )
-from .spec import KIND_SERIAL, Bench, Device, FlashRecord, FlashTarget, chipset_matches
+from ..uf2 import Uf2Error, image_extent
+from .spec import (
+    KIND_SERIAL,
+    Bench,
+    Device,
+    FlashRecord,
+    FlashTarget,
+    artifact_path,
+    chipset_matches,
+    staged_record,
+)
 
 if TYPE_CHECKING:
     from ..helpers.spec import BootselRequester, Helper
@@ -47,6 +58,32 @@ def ensure_uf2(uf2: str) -> None:
     """Refuse a missing image before a BOOTSEL transition is requested."""
     if not os.path.exists(uf2):
         raise FlashError(f"firmware image not found at {uf2}.", path=uf2)
+
+
+#: Where the RP2040 maps flash. An image that starts above it expects
+#: something below it - a bootloader - to jump into it.
+FLASH_BASE = 0x10000000
+
+
+def _image_start(uf2: str) -> int | None:
+    """The image's start address, read once for both the warn and refuse paths.
+
+    `None` for a file the copy step will fail on anyway (missing, unreadable) -
+    `ensure_uf2` already ran, so only a race remains, and the copy reports that
+    on its own. A `Uf2Error` is different: the bytes were read and are not a
+    valid image, so this is the earliest point that can say so - ahead of any
+    request or write, on both the helper and no-helper paths.
+    """
+    try:
+        with open(uf2, "rb") as fh:
+            data = fh.read()
+    except OSError:
+        return None
+    try:
+        start, _length = image_extent(data)
+    except Uf2Error as exc:
+        raise FlashError(f"{uf2} is not a valid UF2 image: {exc}", path=uf2) from exc
+    return start
 
 
 _COPY_CHUNK = 1 << 20
@@ -267,6 +304,7 @@ class Bootsel:
     #: that asks a helper for BOOTSEL overrides this with True (see
     #: `target_for`), because that request goes over a port Klipper may hold.
     needs_services_stopped = False
+    accepts: tuple[str, ...] = (KIND_UF2,)
 
     def supports(self, device: Device, helper: Helper | None) -> bool:
         """A board in BOOTSEL, or a running board its helper can put there.
@@ -285,18 +323,19 @@ class Bootsel:
         paths: Paths,
         device: Device,
         helper: Helper | None,
+        artifact: Artifact,
         *,
         stop_services: tuple[str, ...],
     ) -> FlashTarget:
-        uf2 = device.detail["uf2_file"]
         requester = helpers.bootsel_requester(helper)
         if device.state in self.states or requester is None:
-            return target_for(uf2, chipset=device.chipset, paths=paths)
+            return target_for(artifact, chipset=device.chipset, paths=paths)
         return target_for(
-            uf2,
+            artifact,
             chipset=device.chipset,
             type_name=device.type,
             serial=device.id,
+            fw=device.fw,
             helper=requester,
             stop_services=stop_services,
         )
@@ -311,9 +350,28 @@ class Bootsel:
     def write(
         self, bench: Bench, session: Any, target: FlashTarget, ctx: Any
     ) -> dict[str, Any]:
-        uf2 = target.detail["uf2_file"]
+        uf2 = artifact_path(target)
         ensure_uf2(uf2)
         requester: BootselRequester | None = target.detail.get("helper")
+        start = _image_start(uf2)
+        if start is not None and start > FLASH_BASE:
+            if requester is not None:
+                raise FlashError(
+                    f"{uf2} starts at {start:#x}, after a bootloader offset, and a board "
+                    f"asked for BOOTSEL by its firmware has no bootloader below it to boot "
+                    f"it. Nothing was written. Rebuild with no bootloader offset "
+                    f"(Bootloader offset: No bootloader), or list flashtool before bootsel "
+                    f"to write the .bin through Katapult.",
+                    serial=target.id,
+                    type=target.type,
+                )
+            ctx.reporter(
+                "warn",
+                f"{os.path.basename(uf2)} starts at {start:#x}, above the start of flash, "
+                f"so it expects a bootloader below it. A board with Katapult keeps it and "
+                f"boots this image; a board without one will not boot it - build with no "
+                f"bootloader offset for that board.",
+            )
 
         if bench.settings.dry_run:
             if requester is None:
@@ -336,48 +394,23 @@ class Bootsel:
                 chipset=target.detail["chipset"],
                 ctx=ctx,
             )
+            target.detail["topology"] = handoff.topology
             mount = mount_for_topology(bench.paths, handoff.topology)
         copy_uf2(uf2, mount, ctx)
         return {"mount": mount}
 
     def record(self, bench: Bench, target: FlashTarget) -> FlashRecord | None:
-        """The CMake image this board now holds.
+        """The image this board now holds, from what its family staged.
 
-        `None` for anything that is not a configured CMake type: first install
-        writes a bootloader to a bare board whose `type` is a chipset string
-        and whose id may be empty, and there is no tracked device to file that
-        under.
+        `None` for a board that was already in BOOTSEL: first install writes a
+        bootloader to a bare board whose `type` is a chipset string and whose
+        id may be empty, and there is no tracked device to file that under.
+        Only a helper-requested target names a tracked board and its family.
         """
-        from ..providers import cmake as cmake_mod
-
-        target_type = cmake_mod.load(bench.paths).get(target.type)
-        if target_type is None:
+        fw = target.detail.get("fw")
+        if "helper" not in target.detail or not fw:
             return None
-        side = cmake_mod.read_sidecar(bench.paths, target_type) or {}
-        uf2 = target.detail["uf2_file"]
-        try:
-            ours = not side.get("dirty") and cmake_mod.sidecar_describes_image(side, uf2, os.stat(uf2))
-        except OSError:
-            # The staged image went away between the copy and this read. Filing
-            # the ledger is best effort by design - `write_all` catches an
-            # `UpdaterError` here and warns "flashed, but its ledger record
-            # could not be filed", precisely so a board that *was* written is
-            # never reported unwritten and never stops the boards behind it.
-            # A raw OSError would escape that handler and do both. Unprovable
-            # is the honest answer anyway: without the bytes there is nothing
-            # to check the sidecar against.
-            ours = False
-        if not ours:
-            side = {}
-        return FlashRecord(
-            key=target.id,
-            mcu_type=target.type,
-            fw=target_type.firmware,
-            bin_sha256=side.get("bin_sha256"),
-            # `sha`, not `fw_sha`: the CMake sidecar's own spelling.
-            fw_sha=side.get("sha"),
-            version=side.get("version"),
-        )
+        return staged_record(bench, target, fw=fw, kind=KIND_UF2)
 
     def settled(self, bench: Bench, target: FlashTarget, ctx: Any) -> None:
         """Wait for a helper-requested board to confirm its identity.
@@ -396,6 +429,9 @@ class Bootsel:
                 serial=target.id,
                 chipset=target.detail["chipset"],
                 ctx=ctx,
+                type_name=target.type,
+                fw=target.detail.get("fw", ""),
+                topology=target.detail.get("topology", ""),
             )
         except OperationCancelled:
             raise
@@ -455,12 +491,13 @@ def _find_mount(paths: Any) -> str:
 
 
 def target_for(
-    uf2_file: str,
+    uf2_file: str | Artifact,
     *,
     chipset: str,
     paths: Paths | None = None,
     type_name: str = "",
     serial: str = "",
+    fw: str = "",
     helper: BootselRequester | None = None,
     stop_services: tuple[str, ...] = (),
 ) -> FlashTarget:
@@ -484,15 +521,22 @@ def target_for(
     `paths` is only used for that lookup (via `bootsel_devices`); callers that
     omit it, or that hit zero or more than one device, get `id=""` - the
     multi-volume case is still refused in `write`.
+
+    `uf2_file` is normally the artifact selection chose. A plain path is
+    taken as a `uf2` with no recorded hash, for callers holding a file rather
+    than a build. `fw` names the family whose staged image the ledger reads
+    back after the write.
     """
+    artifact = uf2_file if isinstance(uf2_file, Artifact) else Artifact(KIND_UF2, uf2_file)
     if helper is not None:
         return FlashTarget(
             flasher=Bootsel.name,
             type=type_name,
             id=serial,
             stop_services=stop_services,
-            detail={"uf2_file": uf2_file, "chipset": chipset, "helper": helper},
+            detail={"chipset": chipset, "helper": helper, "fw": fw},
             needs_services_stopped=True,
+            artifact=artifact,
         )
     device_id = ""
     if paths is not None:
@@ -503,5 +547,6 @@ def target_for(
         flasher=Bootsel.name,
         type=chipset,
         id=device_id,
-        detail={"uf2_file": uf2_file, "chipset": chipset},
+        detail={"chipset": chipset},
+        artifact=artifact,
     )

@@ -127,7 +127,7 @@ application error (see `data.code`), `-32603` internal.
 | `fw.canbus.scan` | — | `{interfaces, devices, failures, count, message}` — read-only, run only when called |
 | `fw.canbus.ignore` | `uuid` (required) | `{uuid, ignored: true}` — hide every sighting of a CAN UUID from the "new board?" flow; idempotent, flag not filter; `busy` / `config` as for `fw.settings.set` |
 | `fw.canbus.unignore` | `uuid` (required) | `{uuid, ignored: false}` — reverse `fw.canbus.ignore`; idempotent; `busy` / `config` as for `fw.settings.set` |
-| `fw.add_mcu.start` | `name`, `dfu_serial?` (STM32 only) | `{job_id, job, dfu_serial, bootsel_id}` — **off by default** |
+| `fw.add_mcu.start` | `name`, `dfu_serial?` (STM32 only) | `{job_id, job, dfu_serial, bootsel_id}` — writes the type's first image (Katapult, or with none its application); **off by default** |
 | `fw.roadrunner.provision` | `serial` (required) | `{serial, prior_serial, state: "provisioned"}` - explicit direct-USB provisioning of one confirmed, untracked Roadrunner — **off by default** |
 | `fw.roadrunner.clear` | `serial` (required) | `{serial, prior_serial, state: "unprovisioned"}` - explicit direct-USB identity clear of one confirmed, untracked Roadrunner — **off by default** |
 | `fw.artifacts` | `name` (required) | `{<fw>: Artifact, ...}`, one key per family the type declares |
@@ -423,6 +423,11 @@ see "Which screen is on which port is not tracked" below.
              "parent": null, "reason": null, "tone": "ok",
              "label": "Matches profile"}}
 ```
+
+`has_bin` and `has_uf2` each report their own file. A Kconfig build stages
+whichever of the two `make` produced - an RP2040 Klipper build makes one or
+the other, never both - so either one being true means the type is built, and
+`bin_mtime`/`bin_size` are `null` for a build that staged only a `.uf2`.
 
 `reason` ∈ `null` | `"never_built"` | `"config_changed"` | `"source_changed"` |
 `"built_dirty"` | `"foreign_build"` | `"no_provenance"`. Retired at
@@ -746,7 +751,7 @@ real explanation instead of a job that dies a second later. In order:
 | capability gate | `flashing_disabled` |
 | `serial` present | `-32602` |
 | serial resolves to a type | `unknown_serial` / `ambiguous_serial` / `serial_tracked_elsewhere` |
-| firmware has been built | `no_artifact` |
+| firmware has been built - anything staged, `.bin` or `.uf2` | `no_artifact` |
 | board is on the bus | `device_not_found` |
 | the family's `flashers:` can write it | `no_flasher` |
 | printer idle | `print_in_progress` (bypass with `force: true`) |
@@ -762,7 +767,11 @@ different owner fails as `unknown_serial`/`ambiguous_serial`/
 `serial_tracked_elsewhere` before a job is created. The named type must have a
 staged UF2, and a family whose flashers cannot write the board (for Roadrunner,
 `flashers: bootsel` with `helper: roadrunner`) fails with `no_flasher`, whose
-`data` carries `family`, `flashers`, `type`, `id`, `chipset` and `state`. The
+`data` carries `family`, `flashers`, `type`, `id`, `chipset`, `state`
+and `missing` - the kinds (`bin`, `uf2`, `pio_env`) a listed flasher could
+have written the board from, had the family's build staged one. Empty when
+no listed flasher could write the board at all; non-empty means "build it
+first", not "change the list". The
 write reports `"flasher": "bootsel"`.
 
 That helper confirms the exact Roadrunner protocol identity, captures the full
@@ -799,7 +808,7 @@ with two differences a CAN uuid's lack of a chipset-segment identity forces:
 | capability gate | `flashing_disabled` |
 | `uuid` present | `-32602` |
 | uuid resolves to a type | `unknown_uuid` / `ambiguous_uuid` / `uuid_tracked_elsewhere` |
-| firmware has been built | `no_artifact` |
+| firmware has been built - anything staged, `.bin` or `.uf2` | `no_artifact` |
 | **a CAN interface exists on this host at all** | `device_not_found` |
 | printer idle | `print_in_progress` (bypass with `force: true`) |
 
@@ -1021,9 +1030,9 @@ than a single instant by-id check:
 
 **A cmake type's declared `serials:` are included too**, judged by the same
 verdict the panel row shows and selected by the same two tests as a kconfig
-board: something staged to write, and the board on the by-id bus. Its board
-dict carries `uf2_file` beside the usual keys, because a BOOTSEL write copies an
-image rather than driving a bootloader protocol. A board already *in* BOOTSEL is
+board: something staged to write, and the board on the by-id bus. Its board dict has the same keys as a kconfig board's; which staged file a
+flasher writes is chosen by selection, from the kinds the family's build
+staged, never carried in the dict. A board already *in* BOOTSEL is
 not selected - it has no by-id entry while its volume is mounted, so its verdict
 is `offline` - and `fw.flash` with its serial still writes it.
 
@@ -1073,12 +1082,15 @@ the confirmation is not, because a human reading it wants the real names.
 
 Selection goes through each device's `[firmware]` `flashers:` list. A device
 that nothing in the list can write is not dropped, and it does not stop the
-batch. It appears in the job's `failures[]` with `"flasher": null` and an
-`error` naming the family and its list:
+batch. It appears in the job's `failures[]` with `"flasher": null`, an
+`error` naming the family and its list, and `missing` - the kinds a build
+would have to stage for a listed flasher to take it:
 
 ```json
-{"type": "bttebb36", "id": "2900...", "flasher": null,
+{"type": "bttebb36", "id": "2900...", "flasher": null, "missing": [],
  "error": "nothing in [firmware klipper] (flashers: dfu_util) can write bttebb36 2900... while it is klipper."}
+{"type": "pico", "id": "E661...", "flasher": null, "missing": ["uf2"],
+ "error": "bootsel could write pico E661... while it is klipper, but [firmware klipper] staged no uf2 - build it first."}
 ```
 
 A refused board is still listed in `boards`. A refused screen is not listed in
@@ -1151,9 +1163,24 @@ Either way the whole flow is four calls of which only two are new:
 | Step | Call | New? |
 | --- | --- | --- |
 | 1. What is in DFU / BOOTSEL? | `fw.dfu.scan` / `fw.bootsel.scan` | **new**, read-only |
-| 2. Put Katapult on it | `fw.add_mcu.start {name}` | **new** |
+| 2. Put the type's first image on it | `fw.add_mcu.start {name}` | **new** |
 | 3. Adopt what appeared | `fw.serial.add {name, serial}` | existing |
-| 4. Put Klipper on it | `fw.flash {serial}` | existing |
+| 4. Put Klipper on it, if step 2 wrote Katapult | `fw.flash {serial}` | existing |
+
+**What step 2 writes is the type's first image**, one rule for the agent and the
+CLI's `add-mcu` alike: the type's bootloader family when it has one (Katapult),
+and otherwise its application family (Klipper, or whichever family it runs). A
+type with `katapult_installed: false` therefore gets its own Klipper build
+written directly, and step 4 is not needed. That build must have **no
+bootloader offset** (`Bootloader offset: No bootloader`), since nothing sits
+below it to boot it, and the application family's `flashers:` list must name
+the bare-board writer — `bootsel` for an RP2040, `dfu_util` for an STM32:
+
+```ini
+[firmware klipper]
+source: ~/klipper
+flashers: flashtool, bootsel, dfu_util
+```
 
 There is no `fw.add_mcu.confirm`. Adopting the board is exactly what
 `fw.serial.add` already does, validation included, so a confirm method would be a
@@ -1271,17 +1298,36 @@ board on `/dev/serial/by-id`.
 
 #### `fw.add_mcu.start`
 
-Writes Katapult to a board in DFU or BOOTSEL (by the type's `chipset`), waits
-for it to re-enumerate, and reports what appeared. `dfu_serial` is populated
-only on the DFU path; `bootsel_id` (the boot-ROM flash-chip id, when exactly one
-board was attached) only on the BOOTSEL path — the other is always `null`:
+Writes the type's first image — Katapult, or with no bootloader its own
+application (see above) — to a board in DFU or BOOTSEL (by the type's
+`chipset`), waits for it to re-enumerate, and reports what appeared. `fw` names
+the family that was written. `dfu_serial` is populated only on the DFU path;
+`bootsel_id` (the boot-ROM flash-chip id, when exactly one board was attached)
+only on the BOOTSEL path — the other is always `null`:
 
 ```json
-{"type": "bttebb36", "chipset": "stm32g0b1xx", "dfu_serial": "3941335F3434",
- "bootsel_id": null,
+{"type": "bttebb36", "chipset": "stm32g0b1xx", "fw": "katapult",
+ "dfu_serial": "3941335F3434", "bootsel_id": null,
  "candidates":      [{"serial": "2D0043...", "path": "...", "state": "katapult"}],
  "already_tracked": []}
 ```
+
+`fw` is additive and needs no `API_VERSION` bump. The writer is the first one on
+`[firmware <fw>]`'s `flashers:` list that writes a bare board of the chipset —
+`bootsel` or `dfu_util`. A list with neither fails the job with
+`unsupported_chipset`, naming the section and the `flashers:` line to add.
+
+**An application image is refused if a bare board cannot boot it.** With no
+bootloader below it, the image has to start at the start of flash. An RP2040
+`.uf2` must start at `0x10000000`, read from its own blocks; a `.uf2` that is
+not a valid image is refused too. An STM32 `.bin` carries no address of its own,
+so its build record's `app_address` (`CONFIG_FLASH_APPLICATION_ADDRESS`) must be
+`0x08000000`, where the DFU write lands; a build record with no `app_address`
+is refused, since it cannot be proven. Either refusal is `offset_mismatch`,
+raised before a job exists and before anything is written, with
+`data.{type, fw, path, start, expected}`. The fix is to rebuild the type with no
+bootloader offset. A Katapult image is not checked this way — it is the
+bootloader, and it is linked at the start of flash.
 
 `candidates` are matched by chipset and by not having been on the bus before
 the write, not by which firmware they come back running. A board that already
@@ -1292,7 +1338,10 @@ boot — this is the normal case for a board getting a bootloader *re*-installed
 
 Both routes now erase the previous application before Katapult boots, so that
 case should no longer arise from this method; matching stays
-firmware-agnostic regardless. DFU erases with `mass-erase`. BOOTSEL has no
+firmware-agnostic regardless. A board given its Klipper build directly comes
+back the same way, as a new serial of its chipset. DFU erases with `mass-erase`.
+An application `.uf2` is copied as built: it starts at the start of flash and
+overwrites what boots. For Katapult, BOOTSEL has no
 erase command, so the `.uf2` copied to the volume is Katapult's own blocks plus
 the first flash sector at Katapult's `LAUNCH_APP_ADDRESS` written as `0xff`
 pages — the vector table Katapult checks for is gone, and the board stays in
@@ -1319,7 +1368,7 @@ investigating.
 **Neither path can take a serial for the new board, because there isn't one
 yet.** A DFU device has no by-id name at all, and a BOOTSEL board's only
 identity (the boot-ROM id) is not the serial it will run under — the identity
-to adopt does not exist until Katapult is on it either way. That is why this
+to adopt does not exist until the first image is on it either way. That is why this
 snapshots the bus first and diffs afterwards, for both mechanisms.
 
 **Klipper is never stopped.** A board that is not in `printer.cfg` is not held by
@@ -1333,7 +1382,8 @@ Refusals, all synchronous and before a job exists:
 | capability gate | `flashing_disabled` |
 | type exists | `unknown_type` |
 | chipset uses DFU or BOOTSEL at all | `unsupported_chipset` |
-| Katapult has been built for the type (`.bin` for DFU, `.uf2` for BOOTSEL) | `no_artifact` |
+| the first image has been built for the type (`.bin` for DFU, `.uf2` for BOOTSEL); `data.fw` names the family | `no_artifact` |
+| **no bootloader:** the image starts at the start of flash | `offset_mismatch` |
 | **DFU:** something is in DFU | `dfu_none` / `dfu_permission_denied` / `dfu_no_tool` |
 | **DFU:** exactly one, or one named | `dfu_ambiguous` |
 | **DFU:** the named serial is present | `device_not_found` |

@@ -73,7 +73,7 @@ class _Api(Protocol):
         fw_head: str | None,
         *,
         state: str | None = None,
-        artifact_sha: str | None = None,
+        artifact_shas: frozenset[str] = frozenset(),
         flashlog: Any | None = None,
         built_version: str | None = None,
         reader: DeviceInfoReader = device_info.KLIPPER,

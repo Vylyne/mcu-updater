@@ -21,6 +21,7 @@ is a fact about a repository and not about one directory in it.
 
 from __future__ import annotations
 
+import contextlib
 import dataclasses
 import json
 import os
@@ -32,6 +33,15 @@ import time
 
 from .. import build as build_mod
 from .. import firmware, typelist, uf2
+from ..artifacts import (
+    KIND_BIN,
+    KIND_UF2,
+    Artifact,
+    Staged,
+    recorded_kinds,
+    recorded_sha256,
+    sidecar_field,
+)
 from ..build import Reporter, null_reporter
 from ..errors import BuildError, ConfigError
 from ..paths import Paths
@@ -273,6 +283,26 @@ def staged_uf2(source: str, cmake_target: str) -> str:
     return os.path.join(build_dir(source), f"{cmake_target}.uf2")
 
 
+def fresh_bin(source: str, cmake_target: str) -> str | None:
+    """This link's raw image, or None when it made none.
+
+    pico-sdk writes `<target>.bin` as a post-link step of `<target>.elf`, so a
+    `.bin` this link produced is never older than the `.elf`. One that is was
+    left by an earlier build of a tree that has since stopped making it -
+    cmake does not delete outputs it no longer declares - and staging it would
+    put an older image beside today's `.uf2`. No `.elf` means nothing to
+    compare against, which is also None: an image nobody can date is not
+    offered to a flasher.
+    """
+    base = os.path.join(build_dir(source), cmake_target)
+    try:
+        bin_mtime = os.stat(base + ".bin").st_mtime
+        elf_mtime = os.stat(base + ".elf").st_mtime
+    except OSError:
+        return None
+    return base + ".bin" if bin_mtime >= elf_mtime else None
+
+
 def _run(argv: list[str], cwd: str) -> str | None:
     """Capture a short command's stdout, or None if it could not answer."""
     try:
@@ -434,6 +464,13 @@ def record_build(paths: Paths, target: CmakeType, state: SourceState) -> None:
     except OSError:
         return
 
+    uf2_sha256 = build_mod.sha256_file(path)
+    hashes: dict[str, str | None] = {KIND_UF2: uf2_sha256}
+    bin_path = paths.bin_file(target.name, target.firmware)
+    if os.path.exists(bin_path):
+        # Only ever this build's: `build()` removes a staged `.bin` its link
+        # did not produce before it gets here.
+        hashes[KIND_BIN] = build_mod.sha256_file(bin_path)
     record = {
         # Which provider wrote this. The sidecar path is shared with
         # `kconfig_make`, whose record is a different schema in the same place
@@ -449,9 +486,12 @@ def record_build(paths: Paths, target: CmakeType, state: SourceState) -> None:
         "dirty": state.dirty,
         "cmake_target": target.cmake_target,
         "at": time.time(),
-        "bin_sha256": build_mod.sha256_file(path),
+        "bin_sha256": uf2_sha256,
         "bin_size": stat.st_size,
         "bin_mtime": stat.st_mtime,
+        # One hash per staged kind. `bin_sha256` above stays the .uf2's hash,
+        # which is what every reader older than this field expects.
+        "artifacts": sidecar_field(hashes),
         # What a board running this image should report back over INFO.
         # Absent for anything that would not parse as a UF2, and absent is
         # never mismatch - the comparison falls through to the version string,
@@ -466,15 +506,16 @@ def record_build(paths: Paths, target: CmakeType, state: SourceState) -> None:
     os.replace(tmp, sidecar)
 
 
-def read_sidecar(paths: Paths, target: CmakeType) -> dict | None:
-    """This type's build record, or None when there is not a usable one.
+def read_record(paths: Paths, type_name: str, fw: str) -> dict | None:
+    """This type's build record, by name, or None when there is not a usable one.
 
     Degrades to None on every failure - missing, unreadable, non-dict and not
     ours all mean "no provenance", and telling them apart would not change any
-    answer.
+    answer. Takes names rather than a `CmakeType` so selection can read it
+    without the validating type load.
     """
     try:
-        with open(paths.sidecar_file(target.name, target.firmware), encoding="utf-8") as fh:
+        with open(paths.sidecar_file(type_name, fw), encoding="utf-8") as fh:
             record = json.load(fh)
     except (OSError, ValueError):
         return None
@@ -486,6 +527,11 @@ def read_sidecar(paths: Paths, target: CmakeType) -> dict | None:
     if record.get("provider") != BUILDER:
         return None
     return record
+
+
+def read_sidecar(paths: Paths, target: CmakeType) -> dict | None:
+    """`read_record` for a loaded type."""
+    return read_record(paths, target.name, target.firmware)
 
 
 def build(
@@ -621,6 +667,19 @@ def build(
     shutil.copyfile(produced, staged)
     reporter("info", f"Staged {staged}")
 
+    # The raw image beside the uf2, when this link made one, so a family can
+    # list flashtool or dfu_util as well as bootsel. Removed when it made
+    # none, so an older build's `.bin` is never offered beside today's `.uf2`.
+    # Below the dry-run return above, so a rehearsal never removes one.
+    produced_bin = fresh_bin(source, target.cmake_target)
+    bin_staged = paths.bin_file(target.name, target.firmware)
+    if produced_bin is not None:
+        shutil.copyfile(produced_bin, bin_staged)
+        reporter("info", f"Staged {bin_staged}")
+    else:
+        with contextlib.suppress(FileNotFoundError):
+            os.remove(bin_staged)
+
     # After the copy, so the record describes the bytes that now exist - and
     # the two halves of that record are deliberately sampled at different
     # times, so do not "fix" one to match the other:
@@ -676,6 +735,40 @@ def sidecar_describes_image(record: dict, path: str, stat: os.stat_result) -> bo
     return build_mod.sha256_file(path) == recorded
 
 
+def staged(paths: Paths, type_name: str, family: firmware.FirmwareFamily) -> Staged:
+    """What this type's cmake build left staged, by kind.
+
+    The `uf2` is the primary artifact, offered whenever it exists. Its
+    provenance is reported only when the record is ours, clean and describes
+    those bytes - the ownership boundary `artifact_status` draws - so rejected
+    evidence cannot return through the flash ledger. A `bin` is offered when
+    the record lists one, and is flashable without provenance the same way a
+    dirty `uf2` always has been.
+    """
+    fw = family.name
+    uf2_path = paths.uf2_file(type_name, fw)
+    try:
+        stat = os.stat(uf2_path)
+    except OSError:
+        return Staged(fw=fw)
+    record = read_record(paths, type_name, fw) or {}
+    ours = bool(record) and not record.get("dirty") and sidecar_describes_image(record, uf2_path, stat)
+    side = record if ours else {}
+    found = [Artifact(KIND_UF2, uf2_path, recorded_sha256(side, KIND_UF2, primary=KIND_UF2))]
+    bin_path = paths.bin_file(type_name, fw)
+    if KIND_BIN in recorded_kinds(record) and os.path.exists(bin_path):
+        recorded = recorded_sha256(side, KIND_BIN, primary=KIND_UF2)
+        verified = recorded if recorded and build_mod.sha256_file(bin_path) == recorded else None
+        found.append(Artifact(KIND_BIN, bin_path, verified))
+    return Staged(
+        fw=fw,
+        artifacts=tuple(found),
+        # `sha`, not `fw_sha`: the CMake sidecar's own spelling.
+        fw_sha=side.get("sha"),
+        version=side.get("version"),
+    )
+
+
 def artifact_status(
     paths: Paths, target: CmakeType, state: SourceState
 ) -> ArtifactStatus:
@@ -707,6 +800,13 @@ def artifact_status(
         if record.get("bin_sha256"):
             return ArtifactStatus(FOREIGN_BUILD)
         return ArtifactStatus(NO_PROVENANCE)
+    # The bin is a second image from the same link, and flashtool writes it
+    # without looking at the uf2 - so a bin replaced behind the record is a
+    # foreign build even while the uf2 still matches.
+    bin_path = paths.bin_file(target.name, target.firmware)
+    recorded_bin = recorded_sha256(record, KIND_BIN, primary=KIND_UF2)
+    if recorded_bin and os.path.exists(bin_path) and build_mod.sha256_file(bin_path) != recorded_bin:
+        return ArtifactStatus(FOREIGN_BUILD)
     if record.get("dirty"):
         # The tree it came from is not recoverable, so current is unprovable
         # rather than merely unknown.
@@ -766,3 +866,6 @@ class Cmake:
         if entry is None:
             raise BuildError(f"no cmake type '{target.name}' is configured.", type=target.name)
         return clean_build_dir(entry.source)
+
+    def staged(self, paths: Paths, type_name: str, family: firmware.FirmwareFamily) -> Staged:
+        return staged(paths, type_name, family)

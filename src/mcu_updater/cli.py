@@ -48,7 +48,7 @@ from .errors import (
     UnknownSerialError,
     UpdaterError,
 )
-from .flashers.flash import adoptable_devices, flash_initial_bootloader
+from .flashers.flash import adoptable_devices, flash_initial_bootloader, install_family
 from .lock import exclusive
 from .paths import Paths
 from .service import (
@@ -676,7 +676,6 @@ def _cmake_targets(c: Context, mcu_type: str, serial: str) -> tuple[list, list]:
                     chipset=target_type.chipset,
                     state=present.state if present is not None else STATE_OFFLINE,
                     fw=family.name,
-                    detail={"uf2_file": fw_bin},
                 ),
                 stop_services.for_cmake(c.paths, target_type, c.settings, families),
             ),
@@ -863,7 +862,11 @@ def _cmake_type_targets(
     if entry is None:
         raise UpdaterError(f"CMake type '{name}' is no longer configured.")
     if force:
-        print("Note: --force does not apply to helper-BOOTSEL writes.")
+        print(
+            "Note: --force has no effect on a CMake flash, through bootsel or "
+            "flashtool alike; it only overrides the kconfig family's "
+            "bootloader-offset check."
+        )
     targets: list = []
     refused: list = []
     for device_id in [serial] if serial is not None else entry.serials:
@@ -1143,9 +1146,15 @@ def add_mcu(args: argparse.Namespace) -> None:
     mcu = reg.get(args.type)
     chipset = mcu.chipset
 
+    # The board's first image: its bootloader, or with none its own
+    # application - the same rule the agent's fw.add_mcu.start follows.
+    families = firmware.load(c.paths)
+    install = install_family(mcu, families)
+    family = firmware.resolve(c.paths, install, families)
+
     with exclusive(c.paths, f"add-mcu {args.type}"):
         # A brand new type has no saved .config, so this launches menuconfig.
-        result = _build_interactive(c, args.type, "katapult")
+        result = _build_interactive(c, args.type, install)
 
         before = set(reg.all_serials()) | {
             d.serial for d in find_untracked(c.paths, reg.all_serials())
@@ -1155,17 +1164,23 @@ def add_mcu(args: argparse.Namespace) -> None:
             c.settings,
             chipset,
             result.bin_path,
+            fw=install,
+            mcu_type=args.type,
             uf2_bin=result.uf2_path,
-            katapult_config=c.paths.config_file(args.type, "katapult"),
+            # Where BOOTSEL erases the old application under a bootloader. An
+            # application image replaces what boots, so it has none.
+            katapult_config=(
+                c.paths.config_file(args.type, install) if family.bootloader else None
+            ),
             reporter=stdout_reporter,
         )
 
-        print("Waiting for the device to enumerate as Katapult...")
+        print(f"Waiting for the device to enumerate as {install}...")
         candidates = adoptable_devices(c.paths, before, chipset)
 
     if not candidates:
         print(
-            f"No new, unassigned Katapult device found for chipset '{chipset}'. "
+            f"No new, unassigned {install} device found for chipset '{chipset}'. "
             f"Check `ls /dev/serial/by-id/` and use 'add-serial' manually."
         )
         return
@@ -1173,7 +1188,7 @@ def add_mcu(args: argparse.Namespace) -> None:
     refused = False
     for dev in candidates:
         if _confirm(
-            f"Found unassigned Katapult device: {dev.serial} ({dev.path}). "
+            f"Found unassigned {install} device: {dev.serial} ({dev.path}). "
             f"Add it to '{args.type}'?"
         ):
             # One refused board (tracked under another type, an unprovisioned

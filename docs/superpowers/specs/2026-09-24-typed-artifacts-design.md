@@ -36,13 +36,24 @@ match where the edit was small.
    `RPI-RP2`.** The ROM falls back to BOOTSEL only when the start of flash
    holds no valid boot stage. If an earlier no-offset image's start is still
    there, what runs is the remains of that image. It is still recoverable by
-   holding BOOTSEL, so the warning stands and nothing becomes a refusal.
+   holding BOOTSEL, so on that no-helper path the warning stands and nothing
+   becomes a refusal (see correction 11 for the helper path, which does
+   refuse).
 10. **Klipper tries Katapult only when the running image has a bootloader
     offset** and Katapult's signature is at the start of flash
     (`try_request_canboot`). So "a board with Katapult lands in Katapult" is
-    true of a running board, whose Klipper must have the offset. Writing
-    Klipper through BOOTSEL onto a Katapult board happens only when the board
-    is held in BOOTSEL by hand.
+    true of a running board, whose Klipper must have the offset.
+11. **Ruled on in review, not while planning:** an offset `uf2` on the helper
+    path (correction 7's `BootselRequester`) is refused outright, with
+    nothing written - correction 9's warning is for a board addressed with no
+    helper, not this one. A corrupt `uf2` is refused the same way, on either
+    path. And a tracked Klipper-family board already sitting in BOOTSEL -
+    correction 10's last sentence, before this correction - is not a state
+    `resolve` can reach for a `[type]`'s tracked device: only a first-install
+    `Device`, built directly against the `katapult` family in
+    `flash_katapult`, ever carries `state == STATE_BOOTSEL`. Writing Klipper
+    through BOOTSEL onto a board that has Katapult is therefore unreachable
+    for a tracked device, by hand or otherwise.
 
 Also settled while planning:
 - A recorded hash is reported only when the bytes on disk still match it.
@@ -193,9 +204,15 @@ flasher that both `supports(device, helper)` and has a staged artifact of a
 kind it `accepts`. For example, with `[firmware klipper] flashers: flashtool,
 bootsel`:
 
-- A board running Klipper goes to flashtool, with the `bin`.
-- A bare board sitting in BOOTSEL is not a device flashtool supports, so it
-  goes to bootsel, with the `uf2`.
+- A board running Klipper goes to flashtool, with the `bin`, since flashtool
+  is not narrowed by state (correction 3) and a kconfig build almost always
+  stages one.
+- When no `.bin` was staged, `resolve` falls through to bootsel with the
+  `uf2`, via the family's `helper: klipper` (`Bootsel.supports` takes the
+  helper path for any `KIND_SERIAL` device, regardless of state). A
+  factory-bare board sitting in BOOTSEL is a different device object,
+  built for the `katapult` family's own first-install flow, not this
+  family's `resolve` (correction 11).
 
 **`target()` takes the chosen artifact.** Its signature becomes
 `target(paths, device, helper, artifact, *, stop_services)`.
@@ -226,7 +243,9 @@ A user chooses BOOTSEL through the list:
 
 - `flashers: bootsel` means BOOTSEL only, for a board without Katapult.
 - `flashers: flashtool, bootsel` means Katapult first, with BOOTSEL as the
-  fallback for a board already sitting in BOOTSEL.
+  fallback reached through the helper when no `.bin` was staged (correction
+  11: a tracked board already sitting in BOOTSEL is not a reachable state
+  here).
 
 **The `klipper` helper.** A board running Klipper needs a way into BOOTSEL.
 Bootsel supports a device that is already in BOOTSEL, or one whose family
@@ -312,10 +331,12 @@ a board:
 | No-offset `bin` through Katapult | Katapult never overwrites itself. The image lands at the offset and does not run, and the board stays in Katapult, where it can be flashed again. |
 
 The worst outcome is a board that does not come back running the new
-firmware, and the readiness check already reports that. One case gets a
-warning rather than a refusal: an *offset* `uf2` written through BOOTSEL. That
-is legitimate on a board that has Katapult, and a BOOTSEL board cannot say
-whether it does.
+firmware, and the readiness check already reports that. On the helper path,
+an *offset* `uf2` is refused instead, with nothing written (correction 11).
+Only a board already sitting in BOOTSEL, addressed with no helper, still gets
+a warning instead of a refusal: that is legitimate on a board that has
+Katapult, and a bare BOOTSEL board cannot say whether it does. A corrupt
+`uf2` is refused on either path, with nothing written.
 
 ## Error handling
 
@@ -325,7 +346,9 @@ whether it does.
 | Nothing in the list supports the device | `NoFlasherError`, as today. |
 | A CAN device in a family with `flashers: bootsel` and `helper: klipper` | `NoFlasherError` from selection, with `missing == []`. Nothing is sent. |
 | The Klipper request lands in Katapult | Named `FlashError` from `request_bootsel`. Nothing is written. |
-| An offset `uf2` goes through BOOTSEL | Warning. The write proceeds. |
+| An offset `uf2` on the helper path | Refused. Nothing is written (correction 11). |
+| An offset `uf2` on a board already sitting in BOOTSEL, no helper | Warning. The write proceeds. |
+| A corrupt `uf2` | Refused, on either path. Nothing is written. |
 | The new image presents a different serial | `wait_ready` waits for the predicted serial and reports the change. |
 
 ## Documentation
@@ -396,8 +419,10 @@ flashtool `target()` lines are the likely hits. Run specs one at a time.
 On the bench board only, never the toolhead:
 
 - Klipper through BOOTSEL on a bare RP2040.
-- Klipper through BOOTSEL on an RP2040 that has Katapult, to confirm Katapult
-  survives.
+- ~~Klipper through BOOTSEL on an RP2040 that has Katapult, to confirm
+  Katapult survives.~~ Unreachable, since a tracked Klipper board in BOOTSEL
+  is never handed to selection (ruled on in review, not in the original
+  design).
 
 The plan's "Bench checks" section is the full list.
 

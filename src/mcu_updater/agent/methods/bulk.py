@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-import os
 from typing import Any
 
 from ... import device_info, firmware, flashers, helpers, inventory, providers, stop_services
+from ...artifacts import recorded_hashes
 from ...build import read_sidecar
 from ...config import Registry
 from ...devices import (
@@ -138,16 +138,18 @@ class BulkMixin(_Base):
                 continue
             mcu = reg.get(name)
             application = mcu.application(families)
-            if not os.path.exists(self.paths.bin_file(name, application)):
-                continue
             family = firmware.resolve(self.paths, application, families)
+            # Built means staged anything: an offset-less RP2040 Klipper build
+            # stages only a .uf2. Which flasher takes it is selection's call.
+            if not providers.staged(self.paths, name, family).artifacts:
+                continue
             fw_head = git_head(family.source_dir(self.paths))
             reader = device_info.reader_for(family)
             # Once per type, not per serial - every board of this type shares
             # the same resolved list.
             units = stop_services.for_mcu(self.paths, mcu, settings, families)
             sidecar = read_sidecar(self.paths, name, application) or {}
-            artifact_sha = sidecar.get("bin_sha256")
+            artifact_shas = recorded_hashes(sidecar)
             # Passed for the same reason the panel passes it: a type whose
             # boards stamp a literal instead of a git describe has no commit to
             # compare, and omitting this here made the fleet-flash selection
@@ -162,7 +164,7 @@ class BulkMixin(_Base):
                     versions,
                     fw_head,
                     state=state,
-                    artifact_sha=artifact_sha,
+                    artifact_shas=artifact_shas,
                     flashlog=flashlog,
                     built_version=built_version,
                     reader=reader,
@@ -227,14 +229,16 @@ class BulkMixin(_Base):
             if not mcu.canbus_uuids:
                 continue
             application = mcu.application(families)
-            if not os.path.exists(self.paths.bin_file(name, application)):
-                continue
             family = firmware.resolve(self.paths, application, families)
+            # Built means staged anything: an offset-less RP2040 Klipper build
+            # stages only a .uf2. Which flasher takes it is selection's call.
+            if not providers.staged(self.paths, name, family).artifacts:
+                continue
             fw_head = git_head(family.source_dir(self.paths))
             reader = device_info.reader_for(family)
             units = stop_services.for_mcu(self.paths, mcu, settings, families)
             sidecar = read_sidecar(self.paths, name, application) or {}
-            artifact_sha = sidecar.get("bin_sha256")
+            artifact_shas = recorded_hashes(sidecar)
             # Passed for the same reason the panel passes it: a type whose
             # boards stamp a literal instead of a git describe has no commit to
             # compare, and omitting this here made the fleet-flash selection
@@ -252,7 +256,7 @@ class BulkMixin(_Base):
                         uuid,
                         {uuid: {"version": cross["version"], "mcu": cross["mcu"]}},
                         fw_head,
-                        artifact_sha=artifact_sha,
+                        artifact_shas=artifact_shas,
                         flashlog=flashlog,
                         built_version=built_version,
                         reader=reader,
@@ -317,7 +321,6 @@ class BulkMixin(_Base):
             except ConfigCorruptError:
                 helper = None
             units = stop_services.for_cmake(self.paths, entry, settings, families)
-            uf2 = self.paths.uf2_file(name, payload["firmware"])
             for device in self._cmake_devices(payload, family, helper):
                 if not device["present"]:
                     continue
@@ -330,7 +333,6 @@ class BulkMixin(_Base):
                         "serial": device["serial"],
                         "chipset": payload["chipset"],
                         "fw": payload["firmware"],
-                        "uf2_file": uf2,
                         "stop_services": list(units),
                         "state": device["state"],
                         "reason": (

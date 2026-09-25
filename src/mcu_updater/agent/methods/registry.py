@@ -18,6 +18,7 @@ from ...errors import (
 )
 from ..rpc import ERR_INVALID_PARAMS, RpcError
 from ._api import _Base
+from .status import _has_staged
 
 _HEX_COLOR = re.compile(r"^#[0-9a-fA-F]{6}$")
 
@@ -400,7 +401,7 @@ class RegistryMixin(_Base):
                     # .config, neither of which changes when the chipset does - so
                     # a binary built for the old chip would keep reporting itself
                     # as fresh. Say so rather than let it be flashed.
-                    if self.artifact(name, mcu.application(families)).get("has_bin"):
+                    if _has_staged(self.artifact(name, mcu.application(families))):
                         warnings.append(
                             f"the built firmware for '{name}' was compiled for "
                             f"{mcu.chipset}. Rebuild before flashing - staleness "
@@ -415,7 +416,7 @@ class RegistryMixin(_Base):
                     # Same reasoning as a chipset change, and stronger: the
                     # artifact was built from a different source tree entirely,
                     # and nothing in the provenance record would notice.
-                    if self.artifact(name, current).get("has_bin"):
+                    if _has_staged(self.artifact(name, current)):
                         warnings.append(
                             f"the built firmware for '{name}' came from "
                             f"{current}. Rebuild before flashing - "

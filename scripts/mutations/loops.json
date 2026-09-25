@@ -32,11 +32,6 @@
       "replace": "            name = payload[\"name\"]"
     },
     {
-      "name": "the cmake board dict carries the staged uf2",
-      "find": "                        \"uf2_file\": uf2,",
-      "replace": "                        \"uf2_file\": \"\","
-    },
-    {
       "name": "flash_all selects cmake boards beside the others",
       "find": "            + self._canbus_boards_to_flash(reg, scope, only)\n            + self._cmake_boards_to_flash(scope, only)",
       "replace": "            + self._canbus_boards_to_flash(reg, scope, only)"

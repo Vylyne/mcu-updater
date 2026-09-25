@@ -22,7 +22,7 @@ from mcu_updater.devices import (
     scan,
     wait_for_device,
 )
-from mcu_updater.discovery.bootsel import mount_for_topology, serial_topology_for
+from mcu_updater.discovery.bootsel import mount_for_topology, mounts_on, serial_topology_for
 from mcu_updater.errors import BootloaderTimeoutError, FlashError
 
 from .conftest import make_device
@@ -569,6 +569,24 @@ def test_mount_for_topology_preserves_the_complete_hub_port_path(paths, tmp_path
     assert mount_for_topology(
         rp_paths, "platform-x.usb-usb-0:1.6.3.1.2", timeout=0
     ) == str(exact_port)
+
+
+def test_mounts_on_returns_only_the_mount_that_matches(paths, tmp_path):
+    """`mounts_on`'s own direct coverage, not just exercised incidentally
+    through `write`/`_await_bootsel`: one matching mount, one a deeper hub
+    path off the same parent, one on an unrelated port - only the first is
+    the board that was asked for."""
+    root = tmp_path / "bootsel_root"
+    by_path = root / "BOOTSEL" / "by-path"
+    matching = by_path / "platform-x_usb-usb-0_1_6_3_1_2_1_0-scsi-0_0_0_0"
+    deeper_hub_path = by_path / "platform-x_usb-usb-0_1_6_3_1_2_9_1_0-scsi-0_0_0_0"
+    another_port = by_path / "platform-x_usb-usb-0_1_6_3_1_9_1_0-scsi-0_0_0_0"
+    for mount in (matching, deeper_hub_path, another_port):
+        mount.mkdir(parents=True)
+        (mount / "INFO_UF2.TXT").write_text("", encoding="utf-8")
+    rp_paths = dataclasses.replace(paths, bootsel_root=str(root))
+
+    assert mounts_on(rp_paths, "platform-x.usb-usb-0:1.6.3.1.2:1.0") == [str(matching)]
 
 
 def test_mount_for_topology_refuses_two_normalized_matches(paths, tmp_path):

@@ -17,15 +17,17 @@ import os
 
 import pytest
 
-from mcu_updater import device_info, flashers, uf2
+from mcu_updater import device_info, firmware, flashers, uf2
 from mcu_updater.agent.methods import Api
+from mcu_updater.agent.methods.bulk import _board_request
 from mcu_updater.agent.rpc import ERR_INVALID_PARAMS, RpcError
+from mcu_updater.artifacts import KIND_BIN, Artifact
 from mcu_updater.config import Registry
 from mcu_updater.jobs import IMMEDIATELY_CANCELLABLE, JobRunner
 from mcu_updater.providers import cmake
 from mcu_updater.service import NullService
 
-from .conftest import make_device, write_settings
+from .conftest import make_device, stage_uf2_only, write_settings
 
 EBB = "bttebb36"
 EBB_CHIPSET = "stm32g0b1xx"
@@ -124,6 +126,33 @@ def _declare_cartographer(paths) -> None:
         fh.write("\n[type carto_v4]\nchipset: stm32g431xx\nfirmware: cartographer\n")
 
 
+def _fake_uf2(payload: bytes = b"UF2", *, address: int = 0x10000000) -> bytes:
+    """`payload` wrapped as a minimal, valid UF2 - `Bootsel.write` now reads
+    every image once before copying it (M-3), so a staged fixture has to be a
+    container `image_extent` can parse, even when the test has nothing to do
+    with the image's own content."""
+    import struct
+
+    chunk = 256
+    chunks = [payload[i : i + chunk] for i in range(0, len(payload), chunk)] or [b""]
+    out = bytearray()
+    for index, data in enumerate(chunks):
+        out += struct.pack(
+            "<IIIIIIII",
+            0x0A324655,
+            0x9E5D5157,
+            0x2000,
+            address + index * chunk,
+            chunk,
+            index,
+            len(chunks),
+            0xE48BFF56,
+        )
+        out += data.ljust(476, b"\x00")
+        out += struct.pack("<I", 0x0AB16F30)
+    return bytes(out)
+
+
 def _declare_cmake(
     paths,
     fake_root,
@@ -165,8 +194,9 @@ def _declare_cmake(
     if staged:
         os.makedirs(paths.artifact_dir(name), exist_ok=True)
         artifact = paths.uf2_file(name, RR)
+        image = _fake_uf2()
         with open(artifact, "wb") as fh:
-            fh.write(b"UF2")
+            fh.write(image)
         if provenance:
             stat = os.stat(artifact)
             with open(paths.sidecar_file(name, RR), "w", encoding="utf-8") as fh:
@@ -176,7 +206,7 @@ def _declare_cmake(
                         "sha": "deadbee",
                         "version": "v1.2.0-3-gdeadbee",
                         "dirty": False,
-                        "bin_sha256": hashlib.sha256(b"UF2").hexdigest(),
+                        "bin_sha256": hashlib.sha256(image).hexdigest(),
                         "bin_size": stat.st_size,
                         "bin_mtime": stat.st_mtime,
                         "digest_algorithm": uf2.DIGEST_CRC32_ISO_HDLC,
@@ -495,6 +525,40 @@ def test_only_boards_that_need_it_are_selected(paths, live_registry_text, fake_r
     assert boards[0]["reason"] == "source_changed"
 
 
+def test_a_board_flashed_from_a_non_primary_kind_is_not_picked_as_stale(
+    paths, live_registry_text, fake_root
+):
+    """I-1: the sidecar's build staged a .bin and a .uf2. The flash log holds
+    the .uf2 hash under the legacy `bin_sha256` key - a BOOTSEL write, say -
+    and that must still read as the current build, not a stale one."""
+    from mcu_updater.artifacts import KIND_UF2, sidecar_field
+    from mcu_updater.build import FlashLog
+
+    with open(paths.registry_file, "w", encoding="utf-8") as fh:
+        fh.write(live_registry_text)
+    bin_hash = "aa" * 32
+    uf2_hash = "bb" * 32
+    _stage_artifact(paths, EBB)
+    os.makedirs(paths.artifact_dir(EBB), exist_ok=True)
+    with open(paths.sidecar_file(EBB, "klipper"), "w", encoding="utf-8") as fh:
+        json.dump(
+            {
+                "artifacts": sidecar_field({KIND_BIN: bin_hash, KIND_UF2: uf2_hash}),
+                "bin_sha256": bin_hash,
+            },
+            fh,
+        )
+    FlashLog(paths).record(
+        EBB_A, mcu_type=EBB, fw="klipper", bin_sha256=uf2_hash, fw_sha=HEAD
+    )
+    make_device(fake_root / "bus", "Klipper", EBB_CHIPSET, EBB_A)
+
+    api = Api(paths, call=_moonraker({EBB_A: CURRENT_VERSION}))
+    monkey_head(api, paths)
+
+    assert api._boards_to_flash(Registry.load(paths), "stale") == []
+
+
 def test_scope_all_takes_every_online_board_of_a_built_type(paths, live_registry_text, fake_root):
     """The buffer-patch case: the source has not moved, so nothing looks stale,
     but you know the binary changed."""
@@ -540,6 +604,25 @@ def test_a_type_with_no_built_firmware_is_skipped(paths, live_registry_text, fak
     monkey_head(api, paths)
 
     assert api._boards_to_flash(Registry.load(paths), "all") == []
+
+
+def test_a_type_that_staged_only_a_uf2_is_not_skipped_as_unbuilt(
+    paths, live_registry_text, fake_root
+):
+    """An offset-less RP2040 Klipper build stages a `.uf2` and no `.bin`. It
+    was built; which flasher takes its file is selection's call, not this
+    pass's."""
+    with open(paths.registry_file, "w", encoding="utf-8") as fh:
+        fh.write(live_registry_text)
+    stage_uf2_only(paths, EBB)
+    make_device(fake_root / "bus", "Klipper", EBB_CHIPSET, EBB_A)
+
+    api = Api(paths, call=_moonraker({EBB_A: OLD_VERSION}))
+    monkey_head(api, paths)
+
+    boards = api._boards_to_flash(Registry.load(paths), "stale")
+    assert [b["serial"] for b in boards] == [EBB_A]
+    assert boards[0]["reason"] == "source_changed"
 
 
 def test_a_board_in_its_bootloader_is_selected(paths, live_registry_text, fake_root):
@@ -977,6 +1060,7 @@ def _board(serial: str) -> flashers.FlashTarget:
             "reason": "x",
         },
         stop_services=("klipper",),
+        artifact=Artifact(KIND_BIN, f"/fake/{serial}.bin"),
     )
 
 
@@ -1160,13 +1244,18 @@ def test_a_no_provenance_cmake_board_is_only_selected_by_scope_all(
     ] == [RR_SERIAL]
 
 
-def test_a_cmake_board_carries_the_staged_uf2(bulk, paths, fake_root):
+def test_a_cmake_board_is_handed_its_staged_uf2_by_selection(bulk, paths, fake_root):
+    """The board dict names the board, not its file: selection asks the builder."""
     _declare_cmake(paths, fake_root, serials=[RR_SERIAL], helper=True, staged=True)
     make_device(fake_root / "bus", "Klipper", RR_CHIPSET, RR_SERIAL)
 
     [board] = bulk._cmake_boards_to_flash("all")
+    targets, refused = flashers.select_each(paths, firmware.load(paths), [_board_request(board)])
 
-    assert board["uf2_file"] == paths.uf2_file(RR, RR)
+    assert "uf2_file" not in board
+    assert refused == []
+    assert targets[0].artifact is not None
+    assert targets[0].artifact.path == paths.uf2_file(RR, RR)
 
 
 def test_an_absent_cmake_board_is_never_selected(bulk, paths, fake_root):

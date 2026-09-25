@@ -108,8 +108,9 @@ capability name in the package's explicit static registry, never a Python module
 path. It lets a firmware family supply narrowly scoped operations such as a
 confirmed BOOTSEL request without adding vendor branches to `fw.flash`.
 
-For Kconfig Make trees, `out/` is transient. The requested `.bin` and optional
-`.uf2` are copied into `~/printer_data/mcu-updater/` with their provenance, then
+For Kconfig Make trees, `out/` is transient. Whichever of the `.bin` and `.uf2`
+the build produced - an RP2040 Klipper build makes one or the other - is copied
+into `~/printer_data/mcu-updater/` with its provenance, then
 `make clean` removes the source-tree outputs. Cleanup runs after failed and
 cancelled builds too, so another tool cannot later flash whichever image a
 previous updater build happened to leave in `out/`.

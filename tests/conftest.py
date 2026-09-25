@@ -327,3 +327,25 @@ def serve_klipper(
 
     call.queries = queries  # type: ignore[attr-defined]
     return call
+
+
+def stage_uf2_only(paths: Paths, mcu_type: str, fw: str = "klipper", content: bytes = b"uf2 firmware") -> str:
+    """Leave what an offset-less RP2040 Klipper build leaves: a `.uf2`, no
+    `.bin`, and a sidecar listing only the `.uf2`."""
+    import hashlib
+
+    from mcu_updater.artifacts import KIND_UF2, sidecar_field
+
+    os.makedirs(paths.artifact_dir(mcu_type), exist_ok=True)
+    path = paths.uf2_file(mcu_type, fw)
+    with open(path, "wb") as fh:
+        fh.write(content)
+    with open(paths.sidecar_file(mcu_type, fw), "w", encoding="utf-8") as fh:
+        json.dump(
+            {
+                "bin_sha256": None,
+                "artifacts": sidecar_field({KIND_UF2: hashlib.sha256(content).hexdigest()}),
+            },
+            fh,
+        )
+    return path

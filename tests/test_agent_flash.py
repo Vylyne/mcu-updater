@@ -18,7 +18,7 @@ from mcu_updater.errors import ServiceControlError
 from mcu_updater.jobs import JobRunner
 from mcu_updater.service import Journal, NullService, services_stopped
 
-from .conftest import make_device, with_base_firmwares, write_settings
+from .conftest import make_device, stage_uf2_only, with_base_firmwares, write_settings
 
 TRACKED_SERIAL = "123456789012345678901"
 TRACKED_TYPE = "bttebb36"
@@ -28,6 +28,33 @@ ROADRUNNER_SERIAL = "RR-5K3DNTFCR1B3C9D0RZMYA3Y720"
 
 def _write_settings(paths, **extra) -> None:
     write_settings(paths, dry_run="true", service_backend="null", **extra)
+
+
+def _fake_uf2(payload: bytes = b"UF2-road-runner", *, address: int = 0x10000000) -> bytes:
+    """`payload` wrapped as a minimal, valid UF2 - `Bootsel.write` now reads
+    every image once before copying it (M-3), so a staged fixture has to be a
+    container `image_extent` can parse, even when the test has nothing to do
+    with the image's own content."""
+    import struct
+
+    chunk = 256
+    chunks = [payload[i : i + chunk] for i in range(0, len(payload), chunk)] or [b""]
+    out = bytearray()
+    for index, data in enumerate(chunks):
+        out += struct.pack(
+            "<IIIIIIII",
+            0x0A324655,
+            0x9E5D5157,
+            0x2000,
+            address + index * chunk,
+            chunk,
+            index,
+            len(chunks),
+            0xE48BFF56,
+        )
+        out += data.ljust(476, b"\x00")
+        out += struct.pack("<I", 0x0AB16F30)
+    return bytes(out)
 
 
 def _stage_artifact(paths, mcu_type=TRACKED_TYPE) -> str:
@@ -104,7 +131,7 @@ def cmake_flash_factory(paths, fake_root, tmp_path):
         if staged:
             os.makedirs(paths.artifact_dir("roadrunner"), exist_ok=True)
             with open(paths.uf2_file("roadrunner", "roadrunner"), "wb") as fh:
-                fh.write(b"UF2-road-runner")
+                fh.write(_fake_uf2())
         if attached:
             make_device(fake_root / "bus", "Vylyne", "Roadrunner", serial)
         runner = JobRunner(
@@ -458,7 +485,7 @@ def test_a_cmake_family_that_cannot_write_the_board_refuses_before_a_job(
 ):
     api = cmake_flash_factory(dry_run="false")
     monkeypatch.setattr(
-        "mcu_updater.flashers.registry.resolve", lambda family, device, helper: None
+        "mcu_updater.flashers.registry.resolve", lambda family, device, helper, staged: None
     )
 
     with pytest.raises(RpcError) as exc:
@@ -473,6 +500,18 @@ def test_flashing_without_a_built_artifact_is_refused(flashable, paths):
     with pytest.raises(RpcError) as exc:
         flashable.dispatch("fw.flash", {"serial": TRACKED_SERIAL})
     assert exc.value.data["code"] == "no_artifact"
+    assert flashable.runner.current() is None, "no job should have been created"
+
+
+def test_a_build_that_staged_only_a_uf2_is_left_to_selection(flashable, paths):
+    """Built means "staged anything". A `.uf2` with no `.bin` is not
+    `no_artifact`: selection refuses it by kind, naming the fix."""
+    os.unlink(paths.bin_file(TRACKED_TYPE, "klipper"))
+    stage_uf2_only(paths, TRACKED_TYPE)
+    with pytest.raises(RpcError) as exc:
+        flashable.dispatch("fw.flash", {"serial": TRACKED_SERIAL})
+    assert exc.value.data["code"] == "no_flasher"
+    assert "staged a .uf2 and no .bin" in str(exc.value)
     assert flashable.runner.current() is None, "no job should have been created"
 
 

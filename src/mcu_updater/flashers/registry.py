@@ -12,12 +12,13 @@ from __future__ import annotations
 from collections.abc import Iterable
 from typing import TYPE_CHECKING, Any
 
+from ..artifacts import KIND_BIN, KIND_UF2, Artifact, Staged
 from ..errors import NoFlasherError
 from .bootsel import Bootsel
 from .dfu_util import DfuUtil
 from .esptool import Esptool
 from .flashtool import Flashtool
-from .spec import Device, Flasher, FlashTarget
+from .spec import KIND_SERIAL, Device, Flasher, FlashTarget
 
 if TYPE_CHECKING:
     from ..firmware import FirmwareFamily
@@ -108,19 +109,135 @@ def by_flasher(targets: list[FlashTarget]) -> list[tuple[Flasher, list[FlashTarg
 
 
 def resolve(
-    family: FirmwareFamily, device: Device, helper: Helper | None
-) -> Flasher | None:
-    """The first flasher in `family.flashers` that supports `device`, or None.
+    family: FirmwareFamily, device: Device, helper: Helper | None, staged: Staged
+) -> tuple[Flasher, Artifact] | None:
+    """The first flasher in `family.flashers` that supports `device` and was
+    staged a kind it accepts, with that artifact - or None.
 
     The family's order, not the registry's: the same RP2040 is flashtool's in
     `[firmware klipper]` and bootsel's in `[firmware roadrunner]`, and a global
-    first match could only ever reach one of them.
+    first match could only ever reach one of them. A flasher whose kind was not
+    staged is passed over, so `flashers: flashtool, bootsel` reaches bootsel,
+    through the family's helper, when no `.bin` was staged - flashtool is not
+    narrowed by state, so a running or offline board always goes to it first
+    when one was.
     """
     for name in family.flashers:
         flasher = by_name(name)
-        if flasher.supports(device, helper):
-            return flasher
+        if not flasher.supports(device, helper):
+            continue
+        artifact = staged.first_of(flasher.accepts)
+        if artifact is not None:
+            return flasher, artifact
     return None
+
+
+def _unstaged(
+    family: FirmwareFamily, device: Device, helper: Helper | None
+) -> list[tuple[str, tuple[str, ...]]]:
+    """Listed flashers that could write `device`, with the kinds they take.
+
+    Only asked after `resolve` found nothing, so every flasher here is one
+    whose kind was not staged.
+    """
+    return [
+        (name, by_name(name).accepts)
+        for name in family.flashers
+        if by_name(name).supports(device, helper)
+    ]
+
+
+def _bootsel_route(family: FirmwareFamily, device: Device, helper: Helper | None) -> str:
+    """The config that would let bootsel write a staged `.uf2` to `device`.
+
+    Only asked when bootsel was not chosen, so either it is unlisted or it
+    cannot reach a running board. Listing it alone does not do that: bootsel
+    writes a running board only through a helper that asks it for BOOTSEL,
+    so a family with no helper is told to add `helper: klipper` too. Empty
+    when no config would help: a CAN board cannot be asked for BOOTSEL, and a
+    family with some other helper cannot also name `klipper`.
+    """
+    from .. import helpers
+
+    if device.kind != KIND_SERIAL:
+        return ""
+    if helpers.bootsel_requester(helper) is not None:
+        return f", or add bootsel to [firmware {family.name}]'s flashers to write the .uf2"
+    if helper is not None:
+        return ""
+    if "bootsel" in family.flashers:
+        return (
+            f", or add `helper: klipper` to [firmware {family.name}] so bootsel can ask "
+            f"the running board for BOOTSEL and write the .uf2"
+        )
+    listed = ", ".join((*family.flashers, "bootsel"))
+    return (
+        f", or add `flashers: {listed}` and `helper: klipper` to "
+        f"[firmware {family.name}] to write the .uf2 through BOOTSEL"
+    )
+
+
+def _refusal_error(
+    family: FirmwareFamily,
+    device: Device,
+    waiting: list[tuple[str, tuple[str, ...]]],
+    staged: Staged,
+    helper: Helper | None,
+) -> NoFlasherError:
+    """Why nothing in the list writes `device`, naming what would fix it.
+
+    A flasher that could write the device but was staged nothing it takes is
+    a missing build, not a missing flasher, and the message says which. When
+    the build staged the *other* image, rebuilding as configured makes the
+    same one again, so the message names the setting that decides which image
+    an RP2040 build makes instead.
+    """
+    from .. import firmware
+
+    missing = list(dict.fromkeys(kind for _, kinds in waiting for kind in kinds))
+    subject = f"{device.type} {device.id or device.chipset} while it is {device.state}"
+    # The offset is a Kconfig answer, so only a kconfig build is told to change
+    # it. A CMake tree's `.bin` comes from its own CMakeLists, not an offset.
+    kinds_staged = (
+        {artifact.kind for artifact in staged.artifacts}
+        if family.builder == firmware.DEFAULT_BUILDER
+        else set()
+    )
+    if waiting:
+        name, kinds = waiting[0]
+        if KIND_BIN in kinds_staged and KIND_UF2 not in kinds_staged:
+            message = (
+                f"{name} could write {subject}, but [firmware {family.name}] staged a .bin "
+                f"and no .uf2, and rebuilding as configured will not make one: on an "
+                f"RP2040, only a build with no bootloader offset produces a .uf2. Set the "
+                f"bootloader offset to none and rebuild, or list a flasher that takes the .bin."
+            )
+        elif KIND_UF2 in kinds_staged and KIND_BIN not in kinds_staged:
+            message = (
+                f"{name} could write {subject}, but [firmware {family.name}] staged a .uf2 "
+                f"and no .bin, and rebuilding as configured will not make one: on an "
+                f"RP2040, only a build with a bootloader offset produces a .bin. Set the "
+                f"bootloader offset (16KiB for Katapult) and rebuild"
+                f"{_bootsel_route(family, device, helper)}."
+            )
+        else:
+            message = (
+                f"{name} could write {subject}, but [firmware {family.name}] staged "
+                f"no {' or '.join(kinds)} - build it first."
+            )
+    else:
+        listed = ", ".join(family.flashers) or "(none)"
+        message = f"nothing in [firmware {family.name}] (flashers: {listed}) can write {subject}."
+    return NoFlasherError(
+        message,
+        family=family.name,
+        flashers=list(family.flashers),
+        type=device.type,
+        id=device.id,
+        chipset=device.chipset,
+        state=device.state,
+        missing=missing,
+    )
 
 
 def select(
@@ -130,31 +247,33 @@ def select(
     helper: Helper | None,
     *,
     stop_services: tuple[str, ...],
+    staged: Staged | None = None,
 ) -> FlashTarget:
     """The target that writes `device`, chosen by its family.
 
     `stop_services` is required so no caller can forget it: a flasher that
     needs Klipper down and gets an empty list stops nothing.
 
+    `staged` is what the family's builder staged for `device.type`. Left out,
+    it is read here, which is what every production caller does: which file a
+    board gets is the builder's answer, never the caller's.
+
     Raises `NoFlasherError` naming the family and its list when nothing in it
-    supports the device. A batch reports that as the device's failure; a
-    single-device call raises it.
+    can write the device, or naming the missing kind when something could but
+    was staged nothing it takes. A batch reports that as the device's failure;
+    a single-device call raises it.
     """
-    flasher = resolve(family, device, helper)
-    if flasher is None:
-        listed = ", ".join(family.flashers) or "(none)"
-        raise NoFlasherError(
-            f"nothing in [firmware {family.name}] (flashers: {listed}) can write "
-            f"{device.type} {device.id or device.chipset} while it is "
-            f"{device.state}.",
-            family=family.name,
-            flashers=list(family.flashers),
-            type=device.type,
-            id=device.id,
-            chipset=device.chipset,
-            state=device.state,
+    if staged is None:
+        from .. import providers
+
+        staged = providers.staged(paths, device.type, family)
+    choice = resolve(family, device, helper, staged)
+    if choice is None:
+        raise _refusal_error(
+            family, device, _unstaged(family, device, helper), staged, helper
         )
-    return flasher.target(paths, device, helper, stop_services=stop_services)
+    flasher, artifact = choice
+    return flasher.target(paths, device, helper, artifact, stop_services=stop_services)
 
 
 def select_device(
@@ -182,9 +301,17 @@ def refusal(device: Device, exc: NoFlasherError) -> dict[str, Any]:
     """A device nothing could write, in a batch's `failures[]` shape.
 
     The uniform slots `FlashTarget.to_json` has, with no flasher because none
-    was chosen, and the refusal's own sentence as the error.
+    was chosen, the refusal's own sentence as the error, and the kinds a build
+    would have to stage for a listed flasher to take it - empty when no listed
+    flasher could write the device at all.
     """
-    return {"type": device.type, "id": device.id, "flasher": None, "error": str(exc)}
+    return {
+        "type": device.type,
+        "id": device.id,
+        "flasher": None,
+        "error": str(exc),
+        "missing": list(exc.data.get("missing", [])),
+    }
 
 
 def select_each(

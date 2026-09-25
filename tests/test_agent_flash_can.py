@@ -19,7 +19,7 @@ from mcu_updater.discovery.canbus import ARPHRD_CAN
 from mcu_updater.flashers import flash as flash_mod
 from mcu_updater.jobs import JobRunner
 
-from .conftest import write_settings
+from .conftest import stage_uf2_only, write_settings
 
 TYPE = "hexadistrofusion"
 CHIPSET = "stm32f072xb"
@@ -370,6 +370,21 @@ def test_cross_reference_miss_falls_back_to_unconditional_inclusion(paths, live_
     assert [b["uuid"] for b in boards] == [UUID]
     assert boards[0]["reason"] == "unknown_liveness"
     assert boards[0]["state"] == "unknown"
+
+
+def test_a_can_type_that_staged_only_a_uf2_is_not_skipped_as_unbuilt(
+    paths, live_registry_text
+):
+    """Built is "staged anything". Selection then refuses the uf2 for a CAN
+    board by kind, with the fix named - not this pass, silently."""
+    with open(paths.registry_file, "w", encoding="utf-8") as fh:
+        fh.write(live_registry_text)
+    stage_uf2_only(paths, TYPE)
+    _track_uuid(paths)
+    api = Api(paths, call=_moonraker_canbus(declared=False))
+
+    boards = api._canbus_boards_to_flash(Registry.load(paths), "stale")
+    assert [b["uuid"] for b in boards] == [UUID]
 
 
 def test_flash_all_selection_includes_both_serial_and_canbus_boards(paths, live_registry_text):

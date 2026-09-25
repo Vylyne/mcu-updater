@@ -398,15 +398,26 @@ updater cannot derive from arbitrary firmware bytes. Add a validation rule only
 when a builder or image format supplies actual machine-readable evidence, not
 because today's known trees happen to use different suffixes.
 
+Resolved without a matrix (2026-09-24): a builder now reports what it staged
+*by kind* - `bin`, `uf2`, `pio_env` - and each flasher declares the kinds it
+`accepts`. That is the machine-readable evidence the paragraph above asks for:
+the builder says which file it made, not a filename guessed at by selection.
+Selection hands a flasher the first staged file of a kind it takes, and a
+family whose builder staged nothing its flashers take is refused with the
+missing kind. It still does not judge what is *inside* a file: a `.bin`
+flashtool is handed is trusted to be an application, exactly as before. Do
+not grow `accepts` into a content check.
+
 ### A device nothing can write is a failure, not an abort
 
 Spec §8 step 1. `flashers.select_each` turns a `NoFlasherError` into a
 `failures[]` entry with `"flasher": null`, and `write_all` reports it with the
 writes that failed. A single-device RPC raises instead, before a job exists.
-First install asks `[firmware katapult]` the same question and keeps its
-`unsupported_chipset` refusal. The serial `fw.flash` job collects its write's
-exception (`write_all(errors=...)`) and re-raises it, because the job's error
-code was already on the wire.
+First install asks the type's install family the same question - its
+bootloader family, or its application family when it has none - and keeps its
+`unsupported_chipset` refusal, naming that family's `flashers:` line. The
+serial `fw.flash` job collects its write's exception (`write_all(errors=...)`)
+and re-raises it, because the job's error code was already on the wire.
 
 ### The batch loop is the only writer of the flash ledger
 

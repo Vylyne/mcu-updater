@@ -78,8 +78,12 @@ class FlashMixin(_Base):
         families = firmware.load(self.paths)
         application = mcu.application(families)
 
+        # Refused here only when the build staged nothing at all. A build that
+        # staged some other kind than a listed flasher takes is selection's to
+        # refuse, by kind and with the fix named.
         fw_bin = self.paths.bin_file(mcu_type, application)
-        if not os.path.exists(fw_bin):
+        family = firmware.resolve(self.paths, application, families)
+        if not providers.staged(self.paths, mcu_type, family).artifacts:
             raise RpcError(
                 f"no built firmware for {mcu_type} at {fw_bin}. Build it first.",
                 data={
@@ -158,7 +162,7 @@ class FlashMixin(_Base):
             return {
                 "type": mcu_type,
                 "serial": serial,
-                "fw_bin": fw_bin,
+                "fw_bin": flashers.artifact_path(target),
                 "klippy_state": state_holder.get("klippy_state"),
             }
 
@@ -229,7 +233,6 @@ class FlashMixin(_Base):
                 chipset=target_type.chipset,
                 state=present.state,
                 fw=family.name,
-                detail={"uf2_file": fw_bin},
             ),
             helper,
             stop_services=units,
@@ -263,7 +266,7 @@ class FlashMixin(_Base):
             return {
                 "type": mcu_type,
                 "serial": serial,
-                "fw_bin": fw_bin,
+                "fw_bin": flashers.artifact_path(target),
                 "klippy_state": state_holder.get("klippy_state"),
             }
 
@@ -296,8 +299,12 @@ class FlashMixin(_Base):
         families = firmware.load(self.paths)
         application = mcu.application(families)
 
+        # Refused here only when the build staged nothing at all. A build that
+        # staged some other kind than a listed flasher takes is selection's to
+        # refuse, by kind and with the fix named.
         fw_bin = self.paths.bin_file(mcu_type, application)
-        if not os.path.exists(fw_bin):
+        family = firmware.resolve(self.paths, application, families)
+        if not providers.staged(self.paths, mcu_type, family).artifacts:
             raise RpcError(
                 f"no built firmware for {mcu_type} at {fw_bin}. Build it first.",
                 data={
@@ -831,18 +838,25 @@ class FlashMixin(_Base):
         out["ready"] = True
         return out
 
-    #: How long to wait for a freshly-flashed board to come back as Katapult.
+    #: How long to wait for a freshly-flashed board to come back on the bus.
     #: A class attribute so tests can shrink it without patching a call site,
     #: matching KLIPPY_READY_TIMEOUT and friends.
     ADD_MCU_REENUMERATE_TIMEOUT = float(REENUMERATE_TIMEOUT)
 
     def add_mcu_start(self, args: dict) -> dict[str, Any]:
-        """Put Katapult on a bare board, then report what appeared on the bus.
+        """Put a type's first image on a bare board, then report what appeared
+        on the bus.
+
+        The first image is the type's bootloader (Katapult) when it has one, and
+        otherwise its own application - `flashers.flash.install_family`. A
+        type with `katapult_installed: false` gets its Klipper build written
+        directly, which has to start at the start of flash; one built for a
+        bootloader offset is refused here, before a job exists.
 
         The one new method the guided flow needs. Adopting the result is
-        `fw.serial.add` and putting Klipper on it is `fw.flash` - both already
-        exist, and wrapping them here would be a second implementation to keep in
-        step with the first.
+        `fw.serial.add` and putting Klipper on a bootloadered board is
+        `fw.flash` - both already exist, and wrapping them here would be a
+        second implementation to keep in step with the first.
 
         **STM32 goes over DFU, RP2040 over BOOTSEL mass storage** - two
         genuinely different mechanisms sharing one method, exactly as the CLI's
@@ -889,20 +903,55 @@ class FlashMixin(_Base):
                 },
             )
 
-        katapult_bin = self.paths.bin_file(name, "katapult")
-        uf2_bin = self.paths.uf2_file(name, "katapult")
-        artifact_path = uf2_bin if is_bootsel else katapult_bin
+        from ...artifacts import KIND_BIN, KIND_UF2, Artifact
+        from ...flashers.flash import install_family, refuse_unbootable_first_image
+
+        # What goes on the board first: the bootloader, or with none the
+        # application itself. Every path and message below follows from it.
+        families = firmware.load(self.paths)
+        install = install_family(mcu, families)
+        family = firmware.resolve(self.paths, install, families)
+
+        fw_bin = self.paths.bin_file(name, install)
+        uf2_bin = self.paths.uf2_file(name, install)
+        artifact_path = uf2_bin if is_bootsel else fw_bin
         if not os.path.exists(artifact_path):
+            if family.bootloader:
+                advice = (
+                    "Build it first - this flow installs the bootloader, so the "
+                    "bootloader has to exist."
+                )
+            elif is_bootsel and os.path.exists(fw_bin):
+                # An RP2040 Klipper build makes a .bin only for an offset, so
+                # building again as configured makes the same .bin again.
+                advice = (
+                    f"Its build made a .bin, which an RP2040 build does only for a "
+                    f"bootloader offset. Rebuild {name} with no bootloader offset "
+                    f"(Bootloader offset: No bootloader)."
+                )
+            else:
+                advice = "Build it first."
             raise RpcError(
-                f"no built Katapult {'.uf2' if is_bootsel else 'firmware'} for "
-                f"{name}. Build it first - this flow installs the bootloader, so "
-                f"the bootloader has to exist.",
+                f"no built {install} {'.uf2' if is_bootsel else '.bin'} for "
+                f"{name}. {advice}",
                 data={
                     "code": "no_artifact",
-                    "message": "katapult has not been built for this type",
-                    "data": {"type": name, "fw": "katapult", "path": artifact_path},
+                    "message": f"{install} has not been built for this type",
+                    "data": {"type": name, "fw": install, "path": artifact_path},
                 },
             )
+        if not family.bootloader:
+            # Nothing below an application boots it, so one built for an offset
+            # is refused now - synchronously, like no_artifact, not in a job.
+            refuse_unbootable_first_image(
+                self.paths,
+                name,
+                install,
+                Artifact(KIND_UF2 if is_bootsel else KIND_BIN, artifact_path),
+            )
+        # Katapult's saved .config says where BOOTSEL erases the old
+        # application. An application image replaces what boots, so has none.
+        boot_config = self.paths.config_file(name, install) if family.bootloader else None
 
         # Which board, decided here rather than in the job, so an ambiguous bus is
         # a synchronous refusal the caller can act on instead of a job that dies.
@@ -964,17 +1013,19 @@ class FlashMixin(_Base):
             from ...flashers.flash import flash_initial_bootloader
 
             label = "BOOTSEL board" if is_bootsel else "DFU board"
-            ctx.step(f"Flashing Katapult onto the {label} for {name}", 0, 2)
+            ctx.step(f"Flashing {install} onto the {label} for {name}", 0, 2)
             flash_initial_bootloader(
                 self.paths,
                 self.settings(),
                 mcu.chipset,
-                katapult_bin,
+                fw_bin,
+                fw=install,
+                mcu_type=name,
                 # Unconditional, exactly like the CLI's add-mcu - ignored by the
                 # DFU branch, required by BOOTSEL's.
                 uf2_bin=uf2_bin,
                 # Where BOOTSEL erases the old application; DFU mass-erases.
-                katapult_config=self.paths.config_file(name, "katapult"),
+                katapult_config=boot_config,
                 reporter=ctx.reporter,
                 target_serial=target,
             )
@@ -989,11 +1040,12 @@ class FlashMixin(_Base):
 
                 Pairings(self.paths).record(pairing_key, name)
 
-            # Not filtered to Katapult: both routes erase the old application
-            # now, but an image that survives anyway (an erase the ROM skipped,
-            # say) chain-loads straight past Katapult and reappears running
-            # that firmware instead. Chipset + "wasn't on the bus before" is
-            # what actually identifies it either way.
+            # Not filtered to what was written: both routes erase the old
+            # application now, but an image that survives a Katapult install
+            # anyway (an erase the ROM skipped, say) chain-loads straight past
+            # Katapult and reappears running that firmware instead. A Klipper
+            # install reappears as a new serial of this chipset too. Chipset +
+            # "wasn't on the bus before" is what identifies it either way.
             ctx.step("Waiting for the board to re-enumerate", 1, 2)
             appeared = wait_for_new_device(
                 self.paths,
@@ -1009,11 +1061,17 @@ class FlashMixin(_Base):
             already = [d for d in appeared if d.serial in tracked]
 
             ctx.step(f"Found {len(appeared)} board(s)", 2, 2)
+            where = f"in {install}" if family.bootloader else f"running {install}"
+            then = (
+                f" Flash {mcu.application(families)} onto it when ready."
+                if family.bootloader
+                else ""
+            )
             for device in already:
                 ctx.reporter(
                     "info",
-                    f"{device.serial} is back in Katapult and already tracked - "
-                    f"nothing to adopt. Flash Klipper onto it when ready.",
+                    f"{device.serial} is back {where} and already tracked - "
+                    f"nothing to adopt.{then}",
                 )
             if not appeared:
                 # Not raised: the write may well have succeeded and the board may
@@ -1021,12 +1079,15 @@ class FlashMixin(_Base):
                 # beats failing a job that probably worked.
                 ctx.reporter(
                     "warn",
-                    "No board appeared in Katapult. Check `ls /dev/serial/by-id/` - "
+                    f"No board appeared {where}. Check `ls /dev/serial/by-id/` - "
                     "if it is there, adopt it directly with fw.serial.add.",
                 )
             return {
                 "type": name,
                 "chipset": mcu.chipset,
+                # What was written: the bootloader, or the application on a
+                # type that has none. Additive; no API_VERSION change.
+                "fw": install,
                 "dfu_serial": target,
                 "bootsel_id": bootsel_id,
                 "candidates": [

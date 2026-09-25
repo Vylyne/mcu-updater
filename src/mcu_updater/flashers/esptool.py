@@ -30,6 +30,7 @@ import dataclasses
 from collections.abc import Iterator
 from typing import TYPE_CHECKING, Any
 
+from ..artifacts import KIND_PIO_ENV, Artifact
 from ..devices import STATE_ESP_ROM
 from ..errors import FlashError, UpdaterError
 from .spec import KIND_SCREEN, Bench, Device, FlashRecord, FlashTarget
@@ -57,6 +58,7 @@ class Esptool:
     #: take. Unlike flashtool, this one is about the write and not about
     #: getting somewhere first.
     needs_services_stopped = True
+    accepts: tuple[str, ...] = (KIND_PIO_ENV,)
 
     def supports(self, device: Device, helper: Helper | None) -> bool:
         """A PlatformIO device reached through its configured port. Its
@@ -68,6 +70,7 @@ class Esptool:
         paths: Paths,
         device: Device,
         helper: Helper | None,
+        artifact: Artifact,
         *,
         stop_services: tuple[str, ...],
     ) -> FlashTarget:
@@ -79,7 +82,7 @@ class Esptool:
         # Anything else the caller put in `detail` (bulk's `reason`) rides
         # along; the screen's own keys win.
         return dataclasses.replace(
-            target, detail={**device.detail, **target.detail}
+            target, detail={**device.detail, **target.detail}, artifact=artifact
         )
 
     @contextlib.contextmanager

@@ -7,6 +7,8 @@
     "pytest",
     "tests/test_cmake.py",
     "tests/test_build.py",
+    "tests/test_artifacts.py",
+    "tests/test_verdict.py",
     "-q"
   ],
   "mutations": [
@@ -36,6 +38,72 @@
       "file": "src/mcu_updater/build.py",
       "find": "    if recorded_bin and sha256_file(paths.bin_file(mcu_type, fw)) != recorded_bin:\n        return ArtifactStatus(FOREIGN_BUILD)",
       "replace": "    if sha256_file(paths.bin_file(mcu_type, fw)) != recorded_bin:\n        return ArtifactStatus(FOREIGN_BUILD)"
+    },
+    {
+      "name": "a kconfig uf2 that disagrees with its recorded hash is foreign",
+      "file": "src/mcu_updater/build.py",
+      "find": "    if recorded_uf2 and os.path.exists(uf2_path) and sha256_file(uf2_path) != recorded_uf2:",
+      "replace": "    if False:"
+    },
+    {
+      "name": "a kconfig build removes each staged image it did not make",
+      "file": "src/mcu_updater/build.py",
+      "find": "        os.remove(staged_path)",
+      "replace": "        pass"
+    },
+    {
+      "name": "a build that made only a uf2 is staged, not refused",
+      "file": "src/mcu_updater/build.py",
+      "find": "            if not (made_bin or made_uf2):",
+      "replace": "            if not made_bin:"
+    },
+    {
+      "name": "an old sidecar vouches only for its primary kind",
+      "file": "src/mcu_updater/artifacts.py",
+      "find": "    if kind == primary:\n        legacy = side.get(\"bin_sha256\")",
+      "replace": "    if True:\n        legacy = side.get(\"bin_sha256\")"
+    },
+    {
+      "name": "a kconfig uf2 waits for a sidecar that lists it",
+      "file": "src/mcu_updater/build.py",
+      "find": "    if KIND_UF2 in recorded_kinds(side) and os.path.exists(uf2_path):",
+      "replace": "    if os.path.exists(uf2_path):"
+    },
+    {
+      "name": "a replaced file is flashed without the recorded hash",
+      "file": "src/mcu_updater/build.py",
+      "find": "    if recorded and sha256_file(path) == recorded:\n        return recorded\n    return None",
+      "replace": "    return recorded"
+    },
+    {
+      "name": "recorded_hashes vouches for every kind a build staged, not only the legacy slot",
+      "file": "src/mcu_updater/artifacts.py",
+      "find": "    hashes: set[str] = set()\n    field = side.get(\"artifacts\")\n    if isinstance(field, dict):",
+      "replace": "    hashes: set[str] = set()\n    field = side.get(\"artifacts\")\n    if False:"
+    },
+    {
+      "name": "a cmake bin that disagrees with its recorded hash is foreign",
+      "file": "src/mcu_updater/providers/cmake.py",
+      "find": "    if recorded_bin and os.path.exists(bin_path) and build_mod.sha256_file(bin_path) != recorded_bin:",
+      "replace": "    if False:"
+    },
+    {
+      "name": "a cmake build with no fresh bin removes the staged one",
+      "file": "src/mcu_updater/providers/cmake.py",
+      "find": "            os.remove(bin_staged)",
+      "replace": "            pass"
+    },
+    {
+      "name": "a bin older than its elf is not staged",
+      "file": "src/mcu_updater/providers/cmake.py",
+      "find": "    return base + \".bin\" if bin_mtime >= elf_mtime else None",
+      "replace": "    return base + \".bin\""
+    },
+    {
+      "name": "the cmake record hashes the staged bin",
+      "file": "src/mcu_updater/providers/cmake.py",
+      "find": "        hashes[KIND_BIN] = build_mod.sha256_file(bin_path)",
+      "replace": "        pass"
     }
   ]
 }

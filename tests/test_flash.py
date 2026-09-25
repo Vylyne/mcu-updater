@@ -741,7 +741,9 @@ def test_stm32_dispatches_to_dfu(paths, ready, monkeypatch):
         "flash_dfu_stm32",
         lambda *a, **kw: called.setdefault("yes", True),
     )
-    flash_initial_bootloader(paths, ready, "stm32f072xb", "x.bin")
+    flash_initial_bootloader(
+        paths, ready, "stm32f072xb", "x.bin", fw="katapult", mcu_type="board"
+    )
     assert called == {"yes": True}
 
 
@@ -760,10 +762,40 @@ def test_rp2040_dispatches_to_bootsel_when_a_uf2_was_built(paths, settings, tmp_
     uf2, cfg = _katapult_uf2(tmp_path)
 
     flash_initial_bootloader(
-        rp_paths, settings, "rp2040", "unused.bin", uf2_bin=uf2, katapult_config=cfg
+        rp_paths, settings, "rp2040", "unused.bin", fw="katapult", mcu_type="board",
+        uf2_bin=uf2, katapult_config=cfg
     )
 
     assert (vol / "katapult.uf2").exists()
+
+
+def _fake_uf2(payload: bytes = b"\x01" * 32, *, address: int = 0x10000000) -> bytes:
+    """`payload` wrapped as a minimal, valid UF2 - real enough for
+    `image_extent` to accept, split across as many 256-byte blocks as
+    `payload` needs. `Bootsel.write` now reads every image once before
+    copying it (M-3), so a fixture that used to be arbitrary bytes has to be
+    a container `image_extent` can parse, even when the test has nothing to
+    do with the image's own content."""
+    import struct
+
+    chunk = 256
+    chunks = [payload[i : i + chunk] for i in range(0, len(payload), chunk)] or [b""]
+    out = bytearray()
+    for index, data in enumerate(chunks):
+        out += struct.pack(
+            "<IIIIIIII",
+            0x0A324655,
+            0x9E5D5157,
+            0x2000,
+            address + index * chunk,
+            chunk,
+            index,
+            len(chunks),
+            0xE48BFF56,
+        )
+        out += data.ljust(476, b"\x00")
+        out += struct.pack("<I", 0x0AB16F30)
+    return bytes(out)
 
 
 def _katapult_uf2(tmp_path, *, address="0x10004000"):
@@ -803,7 +835,8 @@ def test_bootsel_copies_katapult_with_the_application_sector_erased(
         original = fh.read()
 
     flash_initial_bootloader(
-        rp_paths, settings, "rp2040", "unused.bin", uf2_bin=uf2, katapult_config=cfg
+        rp_paths, settings, "rp2040", "unused.bin", fw="katapult", mcu_type="board",
+        uf2_bin=uf2, katapult_config=cfg
     )
 
     assert (vol / "katapult.uf2").read_bytes() == with_erased_sector(original, 0x10004000)
@@ -827,7 +860,8 @@ def test_bootsel_refuses_without_an_application_address(
 
     with pytest.raises(FlashError) as exc:
         flash_initial_bootloader(
-            rp_paths, settings, "rp2040", "unused.bin", uf2_bin=uf2, katapult_config=cfg
+            rp_paths, settings, "rp2040", "unused.bin", fw="katapult", mcu_type="board",
+            uf2_bin=uf2, katapult_config=cfg
         )
     assert "LAUNCH_APP_ADDRESS" in str(exc.value)
     assert not (vol / "katapult.uf2").exists()
@@ -837,7 +871,10 @@ def test_bootsel_refuses_with_no_katapult_config(paths, settings, tmp_path):
     seed_base_firmwares(paths)
     uf2, _cfg = _katapult_uf2(tmp_path)
     with pytest.raises(FlashError) as exc:
-        flash_initial_bootloader(paths, settings, "rp2040", "unused.bin", uf2_bin=uf2)
+        flash_initial_bootloader(
+            paths, settings, "rp2040", "unused.bin", fw="katapult", mcu_type="board",
+            uf2_bin=uf2,
+        )
     assert "LAUNCH_APP_ADDRESS" in str(exc.value)
 
 
@@ -850,7 +887,8 @@ def test_bootsel_refuses_a_uf2_it_cannot_extend(paths, settings, tmp_path):
     bad.write_bytes(b"\0" * 8)
     with pytest.raises(FlashError) as exc:
         flash_initial_bootloader(
-            paths, settings, "rp2040", "unused.bin", uf2_bin=str(bad), katapult_config=cfg
+            paths, settings, "rp2040", "unused.bin", fw="katapult", mcu_type="board",
+            uf2_bin=str(bad), katapult_config=cfg
         )
     assert "UF2" in str(exc.value)
 
@@ -861,7 +899,8 @@ def test_bootsel_reports_a_missing_uf2_as_a_flash_error(paths, settings, tmp_pat
     missing = str(tmp_path / "nope.uf2")
     with pytest.raises(FlashError) as exc:
         flash_initial_bootloader(
-            paths, settings, "rp2040", "unused.bin", uf2_bin=missing, katapult_config=cfg
+            paths, settings, "rp2040", "unused.bin", fw="katapult", mcu_type="board",
+            uf2_bin=missing, katapult_config=cfg
         )
     assert missing in str(exc.value)
 
@@ -871,14 +910,43 @@ def test_rp2040_refuses_with_no_uf2_built(paths, settings):
     outright is better than a write that appears to succeed and does nothing."""
     seed_base_firmwares(paths)
     with pytest.raises(FlashError) as exc:
-        flash_initial_bootloader(paths, settings, "rp2040", "x.bin")
+        flash_initial_bootloader(
+            paths, settings, "rp2040", "x.bin", fw="katapult", mcu_type="board"
+        )
     assert ".uf2" in str(exc.value)
+    assert "No bootloader" not in str(exc.value)
+
+
+def test_a_klipper_first_install_with_no_uf2_is_told_to_drop_the_offset(paths, settings):
+    """An RP2040 Klipper build makes a .uf2 only with no bootloader offset, so
+    "build again" as configured would never produce one."""
+    seed_base_firmwares(paths)
+    with pytest.raises(FlashError) as exc:
+        flash_initial_bootloader(
+            paths, settings, "rp2040", "x.bin", fw="klipper", mcu_type="board"
+        )
+    assert "No bootloader" in str(exc.value)
+    assert "build again" not in str(exc.value)
+
+
+def test_dfu_refuses_with_no_bin_built(paths, settings):
+    """A Katapult build can stage only a `.uf2`. DFU writes a `.bin`, so the
+    first install names the missing build rather than the chipset."""
+    seed_base_firmwares(paths)
+    with pytest.raises(FlashError) as exc:
+        flash_initial_bootloader(
+            paths, settings, "stm32f072xb", None, fw="katapult", mcu_type="board",
+            uf2_bin="x.uf2",
+        )
+    assert ".bin" in str(exc.value)
 
 
 def test_an_unknown_chipset_is_reported_clearly(paths, ready):
     seed_base_firmwares(paths)
     with pytest.raises(UnsupportedChipsetError) as exc:
-        flash_initial_bootloader(paths, ready, "esp32", "x.bin")
+        flash_initial_bootloader(
+            paths, ready, "esp32", "x.bin", fw="katapult", mcu_type="board"
+        )
     assert exc.value.data["chipset"] == "esp32"
 
 
@@ -896,9 +964,139 @@ def test_first_install_writes_only_with_what_katapult_lists(paths, settings, tmp
 
     with pytest.raises(UnsupportedChipsetError) as exc:
         flash_initial_bootloader(
-            paths, settings, "rp2040", "unused.bin", uf2_bin=uf2, katapult_config=cfg
+            paths, settings, "rp2040", "unused.bin", fw="katapult", mcu_type="board",
+            uf2_bin=uf2, katapult_config=cfg
         )
     assert exc.value.data["chipset"] == "rp2040"
+
+
+def _klipper_writes_bare_boards(paths) -> None:
+    """`[firmware klipper]` with bootsel and dfu_util listed, as a type with no
+    Katapult needs for its first install."""
+    seed_base_firmwares(paths)
+    with open(paths.main_config, encoding="utf-8") as fh:
+        text = fh.read()
+    section = "[firmware klipper]\nsource: ~/klipper\nflashers: flashtool\n"
+    assert section in text
+    with open(paths.main_config, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(
+            text.replace(
+                section,
+                "[firmware klipper]\nsource: ~/klipper\n"
+                "flashers: flashtool, bootsel, dfu_util\n",
+            )
+        )
+
+
+def test_a_first_application_image_is_copied_as_built(paths, settings, tmp_path):
+    """No erased sector: an application starts at the start of flash and
+    overwrites what boots. No katapult_config is needed for it either."""
+    _klipper_writes_bare_boards(paths)
+    root, vol = mounted_bootsel_volume(tmp_path)
+    rp_paths = dataclasses.replace(paths, bootsel_root=str(root))
+    uf2 = tmp_path / "klipper.uf2"
+    image = _fake_uf2(b"\x01" * 32, address=0x10000000)
+    uf2.write_bytes(image)
+
+    flash_initial_bootloader(
+        rp_paths, settings, "rp2040", None, fw="klipper", mcu_type="board",
+        uf2_bin=str(uf2),
+    )
+
+    assert (vol / "klipper.uf2").read_bytes() == image
+
+
+def test_a_first_application_uf2_built_for_an_offset_is_refused(paths, settings, tmp_path):
+    """The backstop for the CLI, which has no pre-check of its own: nothing is
+    copied, and the refusal names the rebuild."""
+    from mcu_updater.errors import BareImageOffsetError
+
+    _klipper_writes_bare_boards(paths)
+    root, vol = mounted_bootsel_volume(tmp_path)
+    rp_paths = dataclasses.replace(paths, bootsel_root=str(root))
+    uf2 = tmp_path / "klipper.uf2"
+    uf2.write_bytes(_fake_uf2(b"\x01" * 32, address=0x10004000))
+
+    with pytest.raises(BareImageOffsetError) as exc:
+        flash_initial_bootloader(
+            rp_paths, settings, "rp2040", None, fw="klipper", mcu_type="board",
+            uf2_bin=str(uf2),
+        )
+
+    assert exc.value.code == "offset_mismatch"
+    assert "0x10004000" in str(exc.value)
+    assert "Rebuild board with no bootloader offset" in str(exc.value)
+    assert not (vol / "klipper.uf2").exists()
+
+
+def test_a_first_application_bin_is_checked_against_its_build_record(
+    paths, settings, monkeypatch
+):
+    """A .bin carries no address of its own, so the sidecar's app_address has to
+    say 0x08000000 - the address DFU writes at."""
+    import json
+
+    from mcu_updater.errors import BareImageOffsetError
+
+    _klipper_writes_bare_boards(paths)
+    written: list[str] = []
+    monkeypatch.setattr(
+        flash_mod, "flash_dfu_stm32", lambda p, s, fw_bin, **kw: written.append(fw_bin)
+    )
+    os.makedirs(paths.artifact_dir("board"), exist_ok=True)
+    fw_bin = paths.bin_file("board", "klipper")
+    with open(fw_bin, "wb") as fh:
+        fh.write(b"\0" * 16)
+    sidecar = paths.sidecar_file("board", "klipper")
+
+    for address in (0x08002000, None):
+        with open(sidecar, "w", encoding="utf-8") as fh:
+            json.dump({"app_address": address}, fh)
+        with pytest.raises(BareImageOffsetError):
+            flash_initial_bootloader(
+                paths, settings, "stm32g0b1xx", fw_bin, fw="klipper", mcu_type="board"
+            )
+    assert written == []
+
+    with open(sidecar, "w", encoding="utf-8") as fh:
+        json.dump({"app_address": 0x08000000}, fh)
+    flash_initial_bootloader(
+        paths, settings, "stm32g0b1xx", fw_bin, fw="klipper", mcu_type="board"
+    )
+    assert written == [fw_bin]
+
+
+def test_a_bootloader_first_image_is_not_offset_checked(paths, settings, monkeypatch):
+    """Katapult is linked at the start of flash and records no app_address -
+    the check is for an application with nothing below it, not for this."""
+    seed_base_firmwares(paths)
+    written: list[str] = []
+    monkeypatch.setattr(
+        flash_mod, "flash_dfu_stm32", lambda p, s, fw_bin, **kw: written.append(fw_bin)
+    )
+
+    flash_initial_bootloader(
+        paths, settings, "stm32g0b1xx", "katapult.bin", fw="katapult", mcu_type="board"
+    )
+    assert written == ["katapult.bin"]
+
+
+def test_no_bare_board_writer_on_the_family_names_the_line_to_add(paths, settings, tmp_path):
+    """Not "flash katapult manually": the fix is the install family's list."""
+    seed_base_firmwares(paths)
+    uf2 = tmp_path / "klipper.uf2"
+    uf2.write_bytes(_fake_uf2(address=0x10000000))
+
+    with pytest.raises(UnsupportedChipsetError) as exc:
+        flash_initial_bootloader(
+            paths, settings, "rp2040", None, fw="klipper", mcu_type="board",
+            uf2_bin=str(uf2),
+        )
+
+    assert "flashers: flashtool, bootsel" in str(exc.value)
+    assert "[firmware klipper]" in str(exc.value)
+    assert "katapult" not in str(exc.value).lower()
+    assert exc.value.data["fw"] == "klipper"
 
 
 # --------------------------------------------------------------------------
@@ -914,13 +1112,14 @@ def test_bootsel_copies_the_uf2_to_the_mounted_volume(paths, settings, tmp_path)
 
     uf2 = tmp_path / "build" / "katapult.uf2"
     uf2.parent.mkdir()
-    uf2.write_bytes(b"\x01" * 32)
+    image = _fake_uf2(b"\x01" * 32)
+    uf2.write_bytes(image)
 
     bench = flashers.Bench(paths=rp_paths, settings=settings, controller=lambda name=None: None)
     target = flashers.bootsel.target_for(str(uf2), chipset="rp2040")
     result = flashers.Bootsel().write(bench, None, target, flashers.PlainContext(lambda *a: None))
 
-    assert (vol / "katapult.uf2").read_bytes() == b"\x01" * 32
+    assert (vol / "katapult.uf2").read_bytes() == image
     assert result["mount"] == str(vol)
 
 
@@ -998,7 +1197,8 @@ def test_a_volume_that_vanishes_after_the_last_byte_is_a_successful_write(
     root, vol = mounted_bootsel_volume(tmp_path)
     rp_paths = dataclasses.replace(paths, bootsel_root=str(root))
     uf2 = tmp_path / "katapult.uf2"
-    uf2.write_bytes(b"every-byte-of-this-image")
+    image = _fake_uf2(b"every-byte-of-this-image")
+    uf2.write_bytes(image)
     _volume_that_dies(
         monkeypatch, error=OSError(5, "Input/output error"), after_bytes=None
     )
@@ -1013,7 +1213,7 @@ def test_a_volume_that_vanishes_after_the_last_byte_is_a_successful_write(
     )
 
     assert result == {"mount": str(vol)}
-    assert (vol / "katapult.uf2").read_bytes() == b"every-byte-of-this-image"
+    assert (vol / "katapult.uf2").read_bytes() == image
     assert any(
         level == "info" and "Input/output error" in text for level, text in events
     )
@@ -1028,7 +1228,7 @@ def test_a_vanished_volume_reaches_flashed_so_provenance_can_record(
     root, vol = mounted_bootsel_volume(tmp_path)
     rp_paths = dataclasses.replace(paths, bootsel_root=str(root))
     uf2 = tmp_path / "katapult.uf2"
-    uf2.write_bytes(b"image")
+    uf2.write_bytes(_fake_uf2(b"image"))
     _volume_that_dies(
         monkeypatch, error=OSError(5, "Input/output error"), after_bytes=None
     )
@@ -1055,7 +1255,8 @@ def test_a_copy_that_dies_partway_through_the_data_is_still_a_failure(
     root, vol = mounted_bootsel_volume(tmp_path)
     rp_paths = dataclasses.replace(paths, bootsel_root=str(root))
     uf2 = tmp_path / "katapult.uf2"
-    uf2.write_bytes(b"half-written-image")
+    image = _fake_uf2(b"half-written-image")
+    uf2.write_bytes(image)
     _volume_that_dies(
         monkeypatch, error=OSError(28, "No space left on device"), after_bytes=4
     )
@@ -1071,7 +1272,7 @@ def test_a_copy_that_dies_partway_through_the_data_is_still_a_failure(
 
     assert exc.value.code == "flash_failed"
     assert "No space left" in str(exc.value)
-    assert (vol / "katapult.uf2").read_bytes() == b"half"
+    assert (vol / "katapult.uf2").read_bytes() == image[:4]
 
 
 def test_the_destination_handle_never_holds_bytes_back(tmp_path):
@@ -1094,7 +1295,7 @@ def test_a_multi_chunk_image_is_copied_whole(paths, settings, tmp_path, monkeypa
     live path rather than a defensive one."""
     root, vol = mounted_bootsel_volume(tmp_path)
     rp_paths = dataclasses.replace(paths, bootsel_root=str(root))
-    image = (b"UF2\n" * 4096) + os.urandom(flashers.bootsel._COPY_CHUNK)
+    image = _fake_uf2((b"UF2\n" * 4096) + os.urandom(flashers.bootsel._COPY_CHUNK))
     uf2 = tmp_path / "katapult.uf2"
     uf2.write_bytes(image)
     real_open = flashers.bootsel._open_dest
@@ -1140,7 +1341,7 @@ def test_a_short_write_resumes_where_it_stopped(paths, settings, tmp_path, monke
     at rather than dropping or repeating the remainder."""
     root, vol = mounted_bootsel_volume(tmp_path)
     rp_paths = dataclasses.replace(paths, bootsel_root=str(root))
-    image = bytes(range(256)) * 8
+    image = _fake_uf2(bytes(range(256)) * 8)
     uf2 = tmp_path / "katapult.uf2"
     uf2.write_bytes(image)
     real_open = flashers.bootsel._open_dest
@@ -1191,7 +1392,8 @@ def test_a_copy_onto_the_image_itself_is_refused_before_it_is_destroyed(
     root, vol = mounted_bootsel_volume(tmp_path)
     rp_paths = dataclasses.replace(paths, bootsel_root=str(root))
     uf2 = vol / "katapult.uf2"
-    uf2.write_bytes(b"the-only-copy-of-this-image")
+    image = _fake_uf2(b"the-only-copy-of-this-image")
+    uf2.write_bytes(image)
     bench = flashers.Bench(
         paths=rp_paths, settings=settings, controller=lambda name=None: None
     )
@@ -1204,7 +1406,7 @@ def test_a_copy_onto_the_image_itself_is_refused_before_it_is_destroyed(
 
     assert exc.value.code == "flash_failed"
     assert "onto itself" in str(exc.value)
-    assert uf2.read_bytes() == b"the-only-copy-of-this-image"
+    assert uf2.read_bytes() == image
 
 
 def test_a_copy_that_dies_mid_write_is_a_structured_flash_failure(
@@ -1221,7 +1423,7 @@ def test_a_copy_that_dies_mid_write_is_a_structured_flash_failure(
     root, vol = mounted_bootsel_volume(tmp_path)
     rp_paths = dataclasses.replace(paths, bootsel_root=str(root))
     uf2 = tmp_path / "katapult.uf2"
-    uf2.write_bytes(b"image")
+    uf2.write_bytes(_fake_uf2(b"image"))
 
     _volume_that_dies(
         monkeypatch, error=OSError(5, "Input/output error"), after_bytes=0
@@ -1247,7 +1449,7 @@ def test_a_copy_failure_still_reaches_the_klipper_readiness_gate(
     root, vol = mounted_bootsel_volume(tmp_path)
     rp_paths = dataclasses.replace(paths, bootsel_root=str(root))
     uf2 = tmp_path / "katapult.uf2"
-    uf2.write_bytes(b"image")
+    uf2.write_bytes(_fake_uf2(b"image"))
 
     _volume_that_dies(
         monkeypatch, error=OSError(28, "No space left on device"), after_bytes=0
@@ -1277,7 +1479,7 @@ def test_bootsel_dry_run_copies_nothing(paths, settings, tmp_path):
     settings.dry_run = True
 
     uf2 = tmp_path / "katapult.uf2"
-    uf2.write_bytes(b"\0")
+    uf2.write_bytes(_fake_uf2())
 
     events: list = []
     bench = flashers.Bench(paths=rp_paths, settings=settings, controller=lambda name=None: None)
@@ -1302,7 +1504,7 @@ def test_bootsel_refuses_a_missing_uf2(paths, settings, tmp_path):
 def test_bootsel_refuses_when_no_volume_is_mounted(paths, settings, tmp_path):
     rp_paths = dataclasses.replace(paths, bootsel_root=str(tmp_path / "nothing-here"))
     uf2 = tmp_path / "katapult.uf2"
-    uf2.write_bytes(b"\0")
+    uf2.write_bytes(_fake_uf2())
 
     bench = flashers.Bench(paths=rp_paths, settings=settings, controller=lambda name=None: None)
     target = flashers.bootsel.target_for(str(uf2), chipset="rp2040")
@@ -1320,7 +1522,7 @@ def test_bootsel_reports_unmounted_device_distinctly_from_no_device(paths, setti
     rp_paths = dataclasses.replace(paths, bootsel_root=str(root))
 
     uf2 = tmp_path / "katapult.uf2"
-    uf2.write_bytes(b"\0")
+    uf2.write_bytes(_fake_uf2())
     bench = flashers.Bench(paths=rp_paths, settings=settings, controller=lambda name=None: None)
     target = flashers.bootsel.target_for(str(uf2), chipset="rp2040")
 
@@ -1376,7 +1578,7 @@ def test_bootsel_refuses_more_than_one_mounted_volume(paths, settings, tmp_path,
     monkeypatch.setattr(devices_mod, "DEFAULT_BOOTSEL_ROOT_GLOBS", (str(media / "*"),))
 
     uf2 = tmp_path / "katapult.uf2"
-    uf2.write_bytes(b"\0")
+    uf2.write_bytes(_fake_uf2())
     bench = flashers.Bench(paths=paths, settings=settings, controller=lambda name=None: None)
     target = flashers.bootsel.target_for(str(uf2), chipset="rp2040")
 
@@ -1397,7 +1599,8 @@ def test_bootsel_handoff_requests_handoff_then_copies_only_to_matching_mount(
         (mount / "INFO_UF2.TXT").write_text("", encoding="utf-8")
     rp_paths = dataclasses.replace(paths, bootsel_root=str(root))
     uf2 = tmp_path / "roadrunner.uf2"
-    uf2.write_bytes(b"road-runner")
+    image = _fake_uf2(b"road-runner")
+    uf2.write_bytes(image)
     calls: list[tuple[str, str]] = []
 
     class Helper:
@@ -1424,7 +1627,7 @@ def test_bootsel_handoff_requests_handoff_then_copies_only_to_matching_mount(
     )
 
     assert calls == [("RR-0123456789ABCDEFGHJKMNPQRS", "rp2040")]
-    assert (matching / "roadrunner.uf2").read_bytes() == b"road-runner"
+    assert (matching / "roadrunner.uf2").read_bytes() == image
     assert not (bystander / "roadrunner.uf2").exists()
     assert result == {"mount": str(matching)}
 
@@ -1463,11 +1666,11 @@ def _real_apply_wait(monkeypatch, leaves=None):
     return clock
 
 
-def _bootsel_bench_and_target(paths, settings, tmp_path, image=b"image"):
+def _bootsel_bench_and_target(paths, settings, tmp_path, image=None):
     root, vol = mounted_bootsel_volume(tmp_path)
     rp_paths = dataclasses.replace(paths, bootsel_root=str(root))
     uf2 = tmp_path / "katapult.uf2"
-    uf2.write_bytes(image)
+    uf2.write_bytes(image if image is not None else _fake_uf2(b"image"))
     bench = flashers.Bench(
         paths=rp_paths, settings=settings, controller=lambda name=None: None
     )
@@ -1524,7 +1727,7 @@ def test_the_image_is_synced_to_the_volume_before_the_wait(
     """Without the `fsync` the image can sit in the page cache for the
     kernel's writeback delay, and the apply wait would be timing that instead
     of the board."""
-    image = b"every-byte-of-this-image"
+    image = _fake_uf2(b"every-byte-of-this-image")
     bench, target, vol = _bootsel_bench_and_target(
         paths, settings, tmp_path, image=image
     )
@@ -1609,7 +1812,7 @@ def test_bootsel_handoff_waits_for_its_own_volume_not_a_bystander(
         mount.mkdir(parents=True)
         (mount / "INFO_UF2.TXT").write_text("", encoding="utf-8")
     uf2 = tmp_path / "roadrunner.uf2"
-    uf2.write_bytes(b"road-runner")
+    uf2.write_bytes(_fake_uf2(b"road-runner"))
     clock = _real_apply_wait(monkeypatch, {matching / "INFO_UF2.TXT": 5.0})
 
     class Helper:
@@ -1669,7 +1872,7 @@ def test_bootsel_handoff_waits_for_helper_before_service_restart(
     (matching / "INFO_UF2.TXT").write_text("", encoding="utf-8")
     rp_paths = dataclasses.replace(paths, bootsel_root=str(root))
     uf2 = tmp_path / "roadrunner.uf2"
-    uf2.write_bytes(b"road-runner")
+    uf2.write_bytes(_fake_uf2(b"road-runner"))
     order: list[str] = []
 
     class Service(NullService):
@@ -1688,7 +1891,7 @@ def test_bootsel_handoff_waits_for_helper_before_service_restart(
             order.append("request")
             return BootselHandoff(topology="platform-x.usb-usb-0:1.3:1.0")
 
-        def wait_ready(self, bench, *, serial, chipset, ctx):
+        def wait_ready(self, bench, *, serial, chipset, ctx, type_name="", fw="", topology=""):
             order.append("ready")
 
     service = Service()
@@ -1726,7 +1929,8 @@ def test_a_whole_batch_still_succeeds_when_post_copy_readiness_fails(
     (matching / "INFO_UF2.TXT").write_text("", encoding="utf-8")
     rp_paths = dataclasses.replace(paths, bootsel_root=str(root))
     uf2 = tmp_path / "roadrunner.uf2"
-    uf2.write_bytes(b"road-runner")
+    image = _fake_uf2(b"road-runner")
+    uf2.write_bytes(image)
 
     class Helper:
         name = "test"
@@ -1734,7 +1938,7 @@ def test_a_whole_batch_still_succeeds_when_post_copy_readiness_fails(
         def request_bootsel(self, bench, *, serial, chipset, ctx):
             return BootselHandoff(topology="platform-x.usb-usb-0:1.3:1.0")
 
-        def wait_ready(self, bench, *, serial, chipset, ctx):
+        def wait_ready(self, bench, *, serial, chipset, ctx, type_name="", fw="", topology=""):
             raise RoadrunnerError(
                 "More than one Roadrunner matched that serial",
                 serial=serial,
@@ -1759,7 +1963,7 @@ def test_a_whole_batch_still_succeeds_when_post_copy_readiness_fails(
 
     assert len(result["flashed"]) == 1
     assert result["failures"] == []
-    assert (matching / "roadrunner.uf2").read_bytes() == b"road-runner"
+    assert (matching / "roadrunner.uf2").read_bytes() == image
     # The bare message, not batch.py's "<id>: <message>" fallback: this pins
     # that `settled` itself absorbed it, not just that the job survived.
     assert ("warn", "More than one Roadrunner matched that serial") in events
@@ -1959,7 +2163,7 @@ def test_bootsel_handoff_dry_run_does_not_request_or_copy(
 ):
     settings.dry_run = True
     uf2 = tmp_path / "roadrunner.uf2"
-    uf2.write_bytes(b"road-runner")
+    uf2.write_bytes(_fake_uf2(b"road-runner"))
     requested: list[object] = []
 
     class Helper:

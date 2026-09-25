@@ -86,7 +86,6 @@ Interfaces:
 of it. What is still open:
 
 - [ ] **TEST ERROR** Reproduce and fix the flaky teardown `RuntimeError` in `test_an_unknown_inbound_method_gets_an_error_not_silence`.
-- [ ] **CHORE** Bump dependency versions. `npm install` in `ui/` warns `glob@10.5.0` is deprecated: it comes in through `@vue/test-utils@2.4.11` → `js-beautify@1.15.4`, and `@vue/test-utils` 2.5.1 moves to `js-beautify ^2.0.0` (`glob ^13`). Run the UI tests after, since `js-beautify` 2.x is a major version.
 - [ ] **FEATURE** Support Flashing new devices for other supported flashers. (currently only shows klipper firmware types)
 - [ ] **NEEDS DESIGN** Run config migrations as the first step of agent startup, so that restarting the service migrates an existing install. First check the restrictions the service runs under.
 - [ ] **BUG** A Roadrunner flash reports `Could not confirm that the Roadrunner CDC device disappeared` on an otherwise successful write. `_await_disappearance` in [src/mcu_updater/discovery/roadrunner.py](src/mcu_updater/discovery/roadrunner.py) sets `unknown = True` when `_entry_candidates(paths, strict=True)` raises `OSError`, then treats "I could not look" as "the device is still there" and spins to `REENUMERATE_TIMEOUT`. The usual cause is `/dev/serial/by-id` disappearing entirely once the last CDC device leaves - which is evidence the board *did* go, not absence of evidence. Seen on the bench 2026-09-19; the flash itself succeeded.

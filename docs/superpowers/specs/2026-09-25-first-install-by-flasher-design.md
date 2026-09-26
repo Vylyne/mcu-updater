@@ -14,7 +14,10 @@ Success looks like:
 
 - A Roadrunner (cmake type, RP2040) can be installed from BOOTSEL through the
   wizard and the job reports the board that came back, rather than "No board
-  appeared".
+  appeared". Its `[type]` must declare `chipset: rp2040`: a bare board in
+  BOOTSEL has nothing but its chipset to vouch for it (`Bootsel.supports`), and
+  cmake types may leave the key empty. One that does is listed with the reason
+  naming the key to add - the config line is the fix, not a code path.
 - Every type appears in the wizard. One that cannot be set up says why, naming
   the line to change.
 - Adding PlatformIO later means implementing one capability in the esptool
@@ -153,7 +156,13 @@ against a bare `Device` is unchanged.
    `add-mcu` builds first and hands over the files it just made, which is why
    `flash_initial_bootloader`'s comment rejects `providers.staged` - both are
    right for their caller, and the difference is recorded here so neither is
-   "fixed" to match the other;
+   "fixed" to match the other.
+   **One consequence for kconfig RP2040 Katapult:** `build.staged` offers a
+   `.uf2` only when its sidecar lists the kind, because a `.uf2` staged before
+   sidecars recorded kinds may be older than the `.bin` beside it. Today's
+   agent path copies whatever `.uf2` is on disk. After this change a Katapult
+   built before typed artifacts is refused `no_artifact` until rebuilt once -
+   the same rule `fw.flash` already applies, and the message says to rebuild;
 3. runs the chosen flasher's `scan_candidates` in place of the `is_bootsel`
    branch. The DFU `dfu_serial` argument keeps its meaning and its refusals
    (`device_not_found`, `dfu_ambiguous`); BOOTSEL keeps its dead-end
@@ -181,7 +190,12 @@ physical port, not the serial the board presents.
   firmware-name filter, `is_mcu` still applies.
 - With no port (the scan could not resolve one), the wait falls back to any new
   `is_mcu` device and logs a warning saying so.
-- The CLI's `add-mcu` gets the same wait through `adoptable_devices`.
+- The CLI's `add-mcu` gets the same wait through `adoptable_devices`. It does
+  not scan today - `flash_initial_bootloader` finds the device itself - so it
+  now asks `first_install` and, after the build and immediately before the
+  write, runs the chosen flasher's `scan_candidates` exactly as the agent does,
+  handing the scan's `port` to the wait. After the build, not before, because
+  the user may still be fitting the jumper while menuconfig runs.
 
 A Roadrunner therefore comes back as `RR-UNPROVISIONED-...` on its port, is
 reported in `candidates`, and the wizard's existing adopt step
@@ -204,8 +218,17 @@ projections in `agent/methods/status.py`:
                   "reason": "nothing on [firmware knomi]'s flashers: can scan for a new board"}
 ```
 
-Additive: no `API_VERSION` bump, so the UI-before-agent ordering rule does not
-come into play. An older UI ignores the field and keeps its kconfig filter.
+Additive: no `API_VERSION` bump. An older UI ignores the field and keeps its
+kconfig filter.
+
+**A newer UI will meet an older agent.** The release order promotes the UI to
+stable first, so there is a guaranteed window where this wizard talks to an
+agent with neither `first_install` nor `fw.add_mcu.scan`. The wizard therefore
+uses the new path only when `hasCapability("fw.add_mcu.scan")` and the rows
+carry `first_install`; otherwise it falls back to today's behaviour exactly -
+the `kconfig_make` filter, `descriptor` parsing, `fw.dfu.scan` /
+`fw.bootsel.scan`. The fallback is kept until a later release removes it, and
+has its own spec test.
 
 `AddMcuWizard.vue`:
 
@@ -215,7 +238,12 @@ come into play. An older UI ignores the field and keeps its kconfig filter.
 - shows `first_install.reason` for a type with no flasher instead of the
   hard-coded "only STM32 and RP2040" sentence;
 - names what it will write (`first_install.fw`) on the button - the comment
-  that declined a wire field just for this label is superseded.
+  that declined a wire field just for this label is superseded;
+- keeps one deliberate flasher-specific branch: when `first_install.flasher`
+  is `dfu_util` and the scan is `ambiguous`, it offers the pick-a-serial
+  choice, because only DFU can target one of several boards (`dfu_serial`).
+  That is a property of the mechanism, documented as such, not drift from
+  the "no caller branches" rule.
 
 `TargetsView.vue` shows "Add new board…" when any target has a
 `first_install.flasher`.
@@ -246,6 +274,12 @@ type has no flasher.
 - `tests/test_ui_contract.py` covers `first_install` on every provider's rows.
 - `AddMcuWizard.spec.ts`: a cmake target is listed and scans via
   `fw.add_mcu.scan`; a PIO target shows its reason; no `descriptor` parsing.
+  Against an agent without `fw.add_mcu.scan` or `first_install`, the old
+  kconfig-only behaviour, unchanged.
+- CLI `add-mcu`: the scan runs between the build and the write, and its port
+  reaches the wait.
+- kconfig RP2040 Katapult whose sidecar does not list `uf2`: `no_artifact`
+  telling the user to rebuild.
 - Mutation specs anchored in `add_mcu_start`, `flash_initial_bootloader` and
   the moved scan bodies (`add-mcu.json`, `single-write-path.json`,
   `bootsel-*.json`, `dfu-pairings.json`, others found by grep) are re-anchored

@@ -1,0 +1,43 @@
+{
+  "_comment": "The config snapshot reuses a parse only while the file's stat key is unchanged and only if the parse was read outside the racy window; the shared parse refuses edits; both write paths read the file fresh under their lock, never the snapshot.",
+  "file": "src/mcu_updater/cfgsnapshot.py",
+  "command": [
+    "python",
+    "-m",
+    "pytest",
+    "tests/test_cfgsnapshot.py",
+    "tests/test_config_snapshot_views.py",
+    "tests/test_agent_targets.py",
+    "-q"
+  ],
+  "mutations": [
+    {
+      "name": "a parse is reused only while the stat key matches",
+      "find": "    if entry is not None and entry.key == _stat_key(st):",
+      "replace": "    if entry is not None:"
+    },
+    {
+      "name": "a parse read inside the racy window is not kept",
+      "find": "    trusted = started - st.st_mtime_ns > RACY_WINDOW_NS",
+      "replace": "    trusted = True"
+    },
+    {
+      "name": "a frozen document refuses every edit",
+      "file": "src/mcu_updater/cfgdoc.py",
+      "find": "        if self._frozen:",
+      "replace": "        if False:"
+    },
+    {
+      "name": "Registry.mutate reads the file fresh, not the snapshot",
+      "file": "src/mcu_updater/config.py",
+      "find": "            reg = cls._from_doc(paths, typelist.read_doc(paths, fresh=True))",
+      "replace": "            reg = cls.load(paths)"
+    },
+    {
+      "name": "settings.mutate reads the file fresh, not the snapshot",
+      "file": "src/mcu_updater/settings.py",
+      "find": "        current = _load_fresh(paths.settings_file)",
+      "replace": "        current = load_settings(paths.settings_file)"
+    }
+  ]
+}

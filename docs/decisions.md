@@ -634,3 +634,28 @@ by hand, because a helper can stop services and write firmware. A misspelt
 misspelt `helper:` resolves lazily when that family's capability is asked for,
 so it costs one family rather than the whole panel. Both refuse rather than
 falling back.
+
+### The config is one snapshot per file, keyed on stat
+
+`mcu-updater.cfg` is parsed once per process and reused by every loader until
+its `(st_dev, st_ino, st_size, st_mtime_ns, st_ctime_ns)` changes
+(`cfgsnapshot.py`). One `fw.status` poll used to open it 46 times.
+
+A parse is kept only if its read began more than 2 s after the file's mtime -
+git's racy-clean rule. A rewrite in place, at the same size, inside one mtime
+tick keeps every field of the key, and nano rewrites in place and ext4 reuses
+the inode `os.replace` frees; any read that could have raced such a rewrite
+began inside that tick, so it is never kept. Writers (`Registry.mutate`,
+`settings.mutate`, `seed`) never read the snapshot - they parse under their
+lock, so the lost-update guarantee does not rest on the window - and drop it
+after `os.replace`, as belt and braces. The shared parse is frozen: an edit
+through a `Registry.load` raises rather than changing every reader's view.
+
+The accepted gap: a rewrite that forges the whole key - same size, same inode,
+mtime restored with `utime` to more than 2 s ago - is not seen until the next
+real change. Only a tool that deliberately restores timestamps does that, and
+writers are unaffected.
+
+Do not replace this with inotify. It is not stdlib, it needs a thread, and an
+event still leaves a gap between the write and the read that the stat check
+has to cover anyway.

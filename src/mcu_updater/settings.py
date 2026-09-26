@@ -152,13 +152,14 @@ _LEGACY_SERVICE_KEY = "service"
 
 
 def _read(path: str) -> CfgDocument:
-    if not os.path.exists(path):
-        return CfgDocument()
+    """The writer's own writable parse. Missing means "not found", exactly as
+    for `load_settings`: a config that cannot even be checked is an error to
+    both, never an empty file to one of them."""
     try:
-        with open(path, encoding="utf-8") as fh:
-            return CfgDocument(fh.read())
+        doc = cfgsnapshot.read_fresh(path)
     except OSError as exc:
         raise ConfigError(f"could not read {path}: {exc}", path=path) from exc
+    return CfgDocument() if doc is None else doc
 
 
 def load_settings(path: str) -> Settings:

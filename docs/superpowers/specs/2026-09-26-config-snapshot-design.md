@@ -116,6 +116,12 @@ silently corrupting every other reader's view.
 | `firmware.load` | `{}` | `{}` | tolerated |
 | `settings.load_settings` | defaults | `ConfigError` | only `[updater]` is refused |
 
+"Missing" is `FileNotFoundError`/`NotADirectoryError` only. The old loaders
+asked `os.path.exists`, which also called a config missing when its existence
+could not be checked at all (directory not searchable, symlink loop); that is
+now "unreadable" for every loader and for `settings._read`, the writer's read,
+so the loader and the writer never disagree about one file.
+
 Each loader replaces its own `open`/`CfgDocument(...)` with
 `cfgsnapshot.read(...)`, and maps `None` and `OSError` exactly as the table
 says. The messages stay byte-for-byte the same. Everything derived from the

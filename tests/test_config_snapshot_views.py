@@ -149,6 +149,41 @@ def test_settings_mutate_reads_the_file_not_the_snapshot(paths, blind_cache):
         assert current.make_jobs == 2
 
 
+def test_reader_and_writer_agree_on_a_config_they_cannot_reach(paths, monkeypatch):
+    """Only "not found" means missing. A config whose existence cannot even be
+    checked - its directory not searchable, a symlink loop - is an error to the
+    loader and to the writer alike, never an empty file to one of them."""
+    import builtins
+
+    _write(paths, "[updater]\nmake_jobs: 1\n")
+    target = os.path.abspath(paths.main_config)
+    real_stat, real_open = os.stat, builtins.open
+
+    def refuse(path):
+        if isinstance(path, (str, os.PathLike)) and os.path.abspath(path) == target:
+            raise PermissionError(13, "Permission denied", str(path))
+
+    def stat(path, *a, **k):
+        refuse(path)
+        return real_stat(path, *a, **k)
+
+    def open_(path, *a, **k):
+        refuse(path)
+        return real_open(path, *a, **k)
+
+    monkeypatch.setattr(os, "stat", stat)
+    monkeypatch.setattr(builtins, "open", open_)
+
+    with pytest.raises(ConfigError, match="could not read"):
+        settings.load_settings(paths.settings_file)
+    with pytest.raises(ConfigError, match="could not read"):
+        settings._load_fresh(paths.settings_file)
+    with pytest.raises(ConfigCorruptError, match="could not read"):
+        Registry.load(paths)
+    with pytest.raises(ConfigCorruptError, match="could not read"):
+        typelist.read_doc(paths, fresh=True)
+
+
 def test_every_writer_drops_the_snapshot(paths, blind_cache):
     """Belt and braces: with the key blind, only `invalidate` can show a
     reader the write."""

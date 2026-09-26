@@ -45,6 +45,15 @@ _TRUE = {"true", "yes", "on", "1"}
 _FALSE = {"false", "no", "off", "0"}
 
 
+class FrozenDocumentError(RuntimeError):
+    """An edit to a document that is shared read-only.
+
+    `cfgsnapshot.read` hands the same parse to every reader, so an edit through
+    one would silently change what every other reader sees - and could never be
+    saved, since the write paths read their own copy under the lock.
+    """
+
+
 def parse_bool(raw: str | None, default: bool | None = False) -> bool | None:
     """Klipper-style truthiness. Returns None when the value is unrecognised, so
     a caller can tell "not set" from "set to nonsense".
@@ -122,6 +131,7 @@ class CfgDocument:
         #: Names appearing more than once. First wins, so the later copy is dead
         #: text - which is silent and confusing enough that callers refuse on it.
         self.duplicate_sections: list[str] = []
+        self._frozen = False
         self._parse()
 
     # -- parsing -----------------------------------------------------------
@@ -247,6 +257,14 @@ class CfgDocument:
         sec = self.sections.get(section)
         return [] if sec is None else list(sec.options)
 
+    def freeze(self) -> None:
+        """Refuse every edit from here on. See `FrozenDocumentError`."""
+        self._frozen = True
+
+    @property
+    def frozen(self) -> bool:
+        return self._frozen
+
     # -- writing -----------------------------------------------------------
 
     @staticmethod
@@ -319,6 +337,11 @@ class CfgDocument:
         return [f"{key}: {text}" + (f"  {comment}" if comment else "")]
 
     def _splice(self, start: int, end: int, replacement: list[str]) -> None:
+        if self._frozen:
+            raise FrozenDocumentError(
+                "this document is the shared config snapshot and is read-only; "
+                "write through Registry.mutate or settings.mutate"
+            )
         self.lines[start:end] = replacement
         # Line numbers everywhere else are now wrong, so rebuild. The files are
         # tens of lines; correctness beats cleverness here.

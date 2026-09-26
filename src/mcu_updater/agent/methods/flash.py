@@ -759,7 +759,9 @@ class FlashMixin(_Base):
         # A build made earlier, which is exactly what `providers.staged`
         # describes - the same staged set `fw.flash` chooses from. The CLI's
         # add-mcu hands over what it has just built instead, since that is the
-        # image it means to write.
+        # image it means to write. docs/decisions.md ("First install is gated
+        # by flashers") records why neither is to be "fixed" to match the
+        # other.
         staged = providers.staged(self.paths, name, family)
         picked = flashers.resolve(family, bare, None, staged)
         if picked is None:

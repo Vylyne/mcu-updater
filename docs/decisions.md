@@ -523,6 +523,34 @@ by default: `enable_flashing` is documented as an agent-only safety gate the
 CLI has always ignored (`Settings.enable_flashing`), and grepping `cli.py`
 confirms it never consults it anywhere today.
 
+### First install is gated by flashers
+
+Setting up a bare board is a question for the install family's `flashers:`
+list, not for the builder or a chipset prefix: `flashers.first_install` walks
+that list and takes the first `CandidateScanner` whose `supports()` takes a
+bare device of the type's `chipset`. A new mechanism (PlatformIO's `esptool`,
+say) is one capability on its flasher module, with no change to the agent, the
+wire, or the wizard.
+
+Identification lives in the scanner, not in a caller: it is handed the type
+list's tracked boards, because deriving a ROM id from a running serial is
+flasher knowledge, and no generic path should carry it.
+
+The wait after the write is keyed on the USB port the scan saw, never on the
+by-id chipset segment - the same rule `docs/decisions.md`'s "Presence comes
+from the inventory" gives for tracking. It falls back to any new board, with a
+warning, only when the scan cannot trace a port.
+
+Staged vs just-built is two right answers for two callers, not one to
+reconcile: `fw.add_mcu.start` writes a build made earlier, so it reads
+`providers.staged`. The CLI's `add-mcu` builds first and writes the files it
+just made, which is why `flash_initial_bootloader` rejects `providers.staged`.
+Neither is to be "fixed" to match the other.
+
+The wizard's DFU pick-a-serial is the one sanctioned flasher-specific branch in
+a caller. It exists because only DFU can target one of several boards sitting
+in front of it at once; nothing else needs to ask a human to disambiguate.
+
 ### One selection per identity, every builder
 
 A fleet flash's selection is one list per kind of identity a type can declare -

@@ -1174,12 +1174,14 @@ and the service restart.
 ### Setting up a brand-new board
 
 A board with no bootloader on it is reached through its boot ROM — **DFU**
-(STM32) or **BOOTSEL** mass storage (RP2040). **Every type in the type list is
-eligible**, whatever its builder: a cmake or PlatformIO type is set up the same
-way as a kconfig one. The mechanism is the install family's (below) first
+(STM32) or **BOOTSEL** mass storage (RP2040). Eligibility is never the
+builder, and never a chipset prefix: it is the install family's (below) first
 `flashers:` entry that can both scan for a bare board and write one of the
-type's `chipset` (`flashers.first_install`) — never the builder, and never a
-chipset prefix. The whole flow is four calls of which only two are new:
+type's `chipset` (`flashers.first_install`). What that resolves to today: a
+kconfig type over DFU (STM32) or BOOTSEL (RP2040), and a cmake type over
+BOOTSEL (RP2040). A PlatformIO type has no candidate scanner yet — esptool
+detection is deferred — so its `first_install` names no flasher. The whole
+flow is four calls of which only two are new:
 
 | Step | Call | New? |
 | --- | --- | --- |

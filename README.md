@@ -77,7 +77,7 @@ Interfaces:
 - [x] CLI and interactive TUI
 - [x] Moonraker agent (JSON-RPC over the unix socket)
 - [x] Bulk build / flash / update-all, covering every provider - kconfig, PlatformIO and cmake alike
-- [x] Guided first-time MCU setup over DFU and BOOTSEL
+- [x] Guided first-time setup for any type whose firmware's flashers can find and write a bare board - STM32 over DFU and RP2040 over BOOTSEL, for kconfig and cmake builds alike
 - [x] Standalone embeddable UI, with single-flight refreshes and retained job-log restoration after reload
 
 ## TODO
@@ -86,7 +86,6 @@ Interfaces:
 of it. What is still open:
 
 - [ ] **TEST ERROR** Reproduce and fix the flaky teardown `RuntimeError` in `test_an_unknown_inbound_method_gets_an_error_not_silence`.
-- [ ] **FEATURE** Support Flashing new devices for other supported flashers. (currently only shows klipper firmware types)
 - [ ] **NEEDS DESIGN** Run config migrations as the first step of agent startup, so that restarting the service migrates an existing install. First check the restrictions the service runs under.
 - [ ] **BUG** A Roadrunner flash reports `Could not confirm that the Roadrunner CDC device disappeared` on an otherwise successful write. `_await_disappearance` in [src/mcu_updater/discovery/roadrunner.py](src/mcu_updater/discovery/roadrunner.py) sets `unknown = True` when `_entry_candidates(paths, strict=True)` raises `OSError`, then treats "I could not look" as "the device is still there" and spins to `REENUMERATE_TIMEOUT`. The usual cause is `/dev/serial/by-id` disappearing entirely once the last CDC device leaves - which is evidence the board *did* go, not absence of evidence. Seen on the bench 2026-09-19; the flash itself succeeded.
 - [ ] Identify a tracked board sitting in BOOTSEL by its boot-ROM ID and hand it to flasher selection, so a helper flash that stopped after the reboot can be finished without a power-cycle. `Bootsel.scan_candidates` in [src/mcu_updater/flashers/bootsel.py](src/mcu_updater/flashers/bootsel.py) already maps boot-ROM IDs to tracked serials.

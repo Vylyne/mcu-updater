@@ -537,9 +537,9 @@ list's tracked boards, because deriving a ROM id from a running serial is
 flasher knowledge, and no generic path should carry it.
 
 The wait after the write is keyed on the USB port the scan saw, never on the
-by-id chipset segment - the same rule `docs/decisions.md`'s "Presence comes
-from the inventory" gives for tracking. It falls back to any new board, with a
-warning, only when the scan cannot trace a port.
+by-id chipset segment - the same rule "Presence comes from the inventory"
+(above) gives for tracking. It falls back to any new board, with a warning,
+only when the scan cannot trace a port.
 
 Staged vs just-built is two right answers for two callers, not one to
 reconcile: `fw.add_mcu.start` writes a build made earlier, so it reads

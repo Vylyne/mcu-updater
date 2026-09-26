@@ -196,6 +196,12 @@ In `from_env`:
 - Beside `tty_sysfs = ...`, add `block_sysfs = e.get("MCU_UPDATER_FAKE_BLOCK_SYSFS") or ""`.
 - Pass `block_sysfs=block_sysfs,` to the constructor next to `tty_sysfs=tty_sysfs,`.
 
+In `docs/layout.md`'s env-var table, add a row after `MCU_UPDATER_FAKE_TTY_SYSFS`:
+
+```markdown
+| `MCU_UPDATER_FAKE_BLOCK_SYSFS` | `/sys/class/block` |
+```
+
 - [ ] **Step 5: Add `device_for_block` to `src/mcu_updater/discovery/usb.py`**
 
 Next to the existing `_DEFAULT_TTY_SYSFS` constant:
@@ -276,7 +282,7 @@ Expected: PASS.
 Run the full gate. Then:
 
 ```bash
-git -C C:/git/github/mcu-updater-first-install-by-flasher add src/mcu_updater/paths.py src/mcu_updater/discovery/usb.py src/mcu_updater/discovery/byid.py tests/conftest.py tests/test_port_wait.py
+git -C C:/git/github/mcu-updater-first-install-by-flasher add src/mcu_updater/paths.py src/mcu_updater/discovery/usb.py src/mcu_updater/discovery/byid.py tests/conftest.py tests/test_port_wait.py docs/layout.md
 git -C C:/git/github/mcu-updater-first-install-by-flasher commit -m "feat(discovery): key the new-device wait on a usb port, and trace a boot-rom volume to its port"
 ```
 
@@ -734,7 +740,26 @@ Expected: PASS. The last three files pass **unmodified** — that is the proof t
 
 - [ ] **Step 11: Mutation specs, gate, commit**
 
-`git grep -n "_identify\|DFU_NONE\|BOOTSEL_NONE\|dfu_devices(reporter" -- scripts/mutations`. Re-anchor any hit onto the moved line in the flasher module (set `"file"` on that mutation), and run each touched spec singly.
+A sweep made while writing this plan (every `find` in `scripts/mutations/*.json` whose file this plan rewrites) found **no** spec anchored inside `dfu_scan`, `bootsel_scan` or the `_identify_*` bodies. Re-check that it still holds before editing, because specs may have been added since:
+
+```bash
+python - <<'EOF'
+import json, glob
+for p in sorted(glob.glob("scripts/mutations/*.json")):
+    d = json.load(open(p, encoding="utf-8"))
+    for m in d.get("mutations", []):
+        if m.get("file", d.get("file")) == "src/mcu_updater/agent/methods/flash.py":
+            print(p, "|", m["name"], "|", m["find"].splitlines()[0])
+EOF
+```
+
+Any hit whose line sits in lines 626-839 moves with its body: re-anchor it onto the moved line, setting `"file"` on that mutation to the flasher module. Then run each touched spec singly.
+
+The same sweep lists the anchors this plan must keep **verbatim** in the files it rewrites, beyond those Tasks 4-6 name:
+- `bootsel-erase.json`'s `boot_config = ...` line in `add_mcu_start`;
+- `batch-selection.json`'s `    if choice is None:` in `flashers/flash.py`;
+- `single-write-path.json`'s two lines in the CLI's add-mcu adoption tail;
+- `dfu-pairings.json`'s late-adoption lines.
 
 Run the full gate, then:
 

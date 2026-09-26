@@ -18,7 +18,7 @@ import re
 import sys
 from collections.abc import Sequence
 
-from . import firmware
+from . import cfgsnapshot, firmware
 from .cfgdoc import CfgDocument
 from .errors import UpdaterError
 from .lock import ExclusiveLock
@@ -117,6 +117,7 @@ def seed_firmware_sections(paths: Paths, sources: dict[str, str]) -> list[str]:
         with open(tmp, "w", encoding="utf-8", newline="\n") as fh:
             fh.write(new_text)
         os.replace(tmp, paths.main_config)
+        cfgsnapshot.invalidate(paths.main_config)
         return missing
 
 

@@ -21,6 +21,7 @@ import os
 from collections.abc import Iterator
 from typing import Any
 
+from . import cfgsnapshot
 from .cfgdoc import CfgDocument, parse_bool
 from .errors import ConfigError
 from .paths import Paths
@@ -166,9 +167,24 @@ def load_settings(path: str) -> Settings:
     A *malformed value* still raises. Silently ignoring `dry_run = maybe` means
     the user's dry run quietly does not apply, which is the kind of surprise that
     ends up flashing a board.
+
+    Read through the shared config snapshot; `mutate` reads its own copy.
     """
+    try:
+        doc = cfgsnapshot.read(path)
+    except OSError as exc:
+        raise ConfigError(f"could not read {path}: {exc}", path=path) from exc
+    return _settings_from_doc(CfgDocument() if doc is None else doc, path)
+
+
+def _load_fresh(path: str) -> Settings:
+    """`load_settings` from disk, never the snapshot - for `mutate`, under the lock."""
+    return _settings_from_doc(_read(path), path)
+
+
+def _settings_from_doc(doc: CfgDocument, path: str) -> Settings:
+    """The [updater] section of `doc`. `path` is for messages."""
     s = Settings()
-    doc = _read(path)
 
     # Appending a second [updater] block rather than editing the existing one is
     # an easy mistake, and first-wins would mean `enable_flashing: true` silently
@@ -257,7 +273,7 @@ def mutate(paths: Paths, label: str) -> Iterator[Settings]:
     from .lock import ExclusiveLock
 
     with ExclusiveLock(paths, path=paths.registry_lock_file).acquire(label):
-        current = load_settings(paths.settings_file)
+        current = _load_fresh(paths.settings_file)
         before = copy.deepcopy(current)
         yield current
         if current != before:
@@ -300,3 +316,4 @@ def _write_settings(path: str, settings: Settings) -> None:
     with open(tmp, "w", encoding="utf-8", newline="\n") as fh:
         fh.write(doc.render())
     os.replace(tmp, path)
+    cfgsnapshot.invalidate(path)

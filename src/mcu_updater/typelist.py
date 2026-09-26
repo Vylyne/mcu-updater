@@ -21,9 +21,8 @@ own block, so nothing here needs to know which builder is which.
 from __future__ import annotations
 
 import dataclasses
-import os
 
-from . import firmware, sections
+from . import cfgsnapshot, firmware, sections
 from .cfgdoc import CfgDocument
 from .errors import ConfigCorruptError
 from .paths import Paths
@@ -142,20 +141,22 @@ def read(doc: CfgDocument, families: dict[str, firmware.FirmwareFamily]) -> list
     return out
 
 
-def read_doc(paths: Paths) -> CfgDocument | None:
+def read_doc(paths: Paths, *, fresh: bool = False) -> CfgDocument | None:
     """The config document, or None when there is no file.
+
+    The shared, frozen snapshot (`cfgsnapshot`) unless `fresh`: a writer under
+    its lock asks for its own writable parse, read from disk.
 
     Refuses an unreadable file and duplicate sections: only the first copy of a
     section is read, so everything in a later one would be silently ignored.
     """
     path = paths.registry_file
-    if not os.path.exists(path):
-        return None
     try:
-        with open(path, encoding="utf-8") as fh:
-            doc = CfgDocument(fh.read())
+        doc = cfgsnapshot.read_fresh(path) if fresh else cfgsnapshot.read(path)
     except OSError as exc:
         raise ConfigCorruptError(f"could not read {path}: {exc}", path=path) from exc
+    if doc is None:
+        return None
     if doc.duplicate_sections:
         dupes = ", ".join(f"[{name}]" for name in doc.duplicate_sections)
         raise ConfigCorruptError(
@@ -172,9 +173,10 @@ def read_config(
 ) -> tuple[list[TypeEntry], dict[str, firmware.FirmwareFamily]]:
     """The type list and the families, leniently: no file is neither."""
     try:
-        with open(paths.main_config, encoding="utf-8") as fh:
-            doc = CfgDocument(fh.read())
+        doc = cfgsnapshot.read(paths.main_config)
     except OSError:
+        return [], {}
+    if doc is None:
         return [], {}
     families = firmware.load_from_doc(doc)
     return read(doc, families), families

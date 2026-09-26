@@ -38,6 +38,7 @@ import dataclasses
 import os
 from typing import Any
 
+from . import cfgsnapshot
 from .cfgdoc import CfgDocument, parse_bool
 from .errors import ConfigCorruptError
 from .paths import Paths
@@ -225,9 +226,10 @@ def load(paths: Paths) -> dict[str, FirmwareFamily]:
     is the same thing every install has today.
     """
     try:
-        with open(paths.main_config, encoding="utf-8") as fh:
-            doc = CfgDocument(fh.read())
+        doc = cfgsnapshot.read(paths.main_config)
     except OSError:
+        return {}
+    if doc is None:
         return {}
     return load_from_doc(doc)
 

@@ -21,6 +21,13 @@ from mcu_updater.errors import (
 from .conftest import read_main_config, seed_base_firmwares, with_base_firmwares, write_main_config
 
 
+def _writable(paths) -> Registry:
+    """A registry these tests may edit and `_save` directly: the fresh,
+    writable parse `Registry.mutate` takes under its lock. `Registry.load`
+    hands out the shared, frozen snapshot."""
+    return Registry._from_doc(paths, typelist.read_doc(paths, fresh=True))
+
+
 def _write(paths, text: str) -> None:
     """Write `text` as the whole registry file, declaring klipper and katapult
     first unless `text` already does - most of these bodies predate every
@@ -62,7 +69,7 @@ def test_loads_the_live_registry(paths, live_registry_text):
 def test_the_documented_example_loads_and_round_trips(paths, example_registry_text):
     """The root config is documentation, not incidental agent-test data."""
     _write(paths, example_registry_text)
-    reg = Registry.load(paths)
+    reg = _writable(paths)
     reg._save(paths)
     assert _read(paths) == example_registry_text
 
@@ -113,7 +120,7 @@ def test_a_malformed_patch_is_refused_rather_than_silently_dropped(paths):
 
 def test_an_unchanged_registry_round_trips_byte_identically(paths, live_registry_text):
     _write(paths, live_registry_text)
-    reg = Registry.load(paths)
+    reg = _writable(paths)
     reg._save(paths)
     assert _read(paths) == live_registry_text
 
@@ -122,7 +129,7 @@ def test_comments_survive_the_panel_adding_a_serial(paths, live_registry_text):
     """The whole point of moving to .cfg: people annotate this file, and the panel
     writes to it structurally."""
     _write(paths, live_registry_text)
-    reg = Registry.load(paths)
+    reg = _writable(paths)
     reg.add_serial("bttebb36", "NEWBOARD-if00")
     reg._save(paths)
 
@@ -138,7 +145,7 @@ def test_a_hand_written_comment_inside_a_section_survives(paths):
         "[type a]\n# this board is fussy about its clock\nchipset: stm32f072xb\n"
         "firmware: klipper\nserials:\n    S1\n",
     )
-    reg = Registry.load(paths)
+    reg = _writable(paths)
     reg.add_serial("a", "S2")
     reg._save(paths)
     out = _read(paths)
@@ -152,7 +159,7 @@ def test_unrecognised_keys_survive(paths):
         paths,
         "[type a]\nchipset: rp2040\nfirmware: klipper\nfuture_option: 42\nserials:\n    S1\n",
     )
-    reg = Registry.load(paths)
+    reg = _writable(paths)
     reg.add_serial("a", "S2")
     reg._save(paths)
     assert "future_option: 42" in _read(paths)
@@ -161,7 +168,7 @@ def test_unrecognised_keys_survive(paths):
 def test_repeated_edits_do_not_grow_the_file(paths, live_registry_text):
     _write(paths, live_registry_text)
     for i in range(5):
-        reg = Registry.load(paths)
+        reg = _writable(paths)
         reg.add_serial("OctopusMAXEZ", f"S{i}-if00")
         reg._save(paths)
     out = _read(paths)
@@ -171,7 +178,7 @@ def test_repeated_edits_do_not_grow_the_file(paths, live_registry_text):
 
 def test_removing_a_type_removes_only_its_section(paths, live_registry_text):
     _write(paths, live_registry_text)
-    reg = Registry.load(paths)
+    reg = _writable(paths)
     reg.remove_type("OctopusMAXEZ")
     reg._save(paths)
     out = _read(paths)
@@ -182,7 +189,7 @@ def test_removing_a_type_removes_only_its_section(paths, live_registry_text):
 
 def test_a_new_type_is_appended_and_reloads(paths, live_registry_text):
     _write(paths, live_registry_text)
-    reg = Registry.load(paths)
+    reg = _writable(paths)
     reg.add_type("hexa", "stm32f072xb")
     reg.add_serial("hexa", "0000000000000000000000000-if00")
     reg._save(paths)
@@ -196,7 +203,7 @@ def test_a_new_type_is_appended_and_reloads(paths, live_registry_text):
 def test_defaults_are_not_restated_in_the_file(paths):
     """A file full of restated defaults is harder to read and to diff."""
     seed_base_firmwares(paths)
-    reg = Registry.load(paths)
+    reg = _writable(paths)
     reg.add_type("a", "rp2040")
     reg._save(paths)
     out = _read(paths)
@@ -211,7 +218,7 @@ def test_katapult_installed_false_leaves_no_bootloader_in_firmwares(paths):
     whatever is declared in firmware:, so "not installed" means "not listed",
     and the old key is never written."""
     seed_base_firmwares(paths)
-    reg = Registry.load(paths)
+    reg = _writable(paths)
     reg.add_type("a", "rp2040", katapult_installed=False)
     reg._save(paths)
     assert "katapult_installed" not in _read(paths)
@@ -222,7 +229,7 @@ def test_katapult_installed_false_leaves_no_bootloader_in_firmwares(paths):
 
 def test_clearing_extra_args_removes_the_key(paths):
     _write(paths, "[type a]\nchipset: x\nfirmware: klipper\nklipper_extra_args: -j4\nserials:\n")
-    reg = Registry.load(paths)
+    reg = _writable(paths)
     reg.get("a").fw("klipper").extra_args = ""
     reg._save(paths)
     assert "klipper_extra_args" not in _read(paths)
@@ -230,7 +237,7 @@ def test_clearing_extra_args_removes_the_key(paths):
 
 def test_a_patch_added_programmatically_round_trips(paths):
     seed_base_firmwares(paths)
-    reg = Registry.load(paths)
+    reg = _writable(paths)
     mcu = reg.add_type("a", "stm32f072xb")
     mcu.fw("klipper").makefile_patches = [MakefilePatch(file="src/Makefile", line="src-y += buffer.c")]
     reg._save(paths)
@@ -243,7 +250,7 @@ def test_a_patch_added_programmatically_round_trips(paths):
 
 def test_an_extra_repo_added_programmatically_round_trips(paths):
     seed_base_firmwares(paths)
-    reg = Registry.load(paths)
+    reg = _writable(paths)
     mcu = reg.add_type("a", "stm32f072xb")
     mcu.fw("klipper").extra_repos = ["/home/pi/buffer_manager"]
     reg._save(paths)
@@ -259,7 +266,7 @@ def test_clearing_extra_repos_removes_the_key(paths):
         "[type a]\nchipset: x\nfirmware: klipper\n"
         "klipper_extra_repos:\n    /home/pi/buffer_manager\nserials:\n",
     )
-    reg = Registry.load(paths)
+    reg = _writable(paths)
     reg.get("a").fw("klipper").extra_repos = []
     reg._save(paths)
     assert "klipper_extra_repos" not in _read(paths)
@@ -290,7 +297,7 @@ def test_stop_services_set_at_the_type_level(paths):
 
 def test_an_unset_stop_services_is_not_restated_in_the_file(paths):
     seed_base_firmwares(paths)
-    reg = Registry.load(paths)
+    reg = _writable(paths)
     reg.add_type("a", "rp2040")
     reg._save(paths)
     assert "stop_services" not in _read(paths)
@@ -298,7 +305,7 @@ def test_an_unset_stop_services_is_not_restated_in_the_file(paths):
 
 def test_stop_services_round_trips_through_save_and_load(paths):
     seed_base_firmwares(paths)
-    reg = Registry.load(paths)
+    reg = _writable(paths)
     mcu = reg.add_type("a", "rp2040")
     mcu.stop_services = ["klipper", "knomi_serial"]
     reg._save(paths)
@@ -323,7 +330,7 @@ def test_a_space_separated_stop_services_round_trips_as_comma_separated(paths):
         paths,
         "[type a]\nchipset: x\nfirmware: klipper\nstop_services: klipper knomi_serial\nserials:\n",
     )
-    reg = Registry.load(paths)
+    reg = _writable(paths)
     reg._save(paths)
     assert "stop_services: klipper, knomi_serial" in _read(paths)
 
@@ -333,7 +340,7 @@ def test_clearing_stop_services_removes_the_key(paths):
         paths,
         "[type a]\nchipset: x\nfirmware: klipper\nstop_services: klipper\nserials:\n",
     )
-    reg = Registry.load(paths)
+    reg = _writable(paths)
     reg.get("a").stop_services = None
     reg._save(paths)
     assert "stop_services" not in _read(paths)
@@ -538,7 +545,7 @@ def test_mutate_reads_inside_the_lock_so_it_cannot_clobber(paths, live_registry_
     assert "hexa" not in stale.names()
 
     # Somebody else adds a type after `stale` was read.
-    other = Registry.load(paths)
+    other = _writable(paths)
     other.add_type("hexa", "stm32f072xb")
     other._save(paths)
 
@@ -706,7 +713,7 @@ def test_the_labels_survive_adopting_another_board(paths):
     with open(paths.registry_file, "w", encoding="utf-8") as fh:
         fh.write(ANNOTATED)
 
-    reg = Registry.load(paths)
+    reg = _writable(paths)
     reg.add_serial("bttebb36", "NEWBOARD-if00")
     reg._save(paths)
 
@@ -760,14 +767,14 @@ def test_a_type_with_no_canbus_uuids_never_gets_the_key(paths, live_registry_tex
     must not stamp an empty `canbus_uuids:` stub into its section, unlike
     `serials:` which is always present."""
     _write(paths, live_registry_text)
-    reg = Registry.load(paths)
+    reg = _writable(paths)
     reg._save(paths)
     assert CfgDocument(_read(paths)).get("type bttebb36", "canbus_uuids") is None
 
 
 def test_canbus_uuid_round_trips_through_save_and_load(paths, live_registry_text):
     _write(paths, live_registry_text)
-    reg = Registry.load(paths)
+    reg = _writable(paths)
     reg.add_canbus_uuid("hexadistrofusion", "bcb5346fc731")
     reg._save(paths)
 
@@ -784,10 +791,10 @@ def test_canbus_uuid_round_trips_through_save_and_load(paths, live_registry_text
 
 def test_removing_the_last_canbus_uuid_drops_the_key_again(paths, live_registry_text):
     _write(paths, live_registry_text)
-    reg = Registry.load(paths)
+    reg = _writable(paths)
     reg.add_canbus_uuid("hexadistrofusion", "bcb5346fc731")
     reg._save(paths)
-    reg = Registry.load(paths)
+    reg = _writable(paths)
     reg.remove_canbus_uuid("hexadistrofusion", "bcb5346fc731")
     reg._save(paths)
 
@@ -877,7 +884,7 @@ def test_saving_does_not_delete_a_type_this_registry_does_not_own(paths):
     """
     with open(paths.registry_file, "w", encoding="utf-8") as fh:
         fh.write(_cfg_with_a_cmake_type())
-    registry = Registry.load(paths)
+    registry = _writable(paths)
     registry._save(paths)
 
     text = open(paths.registry_file, encoding="utf-8").read()
@@ -963,7 +970,7 @@ def test_resolve_declared_serial_refuses_a_cross_type_pairing(paths):
 
 def test_removing_a_kconfig_type_leaves_every_other_builders_sections(paths, example_registry_text):
     write_main_config(paths, example_registry_text)
-    reg = Registry.load(paths)
+    reg = _writable(paths)
     reg.remove_type("hexadistrofusion")
     reg._save(paths)
     text = read_main_config(paths)
@@ -977,7 +984,7 @@ def test_a_save_never_deletes_a_section_it_was_not_asked_to(paths, example_regis
     """Ownership is removal, not absence from `types`: a view that does not
     hold a type must not be able to delete it by saving."""
     write_main_config(paths, example_registry_text)
-    reg = Registry.load(paths)
+    reg = _writable(paths)
     reg.types.pop("bttebb36")
     reg._save(paths)
     assert "[type bttebb36]" in read_main_config(paths)
@@ -1003,7 +1010,7 @@ def test_declared_serials_answers_for_every_builder(paths, example_registry_text
 
 def test_a_declared_type_is_removed_whatever_builds_it(paths, example_registry_text):
     write_main_config(paths, example_registry_text)
-    reg = Registry.load(paths)
+    reg = _writable(paths)
     for name in ("roadrunner", "knomi", "bttebb36"):
         expected = reg.declared_serials(name)
         assert reg.remove_declared_type(name) == expected

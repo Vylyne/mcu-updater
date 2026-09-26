@@ -1,5 +1,5 @@
 {
-  "_comment": "Phase 6 guards. Each one refuses before a job exists, or picks the right board. A first install with no bootloader refuses an image built for an offset, before a job and again at the write.",
+  "_comment": "Phase 6 guards, over the flasher first_install chose. Each one refuses before a job exists, or picks the right board. A first install with no bootloader refuses an image built for an offset, before a job and again at the write.",
   "file": "src/mcu_updater/agent/methods/flash.py",
   "command": [
     "python",
@@ -18,34 +18,34 @@
       "replace": "        before = set()"
     },
     {
-      "name": "the install family's artifact must exist",
-      "find": "        if not os.path.exists(artifact_path):",
+      "name": "the install family's artifact must have been staged",
+      "find": "        if picked is None:",
       "replace": "        if False:"
     },
     {
-      "name": "an unsupported chipset is refused",
-      "find": "        if not (mcu.chipset.startswith(\"stm32\") or is_bootsel):",
-      "replace": "        if False:"
+      "name": "a type no listed flasher can set up is refused",
+      "find": "        if choice.flasher is None:\n            raise RpcError(",
+      "replace": "        if False:\n            raise RpcError("
     },
     {
-      "name": "ambiguous DFU is refused when no serial is named",
-      "find": "            elif not scan[\"ready\"]:",
-      "replace": "            elif False:"
+      "name": "a not-ready scan is refused when no serial is named",
+      "find": "        elif not scan[\"ready\"]:",
+      "replace": "        elif False:"
     },
     {
       "name": "a named serial must actually be in DFU",
-      "find": "                if not any(d.get(\"serial\") == target for d in scan[\"devices\"]):",
-      "replace": "                if False:"
-    },
-    {
-      "name": "a not-ready BOOTSEL scan is refused",
-      "find": "            if not bscan[\"ready\"]:",
-      "replace": "            if False:"
+      "find": "            chosen = next((d for d in scan[\"devices\"] if d.get(\"serial\") == target), None)",
+      "replace": "            chosen = next(iter(scan[\"devices\"]), None)"
     },
     {
       "name": "baseline is the whole bus, not untracked-only",
       "find": "        before = {d.serial for d in scan_bus(self.paths)}",
-      "replace": "        _k = set(reg.all_serials())\n        before = _k | {d.serial for d in scan_bus(self.paths) if d.serial not in _k}"
+      "replace": "        _k = {s for e in entries.values() for s in e.serials}\n        before = _k | {d.serial for d in scan_bus(self.paths) if d.serial not in _k}"
+    },
+    {
+      "name": "the wait is keyed on the port the scan saw",
+      "find": "                port=port,",
+      "replace": "                port=None,"
     },
     {
       "name": "an offset image is refused on a first install with no bootloader",

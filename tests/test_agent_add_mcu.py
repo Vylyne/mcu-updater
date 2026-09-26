@@ -22,7 +22,14 @@ from mcu_updater.agent.rpc import RpcError
 from mcu_updater.config import Registry
 from mcu_updater.jobs import JobRunner
 
-from .conftest import bootsel_device_node, make_device, mounted_bootsel_volume, write_settings
+from .conftest import (
+    bootsel_device_node,
+    make_device,
+    mounted_bootsel_volume,
+    on_port,
+    stage_uf2_only,
+    write_settings,
+)
 from .test_agent_dfu import ONE_BOARD, TWO_BOARDS, patch_dfu
 
 EBB = "bttebb36"
@@ -30,6 +37,7 @@ EBB_CHIPSET = "stm32g0b1xx"
 TRACKED = "123456789012345678901"
 PICO = "testrp2040"
 PICO_CHIPSET = "rp2040"
+DFU_PORT = "6-1.6.6.1.3"  # ONE_BOARD's dfu-util path
 
 
 def _runner(paths) -> JobRunner:
@@ -50,11 +58,9 @@ def _stage_katapult(paths, mcu_type=EBB) -> str:
 
 
 def _stage_katapult_uf2(paths, mcu_type=PICO) -> str:
-    os.makedirs(paths.artifact_dir(mcu_type), exist_ok=True)
-    path = paths.uf2_file(mcu_type, "katapult")
-    with open(path, "wb") as fh:
-        fh.write(b"\0" * 512)
-    return path
+    # With a build record listing it: the image is read through
+    # `providers.staged`, which offers a .uf2 only when its sidecar lists it.
+    return stage_uf2_only(paths, mcu_type, "katapult", content=b"\0" * 512)
 
 
 @pytest.fixture
@@ -65,7 +71,10 @@ def adder(paths, live_registry_text, fake_root):
     write_settings(paths, dry_run="true", service_backend="null", enable_flashing="true")
 
     runner = _runner(paths)
-    api = Api(paths, runner=runner)
+    # Every fake board hangs off the port ONE_BOARD's DFU scan reports - and
+    # the BOOTSEL volume's block device too - because the post-write wait is
+    # keyed on the port the scan saw.
+    api = Api(on_port(paths, fake_root, DFU_PORT), runner=runner)
     # The "nothing appeared" cases otherwise wait out the full re-enumeration
     # timeout, which dominated the run at 15s apiece.
     api.ADD_MCU_REENUMERATE_TIMEOUT = 1.0
@@ -515,6 +524,7 @@ def test_bootsel_flash_receives_the_uf2_path(adder, paths, fake_root, monkeypatc
                 "chipset": chipset,
                 "fw_bin": fw_bin,
                 "fw": fw,
+                "state": state,
                 "uf2_bin": uf2_bin,
                 "katapult_config": katapult_config,
             }
@@ -526,6 +536,7 @@ def test_bootsel_flash_receives_the_uf2_path(adder, paths, fake_root, monkeypatc
     assert adder.runner.wait(timeout=30)
     assert adder.runner.get(res["job_id"]).state == "succeeded"
     assert calls[0]["uf2_bin"] == uf2_path
+    assert calls[0]["state"] == "bootsel"
     assert calls[0]["chipset"] == PICO_CHIPSET
     # A type with Katapult still installs Katapult first.
     assert calls[0]["fw"] == "katapult"
@@ -612,11 +623,8 @@ def _uf2_image(address: int, payload: bytes = b"\x5a" * 256) -> bytes:
 
 
 def _stage_klipper_uf2(paths, name: str, address: int) -> str:
-    os.makedirs(paths.artifact_dir(name), exist_ok=True)
-    path = paths.uf2_file(name, "klipper")
-    with open(path, "wb") as fh:
-        fh.write(_uf2_image(address))
-    return path
+    # With a build record listing it, as `_stage_katapult_uf2` explains.
+    return stage_uf2_only(paths, name, "klipper", content=_uf2_image(address))
 
 
 def _stage_klipper_bin(paths, name: str, app_address: int | None) -> str:
@@ -764,20 +772,23 @@ def test_no_dfu_util_on_klipper_names_the_line_to_add(adder, paths, monkeypatch)
         adder, paths, monkeypatch, app_address=0x08000000, flashers="flashtool"
     )
 
-    res = adder.dispatch("fw.add_mcu.start", {"name": BARE_EBB})
-    assert adder.runner.wait(timeout=30)
-    job = adder.runner.get(res["job_id"])
+    # Refused before a job exists: `first_install` answers it from the list.
+    with pytest.raises(RpcError) as exc:
+        adder.dispatch("fw.add_mcu.start", {"name": BARE_EBB})
 
-    assert job.state == "failed"
-    assert job.error["code"] == "unsupported_chipset"
-    assert "[firmware klipper]" in job.error["message"]
-    assert "flashers: flashtool, dfu_util" in job.error["message"]
-    assert "katapult" not in job.error["message"].lower()
+    assert exc.value.data["code"] == "unsupported_chipset"
+    assert "[firmware klipper]" in str(exc.value)
+    assert "flashers: flashtool, dfu_util" in str(exc.value)
+    assert "katapult" not in str(exc.value).lower()
+    assert adder.runner.current() is None
     assert written == []
 
 
 def test_a_type_with_no_katapult_and_nothing_built_names_klipper(adder, paths, monkeypatch):
     _no_katapult_type(adder, BARE_EBB, EBB_CHIPSET)
+    # Something on klipper's list must write a bare board, or this is refused
+    # as unsupported_chipset before the artifact is ever looked for.
+    _klipper_flashers(paths, "flashtool, dfu_util")
     patch_dfu(monkeypatch, stdout=ONE_BOARD)
 
     with pytest.raises(RpcError) as exc:
@@ -809,3 +820,174 @@ def test_a_bin_only_rp2040_klipper_build_is_told_to_drop_the_offset(
     assert "No bootloader" in str(exc.value)
     assert "Build it first" not in str(exc.value)
     assert adder.runner.current() is None
+
+
+# --------------------------------------------------------------------------
+# any builder: the install family's flashers pick the mechanism
+# --------------------------------------------------------------------------
+
+RR = "roadrunner"
+
+
+def _roadrunner(adder, paths, fake_root, tmp_path, *, chipset="rp2040"):
+    """A cmake RP2040 type, its .uf2 staged, one board in BOOTSEL."""
+    with open(paths.main_config, "a", encoding="utf-8", newline="\n") as fh:
+        fh.write(
+            f"\n[firmware {RR}]\nsource: {tmp_path}\nbuilder: cmake\nflashers: bootsel\n"
+            f"\n[type {RR}]\nchipset: {chipset}\nfirmware: {RR}\n"
+            f"cmake_target: roadrunner_v1_i2c_rgb\n"
+        )
+    stage_uf2_only(paths, RR, RR, content=_uf2_image(0x10000000))
+    root, _vol = mounted_bootsel_volume(fake_root)
+    bootsel_device_node(root)
+    adder.paths = dataclasses.replace(adder.paths, bootsel_root=str(root))
+
+
+def test_a_cmake_rp2040_is_installed_and_found_on_its_port(
+    adder, paths, fake_root, tmp_path, monkeypatch
+):
+    """The bug this feature exists for: a Roadrunner was unknown_type, and had
+    it not been, the chipset-filtered wait would never have seen it come back
+    as `usb-Vylyne_Roadrunner_...`."""
+    _roadrunner(adder, paths, fake_root, tmp_path)
+    calls: list = []
+
+    def appear(*args, **kwargs):
+        calls.append(kwargs)
+        make_device(fake_root / "bus", "Vylyne", "Roadrunner", "RR-UNPROVISIONED-1")
+
+    monkeypatch.setattr("mcu_updater.flashers.flash.flash_initial_bootloader", appear)
+
+    res = adder.dispatch("fw.add_mcu.start", {"name": RR})
+    assert adder.runner.wait(timeout=30)
+    job = adder.runner.get(res["job_id"])
+
+    assert job.state == "succeeded", job.error
+    assert calls[0]["state"] == "bootsel"
+    assert calls[0]["fw"] == RR
+    assert calls[0]["uf2_bin"] == paths.uf2_file(RR, RR)
+    assert [c["serial"] for c in job.result["candidates"]] == ["RR-UNPROVISIONED-1"]
+    assert job.result["flasher"] == "bootsel"
+    assert job.result["port"] == DFU_PORT
+
+
+def test_a_board_on_another_port_is_not_the_new_board(
+    adder, paths, fake_root, tmp_path, monkeypatch
+):
+    _roadrunner(adder, paths, fake_root, tmp_path)
+
+    def elsewhere(*args, **kwargs):
+        # Every tty now resolves to another port; the volume stays on DFU_PORT.
+        adder.paths = dataclasses.replace(
+            adder.paths, tty_sysfs=str(fake_root / "sys-dev" / "9-9" / "tty")
+        )
+        make_device(fake_root / "bus", "Vylyne", "Roadrunner", "RR-OTHER")
+
+    monkeypatch.setattr("mcu_updater.flashers.flash.flash_initial_bootloader", elsewhere)
+
+    res = adder.dispatch("fw.add_mcu.start", {"name": RR})
+    assert adder.runner.wait(timeout=30)
+    assert adder.runner.get(res["job_id"]).result["candidates"] == []
+
+
+def test_no_port_falls_back_to_any_new_board_with_a_warning(
+    adder, paths, fake_root, tmp_path, monkeypatch
+):
+    _roadrunner(adder, paths, fake_root, tmp_path)
+    # No block sysfs: the BOOTSEL volume cannot be traced to a port.
+    adder.paths = dataclasses.replace(adder.paths, block_sysfs=str(fake_root / "nowhere"))
+    monkeypatch.setattr(
+        "mcu_updater.flashers.flash.flash_initial_bootloader",
+        lambda *a, **k: make_device(fake_root / "bus", "Vylyne", "Roadrunner", "RR-1"),
+    )
+
+    res = adder.dispatch("fw.add_mcu.start", {"name": RR})
+    assert adder.runner.wait(timeout=30)
+    job = adder.runner.get(res["job_id"])
+
+    assert [c["serial"] for c in job.result["candidates"]] == ["RR-1"]
+    assert job.result["port"] is None
+    lines, _, _ = job.log_since(0)
+    assert any("which USB port" in line.text for line in lines)
+
+
+def test_a_cmake_type_with_no_chipset_is_refused_naming_the_key(
+    adder, paths, fake_root, tmp_path
+):
+    _roadrunner(adder, paths, fake_root, tmp_path, chipset="")
+    with pytest.raises(RpcError) as exc:
+        adder.dispatch("fw.add_mcu.start", {"name": RR})
+    assert exc.value.data["code"] == "unsupported_chipset"
+    assert "chipset:" in str(exc.value)
+    assert exc.value.data["data"]["flashers"] == ["bootsel"]
+    assert adder.runner.current() is None
+
+
+def test_a_katapult_uf2_its_sidecar_does_not_list_is_rebuilt_once(adder, paths):
+    """A .uf2 staged before sidecars recorded kinds may be older than the .bin
+    beside it - the rule fw.flash already applies."""
+    _pico_type(adder, paths)
+    os.makedirs(paths.artifact_dir(PICO), exist_ok=True)
+    with open(paths.uf2_file(PICO, "katapult"), "wb") as fh:
+        fh.write(b"\0" * 512)
+
+    with pytest.raises(RpcError) as exc:
+        adder.dispatch("fw.add_mcu.start", {"name": PICO})
+    assert exc.value.data["code"] == "no_artifact"
+    assert "rebuild" in str(exc.value).lower()
+    assert adder.runner.current() is None
+
+
+def test_add_mcu_scan_runs_the_scan_first_install_chose(adder, paths, fake_root, tmp_path):
+    _roadrunner(adder, paths, fake_root, tmp_path)
+    out = adder.dispatch("fw.add_mcu.scan", {"name": RR})
+    assert out["flasher"] == "bootsel"
+    assert out["ready"] is True
+    assert out["devices"][0]["port"] == DFU_PORT
+
+
+def test_add_mcu_scan_reports_a_type_with_no_scanner(adder):
+    out = adder.dispatch("fw.add_mcu.scan", {"name": "knomi"})
+    assert out["ready"] is False
+    assert out["reason"] == "no_scanner"
+    assert out["flasher"] is None
+    assert out["devices"] == []
+    assert out["count"] == 0
+    assert "can scan for a new board" in out["message"]
+
+
+def test_add_mcu_scan_is_advertised_read_only(read_only):
+    assert "fw.add_mcu.scan" in read_only.dispatch("fw.ping")["capabilities"]
+
+
+def test_a_dfu_serial_named_for_a_bootsel_type_finds_nothing(adder, paths, fake_root):
+    """Only a DFU device carries a `serial`; naming one against another
+    flasher's scan is not quietly ignored."""
+    _pico_type(adder, paths)
+    _stage_katapult_uf2(paths, PICO)
+    root, _vol = mounted_bootsel_volume(fake_root)
+    bootsel_device_node(root)
+    adder.paths = dataclasses.replace(adder.paths, bootsel_root=str(root))
+
+    with pytest.raises(RpcError) as exc:
+        adder.dispatch("fw.add_mcu.start", {"name": PICO, "dfu_serial": "3941335F3434"})
+    assert exc.value.data["code"] == "device_not_found"
+    assert adder.runner.current() is None
+
+
+def test_the_dfu_job_reports_its_flasher_and_port(adder, paths, monkeypatch):
+    _stage_katapult(paths)
+    patch_dfu(monkeypatch, stdout=ONE_BOARD)
+    monkeypatch.setattr("mcu_updater.flashers.flash.flash_initial_bootloader", lambda *a, **k: None)
+
+    res = adder.dispatch("fw.add_mcu.start", {"name": EBB})
+    assert adder.runner.wait(timeout=30)
+    result = adder.runner.get(res["job_id"]).result
+    assert result["flasher"] == "dfu_util"
+    assert result["port"] == DFU_PORT
+
+
+def test_add_mcu_scan_of_an_unknown_type_fails_fast(adder):
+    with pytest.raises(RpcError) as exc:
+        adder.dispatch("fw.add_mcu.scan", {"name": "nosuchtype"})
+    assert exc.value.data["code"] == "unknown_type"

@@ -1972,6 +1972,7 @@ class StatusMixin(_Base):
         "fw.bus.unignore": "bus_unignore",
         "fw.dfu.scan": "dfu_scan",
         "fw.bootsel.scan": "bootsel_scan",
+        "fw.add_mcu.scan": "add_mcu_scan",
         "fw.canbus.scan": "canbus_scan",
         "fw.canbus.ignore": "canbus_ignore",
         "fw.canbus.unignore": "canbus_unignore",

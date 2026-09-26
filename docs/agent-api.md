@@ -102,7 +102,8 @@ pre-checks the name against both registries itself so it never does), the
 `dfu_<reason>` family (`dfu_none`, `dfu_no_tool`, `dfu_permission_denied`,
 `dfu_ambiguous`) `fw.add_mcu.start` derives from `fw.dfu.scan`'s own `reason`,
 and the `bootsel_<reason>` family (`bootsel_none`, `bootsel_not_mounted`,
-`bootsel_ambiguous`) it derives from `fw.bootsel.scan`'s the same way -
+`bootsel_ambiguous`) it derives from `fw.bootsel.scan`'s the same way - whichever
+scan the type's install family chose (`fw.add_mcu.scan`) -
 documented where each is raised rather than repeated here.
 
 JSON-RPC codes: `-32601` unknown method, `-32602` bad params, `-32000`
@@ -127,7 +128,8 @@ application error (see `data.code`), `-32603` internal.
 | `fw.canbus.scan` | — | `{interfaces, devices, failures, count, message}` — read-only, run only when called |
 | `fw.canbus.ignore` | `uuid` (required) | `{uuid, ignored: true}` — hide every sighting of a CAN UUID from the "new board?" flow; idempotent, flag not filter; `busy` / `config` as for `fw.settings.set` |
 | `fw.canbus.unignore` | `uuid` (required) | `{uuid, ignored: false}` — reverse `fw.canbus.ignore`; idempotent; `busy` / `config` as for `fw.settings.set` |
-| `fw.add_mcu.start` | `name`, `dfu_serial?` (STM32 only) | `{job_id, job, dfu_serial, bootsel_id}` — writes the type's first image (Katapult, or with none its application); **off by default** |
+| `fw.add_mcu.scan` | `name` (required) | the scan `fw.add_mcu.start` would run for the type — `fw.dfu.scan`'s or `fw.bootsel.scan`'s keys, plus `flasher` — read-only |
+| `fw.add_mcu.start` | `name`, `dfu_serial?` (DFU only) | `{job_id, job, dfu_serial, bootsel_id}` — writes the type's first image (Katapult, or with none its application), any builder; **off by default** |
 | `fw.roadrunner.provision` | `serial` (required) | `{serial, prior_serial, state: "provisioned"}` - explicit direct-USB provisioning of one confirmed, untracked Roadrunner — **off by default** |
 | `fw.roadrunner.clear` | `serial` (required) | `{serial, prior_serial, state: "unprovisioned"}` - explicit direct-USB identity clear of one confirmed, untracked Roadrunner — **off by default** |
 | `fw.artifacts` | `name` (required) | `{<fw>: Artifact, ...}`, one key per family the type declares |
@@ -1155,17 +1157,28 @@ and the service restart.
 
 ### Setting up a brand-new board
 
-A board with no bootloader on it is reached over **DFU** (STM32) or **BOOTSEL**
-mass storage (RP2040) — one `fw.add_mcu.start` routes to whichever mechanism the
-type's `chipset` calls for, mirroring `flash_initial_bootloader`'s own dispatch.
-Either way the whole flow is four calls of which only two are new:
+A board with no bootloader on it is reached through its boot ROM — **DFU**
+(STM32) or **BOOTSEL** mass storage (RP2040). **Every type in the type list is
+eligible**, whatever its builder: a cmake or PlatformIO type is set up the same
+way as a kconfig one. The mechanism is the install family's (below) first
+`flashers:` entry that can both scan for a bare board and write one of the
+type's `chipset` (`flashers.first_install`) — never the builder, and never a
+chipset prefix. The whole flow is four calls of which only two are new:
 
 | Step | Call | New? |
 | --- | --- | --- |
-| 1. What is in DFU / BOOTSEL? | `fw.dfu.scan` / `fw.bootsel.scan` | **new**, read-only |
-| 2. Put the type's first image on it | `fw.add_mcu.start {name}` | **new** |
+| 1. What is waiting to be set up? | `fw.add_mcu.scan {name}` | **new**, read-only |
+| 2. Put the type's first image on it | `fw.add_mcu.start {name[, dfu_serial]}` | **new** |
 | 3. Adopt what appeared | `fw.serial.add {name, serial}` | existing |
 | 4. Put Klipper on it, if step 2 wrote Katapult | `fw.flash {serial}` | existing |
+
+The wait after the write is **keyed on the USB port the scan saw** — across a
+reboot into new firmware the port is the durable key, not a serial or the
+chipset segment of a by-id name (a Roadrunner comes back as
+`usb-Vylyne_Roadrunner_...`). When the scan cannot trace the board to a port,
+the wait falls back to any new board and the job log warns that it did.
+`fw.dfu.scan` and `fw.bootsel.scan` remain, for diagnosis; `fw.add_mcu.scan` runs
+whichever one the type's install family chose.
 
 **What step 2 writes is the type's first image**, one rule for the agent and the
 CLI's `add-mcu` alike: the type's bootloader family when it has one (Katapult),
@@ -1313,26 +1326,60 @@ names the application in its reply. There is no non-board case to guard
 against on this path, unlike a USB CH340 bridge chip that merely looks like a
 board on `/dev/serial/by-id`.
 
+#### `fw.add_mcu.scan`
+
+Params `{name}`. The scan `fw.add_mcu.start` would run for this type, as a
+report — what a wizard calls instead of choosing between `fw.dfu.scan` and
+`fw.bootsel.scan` itself. The result is the chosen scanner's own report, with
+the same keys as `fw.dfu.scan` / `fw.bootsel.scan` (every device carries
+`port`), plus `flasher` — the flasher `first_install` chose:
+
+```json
+{"devices": [{"id": "E0C9125B0D9B", "node": "...", "port": "1-1.2"}],
+ "count": 1, "ready": true, "reason": null, "message": null,
+ "mounts": ["..."], "mount_count": 1, "flasher": "bootsel"}
+```
+
+Reports rather than raises, like the two scans it runs. A type nothing on its
+install family's list can set up is not an error here:
+
+```json
+{"devices": [], "count": 0, "ready": false, "reason": "no_scanner",
+ "message": "nothing on [firmware knomi_serial]'s flashers: (esptool) can scan ...",
+ "flasher": null}
+```
+
+`message` is `first_install`'s reason, naming the line to change where there is
+one. An unknown type is still `unknown_type`. Read-only, and advertised whether
+or not flashing is enabled.
+
 #### `fw.add_mcu.start`
 
 Writes the type's first image — Katapult, or with no bootloader its own
-application (see above) — to a board in DFU or BOOTSEL (by the type's
-`chipset`), waits for it to re-enumerate, and reports what appeared. `fw` names
-the family that was written. `dfu_serial` is populated only on the DFU path;
-`bootsel_id` (the boot-ROM flash-chip id, when exactly one board was attached)
-only on the BOOTSEL path — the other is always `null`:
+application (see above) — to the board the install family's chosen flasher
+scanned (DFU or BOOTSEL), waits for it to re-enumerate on the port the scan
+saw, and reports what appeared. `fw` names the family that was written,
+`flasher` the flasher that wrote it, and `port` the USB port the wait was keyed
+on (`null` when the scan could not trace one). `dfu_serial` is populated only
+on the DFU path; `bootsel_id` (the boot-ROM flash-chip id, when exactly one
+board was attached) only on the BOOTSEL path — the other is always `null`:
 
 ```json
 {"type": "bttebb36", "chipset": "stm32g0b1xx", "fw": "katapult",
+ "flasher": "dfu_util", "port": "6-1.6.6.1.3",
  "dfu_serial": "3941335F3434", "bootsel_id": null,
  "candidates":      [{"serial": "2D0043...", "path": "...", "state": "katapult"}],
  "already_tracked": []}
 ```
 
-`fw` is additive and needs no `API_VERSION` bump. The writer is the first one on
-`[firmware <fw>]`'s `flashers:` list that writes a bare board of the chipset —
-`bootsel` or `dfu_util`. A list with neither fails the job with
-`unsupported_chipset`, naming the section and the `flashers:` line to add.
+`fw`, `flasher` and `port` are additive and need no `API_VERSION` bump. The
+writer is the first one on `[firmware <fw>]`'s `flashers:` list that can scan
+for and write a bare board of the chipset — `bootsel` or `dfu_util`. A list
+with neither is refused with `unsupported_chipset` **before a job exists**
+(previously this case was an accepted job that then failed). Its message is
+`first_install`'s reason, naming the section and the `flashers:` line to add;
+`data` carries `type`, `chipset`, `fw` (the install family) and `flashers` (that
+family's list).
 
 **An application image is refused if a bare board cannot boot it.** With no
 bootloader below it, the image has to start at the start of flash. An RP2040
@@ -1346,8 +1393,9 @@ raised before a job exists and before anything is written, with
 bootloader offset. A Katapult image is not checked this way — it is the
 bootloader, and it is linked at the start of flash.
 
-`candidates` are matched by chipset and by not having been on the bus before
-the write, not by which firmware they come back running. A board that already
+`candidates` are matched by the USB port the scan saw and by not having been on
+the bus before the write, not by which firmware they come back running, nor by
+the chipset segment of their by-id name. A board that already
 carried a valid application chain-loads straight past Katapult on its first
 boot — this is the normal case for a board getting a bootloader *re*-installed
 — so `state` here can legitimately be the board's own firmware name instead of
@@ -1373,10 +1421,10 @@ is still taking the image: up to 60 seconds after a clean copy, 10 seconds after
 one that reported an error once every byte was written. A volume still mounted
 after that is logged as a warning and the re-enumerate wait proceeds.
 
-`candidates` are boards that appeared and are **not** in the registry — the ones
+`candidates` are boards that appeared and are **not** in the type list — the ones
 to adopt. `already_tracked` are boards that appeared and already belong to a
-type, which is the normal case when re-installing a bootloader: such a board sits
-`offline` in the registry precisely because it had no firmware. Both mean the
+type, of any builder, which is the normal case when re-installing a bootloader:
+such a board sits `offline` precisely because it had no firmware. Both mean the
 flash worked; only `candidates` leaves anything to do.
 
 Both empty means nothing came back at all, which is the only case worth
@@ -1386,7 +1434,8 @@ investigating.
 yet.** A DFU device has no by-id name at all, and a BOOTSEL board's only
 identity (the boot-ROM id) is not the serial it will run under — the identity
 to adopt does not exist until the first image is on it either way. That is why this
-snapshots the bus first and diffs afterwards, for both mechanisms.
+snapshots the bus first and diffs afterwards, on the scanned port, for both
+mechanisms.
 
 **Klipper is never stopped.** A board that is not in `printer.cfg` is not held by
 Klipper, so there is no port contention and no reason for an outage. The
@@ -1397,13 +1446,13 @@ Refusals, all synchronous and before a job exists:
 | Check | Error code |
 | --- | --- |
 | capability gate | `flashing_disabled` |
-| type exists | `unknown_type` |
-| chipset uses DFU or BOOTSEL at all | `unsupported_chipset` |
-| the first image has been built for the type (`.bin` for DFU, `.uf2` for BOOTSEL); `data.fw` names the family | `no_artifact` |
+| type exists in the type list (any builder) | `unknown_type` |
+| something on the install family's `flashers:` can set up a bare board of the chipset; the message is `first_install`'s reason, `data.{type, chipset, fw, flashers}` | `unsupported_chipset` |
+| the first image has been built for the type, of a kind the chosen flasher takes (`.bin` for DFU, `.uf2` for BOOTSEL); `data.fw` names the family. A kconfig `.uf2` its build record does not list is refused too, asking for one rebuild — it may be older than the `.bin` beside it, the rule `fw.flash` already applies | `no_artifact` |
 | **no bootloader:** the image starts at the start of flash | `offset_mismatch` |
 | **DFU:** something is in DFU | `dfu_none` / `dfu_permission_denied` / `dfu_no_tool` |
 | **DFU:** exactly one, or one named | `dfu_ambiguous` |
-| **DFU:** the named serial is present | `device_not_found` |
+| the named `dfu_serial` is present — on a type set up over anything but DFU there is no serial to match, so it is never present | `device_not_found` |
 | **BOOTSEL:** something is in BOOTSEL and mounted | `bootsel_none` / `bootsel_not_mounted` |
 | **BOOTSEL:** exactly one mounted | `bootsel_ambiguous` |
 

@@ -1,5 +1,5 @@
 {
-  "_comment": "First install is gated by flashers: only a CandidateScanner that supports a bare board of the type is chosen, in list order; the new-device wait keeps only boards on the scanned port.",
+  "_comment": "First install is gated by flashers: only a CandidateScanner that supports a bare board of the type is chosen, in list order; the new-device wait keeps only boards on the scanned port; with more boards in BOOTSEL than mounts, the write's board is the mounted one, never by-id order.",
   "file": "src/mcu_updater/flashers/registry.py",
   "command": [
     "python",
@@ -8,6 +8,8 @@
     "tests/test_first_install.py",
     "tests/test_candidate_scan.py",
     "tests/test_port_wait.py",
+    "tests/test_agent_bootsel.py",
+    "tests/test_agent_add_mcu.py",
     "-q"
   ],
   "mutations": [
@@ -36,6 +38,18 @@
       "file": "src/mcu_updater/discovery/byid.py",
       "find": "        if port and port_of(paths, dev, inventory) != port:\n            continue",
       "replace": "        if False:\n            continue"
+    },
+    {
+      "name": "the mounted board is the scan's target, not the first by id",
+      "file": "src/mcu_updater/flashers/bootsel.py",
+      "find": "        target = next((i for i, d in enumerate(devices) if d[\"mount\"] == mounts[0]), None)",
+      "replace": "        target = 0"
+    },
+    {
+      "name": "add_mcu pairs the board the scan names, not devices[0]",
+      "file": "src/mcu_updater/agent/methods/flash.py",
+      "find": "            chosen = scan_result.chosen or {}",
+      "replace": "            chosen = scan[\"devices\"][0]"
     }
   ]
 }

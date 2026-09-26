@@ -15,7 +15,7 @@ import pytest
 
 from mcu_updater.agent.methods import Api
 
-from .conftest import bootsel_device_node, mounted_bootsel_volume
+from .conftest import bootsel_device_node, mounted_bootsel_volume, mountinfo
 
 PICO = "testrp2040"
 PICO_CHIPSET = "rp2040"
@@ -45,6 +45,49 @@ def test_a_mounted_board_is_ready(api, fake_root):
     assert res["count"] == 1
     assert res["mount_count"] == 1
     assert res["devices"][0]["id"] == "E0C9125B0D9B"
+    assert res["message"] is None
+
+
+def test_a_second_unmounted_board_is_ready_with_a_warning(api, fake_root):
+    """One volume mounted and a second board in BOOTSEL without one: the write
+    can only go to the mounted one, so this stays `ready` - but nobody can
+    tell from the panel which physical board that is, so `message` says so."""
+    root, vol = mounted_bootsel_volume(fake_root)
+    bootsel_device_node(root, serial="AAAAAAAAAAAA")
+    bootsel_device_node(root, serial="E0C9125B0D9B")
+    api.paths = dataclasses.replace(api.paths, bootsel_root=str(root))
+
+    res = api.dispatch("fw.bootsel.scan")
+
+    assert res["ready"] is True
+    assert res["reason"] is None
+    assert res["count"] == 2
+    assert res["mount_count"] == 1
+    message = res["message"] or ""
+    assert "2 RP2040s are in BOOTSEL" in message
+    assert str(vol) in message
+    # udev mounts every board, so the likely story is a mount still in flight.
+    assert "rescan in a moment" in message
+    # With no mount table to say which board is mounted, neither is named.
+    assert [d["mount"] for d in res["devices"]] == [None, None]
+
+
+def test_the_mount_table_names_which_board_the_write_goes_to(api, fake_root):
+    """udev mounts every board in BOOTSEL, so one mounted of two is a mount
+    still in flight. The kernel's mount table says which block device is on
+    the one mounted volume, so the scan can name the board the write reaches."""
+    root, vol = mounted_bootsel_volume(fake_root)
+    bootsel_device_node(root, serial="AAAAAAAAAAAA")
+    mounted = bootsel_device_node(root, serial="E0C9125B0D9B")
+    mountinfo(root, {vol: mounted})
+    api.paths = dataclasses.replace(api.paths, bootsel_root=str(root))
+
+    res = api.dispatch("fw.bootsel.scan")
+
+    assert res["ready"] is True
+    by_id = {d["id"]: d["mount"] for d in res["devices"]}
+    assert by_id == {"AAAAAAAAAAAA": None, "E0C9125B0D9B": str(vol)}
+    assert "no mounted volume yet" in (res["message"] or "")
 
 
 def test_nothing_attached_says_to_hold_bootsel(api, fake_root):

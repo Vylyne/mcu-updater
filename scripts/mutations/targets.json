@@ -98,8 +98,13 @@
     },
     {
       "name": "every row carries first_install",
-      "find": "            row[\"first_install\"] = self._first_install_json(entries.get(row[\"name\"]), families)",
+      "find": "            row[\"first_install\"] = self._first_install_json(by_name.get(row[\"name\"]), families)",
       "replace": "            pass"
+    },
+    {
+      "name": "first_install is answered from the projection's one config read",
+      "find": "        by_name = {e.name: e for e in entries}",
+      "replace": "        by_name = {e.name: e for e in typelist.read_config(self.paths)[0]}"
     }
   ]
 }

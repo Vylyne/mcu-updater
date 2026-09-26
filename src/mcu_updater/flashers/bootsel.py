@@ -29,7 +29,7 @@ from typing import TYPE_CHECKING, Any
 from .. import helpers
 from ..artifacts import KIND_UF2, Artifact
 from ..devices import STATE_BOOTSEL, bootsel_devices, bootsel_id_for, bootsel_scan
-from ..discovery.bootsel import mount_for_topology
+from ..discovery.bootsel import mount_for_topology, mount_sources
 from ..errors import (
     BootselNotMountedError,
     DeviceNotFoundError,
@@ -475,6 +475,10 @@ class Bootsel:
         ``not_mounted``
             A board is attached but nothing mounted its volume - this host has
             no automounter. Re-run install.sh to install the udev rule.
+        Ready with more boards attached than mounted is still ready - the
+        write can only reach the mounted one - but `message` warns that the
+        panel cannot say which physical board that is.
+
         ``ambiguous``
             More than one RPI-RP2 volume is mounted at once. Unlike DFU there
             is no serial to pick one by - the mounts are now distinguishable
@@ -520,6 +524,15 @@ class Bootsel:
         name_tracked(devices, owners, "id")
 
         mounts = bootsel_scan(paths)
+        # Which volume each board is on, from the kernel's mount table - null
+        # for a board with none, and for every board when the table is
+        # unreadable or names none of these nodes.
+        sources = mount_sources(paths)
+        mounted_from = {
+            sources[os.path.realpath(m)]: m for m in mounts if os.path.realpath(m) in sources
+        }
+        for device in devices:
+            device["mount"] = mounted_from.get(os.path.realpath(device["node"]))
         extra: dict[str, Any] = {"mounts": mounts, "mount_count": len(mounts)}
         if not present:
             return CandidateScan(
@@ -550,7 +563,28 @@ class Bootsel:
                 devices,
                 extra,
             )
-        return CandidateScan(True, None, None, devices, extra)
+        if len(present) == 1:
+            return CandidateScan(True, None, None, devices, extra)
+        # One mount but more boards than that. udev mounts every board in
+        # BOOTSEL, so the likely story is a second board whose mount has not
+        # landed yet. The write can only go to the mounted one, so this stays
+        # ready; the caller is told, and told which board when the mount table
+        # can say.
+        target = next((i for i, d in enumerate(devices) if d["mount"] == mounts[0]), None)
+        if target is None:
+            warning = (
+                f"{len(present)} RP2040s are in BOOTSEL but only one volume is "
+                f"mounted ({mounts[0]}), so the write goes to that board. If you "
+                f"just plugged another in, rescan in a moment."
+            )
+        else:
+            where = devices[target]["port"] or mounts[0]
+            warning = (
+                f"Another RP2040 in BOOTSEL has no mounted volume yet - if you "
+                f"just plugged it in, rescan in a moment. The write goes to the "
+                f"board on {where}."
+            )
+        return CandidateScan(True, None, warning, devices, extra, target=target)
 
 
 def _find_mount(paths: Any) -> str:

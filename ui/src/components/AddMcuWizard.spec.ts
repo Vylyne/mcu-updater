@@ -131,6 +131,42 @@ describe("AddMcuWizard", () => {
     expect(start).toHaveBeenCalledWith("roadrunner", undefined);
   });
 
+  it("warns on a ready scan that found more boards than it can write", async () => {
+    newAgent();
+    state.status = {
+      targets: [
+        row("cmake", "roadrunner", {
+          fw: "roadrunner",
+          flasher: "bootsel",
+          reason: null,
+        }),
+      ],
+    } as never;
+    vi.spyOn(store, "scanNewBoard").mockResolvedValue({
+      ready: true,
+      count: 2,
+      flasher: "bootsel",
+      message: "2 RP2040s are in BOOTSEL but only one volume is mounted",
+    });
+    const wrapper = mount(AddMcuWizard, { props: { open: true } });
+
+    await wrapper.get("select").setValue("roadrunner");
+    await wrapper
+      .findAll("button")
+      .find((b) => b.text() === "Scan")!
+      .trigger("click");
+    await flushPromises();
+
+    expect(wrapper.text()).not.toContain("one board found");
+    expect(wrapper.get(".alert--warning").text()).toContain(
+      "2 RP2040s are in BOOTSEL",
+    );
+    const install = wrapper
+      .findAll("button")
+      .find((b) => b.text() === "Install roadrunner");
+    expect(install?.attributes("disabled")).toBeUndefined();
+  });
+
   it("shows why a type with no flasher cannot be set up", async () => {
     newAgent();
     const reason =

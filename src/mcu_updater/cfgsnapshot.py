@@ -6,8 +6,9 @@ opened and parsed it itself: one `fw.status` poll against a small fixture
 opened it 46 times. This keeps one frozen parse per file and hands it to every
 reader until the file's stat says it changed.
 
-Correctness rests on the stat key and the racy-clean window alone
-(docs/decisions.md, "The config is one snapshot per file"). `invalidate`,
+Correctness rests on the stat key - taken before and after each read - and the
+racy-clean window alone (docs/decisions.md, "The config is one snapshot per
+file"). `invalidate`,
 called by every writer, is belt and braces: a writer that forgets it still
 cannot cause a stale read.
 
@@ -54,14 +55,21 @@ def _stat_key(st: os.stat_result) -> _Key:
     return (st.st_dev, st.st_ino, st.st_size, st.st_mtime_ns, st.st_ctime_ns)
 
 
-def _parse(path: str) -> tuple[CfgDocument, os.stat_result]:
-    """The text and the stat of the one handle it was read from, so a replace
-    between a `stat` and this `open` cannot pair one file's key with another's
-    text."""
+def _parse(path: str) -> tuple[CfgDocument, os.stat_result, bool]:
+    """The text, the stat of the one handle it was read from, and whether that
+    stat held still across the read.
+
+    One handle, so a replace between a `stat` and this `open` cannot pair one
+    file's key with another's text. Stat taken before the read and after it, so
+    a rewrite in place *during* the read - `cp -p` or `rsync --inplace -t`,
+    which put the old mtime back - cannot pair the new file's key with the old
+    text; its ctime, at least, moved.
+    """
     with open(path, encoding="utf-8") as fh:
+        before = os.fstat(fh.fileno())
         text = fh.read()
         st = os.fstat(fh.fileno())
-    return CfgDocument(text), st
+    return CfgDocument(text), st, _stat_key(before) == _stat_key(st)
 
 
 def read(path: str) -> CfgDocument | None:
@@ -82,12 +90,12 @@ def read(path: str) -> CfgDocument | None:
         return entry.doc
     started = _now_ns()
     try:
-        doc, st = _parse(path)
+        doc, st, steady = _parse(path)
     except (FileNotFoundError, NotADirectoryError):
         invalidate(path)
         return None
     doc.freeze()
-    trusted = started - st.st_mtime_ns > RACY_WINDOW_NS
+    trusted = steady and started - st.st_mtime_ns > RACY_WINDOW_NS
     with _lock:
         if trusted:
             _cache[where] = _Entry(doc, _stat_key(st))
@@ -99,7 +107,7 @@ def read(path: str) -> CfgDocument | None:
 def read_fresh(path: str) -> CfgDocument | None:
     """An uncached, writable parse, for a writer under its lock."""
     try:
-        doc, _st = _parse(path)
+        doc, _st, _steady = _parse(path)
     except (FileNotFoundError, NotADirectoryError):
         return None
     return doc

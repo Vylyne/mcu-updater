@@ -1,5 +1,5 @@
 {
-  "_comment": "The config snapshot reuses a parse only while the file's stat key is unchanged and only if the parse was read outside the racy window; the shared parse refuses edits; both write paths read the file fresh under their lock, never the snapshot.",
+  "_comment": "The config snapshot reuses a parse only while the file's stat key is unchanged and only if the parse was read outside the racy window, with the file holding still across the read; the shared parse refuses edits; both write paths read the file fresh under their lock, never the snapshot.",
   "file": "src/mcu_updater/cfgsnapshot.py",
   "command": [
     "python",
@@ -18,8 +18,13 @@
     },
     {
       "name": "a parse read inside the racy window is not kept",
-      "find": "    trusted = started - st.st_mtime_ns > RACY_WINDOW_NS",
-      "replace": "    trusted = True"
+      "find": "    trusted = steady and started - st.st_mtime_ns > RACY_WINDOW_NS",
+      "replace": "    trusted = steady"
+    },
+    {
+      "name": "a parse whose file moved during the read is not kept",
+      "find": "    trusted = steady and started - st.st_mtime_ns > RACY_WINDOW_NS",
+      "replace": "    trusted = started - st.st_mtime_ns > RACY_WINDOW_NS"
     },
     {
       "name": "a frozen document refuses every edit",

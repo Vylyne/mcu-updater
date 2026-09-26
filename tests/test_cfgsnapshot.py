@@ -103,6 +103,60 @@ def test_a_rewrite_the_stat_key_cannot_see_is_caught_by_the_window(tmp_path, mon
     assert doc is not None and doc.has_section("b")
 
 
+def _rewrite_after_the_read(monkeypatch, cfg, text: str) -> None:
+    """The next read of `cfg` is raced: the moment its text is read, `text`
+    lands in place - same inode - and the old mtime is put back, as
+    `cp -p backup.cfg mcu-updater.cfg` or `rsync --inplace -t` would."""
+    real_open = open
+
+    def racing_open(path, *args, **kwargs):
+        fh = real_open(path, *args, **kwargs)
+        real_read = fh.read
+
+        def read(*a):
+            got = real_read(*a)
+            old = os.stat(cfg).st_mtime_ns
+            with real_open(cfg, "w", encoding="utf-8", newline="\n") as out:
+                out.write(text)
+            os.utime(cfg, ns=(old, old))
+            monkeypatch.delattr(cfgsnapshot, "open")
+            return got
+
+        fh.read = read
+        return fh
+
+    monkeypatch.setattr(cfgsnapshot, "open", racing_open, raising=False)
+
+
+def test_a_rewrite_that_races_the_read_is_not_kept(tmp_path, monkeypatch):
+    """The key is taken before the read and after it: a rewrite in between,
+    even one that puts the mtime back, keeps nothing - so the next read parses
+    the file as it now is, rather than serving the text it replaced."""
+    cfg = tmp_path / "a.cfg"
+    _write(cfg, "[a]\nk: 1\n")
+    _rewrite_after_the_read(monkeypatch, cfg, "[a]\nk: 22\n")
+
+    raced = cfgsnapshot.read(str(cfg))
+    assert raced is not None and raced.get("a", "k") == "1"
+
+    doc = cfgsnapshot.read(str(cfg))
+    assert doc is not None and doc.get("a", "k") == "22"
+
+
+@pytest.mark.skipif(os.name != "posix", reason="st_ctime is change time only on POSIX")
+def test_a_same_size_rewrite_that_races_the_read_is_not_kept(tmp_path, monkeypatch):
+    """Same size, same inode, mtime put back: only ctime moved, and it moved
+    between the two keys."""
+    cfg = tmp_path / "a.cfg"
+    _write(cfg, "[a]\nk: 1\n")
+    _rewrite_after_the_read(monkeypatch, cfg, "[a]\nk: 2\n")
+
+    cfgsnapshot.read(str(cfg))
+
+    doc = cfgsnapshot.read(str(cfg))
+    assert doc is not None and doc.get("a", "k") == "2"
+
+
 def test_outside_the_window_a_forged_key_is_trusted(tmp_path, monkeypatch):
     """The accepted limitation, pinned so the window test above is known to be
     what catches it: with the key forged and the file aged, the parse is kept."""

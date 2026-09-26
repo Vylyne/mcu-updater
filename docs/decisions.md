@@ -645,16 +645,21 @@ A parse is kept only if its read began more than 2 s after the file's mtime -
 git's racy-clean rule. A rewrite in place, at the same size, inside one mtime
 tick keeps every field of the key, and nano rewrites in place and ext4 reuses
 the inode `os.replace` frees; any read that could have raced such a rewrite
-began inside that tick, so it is never kept. Writers (`Registry.mutate`,
+began inside that tick, so it is never kept. The key is taken from the handle
+before the read and after it, and a parse whose key moved is not kept: `cp -p`
+or `rsync --inplace -t` landing mid-read puts the old mtime back, but not the
+ctime. Writers (`Registry.mutate`,
 `settings.mutate`, `seed`) never read the snapshot - they parse under their
 lock, so the lost-update guarantee does not rest on the window - and drop it
 after `os.replace`, as belt and braces. The shared parse is frozen: an edit
 through a `Registry.load` raises rather than changing every reader's view.
 
-The accepted gap: a rewrite that forges the whole key - same size, same inode,
-mtime restored with `utime` to more than 2 s ago - is not seen until the next
-real change. Only a tool that deliberately restores timestamps does that, and
-writers are unaffected.
+The accepted gap is narrow on Linux: `utime` itself moves ctime, so restoring
+an mtime changes the key. What is left is two same-size, mtime-restoring
+rewrites inside one ctime tick (a few ms), the first after a read has already
+been kept. On Windows `st_ctime` is creation time, so any same-size in-place
+rewrite with its mtime restored goes unseen until the next real change - not a
+host this runs on. Writers are unaffected either way.
 
 Do not replace this with inotify. It is not stdlib, it needs a thread, and an
 event still leaves a gap between the write and the read that the stat check

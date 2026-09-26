@@ -99,18 +99,21 @@ A `KIND_PORT` device's `detail` is:
 | `port` | the configured port, as read before the stop. Equal to `Device.id`. |
 | `device_id` | the hardware id, lowercased, or `""` when the device reports none. |
 | `name` | the label `write()` reports as `name` on the wire. |
+| `section` | the Klipper section a human recognises, such as `knomi_serial t0_knomi`. |
 
 Anything else a caller adds rides along, as `bulk`'s `reason` does today. The
 flasher's own keys win.
 
-`device_id` and `name` are two keys the agreed decision did not list. They are
-needed:
+`device_id`, `name` and `section` are three keys the agreed decision did not
+list. They are needed:
 
 - `record()` files the flash under the hardware id (`build.hardware_id_key`,
   section 2a).
 - `port_for` matches on the hardware id.
 - `write()`'s result carries `name`, and `fw.flash`'s PlatformIO route (`_pio_flash`) projects failures
   onto it.
+- `fw.flash_all`'s selection (`bulk._platformio_json`) reads out `name` and
+  `section` for a caller confirming what is about to happen.
 
 The three callers build this payload directly. Each resolves `device_id` the way
 the flasher does today, so nothing changes about which id a device is matched
@@ -121,14 +124,15 @@ on.
   - `port = s["configured_path"]`
   - `device_id = (s["device_id"] or s["reported_id"] or "").lower()`
   - `name = s["name"]`
+  - `section = s["section"]`
 - `cli.py` reads the `WatcherDevice`:
   - `port = device.port`
   - `device_id = device.device_id`
   - `name = device.device_id`, as its `screen["name"]` is today
+  - `section = f"{display.klipper_section} {device.device_id}"`, as today
 
-`target_for(display, screen, ...)` is replaced by a `target_for(device, ...)`
-that reads the `Device`, or folded into `PlatformIO.target` if nothing else calls
-it. The plan decides which, after one grep.
+`target_for(display, screen, ...)` is folded into `PlatformIO.target`; nothing
+else calls it.
 
 The docstrings on `Device` and `FlashTarget` that say `{"display", "screen"}`
 for esptool are updated to the new keys and name.
@@ -161,7 +165,10 @@ resolved.
 
 It is never fatal. `identify` turns an `UpdaterError` from the listen into a
 warning and the map's answer (section 4), and an empty answer means the
-configured port. That keeps today's "discovery could not run" softening.
+configured port. That keeps today's "discovery could not run" softening. The
+flasher also catches an `UpdaterError` out of `identify` itself, warns, and
+treats that type as unidentified, so the guarantee does not rest on every
+future identifier getting it right.
 
 `write()` and `port_for` keep their four cases:
 
@@ -190,22 +197,29 @@ this change.
 
 - `ask=False`: `read_device_map`, unchanged.
 - `ask=True`: `discover` (the listen pass). On `UpdaterError`, a warning and
-  then `read_device_map` as the fallback. When the listen runs and hears
-  nothing, the answer is `{}`, not the map. The ports were free and nothing
-  spoke, which is the "refuse the silent one" case, not "use the remembered
-  port".
+  then `read_device_map` as the fallback. What the listen heard is the answer,
+  and the map is not merged under it.
 
   That is a deliberate narrowing. Today's write-time `confirm()` merges the map
-  under the listen, so a silent screen still in the map is written to its
-  remembered port. The new rule matches what `agent-api.md` already says: "A
-  screen that does not answer is recorded in `failures` and skipped".
+  under the listen, so a screen that stays silent while others answer is still
+  written to its remembered port. Now it is refused, which is what `agent-api.md`
+  already says: "A screen that does not answer is recorded in `failures` and
+  skipped".
+
+  When the listen runs and hears nothing at all, the answer is `{}`. The flasher
+  then has nothing to match against and writes each device to its configured
+  port with no confidence, the same as today when nothing answers and there is
+  no map. A remembered port is not reported as confirmed for a device that was
+  asked and stayed silent.
 - The docstring is rewritten around the three cases above. The sentence "the
   write itself verifies the port again" goes, because this is that
   verification now.
 
-`WatcherDevice` gains `answered: bool = False`. `listen._parse_discovered` sets
-it `True`, and the map reader leaves it `False`. `to_json` is unchanged, so
-`fw.device.list` does not change shape.
+`WatcherDevice` gains `answered: bool = False`. The helper stamps it `True` on
+what `discover` returned (`dataclasses.replace`), so the fact is set where the
+policy lives and a test's stand-in `discover` need not know about it. The map
+reader leaves it `False`. `to_json` is unchanged, so `fw.device.list` does not
+change shape.
 
 The CLI keeps today's cost. `cli.py`'s type selection runs inside `_ports_free`,
 and it now asks `ask=False` first and `ask=True` only when the map is empty. The
@@ -285,8 +299,12 @@ New or rewritten tests:
 - `identify(ask=True)` falls back to the map when the listen raises
   `UpdaterError`, with a warning.
 - `identify(ask=True)` returns `{}` when the listen runs and hears nothing,
-  even with a map. A test at the flasher level then refuses the silent device
-  rather than writing its remembered port.
+  even with a map.
+- At the flasher level, with a map naming a device and the listen hearing only
+  another, the silent device is refused rather than written at its remembered
+  port.
+- An identifier that raises `UpdaterError` leaves its type written at the
+  configured ports, with a warning.
 - `write()` reports `ANSWERED` for a listened device and `REMEMBERED` for a
   map-fallback one.
 - CLI selection reads the map without listening when the map has entries, and

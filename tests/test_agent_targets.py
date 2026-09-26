@@ -118,6 +118,7 @@ def test_an_mcu_type_projects_onto_the_shared_shape(api):
         "needs_flash",
         "devices",
         "actions",
+        "first_install",
     }
     assert set(ebb["artifact"]) == {"state", "tone", "label", "reason"}
     assert set(ebb["devices"][0]) == {
@@ -1437,3 +1438,41 @@ def test_type_status_takes_board_state_from_the_inventory(paths, fake_root, live
 
     out = Api(paths).type_status(reg, name, versions={}, canbus={})
     assert out["serials"][0]["state"] == "klipper"
+
+
+# --------------------------------------------------------------------------
+# targets[].first_install
+# --------------------------------------------------------------------------
+
+
+def test_every_row_says_how_a_bare_board_of_it_is_set_up(api):
+    targets = _targets(api)
+
+    assert targets["bttebb36"]["first_install"] == {
+        "fw": "katapult",
+        "flasher": "dfu_util",
+        "reason": None,
+    }
+    knomi = targets["knomi"]["first_install"]
+    assert knomi["flasher"] is None
+    assert "can scan for a new board" in knomi["reason"]
+    assert all("first_install" in t for t in targets.values())
+
+
+def test_a_cmake_rp2040_row_is_set_up_over_bootsel(paths, tmp_path):
+    _cmake_config(paths, tmp_path)
+    row = {t["name"]: t for t in Api(paths).dispatch("fw.status")["targets"]}["roadrunner"]
+    assert row["first_install"] == {"fw": "roadrunner", "flasher": "bootsel", "reason": None}
+
+
+def test_a_row_first_install_cannot_answer_still_renders(paths, tmp_path):
+    """No chipset: first_install has no answer, and fw.status must still
+    answer with the row and the reason - it is asked on every poll."""
+    _cmake_config(paths, tmp_path)
+    text = read_main_config(paths).replace("chipset: rp2040", "chipset:")
+    assert text != read_main_config(paths)
+    write_main_config(paths, text)
+
+    row = {t["name"]: t for t in Api(paths).dispatch("fw.status")["targets"]}["roadrunner"]
+    assert row["first_install"]["flasher"] is None
+    assert "chipset:" in row["first_install"]["reason"]

@@ -1355,6 +1355,29 @@ def test_the_flash_prompt_provisions_an_unprovisioned_roadrunner_then_flashes_it
     assert code == 0, f"STDOUT={captured_io.out!r} STDERR={captured_io.err!r}"
 
 
+def _built(bin_path="/tmp/k.bin", uf2_path=None):
+    return types.SimpleNamespace(bin_path=bin_path, uf2_path=uf2_path)
+
+
+def _klipper_only(c):
+    """`board` with no Katapult, and klipper's list without a bare writer."""
+    from mcu_updater import firmware
+
+    with Registry.mutate(c.paths, "test") as reg:
+        reg.get("board").firmwares = ["klipper"]
+    # BASE_FIRMWARES' klipper is `flashers: flashtool` - nothing writes bare.
+    assert firmware.load(c.paths)["klipper"].flashers == ("flashtool",)
+
+
+def _add_cmake_type(c, tmp_path):
+    with open(c.paths.main_config, "a", encoding="utf-8", newline="\n") as fh:
+        fh.write(
+            "\n[firmware roadrunner]\nsource: " + str(tmp_path) + "\nbuilder: cmake\n"
+            "flashers: bootsel\n\n[type roadrunner]\nchipset: rp2040\nfirmware: roadrunner\n"
+            "cmake_target: roadrunner_v1_i2c_rgb\n"
+        )
+
+
 def _adopting(monkeypatch, *serials: str) -> None:
     """add-mcu as far as the adoption prompt, with every candidate accepted."""
     monkeypatch.setattr(
@@ -1362,11 +1385,16 @@ def _adopting(monkeypatch, *serials: str) -> None:
         "_build_interactive",
         lambda c, t, fw: types.SimpleNamespace(bin_path="k.bin", uf2_path=None),
     )
+    monkeypatch.setattr(
+        cli,
+        "_scan_bare_board",
+        lambda c_, choice: flashers.CandidateScan(True, None, None, [{"port": None}]),
+    )
     monkeypatch.setattr(cli, "flash_initial_bootloader", lambda *a, **kw: None)
     monkeypatch.setattr(
         cli,
         "adoptable_devices",
-        lambda paths, before, chipset: [
+        lambda paths, before, **k: [
             types.SimpleNamespace(serial=s, path=f"/dev/serial/by-id/{s}") for s in serials
         ],
     )
@@ -1390,6 +1418,20 @@ def test_add_mcu_builds_and_writes_the_types_first_image(
 ):
     """Katapult when the type has it; with none, the type's own application,
     with no Katapult config handed to the write."""
+    if not katapult_installed:
+        # Behaviour change 6 (plan deviations): base klipper's `flashers:
+        # flashtool` writes nothing bare, so a bootloaderless RP2040 would now
+        # refuse before the build. Give klipper a bare writer, the same way
+        # test_agent_add_mcu.py's `_klipper_flashers` does, so this case still
+        # reaches the write it is testing.
+        with open(c.paths.main_config, encoding="utf-8") as fh:
+            text = fh.read()
+        text = text.replace(
+            "[firmware klipper]\nsource: ~/klipper\nflashers: flashtool\n",
+            "[firmware klipper]\nsource: ~/klipper\nflashers: flashtool, bootsel\n",
+        )
+        with open(c.paths.main_config, "w", encoding="utf-8", newline="\n") as fh:
+            fh.write(text)
     reg = Registry.load(c.paths)
     reg.add_type("bare", "rp2040", katapult_installed=katapult_installed)
     save_registry(reg, c.paths)
@@ -1403,10 +1445,15 @@ def test_add_mcu_builds_and_writes_the_types_first_image(
     )
     monkeypatch.setattr(
         cli,
+        "_scan_bare_board",
+        lambda c_, choice: flashers.CandidateScan(True, None, None, [{"port": None}]),
+    )
+    monkeypatch.setattr(
+        cli,
         "flash_initial_bootloader",
         lambda paths, settings, chipset, fw_bin, **kw: written.append(kw),
     )
-    monkeypatch.setattr(cli, "adoptable_devices", lambda paths, before, chipset: [])
+    monkeypatch.setattr(cli, "adoptable_devices", lambda paths, before, **k: [])
 
     code = _main(fake_root, monkeypatch, ["add-mcu", "-t", "bare"])
 
@@ -1420,6 +1467,51 @@ def test_add_mcu_builds_and_writes_the_types_first_image(
     assert written[0]["katapult_config"] == expected_config
     assert f"enumerate as {install}" in out
     assert f"No new, unassigned {install} device" in out
+
+
+def test_add_mcu_scans_after_the_build_and_waits_on_that_port(c, monkeypatch):
+    from mcu_updater.flashers import CandidateScan
+
+    order: list[str] = []
+    seen: dict = {}
+    monkeypatch.setattr(
+        cli, "_build_interactive", lambda *a, **k: order.append("build") or _built()
+    )
+    monkeypatch.setattr(
+        cli,
+        "_scan_bare_board",
+        lambda c_, choice: order.append("scan")
+        or CandidateScan(True, None, None, [{"serial": "S", "port": "1-1.2"}]),
+    )
+    monkeypatch.setattr(
+        cli, "flash_initial_bootloader", lambda *a, **k: order.append("write") or seen.update(k)
+    )
+    monkeypatch.setattr(
+        cli, "adoptable_devices", lambda paths, before, **k: seen.update(wait=k) or []
+    )
+
+    cli.add_mcu(argparse.Namespace(type="board"))
+
+    assert order == ["build", "scan", "write"]
+    assert seen["state"] == "dfu"
+    assert seen["wait"]["port"] == "1-1.2"
+
+
+def test_add_mcu_refuses_a_type_no_flasher_can_set_up_before_the_build(c, monkeypatch):
+    from mcu_updater.errors import UnsupportedChipsetError
+
+    _klipper_only(c)  # see Step 1b
+    monkeypatch.setattr(
+        cli, "_build_interactive", lambda *a, **k: pytest.fail("built before refusing")
+    )
+    with pytest.raises(UnsupportedChipsetError, match="dfu_util"):
+        cli.add_mcu(argparse.Namespace(type="board"))
+
+
+def test_add_mcu_refuses_a_non_kconfig_type_by_name(c, monkeypatch, tmp_path):
+    _add_cmake_type(c, tmp_path)  # see Step 1b
+    with pytest.raises(UpdaterError, match="web panel"):
+        cli.add_mcu(argparse.Namespace(type="roadrunner"))
 
 
 def test_add_mcu_refuses_to_adopt_a_board_tracked_under_another_type(

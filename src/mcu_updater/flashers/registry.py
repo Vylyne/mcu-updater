@@ -9,16 +9,18 @@ has NOPASSWD `systemctl` for Klipper. The tuple is the seam.
 
 from __future__ import annotations
 
-from collections.abc import Iterable
-from typing import TYPE_CHECKING, Any
+import dataclasses
+from collections.abc import Iterable, Sequence
+from typing import TYPE_CHECKING, Any, Protocol
 
 from ..artifacts import KIND_BIN, KIND_UF2, Artifact, Staged
 from ..errors import NoFlasherError
+from ..firmware import missing_section_message
 from .bootsel import Bootsel
 from .dfu_util import DfuUtil
 from .esptool import Esptool
 from .flashtool import Flashtool
-from .spec import KIND_SERIAL, Device, Flasher, FlashTarget
+from .spec import KIND_BARE, KIND_SERIAL, CandidateScanner, Device, Flasher, FlashTarget
 
 if TYPE_CHECKING:
     from ..firmware import FirmwareFamily
@@ -43,6 +45,12 @@ def by_name(name: str) -> Flasher:
     if flasher is None:
         raise KeyError(f"no flasher {name!r}; known: {sorted(_BY_NAME)}")
     return flasher
+
+
+def candidate_scanner(flasher: Flasher) -> CandidateScanner | None:
+    """`flasher` as a `CandidateScanner`, or None when it cannot find a new
+    board. The one place that asks - the way helper capabilities are reached."""
+    return flasher if isinstance(flasher, CandidateScanner) else None
 
 
 def needs_services_stopped(target: FlashTarget) -> bool:
@@ -312,6 +320,106 @@ def refusal(device: Device, exc: NoFlasherError) -> dict[str, Any]:
         "error": str(exc),
         "missing": list(exc.data.get("missing", [])),
     }
+
+
+@dataclasses.dataclass(frozen=True)
+class FirstInstall:
+    """Which flasher sets a bare board of one type up, or why none can."""
+
+    #: The install family - bootloader, else application. "" when the type
+    #: declares no firmwares at all.
+    fw: str
+    #: None exactly when nothing on the family's list can do it.
+    flasher: str | None
+    #: The ROM state that flasher writes ("dfu", "bootsel"); "" with no flasher.
+    state: str
+    #: Set exactly when `flasher` is None, naming the line to change.
+    reason: str | None
+
+    def to_json(self) -> dict[str, Any]:
+        return {"fw": self.fw or None, "flasher": self.flasher, "reason": self.reason}
+
+
+class _Declared(Protocol):
+    """A `typelist.TypeEntry` or an `McuType` - read-only, so both fit."""
+
+    @property
+    def name(self) -> str: ...
+    @property
+    def chipset(self) -> str: ...
+    @property
+    def firmwares(self) -> Sequence[str]: ...
+
+
+def _bare(entry: _Declared, fw: str, state: str) -> Device:
+    return Device(
+        type=entry.name, id="", chipset=entry.chipset, state=state, fw=fw, kind=KIND_BARE
+    )
+
+
+def first_install(entry: _Declared, families: dict[str, FirmwareFamily]) -> FirstInstall:
+    """Which flasher on this type's install family can find *and* write a
+    bare board of it - the first, in list order, that is a `CandidateScanner`
+    and whose `supports()` takes a bare device in one of its own states.
+
+    No builder and no flasher name is compared: `flashtool` and `esptool`
+    refuse `KIND_BARE` and cannot scan, so they are never chosen.
+
+    Pure - no bus, no subprocess, no file read - because `fw.status` asks it
+    for every row on every poll. Never raises: a row it cannot answer for
+    still renders, with the reason.
+    """
+    from .flash import _no_first_install_writer, install_family
+
+    if not entry.firmwares:
+        return FirstInstall(
+            "", None, "", f"[type {entry.name}] declares no firmware, so there is nothing to install."
+        )
+    fw = install_family(entry.firmwares, families)
+    family = families.get(fw)
+    if family is None:
+        return FirstInstall(fw, None, "", missing_section_message(fw))
+
+    listed = [_BY_NAME[n] for n in family.flashers if n in _BY_NAME]
+    scanners = [f for f in listed if candidate_scanner(f) is not None]
+    for flasher in scanners:
+        for state in flasher.states:
+            if flasher.supports(_bare(entry, fw, state), None):
+                return FirstInstall(fw, flasher.name, state, None)
+
+    if scanners and not entry.chipset:
+        return FirstInstall(
+            fw,
+            None,
+            "",
+            f"[type {entry.name}] declares no chipset:, and a bare board has "
+            f"nothing else to say which boot ROM it speaks. Add chipset: to it.",
+        )
+    for flasher in FLASHERS:
+        if flasher in listed or candidate_scanner(flasher) is None:
+            continue
+        for state in flasher.states:
+            if flasher.supports(_bare(entry, fw, state), None):
+                return FirstInstall(
+                    fw, None, "", _no_first_install_writer(family, entry.chipset, state)
+                )
+    if scanners:
+        return FirstInstall(
+            fw,
+            None,
+            "",
+            f"none of the flashers on [firmware {fw}] that can find a new board "
+            f"({', '.join(f.name for f in scanners)}) writes a bare "
+            f"{entry.chipset}. Flash it by hand, then track it once it enumerates.",
+        )
+    return FirstInstall(
+        fw,
+        None,
+        "",
+        f"nothing on [firmware {fw}]'s flashers: ({', '.join(family.flashers)}) can "
+        f"scan for a new board, so this type cannot be set up from bare yet. "
+        f"Flash it by hand, then track it once it enumerates.",
+    )
 
 
 def select_each(

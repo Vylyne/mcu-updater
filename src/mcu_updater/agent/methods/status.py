@@ -737,7 +737,7 @@ class StatusMixin(_Base):
         # times to be told the same thing.
         families = firmware.load(self.paths)
         configurable = self.kconfig_available(families)
-        return [
+        out = [
             self._mcu_target(reg, payload, allowed, configurable, families)
             for payload in types
         ] + [
@@ -746,6 +746,28 @@ class StatusMixin(_Base):
             self._cmake_target(payload, allowed, families, rows)
             for payload in self.cmake_status()
         ]
+        # One answer for every provider's rows, from the type list: whether a
+        # bare board of this type can be set up, and by which flasher.
+        from ... import typelist
+
+        entries = {e.name: e for e in typelist.read_config(self.paths)[0]}
+        for row in out:
+            row["first_install"] = self._first_install_json(entries.get(row["name"]), families)
+        return out
+
+    @staticmethod
+    def _first_install_json(
+        entry: Any, families: dict[str, firmware.FirmwareFamily]
+    ) -> dict[str, Any]:
+        from ... import flashers
+
+        if entry is None:
+            return {
+                "fw": None,
+                "flasher": None,
+                "reason": "not in the type list, so there is nothing to set up from bare.",
+            }
+        return flashers.first_install(entry, families).to_json()
 
     def _mcu_target(
         self,
@@ -1972,6 +1994,7 @@ class StatusMixin(_Base):
         "fw.bus.unignore": "bus_unignore",
         "fw.dfu.scan": "dfu_scan",
         "fw.bootsel.scan": "bootsel_scan",
+        "fw.add_mcu.scan": "add_mcu_scan",
         "fw.canbus.scan": "canbus_scan",
         "fw.canbus.ignore": "canbus_ignore",
         "fw.canbus.unignore": "canbus_unignore",
@@ -2090,28 +2113,6 @@ class StatusMixin(_Base):
             for name in self.HARDWARE_METHODS:
                 out.pop(name, None)
         return out
-
-
-
-
-    # -- DFU: what is waiting to be adopted ---------------------------------
-
-    #: Why a DFU flash cannot start right now. Stable codes; the panel switches on
-    #: them, and each maps to a different physical thing for the user to do.
-    DFU_NO_TOOL = "no_tool"
-    DFU_PERMISSION_DENIED = "permission_denied"
-    DFU_NONE = "none"
-    DFU_AMBIGUOUS = "ambiguous"
-
-    # -- BOOTSEL: what is waiting to be adopted -----------------------------
-
-    #: Why a BOOTSEL flash cannot start right now. No tool/permission code here
-    #: - reading /dev/disk/by-id and a mount point is plain filesystem access,
-    #: no subprocess and no libusb claim to fail. Readiness gates on the mount
-    #: count rather than the device count - see `bootsel_scan`.
-    BOOTSEL_NONE = "none"
-    BOOTSEL_NOT_MOUNTED = "not_mounted"
-    BOOTSEL_AMBIGUOUS = "ambiguous"
 
     #: How long a bootloader-install pairing stays actionable. A class attribute
     #: so tests can shrink it without patching a call site, matching

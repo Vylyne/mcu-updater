@@ -95,6 +95,11 @@
       "name": "a declared family with no source tree is not reported present",
       "find": "                    \"present\": os.path.isdir(source),",
       "replace": "                    \"present\": True,"
+    },
+    {
+      "name": "every row carries first_install",
+      "find": "            row[\"first_install\"] = self._first_install_json(entries.get(row[\"name\"]), families)",
+      "replace": "            pass"
     }
   ]
 }

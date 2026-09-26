@@ -332,7 +332,7 @@ def test_the_flash_records_the_pairing_before_waiting(paths, live_registry_text,
     from mcu_updater.jobs import JobRunner
 
     from .conftest import write_settings
-    from .test_agent_dfu import ONE_BOARD
+    from .test_agent_dfu import ONE_BOARD, FakeRun
 
     # ONE_BOARD's DFU serial is fixed ("3941335F3434"), so the pairing this
     # test records is keyed on it - not on the module-level NEW_DFU, which
@@ -362,7 +362,7 @@ def test_the_flash_records_the_pairing_before_waiting(paths, live_registry_text,
     import pytest as _pytest
 
     monkeypatch = _pytest.MonkeyPatch()
-    monkeypatch.setattr("mcu_updater.devices.subprocess.run", _FakeRun(ONE_BOARD))
+    monkeypatch.setattr("mcu_updater.devices.subprocess.run", FakeRun(stdout=ONE_BOARD))
     monkeypatch.setattr("mcu_updater.flashers.flash.flash_initial_bootloader", lambda *a, **k: None)
     try:
         res = api.dispatch("fw.add_mcu.start", {"name": "bttebb36"})
@@ -380,11 +380,3 @@ def test_the_flash_records_the_pairing_before_waiting(paths, live_registry_text,
         runner._cancel.set()
         runner.wait(timeout=20)
 
-
-class _FakeRun:
-    def __init__(self, stdout: str) -> None:
-        self.stdout = stdout
-        self.stderr = ""
-
-    def __call__(self, *args, **kwargs):
-        return self

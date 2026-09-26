@@ -840,6 +840,37 @@ export async function scanBareBoard(
   }
 }
 
+/** `fw.add_mcu.scan`: the scan `first_install` chose for this type, plus
+ * `flasher` - so the wizard never chooses a mechanism itself. Null (routed
+ * into state.error) on failure, like every other store call. */
+export async function scanNewBoard(
+  name: string,
+): Promise<Record<string, unknown> | null> {
+  if (client === null) return null;
+  try {
+    const result = await callAgent<Record<string, unknown>>(
+      client,
+      "fw.add_mcu.scan",
+      { name },
+    );
+    state.error = null;
+    return result;
+  } catch (error) {
+    state.error = error as NormalizedAgentError;
+    return null;
+  }
+}
+
+/** Whether the agent answers the flasher-gated first install: the method
+ * and `first_install` on its rows. Both, because the release order pairs a
+ * newer UI with an older agent for a window - see AddMcuWizard.vue. */
+export function firstInstallAware(targets: Target[]): boolean {
+  return (
+    hasCapability("fw.add_mcu.scan") &&
+    targets.some((target) => target.first_install !== undefined)
+  );
+}
+
 /** Write Katapult to a bare board over DFU/BOOTSEL. Returns immediately with
  * a job - the running/succeeded/failed state, including the eventual
  * `candidates`/`already_tracked` result, arrives the normal way through the

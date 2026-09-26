@@ -185,7 +185,7 @@ def test_an_unrecognised_board_is_simply_unnamed(api, fake_root):
 
 
 def test_two_known_boards_sharing_an_id_name_neither(api, fake_root):
-    """Same collision guard as `_identify_dfu` - an unlabelled board is a small
+    """Same collision guard as `DfuUtil.scan_candidates` - an unlabelled board is a small
     annoyance, a board labelled as the wrong one is how you flash the toolhead
     you meant to leave alone. This assumed identity has no derivation to
     collide by construction, but the guard still has to hold if two tracked

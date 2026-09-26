@@ -26,7 +26,13 @@ import {
 import { targetKey, type Target } from "../api/targets";
 import type { Family } from "../api/mcutype";
 import type { BulkOperation } from "../api/bulk";
-import { hasCapability, isBusy, refresh, state } from "../store/agent";
+import {
+  firstInstallAware,
+  hasCapability,
+  isBusy,
+  refresh,
+  state,
+} from "../store/agent";
 
 const props = defineProps<{ targets: Target[] | undefined }>();
 
@@ -61,7 +67,9 @@ const canManageTypes = computed(
 const canAddMcu = computed(
   () =>
     hasCapability("fw.add_mcu.start") &&
-    targets.value.some((target) => target.provider === "kconfig_make"),
+    (firstInstallAware(targets.value)
+      ? targets.value.some((target) => target.first_install?.flasher)
+      : targets.value.some((target) => target.provider === "kconfig_make")),
 );
 const hasMenu = computed(
   () => canUpdateAll.value || canManageTypes.value || canAddMcu.value,

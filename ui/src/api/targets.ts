@@ -97,6 +97,14 @@ export interface CmakeExtra {
   flashable: boolean;
 }
 
+/** `targets[].first_install` - whether a bare board of this type can be set
+ * up, and by which flasher. Absent from an agent older than the field. */
+export interface FirstInstall {
+  fw: string | null;
+  flasher: string | null;
+  reason: string | null;
+}
+
 export interface Target {
   provider: Provider;
   name: string;
@@ -108,6 +116,7 @@ export interface Target {
   devices: TargetDevice[];
   actions: Action[];
   extra?: DisplayExtra | CmakeExtra;
+  first_install?: FirstInstall;
 }
 
 /** Keep provider in the render key so target identity matches the wire shape,

@@ -20,6 +20,7 @@ Env overrides (all honoured by :meth:`Paths.from_env`):
   MCU_UPDATER_FAKE_USB_SYSFS  replace /sys/bus/usb/devices for USB inventory
   MCU_UPDATER_FAKE_TTY_SYSFS  replace /sys/class/tty when joining a serial
                                 by-id link to its USB device
+  MCU_UPDATER_FAKE_BLOCK_SYSFS replace /sys/class/block when finding a volume's port
 """
 
 from __future__ import annotations
@@ -84,6 +85,9 @@ class Paths:
     #: Empty in production: `discovery.usb.device_for_tty` reads `/sys/class/tty`.
     #: An exact override supplies a copied or synthetic tty sysfs tree in tests.
     tty_sysfs: str = ""
+    #: Replaces `/sys/class/block`, where a boot ROM's mass-storage volume is
+    #: traced back to its USB port. Mirrors `tty_sysfs` above.
+    block_sysfs: str = ""
 
     # --- hand-edited config ---
 
@@ -271,6 +275,7 @@ class Paths:
         can_sysfs_net = e.get("MCU_UPDATER_FAKE_CAN_SYSFS") or ""
         usb_sysfs = e.get("MCU_UPDATER_FAKE_USB_SYSFS") or ""
         tty_sysfs = e.get("MCU_UPDATER_FAKE_TTY_SYSFS") or ""
+        block_sysfs = e.get("MCU_UPDATER_FAKE_BLOCK_SYSFS") or ""
 
         return cls(
             home=resolved_home,
@@ -282,4 +287,5 @@ class Paths:
             can_sysfs_net=can_sysfs_net,
             usb_sysfs=usb_sysfs,
             tty_sysfs=tty_sysfs,
+            block_sysfs=block_sysfs,
         )

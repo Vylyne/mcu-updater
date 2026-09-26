@@ -1,4 +1,4 @@
-"""fw.flash, fw.dfu.scan, fw.add_mcu.start -- writing firmware to a board."""
+"""fw.flash, fw.dfu.scan, fw.add_mcu.start/scan -- writing firmware to a board."""
 
 from __future__ import annotations
 
@@ -8,9 +8,7 @@ from typing import Any
 from ... import firmware, flashers, helpers, inventory, providers, stop_services
 from ...config import Registry
 from ...errors import (
-    DfuPermissionError,
     FlashError,
-    ToolMissingError,
     UpdaterError,
 )
 from ...paths import REENUMERATE_TIMEOUT
@@ -540,9 +538,10 @@ class FlashMixin(_Base):
           or by hand can still chain-load straight past Katapult and turn up
           running that firmware instead - the pairing-key match below is what
           actually identifies it;
-        * only an **unambiguous** match, for the same reason `_identify_dfu`
-          refuses to name a colliding board: the DFU serial is derived by a sum
-          and two boards could in principle share one;
+        * only an **unambiguous** match, for the same reason
+          `flashers.dfu_util.DfuUtil.scan_candidates` refuses to name a
+          colliding board: the DFU serial is derived by a sum and two boards
+          could in principle share one;
         * only a pairing **within its TTL**, so a board found in a drawer next
           month is the stranger it has become;
         * only if the type still **exists**, since it can have been removed;
@@ -623,220 +622,41 @@ class FlashMixin(_Base):
             self._changed()
         return adopted
 
-    def _identify_dfu(self, devices: list) -> None:
-        """Name the boards in DFU that we already know about.
+    def _tracked_boards(self) -> list[flashers.TrackedBoard]:
+        """Every tracked serial in the type list, of every builder - what a
+        scan names its finds by. Lenient: a scan is a diagnosis, and a config
+        problem is reported elsewhere."""
+        from ... import typelist
+        from ...flashers import TrackedBoard
 
-        A DFU device has no `/dev/serial/by-id` name, so `3941335F3434` connects
-        to nothing on its own - which is what makes several boards in DFU at once
-        so awkward to tell apart. But the DFU serial is *derived* from the same
-        unique id the running serial is built from, so every tracked board's DFU
-        name can be computed and matched.
+        entries, _families = typelist.read_config(self.paths)
+        return [TrackedBoard(e.name, s, e.chipset) for e in entries for s in e.serials]
 
-        A board that matches nothing is not an error - that is what a genuinely
-        new board looks like, and saying so is useful in itself.
+    def _candidate_report(self, scanner: flashers.CandidateScanner) -> dict[str, Any]:
+        """One `CandidateScanner`'s scan, as its wire result."""
+        scan = scanner.scan_candidates(
+            self.paths, tracked=self._tracked_boards(), reporter=self._log_reporter
+        )
+        return scan.to_json()
 
-        The derivation sums two of the three id words, so a collision is possible
-        in principle. Two known boards mapping to one DFU serial therefore names
-        neither: an unlabelled board is a small annoyance, and a board labelled as
-        the wrong one is how you flash the toolhead you meant to leave alone.
-        """
-        from ...devices import dfu_serial_for
-
-        owners: dict[str, list[tuple[str, str]]] = {}
-        for name, mcu in self.registry().types.items():
-            for serial in mcu.serials:
-                computed = dfu_serial_for(serial)
-                if computed:
-                    owners.setdefault(computed, []).append((name, serial))
-
-        for device in devices:
-            device["known_serial"] = None
-            device["tracked_by"] = None
-            matches = owners.get(str(device.get("serial") or ""), [])
-            if len(matches) == 1:
-                device["tracked_by"], device["known_serial"] = matches[0]
+    @staticmethod
+    def _scanner_named(name: str) -> flashers.CandidateScanner:
+        """The flasher `name` as the `CandidateScanner` a scan method runs."""
+        scanner = flashers.candidate_scanner(flashers.by_name(name))
+        if scanner is None:
+            raise RuntimeError(f"{name} is not a CandidateScanner")
+        return scanner
 
     def dfu_scan(self, args: dict) -> dict[str, Any]:
         """What is sitting in DFU mode, and can this agent actually open it?
-
-        Deliberately **reports** failures instead of raising them. Every other
-        method treats a refusal as an error because the caller asked for work to
-        happen; here, describing the situation *is* the work. "dfu-util is not
-        installed" is this method's answer, not its failure.
-
-        The distinctions are not cosmetic - each sends the user somewhere else:
-
-        ``no_tool``
-            `apt install dfu-util`. Nothing to do with the board.
-        ``permission_denied``
-            libusb saw a board and could not claim it. **The boot jumper worked.**
-            Reporting this as "no device found" is what once sent a user back to
-            redo the one step that had succeeded. The udev rule tags `uaccess`,
-            which grants the *seated* user - and this agent is a daemon, not a
-            login session - so in practice it rides on `GROUP="plugdev"` and the
-            service user being in that group.
-        ``none``
-            Genuinely nothing in DFU. Fit the boot jumper and replug.
-        ``ambiguous``
-            More than one board in DFU, and no serial was named to pick between
-            them. Not a dead end: dfu-util takes `-S/-p/-n`, so naming one is
-            enough - `ready` is false only because the *caller* has not chosen.
-        """
-        from ...devices import dfu_devices
-        from ...flashers.flash import DFU_VID_PID
-
-        out: dict[str, Any] = {
-            "vid_pid": DFU_VID_PID,
-            "devices": [],
-            "count": 0,
-            "ready": False,
-            "reason": None,
-            "message": None,
-        }
-
-        try:
-            devices = dfu_devices(reporter=self._log_reporter)
-        except ToolMissingError as exc:
-            out["reason"] = self.DFU_NO_TOOL
-            out["message"] = str(exc)
-            return out
-        except DfuPermissionError as exc:
-            out["reason"] = self.DFU_PERMISSION_DENIED
-            out["message"] = str(exc)
-            # The raw dfu-util output, because a permissions diagnosis is exactly
-            # the case where the operator wants to see what the tool actually said.
-            # UpdaterError keeps its extras in .data, not as attributes.
-            out["output"] = exc.data.get("output")
-            return out
-        except UpdaterError as exc:
-            out["reason"] = exc.code
-            out["message"] = str(exc)
-            return out
-
-        self._identify_dfu(devices)
-        out["devices"] = devices
-        out["count"] = len(devices)
-        if not devices:
-            out["reason"] = self.DFU_NONE
-            out["message"] = (
-                "No board is in DFU mode. Fit the boot jumper (or hold BOOT0) and "
-                "replug the board."
-            )
-            return out
-        if len(devices) > 1:
-            out["reason"] = self.DFU_AMBIGUOUS
-            out["message"] = (
-                f"{len(devices)} boards are in DFU mode. Pick the one to flash by its "
-                f"serial, or unplug the others."
-            )
-            return out
-
-        out["ready"] = True
-        return out
-
-    def _identify_bootsel(self, devices: list) -> None:
-        """Name the boards in BOOTSEL that we already know about.
-
-        Unlike `_identify_dfu` there is no derivation: this assumes - unverified
-        on real hardware, see the id-collision caveat in docs/agent-api.md's
-        `fw.bootsel.scan` section - that the boot ROM's flash-chip unique id is
-        the same string Katapult later reports as its own running USB serial,
-        so a tracked rp2040 board's serial can be compared to a BOOTSEL
-        device's id directly.
-
-        If that assumption is wrong this simply never matches - every device's
-        `known_serial`/`tracked_by` stays null, exactly what a genuinely new
-        board looks like, never a wrong name. Same collision guard as
-        `_identify_dfu`: two *registry entries* mapping to one id names
-        neither. It does not cover two *physical boards* sharing one id - see
-        docs/agent-api.md's `fw.bootsel.scan` section.
-
-        Tracked identities are canonical hardware serials; the by-id interface
-        suffix belongs only to the transport path. Compare the full string so
-        a legitimate hyphen cannot create a prefix match.
-        """
-        owners: dict[str, list[tuple[str, str]]] = {}
-        for name, mcu in self.registry().types.items():
-            if not mcu.chipset.startswith("rp2040"):
-                continue
-            for serial in mcu.serials:
-                owners.setdefault(serial, []).append((name, serial))
-
-        for device in devices:
-            device["known_serial"] = None
-            device["tracked_by"] = None
-            matches = owners.get(str(device.get("id") or ""), [])
-            if len(matches) == 1:
-                device["tracked_by"], device["known_serial"] = matches[0]
+        Reports rather than raises; the reasons and where each sends the user
+        live on `flashers.dfu_util.DfuUtil.scan_candidates`."""
+        return self._candidate_report(self._scanner_named("dfu_util"))
 
     def bootsel_scan(self, args: dict) -> dict[str, Any]:
         """What is sitting in BOOTSEL, and can this agent actually write it?
-
-        Mirrors `dfu_scan`'s report-don't-raise shape. Diverges where BOOTSEL
-        genuinely differs: no external tool to be missing or to deny access -
-        reading `/dev/disk/by-id` and a mount point is plain filesystem access,
-        so there is no `no_tool`/`permission_denied` here at all.
-
-        Readiness gates on the **mount** count, not the device count, because
-        that is exactly what the write itself
-        (`flashers.bootsel._find_mount`) gates on - a board present but
-        unmounted is not writable regardless of how many are attached.
-
-        ``none``
-            Nothing in BOOTSEL. Hold BOOTSEL and replug the board.
-        ``not_mounted``
-            A board is attached but nothing mounted its volume - this host has
-            no automounter. Re-run install.sh to install the udev rule.
-        ``ambiguous``
-            More than one RPI-RP2 volume is mounted at once. Unlike DFU there
-            is no serial to pick one by - the mounts are now distinguishable
-            (each names its USB port), but nothing upstream can yet say which
-            one this write is for, so this stays a refusal rather than a choice.
-        """
-        from ...devices import bootsel_devices, bootsel_id_for
-        from ...devices import bootsel_scan as bootsel_mounts
-
-        present = bootsel_devices(self.paths)
-        devices = [{"id": bootsel_id_for(node), "node": node} for node in present]
-        self._identify_bootsel(devices)
-
-        mounts = bootsel_mounts(self.paths)
-        out: dict[str, Any] = {
-            "devices": devices,
-            "count": len(devices),
-            "mounts": mounts,
-            "mount_count": len(mounts),
-            "ready": False,
-            "reason": None,
-            "message": None,
-        }
-
-        if not present:
-            out["reason"] = self.BOOTSEL_NONE
-            out["message"] = (
-                "No RP2040 in BOOTSEL is attached. Hold BOOTSEL and replug the board."
-            )
-            return out
-        if not mounts:
-            out["reason"] = self.BOOTSEL_NOT_MOUNTED
-            out["message"] = (
-                f"An RP2040 in BOOTSEL is attached ({', '.join(present)}) but "
-                f"nothing mounted its volume - this host has no automounter. "
-                f"Re-run install.sh to install the udev rule, which mounts each "
-                f"board under /media/<user>/BOOTSEL/by-path/<port>."
-            )
-            return out
-        if len(mounts) > 1:
-            out["reason"] = self.BOOTSEL_AMBIGUOUS
-            out["message"] = (
-                f"{len(mounts)} RPI-RP2 volumes are mounted at once "
-                f"({', '.join(mounts)}) - which one is this board? Unplug the "
-                f"others and try again."
-            )
-            return out
-
-        out["ready"] = True
-        return out
+        Reports rather than raises; see `flashers.bootsel.Bootsel.scan_candidates`."""
+        return self._candidate_report(self._scanner_named("bootsel"))
 
     #: How long to wait for a freshly-flashed board to come back on the bus.
     #: A class attribute so tests can shrink it without patching a call site,
@@ -858,14 +678,12 @@ class FlashMixin(_Base):
         `fw.flash` - both already exist, and wrapping them here would be a
         second implementation to keep in step with the first.
 
-        **STM32 goes over DFU, RP2040 over BOOTSEL mass storage** - two
-        genuinely different mechanisms sharing one method, exactly as the CLI's
-        `add-mcu` already does through `flash_initial_bootloader`. Neither board
-        has an identity to adopt yet: a DFU board exposes no
-        `/dev/serial/by-id` name at all, and a BOOTSEL board's only identity
-        (the boot ROM's flash-chip id) is not the serial it will run under. So
-        both branches snapshot the bus first and diff afterwards, rather than
-        taking a serial as an argument.
+        **The install family's `flashers:` list picks the mechanism**
+        (`flashers.first_install`), never the builder or a chipset prefix. That
+        flasher's own `CandidateScanner` finds the board, and the post-write
+        wait is keyed on the USB port the scan saw. A bare board has no
+        identity to adopt yet, so the bus is snapshotted first and diffed
+        afterwards, rather than taking a serial as an argument.
 
         **Klipper is not stopped.** A board that is not in printer.cfg is not held
         by Klipper, so there is no port contention and no reason for an outage -
@@ -887,41 +705,85 @@ class FlashMixin(_Base):
             )
 
         name = self._require_str(args, "name")
-        reg = self.registry()
-        mcu = reg.get(name)  # unknown_type, before a job exists
 
-        is_bootsel = mcu.chipset.startswith("rp2040")
-        if not (mcu.chipset.startswith("stm32") or is_bootsel):
+        from ... import typelist
+        from ...artifacts import KIND_BIN, KIND_UF2
+        from ...config import McuType
+        from ...errors import UnknownTypeError
+        from ...flashers.flash import refuse_unbootable_first_image
+
+        # The type list, not the kconfig Registry: a cmake or PIO type is a
+        # type like any other, and its flashers - never its builder - say
+        # whether a bare board of it can be set up.
+        entries = {e.name: e for e in typelist.load(self.paths)}
+        entry = entries.get(name)
+        if entry is None:
+            raise UnknownTypeError(
+                f"MCU type '{name}' does not exist.", type=name, known=sorted(entries)
+            )
+        families = firmware.load(self.paths)
+        choice = flashers.first_install(entry, families)
+        if choice.flasher is None:
             raise RpcError(
-                f"{name} is {mcu.chipset}, which this flow does not support. Only "
-                f"STM32 (over DFU) and RP2040 (over BOOTSEL) boards can be set up "
-                f"this way.",
+                choice.reason or f"{name} cannot be set up from a bare board.",
                 data={
                     "code": "unsupported_chipset",
-                    "message": "no bare-board install path for this chipset",
-                    "data": {"type": name, "chipset": mcu.chipset},
+                    "message": "nothing on this type's install family can set up a bare board",
+                    "data": {
+                        "type": name,
+                        "chipset": entry.chipset,
+                        "fw": choice.fw or None,
+                        "flashers": (
+                            list(families[choice.fw].flashers) if choice.fw in families else []
+                        ),
+                    },
                 },
             )
-
-        from ...artifacts import KIND_BIN, KIND_UF2, Artifact
-        from ...flashers.flash import install_family, refuse_unbootable_first_image
+        flasher = flashers.by_name(choice.flasher)
+        scanner = flashers.candidate_scanner(flasher)
+        if scanner is None:  # first_install only ever names a scanner
+            raise RuntimeError(f"{choice.flasher} is not a CandidateScanner")
 
         # What goes on the board first: the bootloader, or with none the
         # application itself. Every path and message below follows from it.
-        families = firmware.load(self.paths)
-        install = install_family(mcu, families)
-        family = firmware.resolve(self.paths, install, families)
-
-        fw_bin = self.paths.bin_file(name, install)
-        uf2_bin = self.paths.uf2_file(name, install)
-        artifact_path = uf2_bin if is_bootsel else fw_bin
-        if not os.path.exists(artifact_path):
-            if family.bootloader:
+        install = choice.fw
+        family = families[install]
+        bare = flashers.Device(
+            type=name,
+            id="",
+            chipset=entry.chipset,
+            state=choice.state,
+            fw=install,
+            kind=flashers.KIND_BARE,
+        )
+        # A build made earlier, which is exactly what `providers.staged`
+        # describes - the same staged set `fw.flash` chooses from. The CLI's
+        # add-mcu hands over what it has just built instead, since that is the
+        # image it means to write. docs/decisions.md ("First install is gated
+        # by flashers") records why neither is to be "fixed" to match the
+        # other.
+        staged = providers.staged(self.paths, name, family)
+        picked = flashers.resolve(family, bare, None, staged)
+        if picked is None:
+            kind = flasher.accepts[0]
+            kconfig = family.builder == firmware.DEFAULT_BUILDER
+            path = (
+                (self.paths.uf2_file if kind == KIND_UF2 else self.paths.bin_file)(name, install)
+                if kconfig
+                else None
+            )
+            if path is not None and os.path.exists(path):
+                advice = (
+                    f"The .{kind} on disk predates build records that list what a "
+                    f"build made, so it may be older than the rest - rebuild "
+                    f"{install} for {name} once."
+                )
+            elif family.bootloader:
                 advice = (
                     "Build it first - this flow installs the bootloader, so the "
                     "bootloader has to exist."
                 )
-            elif is_bootsel and os.path.exists(fw_bin):
+            elif kconfig and kind == KIND_UF2 and any(a.kind == KIND_BIN for a in staged.artifacts):
                 # An RP2040 Klipper build makes a .bin only for an offset, so
                 # building again as configured makes the same .bin again.
                 advice = (
@@ -932,75 +794,101 @@ class FlashMixin(_Base):
             else:
                 advice = "Build it first."
             raise RpcError(
-                f"no built {install} {'.uf2' if is_bootsel else '.bin'} for "
-                f"{name}. {advice}",
+                f"no built {install} .{kind} for {name}. {advice}",
                 data={
                     "code": "no_artifact",
                     "message": f"{install} has not been built for this type",
-                    "data": {"type": name, "fw": install, "path": artifact_path},
+                    "data": {"type": name, "fw": install, "path": path},
+                },
+            )
+        resolved_flasher, artifact = picked
+        if resolved_flasher.name != scanner.name:
+            # `resolve` walks the family's own `flashers:` list independently
+            # of `first_install`'s scanner choice above - a family that lists
+            # more than one flasher able to write a bare device of this state
+            # could otherwise stage an artifact for one flasher while the scan
+            # (and the port/pairing key it produced) belongs to another.
+            # Refused here, before a job exists, the same way an unstaged
+            # artifact is.
+            raise RpcError(
+                f"{name}'s staged {install} would be written by "
+                f"{resolved_flasher.label}, not {scanner.name}, which found the "
+                f"board. Nothing was written.",
+                data={
+                    "code": "no_artifact",
+                    "message": "the staged artifact resolves to a different "
+                    "flasher than the one that scanned the board",
+                    "data": {
+                        "type": name,
+                        "fw": install,
+                        "scanned_flasher": scanner.name,
+                        "resolved_flasher": resolved_flasher.name,
+                    },
                 },
             )
         if not family.bootloader:
             # Nothing below an application boots it, so one built for an offset
             # is refused now - synchronously, like no_artifact, not in a job.
-            refuse_unbootable_first_image(
-                self.paths,
-                name,
-                install,
-                Artifact(KIND_UF2 if is_bootsel else KIND_BIN, artifact_path),
-            )
+            refuse_unbootable_first_image(self.paths, name, install, artifact)
         # Katapult's saved .config says where BOOTSEL erases the old
         # application. An application image replaces what boots, so has none.
         boot_config = self.paths.config_file(name, install) if family.bootloader else None
 
         # Which board, decided here rather than in the job, so an ambiguous bus is
         # a synchronous refusal the caller can act on instead of a job that dies.
-        target: str | None = None  # DFU serial, when relevant
-        bootsel_id: str | None = None  # boot-ROM flash-chip id, when relevant
-
-        if is_bootsel:
-            bscan = self.bootsel_scan({})
-            if not bscan["ready"]:
+        scan_result = scanner.scan_candidates(
+            self.paths, tracked=self._tracked_boards(), reporter=self._log_reporter
+        )
+        scan = scan_result.to_json()
+        target = args.get("dfu_serial")
+        if target is not None:
+            # Only a DFU device carries a `serial` to name it by; naming one on
+            # any other flasher's scan finds nothing, and says so.
+            target = str(target)
+            chosen = next((d for d in scan["devices"] if d.get("serial") == target), None)
+            if chosen is None:
                 raise RpcError(
-                    bscan["message"] or "no board is ready in BOOTSEL.",
+                    f"no board with serial {target} is in DFU mode.",
                     data={
-                        "code": f"bootsel_{bscan['reason']}",
-                        "message": bscan["message"],
-                        "data": {"devices": bscan["devices"], "reason": bscan["reason"]},
+                        "code": "device_not_found",
+                        "message": "the named DFU device is not attached",
+                        "data": {"dfu_serial": target, "devices": scan["devices"]},
                     },
                 )
-            if bscan["devices"]:
-                bootsel_id = bscan["devices"][0].get("id") or None
+            # The caller named this one device among however many are on the
+            # bus, so its own port/id are trustworthy regardless of count -
+            # unlike the implicit pick below.
+            port: str | None = chosen.get("port") or None
+            bootsel_id: str | None = chosen.get("id") or None
+        elif not scan["ready"]:
+            raise RpcError(
+                scan["message"] or f"no board is ready for {scanner.name}.",
+                data={
+                    "code": f"{scanner.candidate_prefix}_{scan['reason']}",
+                    "message": scan["message"],
+                    "data": {"devices": scan["devices"], "reason": scan["reason"]},
+                },
+            )
         else:
-            scan = self.dfu_scan({})
-            target = args.get("dfu_serial")
-            if target is not None:
-                target = str(target)
-                if not any(d.get("serial") == target for d in scan["devices"]):
-                    raise RpcError(
-                        f"no board with serial {target} is in DFU mode.",
-                        data={
-                            "code": "device_not_found",
-                            "message": "the named DFU device is not attached",
-                            "data": {"dfu_serial": target, "devices": scan["devices"]},
-                        },
-                    )
-            elif not scan["ready"]:
-                raise RpcError(
-                    scan["message"] or "no board is ready in DFU mode.",
-                    data={
-                        "code": f"dfu_{scan['reason']}",
-                        "message": scan["message"],
-                        "data": {"devices": scan["devices"], "reason": scan["reason"]},
-                    },
-                )
-            else:
-                target = scan["devices"][0].get("serial")
+            chosen = scan["devices"][0]
+            # `Bootsel.scan_candidates` gates `ready` on the mount count, not
+            # the device count, so a second, unmounted board can leave `scan`
+            # with two devices while still reporting `ready`. `devices[0]` is
+            # sorted by by-id name, not by which one is mounted, so it need
+            # not be the board the write actually goes to. `CandidateScan.port`
+            # already refuses to name a port unless exactly one device is in
+            # the scan; `bootsel_id` - the pairing key `adopt_paired` later acts
+            # on - gets the same guard, or a wrong-board pairing gets recorded.
+            port = scan_result.port
+            bootsel_id = (chosen.get("id") or None) if len(scan_result.devices) == 1 else None
+        # Wire names kept from when there were two branches: a DFU device has
+        # a `serial`, a BOOTSEL one an `id`, and each is null for the other.
+        dfu_serial: str | None = chosen.get("serial") or None
 
         # Every serial actually on the bus right now - NOT "everything untracked".
         #
         # The distinction matters: a board being re-bootloadered is often already
-        # in the registry, sitting offline because it had no firmware. Baselining
+        # tracked, sitting offline because it had no firmware. Baselining
         # on untracked-only meant it came back, was correctly excluded as tracked,
         # and the job reported "no new device appeared" - sending the user to hunt
         # for a failure when the flash had worked perfectly.
@@ -1012,58 +900,64 @@ class FlashMixin(_Base):
             from ...devices import wait_for_new_device
             from ...flashers.flash import flash_initial_bootloader
 
-            label = "BOOTSEL board" if is_bootsel else "DFU board"
-            ctx.step(f"Flashing {install} onto the {label} for {name}", 0, 2)
+            ctx.step(
+                f"Flashing {install} onto the {choice.state.upper()} board for {name}", 0, 2
+            )
             flash_initial_bootloader(
                 self.paths,
                 self.settings(),
-                mcu.chipset,
-                fw_bin,
+                entry.chipset,
+                artifact.path if artifact.kind == KIND_BIN else None,
                 fw=install,
                 mcu_type=name,
-                # Unconditional, exactly like the CLI's add-mcu - ignored by the
-                # DFU branch, required by BOOTSEL's.
-                uf2_bin=uf2_bin,
+                state=choice.state,
+                uf2_bin=artifact.path if artifact.kind == KIND_UF2 else None,
                 # Where BOOTSEL erases the old application; DFU mass-erases.
                 katapult_config=boot_config,
                 reporter=ctx.reporter,
-                target_serial=target,
+                target_serial=dfu_serial,
             )
 
             # Recorded here - after the write, BEFORE the wait - because the wait
             # timing out is precisely the case this covers. A board on a marginal
             # port, or unplugged and brought back tomorrow, then still arrives
             # with its intent attached rather than as an anonymous stranger.
-            pairing_key = bootsel_id if is_bootsel else target
+            pairing_key = bootsel_id or dfu_serial
             if pairing_key:
                 from ...flashers.pairings import Pairings
 
                 Pairings(self.paths).record(pairing_key, name)
 
-            # Not filtered to what was written: both routes erase the old
-            # application now, but an image that survives a Katapult install
-            # anyway (an erase the ROM skipped, say) chain-loads straight past
-            # Katapult and reappears running that firmware instead. A Klipper
-            # install reappears as a new serial of this chipset too. Chipset +
-            # "wasn't on the bus before" is what identifies it either way.
+            # Keyed on the USB port the scan saw: across a reboot the port is
+            # the durable key, not the serial or the by-id chipset segment (a
+            # Roadrunner comes back as `usb-Vylyne_Roadrunner_...`). Not
+            # filtered to what was written either - an image that survives an
+            # install chain-loads past it and reappears running that instead.
             ctx.step("Waiting for the board to re-enumerate", 1, 2)
+            if port is None:
+                ctx.reporter(
+                    "warn",
+                    f"{scanner.name} could not say which USB port the board is on, "
+                    f"so any new board that appears is reported as this one.",
+                )
             appeared = wait_for_new_device(
                 self.paths,
                 before,
-                chipset=mcu.chipset,
+                port=port,
                 timeout=self.ADD_MCU_REENUMERATE_TIMEOUT,
             )
 
-            # Split by whether the registry already knows it. Both mean the flash
-            # worked; only one leaves anything for the user to do.
-            tracked = set(self.registry().all_serials())
+            # Split by whether the type list already tracks it. Both mean the
+            # flash worked; only one leaves anything for the user to do.
+            tracked = {s for e in typelist.read_config(self.paths)[0] for s in e.serials}
             candidates = [d for d in appeared if d.serial not in tracked]
             already = [d for d in appeared if d.serial in tracked]
 
             ctx.step(f"Found {len(appeared)} board(s)", 2, 2)
             where = f"in {install}" if family.bootloader else f"running {install}"
             then = (
-                f" Flash {mcu.application(families)} onto it when ready."
+                f" Flash {McuType(name=name, firmwares=list(entry.firmwares)).application(families)}"
+                f" onto it when ready."
                 if family.bootloader
                 else ""
             )
@@ -1084,30 +978,69 @@ class FlashMixin(_Base):
                 )
             return {
                 "type": name,
-                "chipset": mcu.chipset,
+                "chipset": entry.chipset,
                 # What was written: the bootloader, or the application on a
                 # type that has none. Additive; no API_VERSION change.
                 "fw": install,
-                "dfu_serial": target,
+                # Which flasher first_install chose, and the port the wait was
+                # keyed on (null when the scan could not trace one). Additive.
+                "flasher": scanner.name,
+                "port": port,
+                "dfu_serial": dfu_serial,
                 "bootsel_id": bootsel_id,
                 "candidates": [
                     {"serial": d.serial, "path": d.path, "state": d.state} for d in candidates
                 ],
-                # Appeared, but the registry already has it - the re-bootloader
-                # case. Distinct from an empty result, which means nothing came
-                # back at all.
+                # Appeared, but the type list already tracks it - the
+                # re-bootloader case. Distinct from an empty result, which
+                # means nothing came back at all.
                 "already_tracked": [
                     {"serial": d.serial, "path": d.path, "state": d.state} for d in already
                 ],
             }
 
         job = runner.submit(
-            "add_mcu", {"name": name, "dfu_serial": target, "bootsel_id": bootsel_id}, run
+            "add_mcu", {"name": name, "dfu_serial": dfu_serial, "bootsel_id": bootsel_id}, run
         )
         return {
             "job_id": job.id,
             "job": job.to_dict(),
             "type": name,
-            "dfu_serial": target,
+            "dfu_serial": dfu_serial,
             "bootsel_id": bootsel_id,
         }
+
+    def add_mcu_scan(self, args: dict) -> dict[str, Any]:
+        """The scan `fw.add_mcu.start` would run for this type, as a report -
+        what the wizard calls instead of choosing between `fw.dfu.scan` and
+        `fw.bootsel.scan` itself. Reports rather than raises, like those two;
+        a type nothing can set up is `reason: "no_scanner"` with
+        `first_install`'s reason as its message."""
+        from ... import typelist
+        from ...errors import UnknownTypeError
+
+        name = self._require_str(args, "name")
+        entries, families = typelist.read_config(self.paths)
+        entry = next((e for e in entries if e.name == name), None)
+        if entry is None:
+            raise UnknownTypeError(
+                f"MCU type '{name}' does not exist.",
+                type=name,
+                known=sorted(e.name for e in entries),
+            )
+        choice = flashers.first_install(entry, families)
+        scanner = (
+            flashers.candidate_scanner(flashers.by_name(choice.flasher))
+            if choice.flasher
+            else None
+        )
+        if scanner is None:
+            return {
+                "devices": [],
+                "count": 0,
+                "ready": False,
+                "reason": "no_scanner",
+                "message": choice.reason,
+                "flasher": None,
+            }
+        return {**self._candidate_report(scanner), "flasher": scanner.name}

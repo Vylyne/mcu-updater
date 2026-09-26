@@ -42,9 +42,9 @@ writes it, and the flasher writes.
 from __future__ import annotations
 
 import dataclasses
-from collections.abc import Callable, Mapping, MutableMapping
+from collections.abc import Callable, Mapping, MutableMapping, Sequence
 from contextlib import AbstractContextManager
-from typing import TYPE_CHECKING, Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 from ..artifacts import Artifact
 from ..errors import FlashError
@@ -53,6 +53,7 @@ from ..service import ServiceController
 from ..settings import Settings
 
 if TYPE_CHECKING:
+    from ..build import Reporter
     from ..helpers.spec import Helper
 
 
@@ -307,6 +308,88 @@ class Flasher(Protocol):
         ...
 
 
+@dataclasses.dataclass(frozen=True)
+class TrackedBoard:
+    """A board the type list already tracks - what a scan names its finds by."""
+
+    type: str
+    serial: str
+    chipset: str
+
+
+@dataclasses.dataclass(frozen=True)
+class CandidateScan:
+    """What a flasher can see that it could write as a new board.
+
+    `reason` is the flasher's own vocabulary (`none`, `ambiguous`, ...) and
+    `extra` carries the flasher-specific keys its wire result always had
+    (`vid_pid`, `mounts`, `output`), merged in unchanged by `to_json`.
+    Every device dict carries `port` - `usb.UsbDevice.name`, or None when the
+    flasher cannot say - which is what the post-write wait is keyed on.
+    """
+
+    ready: bool
+    reason: str | None
+    message: str | None
+    devices: list[dict[str, Any]]
+    extra: dict[str, Any] = dataclasses.field(default_factory=dict)
+
+    @property
+    def port(self) -> str | None:
+        """The port a write would go to: the one device's, when `ready`."""
+        if not self.ready or len(self.devices) != 1:
+            return None
+        port = self.devices[0].get("port")
+        return str(port) if port else None
+
+    def to_json(self) -> dict[str, Any]:
+        return {
+            "devices": self.devices,
+            "count": len(self.devices),
+            "ready": self.ready,
+            "reason": self.reason,
+            "message": self.message,
+            **self.extra,
+        }
+
+
+@runtime_checkable
+class CandidateScanner(Protocol):
+    """A flasher that can find a bare board it could write.
+
+    Optional, and reached through `flashers.candidate_scanner`. Implementing
+    it is what makes a flasher able to set up a new board - `first_install`
+    asks nothing else. `candidate_prefix` spells the refusal code a not-ready
+    scan becomes (`<prefix>_<reason>`), so no caller names a flasher.
+    """
+
+    name: str
+    candidate_prefix: str
+
+    def scan_candidates(
+        self, paths: Paths, *, tracked: Sequence[TrackedBoard], reporter: Reporter
+    ) -> CandidateScan: ...
+
+
+def name_tracked(
+    devices: list[dict[str, Any]], owners: dict[str, list[tuple[str, str]]], field: str
+) -> None:
+    """Set each device's `tracked_by`/`known_serial` from `owners`, keyed on
+    `device[field]`.
+
+    A device matching nothing is what a genuinely new board looks like, not an
+    error. Two owners for one key names neither: an unlabelled board is a
+    small annoyance, and a board labelled as the wrong one is how you flash
+    the toolhead you meant to leave alone.
+    """
+    for device in devices:
+        device["known_serial"] = None
+        device["tracked_by"] = None
+        matches = owners.get(str(device.get(field) or ""), [])
+        if len(matches) == 1:
+            device["tracked_by"], device["known_serial"] = matches[0]
+
+
 def chipset_matches(flasher: Flasher, chipset: str) -> bool:
     """Does `chipset` start with one of the flasher's chipset prefixes?"""
     return any(chipset.startswith(prefix) for prefix in flasher.chipsets)
@@ -353,11 +436,15 @@ __all__ = [
     "KIND_SCREEN",
     "KIND_SERIAL",
     "Bench",
+    "CandidateScan",
+    "CandidateScanner",
     "Device",
     "FlashRecord",
     "FlashTarget",
     "Flasher",
+    "TrackedBoard",
     "artifact_path",
     "chipset_matches",
+    "name_tracked",
     "staged_record",
 ]

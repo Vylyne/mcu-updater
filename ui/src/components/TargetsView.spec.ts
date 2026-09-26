@@ -103,6 +103,54 @@ describe("TargetsView", () => {
     expect(wrapper.find(".menu-list").exists()).toBe(false);
   });
 
+  it("offers the add-board menu entry once a first_install row names a flasher", async () => {
+    state.ping = { capabilities: ["fw.add_mcu.start", "fw.add_mcu.scan"] };
+    const targets = [
+      {
+        ...makeTarget("cmake", "roadrunner"),
+        first_install: { fw: "roadrunner", flasher: "bootsel", reason: null },
+      },
+    ];
+    state.status = { targets } as never;
+    const wrapper = mount(TargetsView, { props: { targets } });
+
+    await wrapper.get('[aria-label="More actions"]').trigger("click");
+    const addBoard = wrapper
+      .get(".menu-list")
+      .findAll("button")
+      .find((button) => button.text().includes("Add new board"));
+    expect(addBoard).toBeDefined();
+  });
+
+  it("hides the add-board menu entry when first_install names no flasher", async () => {
+    // fw.update_all keeps the menu itself rendered (hasMenu = canUpdateAll
+    // || canManageTypes || canAddMcu) regardless of canAddMcu, so this
+    // asserts unconditionally on the "Add new board" entry rather than
+    // skipping the check when the whole menu happens to be absent.
+    state.ping = {
+      capabilities: ["fw.add_mcu.start", "fw.add_mcu.scan", "fw.update_all"],
+    };
+    const targets = [
+      {
+        ...makeTarget("cmake", "roadrunner"),
+        first_install: {
+          fw: null,
+          flasher: null,
+          reason: "no scanner",
+        },
+      },
+    ];
+    state.status = { targets } as never;
+    const wrapper = mount(TargetsView, { props: { targets } });
+
+    await wrapper.get('[aria-label="More actions"]').trigger("click");
+    const addBoard = wrapper
+      .get(".menu-list")
+      .findAll("button")
+      .find((button) => button.text().includes("Add new board"));
+    expect(addBoard).toBeUndefined();
+  });
+
   it("protects the unified type namespace across providers", async () => {
     state.ping = {
       capabilities: ["fw.type.add", "fw.type.update", "fw.type.remove"],

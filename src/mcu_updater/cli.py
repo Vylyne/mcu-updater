@@ -1149,7 +1149,7 @@ def add_mcu(args: argparse.Namespace) -> None:
     # The board's first image: its bootloader, or with none its own
     # application - the same rule the agent's fw.add_mcu.start follows.
     families = firmware.load(c.paths)
-    install = install_family(mcu, families)
+    install = install_family(mcu.firmwares, families)
     family = firmware.resolve(c.paths, install, families)
 
     with exclusive(c.paths, f"add-mcu {args.type}"):

@@ -725,7 +725,7 @@ class FlashMixin(_Base):
         # What goes on the board first: the bootloader, or with none the
         # application itself. Every path and message below follows from it.
         families = firmware.load(self.paths)
-        install = install_family(mcu, families)
+        install = install_family(mcu.firmwares, families)
         family = firmware.resolve(self.paths, install, families)
 
         fw_bin = self.paths.bin_file(name, install)

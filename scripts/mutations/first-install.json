@@ -1,0 +1,41 @@
+{
+  "_comment": "First install is gated by flashers: only a CandidateScanner that supports a bare board of the type is chosen, in list order; the new-device wait keeps only boards on the scanned port.",
+  "file": "src/mcu_updater/flashers/registry.py",
+  "command": [
+    "python",
+    "-m",
+    "pytest",
+    "tests/test_first_install.py",
+    "tests/test_candidate_scan.py",
+    "tests/test_port_wait.py",
+    "-q"
+  ],
+  "mutations": [
+    {
+      "name": "only a flasher that can scan is chosen",
+      "find": "    scanners = [f for f in listed if candidate_scanner(f) is not None]",
+      "replace": "    scanners = listed"
+    },
+    {
+      "name": "the chosen flasher must support a bare board of the type",
+      "find": "            if flasher.supports(_bare(entry, fw, state), None):\n                return FirstInstall(fw, flasher.name, state, None)",
+      "replace": "            if True:\n                return FirstInstall(fw, flasher.name, state, None)"
+    },
+    {
+      "name": "the family's list order decides",
+      "find": "    for flasher in scanners:",
+      "replace": "    for flasher in reversed(scanners):"
+    },
+    {
+      "name": "a scanner is an isinstance check, not every flasher",
+      "find": "    return flasher if isinstance(flasher, CandidateScanner) else None",
+      "replace": "    return flasher"
+    },
+    {
+      "name": "the wait keeps only boards on the scanned port",
+      "file": "src/mcu_updater/discovery/byid.py",
+      "find": "        if port and port_of(paths, dev, inventory) != port:\n            continue",
+      "replace": "        if False:\n            continue"
+    }
+  ]
+}

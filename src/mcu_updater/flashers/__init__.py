@@ -23,9 +23,11 @@ from .esptool import Esptool
 from .flashtool import Flashtool
 from .registry import (
     FLASHERS,
+    FirstInstall,
     by_flasher,
     by_name,
     candidate_scanner,
+    first_install,
     group_by_stop,
     needs_services_stopped,
     refusal,
@@ -66,6 +68,7 @@ __all__ = [
     "Device",
     "DfuUtil",
     "Esptool",
+    "FirstInstall",
     "FlashRecord",
     "FlashTarget",
     "Flasher",
@@ -76,6 +79,7 @@ __all__ = [
     "by_flasher",
     "by_name",
     "candidate_scanner",
+    "first_install",
     "group_by_stop",
     "name_tracked",
     "needs_services_stopped",

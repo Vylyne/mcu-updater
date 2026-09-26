@@ -44,6 +44,7 @@ from typing import TYPE_CHECKING, Any
 
 from .. import firmware, profiles, uf2_erase
 from ..build import Reporter, null_reporter, run_streamed
+from ..config import McuType
 from ..devices import (
     STATE_BOOTSEL,
     STATE_DFU,
@@ -76,7 +77,6 @@ from .spec import Bench
 
 if TYPE_CHECKING:
     from ..artifacts import Artifact
-    from ..config import McuType
     from ..firmware import FirmwareFamily
 
 DFU_VID_PID = "0483:df11"
@@ -898,14 +898,18 @@ def flash_dfu_stm32(
 STM32_FLASH_BASE = 0x08000000
 
 
-def install_family(mcu: McuType, families: dict[str, Any] | None = None) -> str:
+def install_family(firmwares: Sequence[str], families: dict[str, Any] | None = None) -> str:
     """The family a bare board of this type gets first: its bootloader if it
     has one, and otherwise the application it runs.
 
-    One rule for every first install - the agent's `fw.add_mcu.start` and the
-    CLI's `add-mcu` both ask it - so a type with `katapult_installed: false`
-    gets its own firmware rather than a Katapult it never declared.
+    One rule for every first install - `flashers.first_install`, the agent's
+    `fw.add_mcu.start` and the CLI's `add-mcu` all ask it - so a type with no
+    bootloader gets its own firmware rather than a Katapult it never declared.
+    Takes the firmwares list, not a type, so a `typelist.TypeEntry` of any
+    builder feeds it as well as an `McuType`; the rule itself is still
+    `McuType`'s own.
     """
+    mcu = McuType(name="", firmwares=list(firmwares))
     boot = mcu.bootloader(families)
     return boot if boot is not None else mcu.application(families)
 

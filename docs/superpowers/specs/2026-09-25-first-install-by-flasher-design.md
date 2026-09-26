@@ -74,29 +74,35 @@ class CandidateScan:
     ready: bool
     reason: str | None          # flasher's own vocabulary: none, ambiguous, ...
     message: str | None
+    #: Each device carries `port` - `usb.UsbDevice.name`, e.g. "1-1.2", or
+    #: None when the flasher cannot say (amendment A2).
     devices: list[dict[str, Any]]
-    #: The USB port (`usb.UsbDevice.name`, e.g. "1-1.2") of the one device a
-    #: write would go to, when `ready`. None when the flasher cannot say.
-    port: str | None
     #: Flasher-specific extras the wire already carries (`vid_pid`, `mounts`,
     #: `output`), merged into the RPC result unchanged.
     extra: dict[str, Any]
+
+    @property
+    def port(self) -> str | None:
+        """The one device's port when `ready`, else None."""
 
 
 @runtime_checkable
 class CandidateScanner(Protocol):
     name: str
+    candidate_prefix: str       # "dfu", "bootsel": spells `<prefix>_<reason>`
 
-    def scan_candidates(self, paths: Paths, *, reporter: Reporter) -> CandidateScan: ...
+    def scan_candidates(
+        self, paths: Paths, *, tracked: Sequence[TrackedBoard], reporter: Reporter
+    ) -> CandidateScan: ...
 ```
 
 - `DfuUtil` and `Bootsel` implement it. The bodies of the agent's `dfu_scan`
   and `bootsel_scan` move into `flashers/dfu_util.py` and `flashers/bootsel.py`
   unchanged in behaviour; the reason constants move with them.
-- The agent's `_identify_dfu` / `_identify_bootsel` stay in the agent and
-  annotate `devices` after the scan: naming a tracked board is registry
-  knowledge, not flasher knowledge. They read tracked serials from the type
-  list rather than `self.registry()`, so a tracked cmake RP2040 is named too.
+- Naming a tracked board moves with them (amendment A1): the agent builds
+  `TrackedBoard(type, serial, chipset)` for every tracked serial in the type
+  list and hands them to `scan_candidates`, so a tracked cmake RP2040 is named
+  too. Deriving a ROM id from a running serial is flasher knowledge.
 - `fw.dfu.scan` and `fw.bootsel.scan` stay on the wire as thin delegates, with
   their existing result shapes, so nothing that calls them changes.
 - `Flashtool` and `Esptool` do not implement it. `Esptool` is where the PIO
@@ -112,7 +118,7 @@ class CandidateScanner(Protocol):
 class FirstInstall:
     fw: str                     # install family: bootloader, else application
     flasher: str | None         # None when nothing on the list can do it
-    state: str | None           # the ROM state that flasher writes (DFU, BOOTSEL)
+    state: str                  # the ROM state that flasher writes; "" with none
     reason: str | None          # set exactly when flasher is None
 ```
 
@@ -180,11 +186,13 @@ The same rule `helpers/klipper.py`'s `_wait_for_topology` and Roadrunner's
 provisioning wait already follow: across a reboot, the durable key is the
 physical port, not the serial the board presents.
 
-- `CandidateScan.port` is the port of the device the write is going to, in the
-  one namespace both sides can produce: `usb.UsbDevice.name` (sysfs, e.g.
-  `1-1.2`). DFU reports it directly as dfu-util's `path`. BOOTSEL derives it
-  from the boot ROM's block device (`/dev/disk/by-id/usb-RPI_RP2_*` ->
-  `/sys/class/block/<dev>` -> `usb.device_for_sysfs_path`).
+- The port of the device the write is going to (each device's `port`, or
+  `CandidateScan.port` when one is ready) is in the one namespace both sides
+  can produce: `usb.UsbDevice.name` (sysfs, e.g. `1-1.2`). DFU reports it
+  directly as dfu-util's `path`. BOOTSEL derives it from the boot ROM's block
+  device (`/dev/disk/by-id/usb-RPI_RP2_*` -> `/sys/class/block/<dev>` ->
+  `usb.device_for_sysfs_path`, via the new `usb.device_for_block` and
+  `Paths.block_sysfs` seam - amendment A4).
 - After the write, a new device is one that was not on the bus before **and**
   whose tty resolves (`usb.device_for_tty`) to that port. No chipset, no
   firmware-name filter, `is_mcu` still applies.
@@ -271,7 +279,8 @@ type has no flasher.
   falls back with a warning.
 - `fw.dfu.scan` / `fw.bootsel.scan` results byte-identical before and after
   the move (existing tests keep passing unmodified).
-- `tests/test_ui_contract.py` covers `first_install` on every provider's rows.
+- `tests/test_agent_targets.py` covers `first_install` on every provider's
+  rows (`test_ui_contract.py` only checks method literals - amendment A5).
 - `AddMcuWizard.spec.ts`: a cmake target is listed and scans via
   `fw.add_mcu.scan`; a PIO target shows its reason; no `descriptor` parsing.
   Against an agent without `fw.add_mcu.scan` or `first_install`, the old
@@ -296,3 +305,31 @@ type has no flasher.
   a chipset prefix are not the question, `CandidateScanner` is; and the
   staged-vs-just-built distinction from section 3.
 - `README.md`: tick the TODO; the Features line for guided setup names cmake.
+
+## Amendments (2026-09-26, from the implementation plan)
+
+Forced by the code once the plan reached line level; the plan
+(`docs/superpowers/plans/2026-09-26-first-install-by-flasher.md`) carries the
+detail. The sections above are already edited to match.
+
+- **A1. Identification moves into the scanners.** Kept in the agent, a generic
+  `add_mcu_start` would have to pick `_identify_dfu` or `_identify_bootsel` by
+  flasher name - the caller branch this design forbids. `scan_candidates`
+  takes `tracked: Sequence[TrackedBoard]`; `name_tracked` lives in `spec.py`.
+- **A2. `port` is per device; `CandidateScan.port` is a property.** One
+  scan-level port cannot say where a *named* `dfu_serial` among several boards
+  is. `fw.dfu.scan` / `fw.bootsel.scan` devices gain an additive `port` key.
+- **A3. `CandidateScanner.candidate_prefix`** spells the `<prefix>_<reason>`
+  refusal codes, so the agent never names a flasher.
+- **A4. New `Paths.block_sysfs`** (`MCU_UPDATER_FAKE_BLOCK_SYSFS`) and
+  `usb.device_for_block`, for BOOTSEL's volume-to-port trace.
+- **A5.** `first_install` rows are tested in `test_agent_targets.py`.
+- **A6. Earlier refusals.** A type whose family lists no bare-board writer is
+  a synchronous `unsupported_chipset` at `fw.add_mcu.start` (was an accepted
+  job that failed), and the CLI refuses it before the build (was after
+  menuconfig). A `dfu_serial` sent for a BOOTSEL type is `device_not_found`
+  (was silently ignored).
+- **A7.** The agent's `DFU_*` / `BOOTSEL_*` reason constants are removed from
+  `status.py` and `_api.py`; they live in the flasher modules.
+- **A8.** The `fw.add_mcu.start` job result gains additive `flasher` and
+  `port`.

@@ -123,7 +123,13 @@ describe("TargetsView", () => {
   });
 
   it("hides the add-board menu entry when first_install names no flasher", async () => {
-    state.ping = { capabilities: ["fw.add_mcu.start", "fw.add_mcu.scan"] };
+    // fw.update_all keeps the menu itself rendered (hasMenu = canUpdateAll
+    // || canManageTypes || canAddMcu) regardless of canAddMcu, so this
+    // asserts unconditionally on the "Add new board" entry rather than
+    // skipping the check when the whole menu happens to be absent.
+    state.ping = {
+      capabilities: ["fw.add_mcu.start", "fw.add_mcu.scan", "fw.update_all"],
+    };
     const targets = [
       {
         ...makeTarget("cmake", "roadrunner"),
@@ -137,15 +143,12 @@ describe("TargetsView", () => {
     state.status = { targets } as never;
     const wrapper = mount(TargetsView, { props: { targets } });
 
-    const hasMenu = wrapper.find('[aria-label="More actions"]').exists();
-    if (hasMenu) {
-      await wrapper.get('[aria-label="More actions"]').trigger("click");
-      const addBoard = wrapper
-        .get(".menu-list")
-        .findAll("button")
-        .find((button) => button.text().includes("Add new board"));
-      expect(addBoard).toBeUndefined();
-    }
+    await wrapper.get('[aria-label="More actions"]').trigger("click");
+    const addBoard = wrapper
+      .get(".menu-list")
+      .findAll("button")
+      .find((button) => button.text().includes("Add new board"));
+    expect(addBoard).toBeUndefined();
   });
 
   it("protects the unified type namespace across providers", async () => {

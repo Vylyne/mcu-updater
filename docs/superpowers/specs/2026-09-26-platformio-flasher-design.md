@@ -106,7 +106,8 @@ flasher's own keys win.
 `device_id` and `name` are two keys the agreed decision did not list. They are
 needed:
 
-- `record()` files the flash under the hardware id (`build.display_key`).
+- `record()` files the flash under the hardware id (`build.hardware_id_key`,
+  section 2a).
 - `port_for` matches on the hardware id.
 - `write()`'s result carries `name`, and `fw.flash`'s PlatformIO route (`_pio_flash`) projects failures
   onto it.
@@ -131,6 +132,14 @@ it. The plan decides which, after one grep.
 
 The docstrings on `Device` and `FlashTarget` that say `{"display", "screen"}`
 for esptool are updated to the new keys and name.
+
+### 2a. `build.display_key` becomes `build.hardware_id_key`
+
+The function is renamed, and its callers (`flashers/platformio.py`,
+`agent/methods/status.py`, the tests) follow. What it returns does not change:
+`display:<id>` is persisted in the flash log, so the prefix stays until the
+wire/flash-log cleanup that follows this spec migrates it. The docstring says
+so, and describes the key as a hardware id's rather than a display's.
 
 ### 3. Rediscovery through the helper
 
@@ -293,17 +302,16 @@ at a time, in the background, followed by the hygiene test.
 - A real `esptool` flasher, one that writes an ESP32 image without PlatformIO.
 - Removing the `Listen` or `Watcher` sources, or `confirm()`, from board
   discovery.
-- Renaming `build.display_key`'s `display:` prefix: it is persisted in the
-  flash log, so changing it needs a migration.
-- Removing the `displays`/`screens` wire keys (`fw.device.list`, `fw.flash`'s
-  PlatformIO response, `fw.flash_all`), the `display_flash` job kind, or
-  `pio_status`. They are wire or status vocabulary, not the flasher's, and
-  removing them is a wire decision of its own. (`fw.display.flash` itself was
-  already retired at API_VERSION 2.)
+- The rest of the screen/display vocabulary, which is the **next** spec (README
+  `## TODO`): the `displays`/`screens` wire keys (`fw.device.list`, `fw.flash`'s
+  PlatformIO response, `fw.flash_all`, the status payload), the `display_flash`
+  job kind, `pio_status`, and the flash log's `display:` prefix. Each is a wire
+  or on-disk change with its own `API_VERSION` or migration cost.
+  (`fw.display.flash` itself was already retired at API_VERSION 2.)
 - First-time flashing of a device that cannot answer the listen yet (a blank
   ESP32, or firmware that does not broadcast its id) while others of its type
   do. Section 4 refuses it; the fix belongs in first install, where a
-  PlatformIO type has no candidate scanner yet.
+  PlatformIO type has no candidate scanner yet (README `## TODO`).
 - Confirming the knomi_serial watcher's Moonraker query against that repo. The
   design reads the map through `read_device_map` and does not depend on how it
   was produced.

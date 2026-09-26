@@ -4,7 +4,7 @@
 
 **Goal:** Rename the `esptool` flasher to `platformio`, describe the device it writes without screen vocabulary (`KIND_PORT`, a neutral `detail`), and move write-time rediscovery from `discovery.confirm()` into the family helper's `Identifier`.
 
-**Architecture:** knomi_serial's `identify(ask=True)` becomes "listen now, and fall back to the map only when listening cannot run"; the CLI keeps its old cost by asking `ask=False` first. The flasher module is renamed, then rewritten to read a five-key `detail` (`env`, `port`, `device_id`, `name`, `section`), resolve the identifier in `target()`, and call it once per type in `prepared()`. `build.display_key` becomes `hardware_id_key` with the persisted `display:` prefix kept. Docs follow.
+**Architecture:** knomi_serial's `identify(ask=True)` becomes "listen now, and fall back to the map only when listening cannot run"; the CLI keeps its old cost by asking `ask=False` first. The flasher module is renamed, then rewritten to read a five-key `detail` (`env`, `port`, `device_id`, `name`, `section`), resolve the identifier in `target()`, and call it once per type in `prepared()`. `build.display_key` becomes `hardware_id_key`, writing `hwid:` keys; the flash log reads old `display:` keys under their new name, and the next write persists it. Docs follow.
 
 **Tech Stack:** Python 3.11 stdlib only, pytest, ruff, mypy, `scripts/mutation_test.py`.
 
@@ -27,8 +27,8 @@
 - **Mutation specs:** before rewriting any line, `git grep -n -F '<the line>' -- scripts/mutations/`. Re-anchor in the same commit. Run `python scripts/mutation_test.py scripts/mutations/<spec>.json` **one spec at a time, with `run_in_background`**, never under a shell timeout. After each run, run `../../.venv/Scripts/python.exe -m pytest -q tests/test_repo_hygiene.py` and read its output.
 - **No alias, no config migration** for the rename. `flashers: esptool` stops being valid.
 - **Wire shapes unchanged** except the `flasher` value (`"esptool"` → `"platformio"`). `WatcherDevice.to_json` does not gain `answered`.
-- **The flash log's `display:` prefix stays.** Only the function is renamed.
-- **Out of scope** (next spec, README `## TODO`): the `displays`/`screens` wire keys, `display_flash` job kind, `pio_status`, the `display:` prefix migration, and first-time flashing of a silent device. Test-helper names such as `_screen_device` also stay for that change.
+- **The flash log's keys move from `display:` to `hwid:`, with no record lost.** The keys never leave the agent, so this is not a wire change.
+- **Out of scope** (next spec, README `## TODO`): the `displays`/`screens` wire keys, `display_flash` job kind, `pio_status`, and first-time flashing of a silent device. Test-helper names such as `_screen_device` also stay for that change.
 - **Commit voice:** conventional prefix, lowercase, no trailing period, ending with `Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>`. Commits are authorized once the gate is green. Push, PR and merge are not.
 
 ## Review Focus
@@ -1323,45 +1323,123 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 
 ---
 
-### Task 4: `build.display_key` becomes `build.hardware_id_key`
+### Task 4: `build.display_key` becomes `build.hardware_id_key`, writing `hwid:` keys
+
+The flash log's keys never leave the agent: nothing outside `build.py` reads the file except through `entry_for`/`record`/`forget`, and no method puts a key on the wire. So the prefix can move without an `API_VERSION` bump, as long as the records already on disk (hestia and athena) are carried across.
 
 **Files:**
-- Modify: `src/mcu_updater/build.py:915-932,954`
+- Modify: `src/mcu_updater/build.py` (`display_key` ~915–932; `FlashLog` docstring ~954 and `_read`)
 - Modify: `src/mcu_updater/flashers/platformio.py` (`record`)
 - Modify: `src/mcu_updater/flashers/spec.py:177`
 - Modify: `src/mcu_updater/agent/methods/status.py:1418,1424`
-- Modify: `scripts/mutations/display-flash.json` (the `status.py` entry `a record the screen disagrees with is discarded`)
-- Test: `tests/test_flashlog_loop.py`, `tests/test_agent_display_jobs.py:835,838`
+- Modify: `scripts/mutations/display-flash.json` (the `status.py` entry `a record the screen disagrees with is discarded`), `scripts/mutations/flashlog-loop.json` (two new entries)
+- Test: `tests/test_flashlog_loop.py`, `tests/test_agent_display_jobs.py`
 
 **Interfaces:**
-- Produces: `build.hardware_id_key(ident: str) -> str`, which returns `f"display:{ident.lower()}"`. `display_key` no longer exists.
+- Produces: `build.hardware_id_key(ident: str) -> str`, which returns `f"hwid:{ident.lower()}"`. `display_key` no longer exists.
+- Produces: `FlashLog` reads a `display:<id>` key as `hwid:<id>`. A `hwid:` record already present wins over the old one. The next `record()` or `forget()` writes the file with only the new keys.
 
-- [ ] **Step 1: Write the failing test**
+- [ ] **Step 1: Write the failing tests**
 
 Append to `tests/test_flashlog_loop.py`:
 
 ```python
-def test_a_hardware_id_files_under_the_persisted_prefix():
-    """`display:` is on disk in every flash log written so far. Renaming the
-    function must not rename the key - moving it is a migration, and that is
-    its own change."""
+def _write_raw_flashlog(paths, data):
+    import json
+    import os
+
+    os.makedirs(os.path.dirname(paths.flashlog_file), exist_ok=True)
+    with open(paths.flashlog_file, "w", encoding="utf-8") as fh:
+        json.dump(data, fh)
+
+
+def _read_raw_flashlog(paths):
+    import json
+
+    with open(paths.flashlog_file, encoding="utf-8") as fh:
+        return json.load(fh)
+
+
+def test_a_hardware_id_files_under_its_own_prefix():
+    """A board is keyed by its by-id serial; a device known by a hardware id
+    gets a prefix saying so, and the prefix names the kind of id, not a kind of
+    device."""
     from mcu_updater.build import hardware_id_key
 
-    assert hardware_id_key("AAA111") == "display:aaa111"
+    assert hardware_id_key("AAA111") == "hwid:aaa111"
+
+
+def test_a_record_under_the_old_prefix_is_still_found(paths):
+    """Every flash log written before the rename files its KNOMIs under
+    `display:`. Losing those records would report every screen's image as
+    unknown until it was flashed again."""
+    from mcu_updater.build import FlashLog, hardware_id_key
+
+    _write_raw_flashlog(paths, {"display:aaa111": {"fw_sha": "abc123", "type": "knomi"}})
+
+    entry = FlashLog(paths).entry_for(hardware_id_key("aaa111"), "abc123")
+
+    assert entry is not None
+    assert entry["type"] == "knomi"
+
+
+def test_the_next_write_moves_the_old_key(paths):
+    """The migration is carried by the first write after the upgrade, so no
+    host keeps an old key for longer than one flash."""
+    from mcu_updater.build import FlashLog
+
+    _write_raw_flashlog(
+        paths,
+        {"display:aaa111": {"fw_sha": "abc123"}, "usb-Klipper_rp2040_X": {"fw_sha": "def"}},
+    )
+
+    FlashLog(paths).record(
+        "usb-Klipper_rp2040_Y", mcu_type="t", fw="f", bin_sha256=None, fw_sha=None
+    )
+
+    assert set(_read_raw_flashlog(paths)) == {
+        "hwid:aaa111",
+        "usb-Klipper_rp2040_X",
+        "usb-Klipper_rp2040_Y",
+    }
+
+
+def test_a_record_under_the_new_prefix_wins_over_the_old(paths):
+    """Both can only be present if a newer build wrote the new key and an older
+    build then wrote the old one beside it. The new key was written by the code
+    that knows about both, so it is kept."""
+    from mcu_updater.build import FlashLog, hardware_id_key
+
+    _write_raw_flashlog(
+        paths,
+        {"display:aaa111": {"type": "old"}, "hwid:aaa111": {"type": "new"}},
+    )
+
+    assert FlashLog(paths).entry_for(hardware_id_key("aaa111"), None)["type"] == "new"
 ```
 
-In `tests/test_agent_display_jobs.py`'s `_record`, replace `from mcu_updater.build import FlashLog, display_key` with `from mcu_updater.build import FlashLog, hardware_id_key`, and `display_key(ident),` with `hardware_id_key(ident),`.
+In `tests/test_agent_display_jobs.py`:
+- In `_record`, replace `from mcu_updater.build import FlashLog, display_key` with `from mcu_updater.build import FlashLog, hardware_id_key`, and `display_key(ident),` with `hardware_id_key(ident),`.
+- Change every `"display:aaa111"` to `"hwid:aaa111"`: `sed -i 's/"display:aaa111"/"hwid:aaa111"/g' tests/test_agent_display_jobs.py`. That covers the three existing assertions and the two Task 3 added. Then `git grep -n '"display:' -- tests/test_agent_display_jobs.py` prints nothing.
 
 - [ ] **Step 2: Run to verify it fails**
 
 Run: `../../.venv/Scripts/python.exe -m pytest -q tests/test_flashlog_loop.py tests/test_agent_display_jobs.py`
 Expected: FAIL with `ImportError: cannot import name 'hardware_id_key'`.
 
-- [ ] **Step 3: Rename**
+- [ ] **Step 3: Rename, and carry the old keys across**
 
-In `src/mcu_updater/build.py`, replace the function with:
+In `src/mcu_updater/build.py`, replace `display_key` with:
 
 ```python
+#: The prefix of a hardware-id key, and what `hardware_id_key` wrote before it
+#: was renamed. The old one is read, never written: `FlashLog._read` moves each
+#: such key to its new name, and the next write persists that. Delete the old
+#: one, and `_migrated`, once every host has flashed since (hestia, athena).
+_HARDWARE_ID_PREFIX = "hwid:"
+_LEGACY_HARDWARE_ID_PREFIX = "display:"
+
+
 def hardware_id_key(ident: str) -> str:
     """A flash-log key for a device known by a hardware id rather than a serial.
 
@@ -1372,9 +1450,6 @@ def hardware_id_key(ident: str) -> str:
     keyspace unprefixed leaves nothing in the file saying which kind of name a
     key is.
 
-    The prefix is still `display:`, because it is persisted in every flash log
-    written so far. Renaming it is a migration, and is not this function's job.
-
     **Never a port.** `docs/decisions.md` rules out per-port tracking, and the
     hardware id is exactly what made dropping it safe - it follows the device
     into any socket. A device with no id gets no record at all rather than one
@@ -1383,41 +1458,87 @@ def hardware_id_key(ident: str) -> str:
     Lowercased on the way in: the id is emitted lowercase at both ends, but the
     vendor's own docs say not to depend on that.
     """
-    return f"display:{ident.lower()}"
+    return f"{_HARDWARE_ID_PREFIX}{ident.lower()}"
+
+
+def _migrated(data: dict[str, Any]) -> dict[str, Any]:
+    """`data` with every `display:` key under its `hwid:` name.
+
+    In place on the dict `_read` just loaded, so every reader sees new keys and
+    every writer - which all start from `_read` - persists them.
+    """
+    for key in [k for k in data if k.startswith(_LEGACY_HARDWARE_ID_PREFIX)]:
+        entry = data.pop(key)
+        # A record already under the new name was written by a build that
+        # knows both, so it is the newer of the two.
+        data.setdefault(_HARDWARE_ID_PREFIX + key.removeprefix(_LEGACY_HARDWARE_ID_PREFIX), entry)
+    return data
 ```
 
-- `build.py:954`: `` Screens live here too, under :func:`display_key` `` → `` Devices reached at a port live here too, under :func:`hardware_id_key` ``.
+In `FlashLog._read`, replace `return data if isinstance(data, dict) else {}` with:
+
+```python
+        if not isinstance(data, dict):
+            return {}
+        return _migrated(data)
+```
+
+Then:
+- `FlashLog` docstring (~954): `` Screens live here too, under :func:`display_key` rather than a serial `` → `` Devices known by a hardware id live here too, under :func:`hardware_id_key` rather than a serial ``.
 - `flashers/platformio.py` `record`: `from ..build import display_key` → `from ..build import hardware_id_key`, `key=display_key(ident),` → `key=hardware_id_key(ident),`, and the docstring's `` `build.display_key` `` → `` `build.hardware_id_key` ``.
 - `flashers/spec.py:177`: `` `build.display_key` `` → `` `build.hardware_id_key` ``.
 - `agent/methods/status.py`: `from ...build import display_key` → `from ...build import hardware_id_key`, and `display_key(ident), reader.running_sha(...)` → `hardware_id_key(ident), reader.running_sha(...)`.
 
-In `scripts/mutations/display-flash.json`, the `a record the screen disagrees with is discarded` entry becomes:
-
-```json
-      "find": "        record = flashlog.entry_for(\n            hardware_id_key(ident), reader.running_sha(entry.get(\"firmware_version\"))\n        )",
-      "replace": "        record = flashlog.entry_for(hardware_id_key(ident), None)"
-```
-
-If the joined line exceeds 110 characters and ruff reflows it, re-anchor on the formatted text.
-
-Check: `git grep -n display_key -- src tests scripts` prints nothing.
+Check: `git grep -n -e display_key -e '"display:' -- src tests scripts` prints only the `_LEGACY_HARDWARE_ID_PREFIX` line in `build.py` and the new migration tests.
 
 - [ ] **Step 4: Run to verify it passes**
 
 Run: `../../.venv/Scripts/python.exe -m pytest -q tests/test_flashlog_loop.py tests/test_agent_display_jobs.py`
 Expected: PASS.
 
-- [ ] **Step 5: Gate, then the mutation spec**
+- [ ] **Step 5: Re-anchor and add the mutations**
+
+Grep first: `git grep -n -F 'display_key' -- scripts/mutations/`. In `scripts/mutations/display-flash.json`, the `a record the screen disagrees with is discarded` entry becomes:
+
+```json
+      "find": "        record = flashlog.entry_for(\n            hardware_id_key(ident), reader.running_sha(entry.get(\"firmware_version\"))\n        )",
+      "replace": "        record = flashlog.entry_for(hardware_id_key(ident), None)"
+```
+
+If ruff reflows the status.py call, re-anchor on the formatted text.
+
+In `scripts/mutations/flashlog-loop.json`, append to `mutations`:
+
+```json
+    {
+      "name": "a record under the old display: prefix is still found",
+      "file": "src/mcu_updater/build.py",
+      "find": "        return _migrated(data)",
+      "replace": "        return data"
+    },
+    {
+      "name": "a record under the new prefix wins over the old",
+      "file": "src/mcu_updater/build.py",
+      "find": "        data.setdefault(_HARDWARE_ID_PREFIX + key.removeprefix(_LEGACY_HARDWARE_ID_PREFIX), entry)",
+      "replace": "        data[_HARDWARE_ID_PREFIX + key.removeprefix(_LEGACY_HARDWARE_ID_PREFIX)] = entry"
+    }
+```
+
+Its `command` already runs `tests/test_flashlog_loop.py`.
+
+- [ ] **Step 6: Gate, then the mutation specs**
 
 Run the gate. Expected: green.
 
-Then, in the background: `python scripts/mutation_test.py scripts/mutations/display-flash.json`, followed by the hygiene test. Expected: all `KILLED`; hygiene PASS.
+Then, in the background and one at a time, each followed by `../../.venv/Scripts/python.exe -m pytest -q tests/test_repo_hygiene.py`:
+1. `python scripts/mutation_test.py scripts/mutations/display-flash.json`. Expected: all `KILLED`.
+2. `python scripts/mutation_test.py scripts/mutations/flashlog-loop.json`. Expected: all `KILLED`.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 7: Commit**
 
 ```bash
 git add -A src tests scripts/mutations
-git commit -m "refactor(build): rename display_key to hardware_id_key, keeping the persisted display: prefix
+git commit -m "refactor(build): rename display_key to hardware_id_key and file hwid: keys, carrying display: records across
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```
@@ -1473,9 +1594,10 @@ No behaviour change. The "test" is the grep in Step 2 and the gate.
 
   Its kind is `KIND_PORT`, and its `detail` names an env and a port, not a
   display or a screen. That vocabulary still survives on the wire (`displays`,
-  `screens`, `display_flash`) and in the flash log's `display:` prefix; removing
-  it is a wire change with its own `API_VERSION` bump, tracked in the README's
-  TODO.
+  `screens`, `display_flash`); removing it is a wire change with its own
+  `API_VERSION` bump, tracked in the README's TODO. The flash log's keys were
+  not wire, so they moved here: `hwid:<id>`, with `FlashLog` reading an old
+  `display:<id>` under its new name until every host has flashed since.
   ```
 
 `README.md`:
@@ -1483,6 +1605,7 @@ No behaviour change. The "test" is the grep in Step 2 and the gate.
 - 325: `` `flashtool`, `esptool`, `dfu_util`, `bootsel` `` → `` `flashtool`, `platformio`, `dfu_util`, `bootsel` ``.
 - 327: `` `esptool` a PlatformIO env `` → `` `platformio` a PlatformIO env ``.
 - 381 and 581: `flashers: esptool` → `flashers: platformio`.
+- 88 (the **NEXT** TODO): drop `, and the flash log's \`display:\` key prefix (persisted, so it needs a migration)` from the list, and `or on-disk` from `each is a wire or on-disk change of its own`. Task 4 moved the prefix.
 
 Comments:
 - `providers/pio.py:382`: `the esptool flasher noting which image a screen was just given` → `the \`platformio\` flasher noting which image a device was just given`.

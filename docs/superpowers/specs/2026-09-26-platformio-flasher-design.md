@@ -140,10 +140,13 @@ for esptool are updated to the new keys and name.
 ### 2a. `build.display_key` becomes `build.hardware_id_key`
 
 The function is renamed, and its callers (`flashers/platformio.py`,
-`agent/methods/status.py`, the tests) follow. What it returns does not change:
-`display:<id>` is persisted in the flash log, so the prefix stays until the
-wire/flash-log cleanup that follows this spec migrates it. The docstring says
-so, and describes the key as a hardware id's rather than a display's.
+`agent/methods/status.py`, the tests) follow, and it returns `hwid:<id>`. The
+flash log's keys never leave the agent - it is read only through `entry_for`,
+`record` and `forget`, and no method puts a key on the wire - so the prefix moves
+here rather than with the wire cleanup. `FlashLog._read` hands back every
+`display:<id>` record under its `hwid:` name (a record already under the new
+name wins), and the next write persists that, so no host loses a record. The
+old prefix is removed once hestia and athena have each flashed since.
 
 ### 3. Rediscovery through the helper
 
@@ -323,8 +326,8 @@ at a time, in the background, followed by the hygiene test.
 - The rest of the screen/display vocabulary, which is the **next** spec (README
   `## TODO`): the `displays`/`screens` wire keys (`fw.device.list`, `fw.flash`'s
   PlatformIO response, `fw.flash_all`, the status payload), the `display_flash`
-  job kind, `pio_status`, and the flash log's `display:` prefix. Each is a wire
-  or on-disk change with its own `API_VERSION` or migration cost.
+  job kind, and `pio_status`. Each is a wire change with its own `API_VERSION`
+  cost.
   (`fw.display.flash` itself was already retired at API_VERSION 2.)
 - First-time flashing of a device that cannot answer the listen yet (a blank
   ESP32, or firmware that does not broadcast its id) while others of its type

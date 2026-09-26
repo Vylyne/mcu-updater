@@ -127,11 +127,15 @@ of it. What is still open:
 | `update-all` | Stop Klipper, rebuild and reflash everything, start Klipper |
 | `add-mcu -t NAME` | Guided first-time install on a new board: Katapult, or the type's own Klipper when it has none |
 
-`add-mcu` builds and writes the type's first image. A type with
+`add-mcu` builds and writes the type's first image. It sets up kconfig types
+only - it builds through menuconfig, so a cmake or PlatformIO type is refused
+by name; add it from the web panel's "Add new board…" instead. A type with
 `katapult_installed: false` gets its Klipper build written directly, so build it
 with no bootloader offset (`Bootloader offset: No bootloader`) - one built for an
 offset is refused with nothing written - and list `bootsel` (RP2040) or
-`dfu_util` (STM32) on `[firmware klipper]`'s `flashers:`.
+`dfu_util` (STM32) on `[firmware klipper]`'s `flashers:`. It matches the new
+board by the USB port the scan saw, falling back to any new board with a
+warning when the port can't be traced.
 
 `FW` is `klipper`, `katapult`, or the name of any declared [firmware
 family](#firmware-families). `apply-profile` defaults `-f` to whichever family

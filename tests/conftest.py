@@ -268,6 +268,26 @@ def bootsel_device_node(root: pathlib.Path, serial: str = "E0C9125B0D9B") -> str
     return str(node)
 
 
+def mountinfo(root: pathlib.Path, mounts: dict[pathlib.Path, str]) -> None:
+    """A fake kernel mount table at `<root>/mountinfo`, the seam
+    `discovery.bootsel.mount_sources` reads when `bootsel_root` is `root`.
+
+    `mounts` maps each mount point to the device node mounted there. Fields are
+    octal-escaped the way the kernel escapes them - a Windows path's
+    backslashes included, so the parser's unescape is exercised on every run.
+    """
+
+    def escape(text: str) -> str:
+        return "".join("\\" + format(ord(ch), "03o") if ch in " \t\n\\" else ch for ch in text)
+
+    lines = [
+        f"{36 + i} 35 8:{i} / {escape(str(point))} rw,relatime shared:1 - vfat "
+        f"{escape(source)} rw"
+        for i, (point, source) in enumerate(mounts.items())
+    ]
+    (root / "mountinfo").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
 def on_port(paths: Paths, root: pathlib.Path, port: str) -> Paths:
     """`paths` with every tty and block device hanging off USB port `port`.
 

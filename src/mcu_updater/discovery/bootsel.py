@@ -304,6 +304,46 @@ def bootsel_devices(paths: Paths) -> list[str]:
     return sorted(glob.glob(pattern))
 
 
+#: The kernel's mount table for this process. `paths.bootsel_root` doubles as
+#: the seam, the way it does for `bootsel_devices`: a test's
+#: `<bootsel_root>/mountinfo` stands in for it.
+_MOUNTINFO = "/proc/self/mountinfo"
+
+#: mountinfo octal-escapes space, tab, newline and backslash in its paths.
+_MOUNTINFO_ESCAPE = re.compile(r"\\([0-7]{3})")
+
+
+def mount_sources(paths: Paths) -> dict[str, str]:
+    """Mount point -> the device mounted there, both fully resolved.
+
+    What says which of several boards in BOOTSEL is on a given volume: the
+    mount directory's own name is `ID_PATH_TAG`'s lossy form of the USB path
+    and cannot be mapped back reliably (docs/bootsel-mountpoint-design.md), but
+    the kernel names the block device outright. Empty when the table cannot be
+    read - no board is then matched to a mount, never a wrong one.
+    """
+    path = os.path.join(paths.bootsel_root, "mountinfo") if paths.bootsel_root else _MOUNTINFO
+    try:
+        with open(path, encoding="utf-8", errors="replace") as fh:
+            text = fh.read()
+    except OSError:
+        return {}
+
+    def unescape(field: str) -> str:
+        return _MOUNTINFO_ESCAPE.sub(lambda m: chr(int(m.group(1), 8)), field)
+
+    out: dict[str, str] = {}
+    for line in text.splitlines():
+        # <id> <parent> <maj:min> <root> <mount point> <opts> [optional...]
+        #   - <fstype> <source> <super opts>
+        head, sep, tail = line.partition(" - ")
+        fields, rest = head.split(), tail.split()
+        if not sep or len(fields) < 5 or len(rest) < 2:
+            continue
+        out[os.path.realpath(unescape(fields[4]))] = os.path.realpath(unescape(rest[1]))
+    return out
+
+
 #: The boot ROM's flash-chip unique ID, out of a `bootsel_devices` entry like
 #: ``/dev/disk/by-id/usb-RPI_RP2_E0C9125B0D9B-0:0-part1``.
 _SERIAL_RE = re.compile(r"usb-RPI_RP2_([0-9A-Fa-f]+)-")

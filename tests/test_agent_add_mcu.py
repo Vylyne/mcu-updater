@@ -26,6 +26,7 @@ from .conftest import (
     bootsel_device_node,
     make_device,
     mounted_bootsel_volume,
+    mountinfo,
     on_port,
     stage_uf2_only,
     write_settings,
@@ -566,6 +567,36 @@ def test_two_bootsel_boards_one_mounted_is_not_paired_to_the_wrong_one(
     # the unmounted board's id would let `adopt_paired` later claim a board
     # that was never written.
     assert Pairings(adder.paths).all() == {}
+
+
+def test_the_mounted_board_of_two_is_the_one_paired_and_waited_on(
+    adder, paths, fake_root, monkeypatch
+):
+    """With the mount table saying which board is on the one mounted volume,
+    the pick is that board - not `devices[0]`, which sorts the unmounted
+    "AAAAAAAAAAAA" first - so its id is paired and its port waited on."""
+    from mcu_updater.flashers.pairings import Pairings
+
+    _pico_type(adder, paths)
+    _stage_katapult_uf2(paths, PICO)
+    root, vol = mounted_bootsel_volume(fake_root)
+    bootsel_device_node(root, serial="AAAAAAAAAAAA")
+    mounted = bootsel_device_node(root, serial="E0C9125B0D9B")
+    mountinfo(root, {vol: mounted})
+    adder.paths = on_port(dataclasses.replace(adder.paths, bootsel_root=str(root)), fake_root, "1-1.3")
+    monkeypatch.setattr("mcu_updater.flashers.flash.flash_initial_bootloader", lambda *a, **k: None)
+
+    res = adder.dispatch("fw.add_mcu.start", {"name": PICO})
+
+    assert res["bootsel_id"] == "E0C9125B0D9B"
+    assert adder.runner.wait(timeout=30)
+    job = adder.runner.get(res["job_id"])
+    assert job.state == "succeeded", job.error
+    assert job.result["port"] == "1-1.3"
+    lines, _, _ = job.log_since(0)
+    assert not any("could not say which USB port" in line.text for line in lines)
+    assert any(line.stream == "warn" and "no mounted volume yet" in line.text for line in lines)
+    assert set(Pairings(adder.paths).all()) == {"E0C9125B0D9B"}
 
 
 def test_bootsel_flash_receives_the_uf2_path(adder, paths, fake_root, monkeypatch):

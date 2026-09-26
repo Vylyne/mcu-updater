@@ -870,17 +870,14 @@ class FlashMixin(_Base):
                 },
             )
         else:
-            chosen = scan["devices"][0]
-            # `Bootsel.scan_candidates` gates `ready` on the mount count, not
-            # the device count, so a second, unmounted board can leave `scan`
-            # with two devices while still reporting `ready`. `devices[0]` is
-            # sorted by by-id name, not by which one is mounted, so it need
-            # not be the board the write actually goes to. `CandidateScan.port`
-            # already refuses to name a port unless exactly one device is in
-            # the scan; `bootsel_id` - the pairing key `adopt_paired` later acts
-            # on - gets the same guard, or a wrong-board pairing gets recorded.
+            # The board the write reaches, as the scan names it - never
+            # `devices[0]`: a ready BOOTSEL scan can hold a second, unmounted
+            # board, and by-id order says nothing about which is mounted. When
+            # the scan cannot say, nothing is named: no port, so the wait
+            # warns, and no pairing for `adopt_paired` to act on later.
+            chosen = scan_result.chosen or {}
             port = scan_result.port
-            bootsel_id = (chosen.get("id") or None) if len(scan_result.devices) == 1 else None
+            bootsel_id = chosen.get("id") or None
         # Wire names kept from when there were two branches: a DFU device has
         # a `serial`, a BOOTSEL one an `id`, and each is null for the other.
         dfu_serial: str | None = chosen.get("serial") or None

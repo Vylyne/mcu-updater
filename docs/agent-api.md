@@ -1262,7 +1262,7 @@ not writable regardless of how many are attached.
 
 | `reason` | What it means, and what to do |
 | --- | --- |
-| `null` | Ready. One mounted volume. With more boards attached than that, `message` warns that the write goes to the mounted one, which the panel cannot identify — unplug the others to be sure. Otherwise `message` is `null`. |
+| `null` | Ready. One mounted volume. With more boards attached than that — udev mounts every board, so usually a second board whose mount has not landed yet — `message` warns and says to rescan in a moment, naming the port the write goes to when the kernel's mount table says which board is mounted. Otherwise `message` is `null`. |
 | `none` | Nothing in BOOTSEL. Hold BOOTSEL and replug. |
 | `not_mounted` | A board is attached but nothing mounted its volume — this host has no automounter. Re-run `install.sh` to install the udev rule, which mounts each board under `/media/<user>/BOOTSEL/by-path/<port>`. |
 | `ambiguous` | More than one RPI-RP2 volume is mounted at once. |
@@ -1283,12 +1283,18 @@ provisioned serial, so its first install necessarily stays on the manual rule.
 
 Each device carries `id` (the boot ROM's flash-chip id, parsed from
 `/dev/disk/by-id/usb-RPI_RP2_<id>-...`, or `null` if it couldn't be parsed),
-`node` (the raw by-id path) and `port` — the USB port the device is on
-(sysfs's device name, e.g. `1-1.2`), or null when it can't be traced.
+`node` (the raw by-id path), `port` — the USB port the device is on
+(sysfs's device name, e.g. `1-1.2`), or null when it can't be traced — and
+`mount`, the volume it is mounted at according to `/proc/self/mountinfo`, or
+null when it has none or the table does not say. `mount` is what lets
+`fw.add_mcu.start` pair and wait on the mounted board when a second one is
+still waiting for its mount; the mount directory's own name is never parsed
+for this (see docs/bootsel-mountpoint-design.md on `ID_PATH_TAG`).
 Additive (`known_serial`/`tracked_by` elided below):
 
 ```json
-{"id": "E0C9125B0D9B", "node": "/dev/disk/by-id/usb-RPI_RP2_E0C9125B0D9B-0:0-part1", "port": "1-1.2"}
+{"id": "E0C9125B0D9B", "node": "/dev/disk/by-id/usb-RPI_RP2_E0C9125B0D9B-0:0-part1", "port": "1-1.2",
+ "mount": "/media/klipper/BOOTSEL/by-path/platform-fd880000_usb-usb-0_1_3_1_0-scsi-0_0_0_0"}
 ```
 
 Like DFU's `scan_candidates`, a device already
@@ -1382,14 +1388,18 @@ scanned (DFU or BOOTSEL), waits for it to re-enumerate on the port the scan
 saw, and reports what appeared. `fw` names the family that was written,
 `flasher` the flasher that wrote it, and `port` the USB port the wait was keyed
 on — `null` when the scan could not trace one, or, when no `dfu_serial` was
-named, more than one board was in the scan (BOOTSEL's `ready` gates on the
-mount count, not the device count, so a second, unmounted board does not make
-the scan ambiguous on its own, but it does mean the write's board cannot be
-named; a named `dfu_serial` picks one device regardless of how many others are
-present, so this case never applies to it). `dfu_serial` is populated only on
-the DFU path; `bootsel_id` (the boot-ROM flash-chip id, set only when exactly
-one board was attached — the same rule `port` follows, since BOOTSEL has no
-named pick) only on the BOOTSEL path — the other is always `null`:
+named, the scan could not say which of several boards the write reaches.
+BOOTSEL's `ready` gates on the mount count, not the device count, so a second,
+unmounted board does not make the scan ambiguous on its own; the write's board
+is then the one `/proc/self/mountinfo` shows mounted, and `port` is `null` only
+when the mount table cannot say which that is. A named `dfu_serial` picks one
+device regardless of how many others are present, so this case never applies
+to it. `dfu_serial` is populated only on the DFU path; `bootsel_id` (the
+boot-ROM flash-chip id, and the pairing key the board is later adopted by)
+only on the BOOTSEL path, set by the same rule `port` follows — the sole board,
+or the mounted one — and `null` when the board cannot be named, so no pairing
+is recorded against a board that may not be the one written. The other is
+always `null`:
 
 ```json
 {"type": "bttebb36", "chipset": "stm32g0b1xx", "fw": "katapult",

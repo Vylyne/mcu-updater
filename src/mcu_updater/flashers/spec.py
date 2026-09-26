@@ -330,6 +330,10 @@ class CandidateScan:
     `message` explains a scan that is not `ready`. On a ready one it is a
     warning - something the scan could not settle but that does not stop the
     write - and every caller surfaces it.
+
+    `target` is the index of the device a ready write reaches, for a flasher
+    that can say so among several (BOOTSEL: the one whose volume is mounted).
+    Left None, only a sole device is that device.
     """
 
     ready: bool
@@ -337,13 +341,21 @@ class CandidateScan:
     message: str | None
     devices: list[dict[str, Any]]
     extra: dict[str, Any] = dataclasses.field(default_factory=dict)
+    target: int | None = None
+
+    @property
+    def chosen(self) -> dict[str, Any] | None:
+        """The device a write would go to, when `ready` and the scan can say."""
+        if not self.ready:
+            return None
+        if self.target is not None:
+            return self.devices[self.target]
+        return self.devices[0] if len(self.devices) == 1 else None
 
     @property
     def port(self) -> str | None:
-        """The port a write would go to: the one device's, when `ready`."""
-        if not self.ready or len(self.devices) != 1:
-            return None
-        port = self.devices[0].get("port")
+        """The port a write would go to: `chosen`'s, when there is one."""
+        port = (self.chosen or {}).get("port")
         return str(port) if port else None
 
     def to_json(self) -> dict[str, Any]:

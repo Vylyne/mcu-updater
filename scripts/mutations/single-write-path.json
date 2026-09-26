@@ -52,8 +52,8 @@
     {
       "name": "settings are loaded under the lock, not before it",
       "file": "src/mcu_updater/settings.py",
-      "find": "    with ExclusiveLock(paths, path=paths.registry_lock_file).acquire(label):\n        current = load_settings(paths.settings_file)\n",
-      "replace": "    current = load_settings(paths.settings_file)\n    with ExclusiveLock(paths, path=paths.registry_lock_file).acquire(label):\n"
+      "find": "    with ExclusiveLock(paths, path=paths.registry_lock_file).acquire(label):\n        current = _load_fresh(paths.settings_file)\n",
+      "replace": "    current = _load_fresh(paths.settings_file)\n    with ExclusiveLock(paths, path=paths.registry_lock_file).acquire(label):\n"
     }
   ]
 }

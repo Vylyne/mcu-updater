@@ -19,6 +19,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import time
 
 import pytest
 
@@ -1512,3 +1513,27 @@ def test_first_install_does_not_read_the_config_file_again(api, paths, monkeypat
 
     assert all("first_install" in row for row in out)
     assert len(opened) <= 2, opened
+
+
+def test_an_unchanged_config_is_parsed_once_across_polls(api, paths, monkeypatch):
+    """The config snapshot's reason to exist: one `fw.status` poll opened the
+    config 46 times. Aged past the racy window, the first poll parses it once
+    and every later poll not at all."""
+    from mcu_updater import cfgsnapshot
+
+    then = time.time_ns() - 10 * cfgsnapshot.RACY_WINDOW_NS
+    os.utime(paths.main_config, ns=(then, then))
+    parsed: list[str] = []
+    real = cfgsnapshot._parse
+
+    def spy(fh):
+        if os.path.abspath(fh.name) == os.path.abspath(paths.main_config):
+            parsed.append(fh.name)
+        return real(fh)
+
+    monkeypatch.setattr(cfgsnapshot, "_parse", spy)
+
+    api.dispatch("fw.status")
+    assert len(parsed) == 1, parsed
+    api.dispatch("fw.status")
+    assert len(parsed) == 1, parsed

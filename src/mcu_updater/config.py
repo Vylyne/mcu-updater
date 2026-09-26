@@ -53,7 +53,7 @@ import re
 from collections.abc import Iterable, Iterator
 from typing import Any
 
-from . import firmware, sections, typelist
+from . import cfgsnapshot, firmware, sections, typelist
 from .cfgdoc import CfgDocument
 from .errors import (
     AmbiguousSerialError,
@@ -307,8 +307,16 @@ class Registry:
 
     @classmethod
     def load(cls, paths: Paths) -> Registry:
+        """The registry, over the shared config snapshot.
+
+        Its document is frozen: a Registry from here is for reading. Every
+        edit goes through `mutate`, which reads its own copy under the lock.
+        """
+        return cls._from_doc(paths, typelist.read_doc(paths))
+
+    @classmethod
+    def _from_doc(cls, paths: Paths, doc: CfgDocument | None) -> Registry:
         path = paths.registry_file
-        doc = typelist.read_doc(paths)
         if doc is None:
             return cls({}, CfgDocument())
 
@@ -380,7 +388,10 @@ class Registry:
         from .lock import ExclusiveLock
 
         with ExclusiveLock(paths, path=paths.registry_lock_file).acquire(label):
-            reg = cls.load(paths)
+            # Fresh from disk, never the snapshot: the lock exists so another
+            # process's edit cannot be lost, and that must not rest on the
+            # snapshot's racy window judging right.
+            reg = cls._from_doc(paths, typelist.read_doc(paths, fresh=True))
             yield reg
             reg._save(paths)
 
@@ -472,6 +483,7 @@ class Registry:
         with open(tmp, "w", encoding="utf-8", newline="\n") as fh:
             fh.write(doc.render())
         os.replace(tmp, paths.registry_file)
+        cfgsnapshot.invalidate(paths.registry_file)
 
     # --- lookups ---
 

@@ -143,8 +143,14 @@ def save_registry(reg, paths: Paths) -> None:
     Production writes only through `Registry.mutate`, which is why `_save` is
     private. A fixture building its starting state has no lock to contend for
     and nothing to re-read, so it is the one place outside config.py's own
-    tests that writes directly - and only through here.
+    tests that writes directly - and only through here. A registry from
+    `Registry.load` holds the shared, frozen snapshot, so it is saved from a
+    writable copy of the same text.
     """
+    from mcu_updater.cfgdoc import CfgDocument
+
+    if reg._doc.frozen:
+        reg._doc = CfgDocument(reg._doc.render())
     reg._save(paths)
 
 

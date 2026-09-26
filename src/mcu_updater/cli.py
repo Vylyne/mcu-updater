@@ -79,7 +79,9 @@ class Context:
     settings: Settings
 
     def registry(self) -> Registry:
-        """Always a fresh read - the file may have changed under us."""
+        """Read on every call, never held here - the file may have changed under
+        us. The parse behind it is the shared config snapshot, reused only while
+        the file's stat says it has not."""
         return Registry.load(self.paths)
 
 

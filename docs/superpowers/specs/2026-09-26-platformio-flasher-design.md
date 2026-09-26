@@ -108,14 +108,14 @@ needed:
 
 - `record()` files the flash under the hardware id (`build.display_key`).
 - `port_for` matches on the hardware id.
-- `write()`'s result carries `name`, and `fw.display.flash` projects failures
+- `write()`'s result carries `name`, and `fw.flash`'s PlatformIO route (`_pio_flash`) projects failures
   onto it.
 
 The three callers build this payload directly. Each resolves `device_id` the way
 the flasher does today, so nothing changes about which id a device is matched
 on.
 
-- `agent/methods/flash.py` (`fw.display.flash`) and `agent/methods/bulk.py`
+- `agent/methods/flash.py` (`_pio_flash`, `fw.flash` on a PlatformIO type) and `agent/methods/bulk.py`
   (the fleet selection) read the klippy screen payload:
   - `port = s["configured_path"]`
   - `device_id = (s["device_id"] or s["reported_id"] or "").lower()`
@@ -282,7 +282,7 @@ New or rewritten tests:
   map-fallback one.
 - CLI selection reads the map without listening when the map has entries, and
   listens when it is empty.
-- The wire: `fw.display.flash` and `fw.flash_all` report `"flasher":
+- The wire: `fw.flash` on a PlatformIO type and `fw.flash_all` report `"flasher":
   "platformio"`, and nothing else in their shape moves.
 
 The gate runs on the 3.11 floor venv. Each touched mutation spec is run once, one
@@ -293,9 +293,17 @@ at a time, in the background, followed by the hygiene test.
 - A real `esptool` flasher, one that writes an ESP32 image without PlatformIO.
 - Removing the `Listen` or `Watcher` sources, or `confirm()`, from board
   discovery.
-- Renaming `build.display_key`, the `fw.display.*` methods, the `displays`/
-  `screens` wire keys, or `pio_status`. They are wire or status vocabulary, not
-  the flasher's, and renaming them is a wire decision of its own.
+- Renaming `build.display_key`'s `display:` prefix: it is persisted in the
+  flash log, so changing it needs a migration.
+- Removing the `displays`/`screens` wire keys (`fw.device.list`, `fw.flash`'s
+  PlatformIO response, `fw.flash_all`), the `display_flash` job kind, or
+  `pio_status`. They are wire or status vocabulary, not the flasher's, and
+  removing them is a wire decision of its own. (`fw.display.flash` itself was
+  already retired at API_VERSION 2.)
+- First-time flashing of a device that cannot answer the listen yet (a blank
+  ESP32, or firmware that does not broadcast its id) while others of its type
+  do. Section 4 refuses it; the fix belongs in first install, where a
+  PlatformIO type has no candidate scanner yet.
 - Confirming the knomi_serial watcher's Moonraker query against that repo. The
   design reads the map through `read_device_map` and does not depend on how it
   was produced.
@@ -304,7 +312,7 @@ at a time, in the background, followed by the hygiene test.
 
 On the bench, not the toolhead, per AGENTS.md:
 
-- One `fw.display.flash` of a KNOMI with the watcher running and a populated
+- One `fw.flash` of a KNOMI with the watcher running and a populated
   map. The log shows the listen pass, and the result carries `"flasher":
   "platformio"` and `"confidence": "answered"`.
 - One CLI flash of that KNOMI type, which listens once, not twice.

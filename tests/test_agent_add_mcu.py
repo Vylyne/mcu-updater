@@ -131,6 +131,38 @@ def test_a_type_with_no_katapult_build_is_refused_with_the_reason(adder, monkeyp
     assert adder.runner.current() is None
 
 
+def test_a_resolved_flasher_other_than_the_scanner_is_refused(adder, paths, monkeypatch):
+    """`flashers.resolve` walks the family's own `flashers:` list independently
+    of `first_install`'s scanner choice above it. Not reachable with today's
+    two scanners - `dfu_util` and `bootsel` differ in both chipset and state,
+    so `resolve` can never land on one while the other scanned the board - so
+    this stubs `resolve`'s return to prove the guard holds if that ever
+    changes, rather than writing through a flasher whose port/pairing key was
+    never actually looked at.
+    """
+    import mcu_updater.flashers as flashers_mod
+
+    _stage_katapult(paths)
+    patch_dfu(monkeypatch, stdout=ONE_BOARD)
+    original_resolve = flashers_mod.resolve
+
+    def mismatched(family, device, helper, staged):
+        result = original_resolve(family, device, helper, staged)
+        assert result is not None
+        _flasher, artifact = result
+        return flashers_mod.by_name("bootsel"), artifact
+
+    monkeypatch.setattr("mcu_updater.flashers.resolve", mismatched)
+
+    with pytest.raises(RpcError) as exc:
+        adder.dispatch("fw.add_mcu.start", {"name": EBB})
+
+    assert exc.value.data["code"] == "no_artifact"
+    assert exc.value.data["data"]["scanned_flasher"] == "dfu_util"
+    assert exc.value.data["data"]["resolved_flasher"] == "bootsel"
+    assert adder.runner.current() is None
+
+
 def test_an_unrelated_chipset_is_refused_precisely(adder, paths, monkeypatch):
     """Neither DFU nor BOOTSEL applies to an ESP32 - say so precisely rather
     than failing inside the job with something about dfu-util or a mount.
@@ -491,6 +523,44 @@ def test_a_lone_bootsel_board_needs_no_choice(adder, paths, fake_root, monkeypat
     assert res["dfu_serial"] is None
     assert adder.runner.wait(timeout=30)
     assert adder.runner.get(res["job_id"]).state == "succeeded"
+
+
+def test_two_bootsel_boards_one_mounted_is_not_paired_to_the_wrong_one(
+    adder, paths, fake_root, monkeypatch
+):
+    """`Bootsel.scan_candidates` gates `ready` on the mount count, not the
+    device count, so a second board sitting in BOOTSEL but not yet mounted
+    still leaves the scan `ready`. `devices` sorts by by-id name, not by which
+    one is mounted - "AAAAAAAAAAAA" sorts before the mounted board's id below -
+    so `devices[0]` can be the *other* board. Taking its port/id anyway would
+    key the re-enumerate wait on the wrong board's port and record the pairing
+    against the wrong board's id.
+    """
+    from mcu_updater.flashers.pairings import Pairings
+
+    _pico_type(adder, paths)
+    _stage_katapult_uf2(paths, PICO)
+    root, _vol = mounted_bootsel_volume(fake_root)
+    bootsel_device_node(root, serial="AAAAAAAAAAAA")  # not mounted
+    bootsel_device_node(root, serial="E0C9125B0D9B")  # the one actually mounted
+    adder.paths = dataclasses.replace(adder.paths, bootsel_root=str(root))
+    monkeypatch.setattr("mcu_updater.flashers.flash.flash_initial_bootloader", lambda *a, **k: None)
+
+    res = adder.dispatch("fw.add_mcu.start", {"name": PICO})
+    # Ambiguous which of the two the write actually went to, so neither is
+    # named - not the unmounted one, which the old `devices[0]` pick did.
+    assert res["bootsel_id"] is None
+    assert adder.runner.wait(timeout=30)
+    job = adder.runner.get(res["job_id"])
+
+    assert job.state == "succeeded", job.error
+    assert job.result["port"] is None
+    lines, _, _ = job.log_since(0)
+    assert any("could not say which USB port" in line.text for line in lines)
+    # No pairing recorded under either candidate's id - recording one against
+    # the unmounted board's id would let `adopt_paired` later claim a board
+    # that was never written.
+    assert Pairings(adder.paths).all() == {}
 
 
 def test_bootsel_flash_receives_the_uf2_path(adder, paths, fake_root, monkeypatch):

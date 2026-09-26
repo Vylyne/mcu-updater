@@ -1378,9 +1378,13 @@ application (see above) — to the board the install family's chosen flasher
 scanned (DFU or BOOTSEL), waits for it to re-enumerate on the port the scan
 saw, and reports what appeared. `fw` names the family that was written,
 `flasher` the flasher that wrote it, and `port` the USB port the wait was keyed
-on (`null` when the scan could not trace one). `dfu_serial` is populated only
-on the DFU path; `bootsel_id` (the boot-ROM flash-chip id, when exactly one
-board was attached) only on the BOOTSEL path — the other is always `null`:
+on — `null` when the scan could not trace one, or when more than one board was
+on the bus (BOOTSEL's `ready` gates on the mount count, not the device count,
+so a second, unmounted board does not make the scan ambiguous on its own, but
+it does mean the write's board cannot be named). `dfu_serial` is populated only
+on the DFU path; `bootsel_id` (the boot-ROM flash-chip id, set only when
+exactly one board was attached — the same rule `port` follows) only on the
+BOOTSEL path — the other is always `null`:
 
 ```json
 {"type": "bttebb36", "chipset": "stm32g0b1xx", "fw": "katapult",
@@ -1467,6 +1471,7 @@ Refusals, all synchronous and before a job exists:
 | type exists in the type list (any builder) | `unknown_type` |
 | something on the install family's `flashers:` can set up a bare board of the chipset; the message is `first_install`'s reason, `data.{type, chipset, fw, flashers}` | `unsupported_chipset` |
 | the first image has been built for the type, of a kind the chosen flasher takes (`.bin` for DFU, `.uf2` for BOOTSEL); `data.fw` names the family. A kconfig `.uf2` its build record does not list is refused too, asking for one rebuild — it may be older than the `.bin` beside it, the rule `fw.flash` already applies | `no_artifact` |
+| the staged artifact resolves to the same flasher the scan (and its scanner) named — a family listing more than one flasher able to write a bare board of this state is refused rather than writing through whichever `flashers.resolve` finds first; `data.{scanned_flasher, resolved_flasher}` | `no_artifact` |
 | **no bootloader:** the image starts at the start of flash | `offset_mismatch` |
 | **DFU:** something is in DFU | `dfu_none` / `dfu_permission_denied` / `dfu_no_tool` |
 | **DFU:** exactly one, or one named | `dfu_ambiguous` |

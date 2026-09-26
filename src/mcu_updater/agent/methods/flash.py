@@ -801,7 +801,31 @@ class FlashMixin(_Base):
                     "data": {"type": name, "fw": install, "path": path},
                 },
             )
-        _chosen, artifact = picked
+        resolved_flasher, artifact = picked
+        if resolved_flasher.name != scanner.name:
+            # `resolve` walks the family's own `flashers:` list independently
+            # of `first_install`'s scanner choice above - a family that lists
+            # more than one flasher able to write a bare device of this state
+            # could otherwise stage an artifact for one flasher while the scan
+            # (and the port/pairing key it produced) belongs to another.
+            # Refused here, before a job exists, the same way an unstaged
+            # artifact is.
+            raise RpcError(
+                f"{name}'s staged {install} would be written by "
+                f"{resolved_flasher.label}, not {scanner.name}, which found the "
+                f"board. Nothing was written.",
+                data={
+                    "code": "no_artifact",
+                    "message": "the staged artifact resolves to a different "
+                    "flasher than the one that scanned the board",
+                    "data": {
+                        "type": name,
+                        "fw": install,
+                        "scanned_flasher": scanner.name,
+                        "resolved_flasher": resolved_flasher.name,
+                    },
+                },
+            )
         if not family.bootloader:
             # Nothing below an application boots it, so one built for an offset
             # is refused now - synchronously, like no_artifact, not in a job.
@@ -812,7 +836,10 @@ class FlashMixin(_Base):
 
         # Which board, decided here rather than in the job, so an ambiguous bus is
         # a synchronous refusal the caller can act on instead of a job that dies.
-        scan = self._candidate_report(scanner)
+        scan_result = scanner.scan_candidates(
+            self.paths, tracked=self._tracked_boards(), reporter=self._log_reporter
+        )
+        scan = scan_result.to_json()
         target = args.get("dfu_serial")
         if target is not None:
             # Only a DFU device carries a `serial` to name it by; naming one on
@@ -828,6 +855,11 @@ class FlashMixin(_Base):
                         "data": {"dfu_serial": target, "devices": scan["devices"]},
                     },
                 )
+            # The caller named this one device among however many are on the
+            # bus, so its own port/id are trustworthy regardless of count -
+            # unlike the implicit pick below.
+            port: str | None = chosen.get("port") or None
+            bootsel_id: str | None = chosen.get("id") or None
         elif not scan["ready"]:
             raise RpcError(
                 scan["message"] or f"no board is ready for {scanner.name}.",
@@ -839,11 +871,19 @@ class FlashMixin(_Base):
             )
         else:
             chosen = scan["devices"][0]
+            # `Bootsel.scan_candidates` gates `ready` on the mount count, not
+            # the device count, so a second, unmounted board can leave `scan`
+            # with two devices while still reporting `ready`. `devices[0]` is
+            # sorted by by-id name, not by which one is mounted, so it need
+            # not be the board the write actually goes to. `CandidateScan.port`
+            # already refuses to name a port unless exactly one device is in
+            # the scan; `bootsel_id` - the pairing key `adopt_paired` later acts
+            # on - gets the same guard, or a wrong-board pairing gets recorded.
+            port = scan_result.port
+            bootsel_id = (chosen.get("id") or None) if len(scan_result.devices) == 1 else None
         # Wire names kept from when there were two branches: a DFU device has
         # a `serial`, a BOOTSEL one an `id`, and each is null for the other.
         dfu_serial: str | None = chosen.get("serial") or None
-        bootsel_id: str | None = chosen.get("id") or None
-        port: str | None = chosen.get("port") or None
 
         # Every serial actually on the bus right now - NOT "everything untracked".
         #

@@ -2546,7 +2546,7 @@ git -C C:/git/github/mcu-updater-first-install-by-flasher add docs/decisions.md 
 git -C C:/git/github/mcu-updater-first-install-by-flasher commit -m "docs: first install is gated by flashers, keyed on the usb port"
 ```
 
-- [ ] **Step 4: Bench verification — Vi, bench board only, never the toolhead**
+- [x] **Step 4: Bench verification — Vi, bench board only, never the toolhead**
 
 No agent runs this; it writes firmware. Hand these steps to Vi:
 
@@ -2557,3 +2557,5 @@ No agent runs this; it writes firmware. Hand these steps to Vi:
 5. The job succeeds, and `candidates` lists the board as `RR-UNPROVISIONED-…`. Adopting it provisions it.
 6. **The job log must not contain "could not say which USB port".** If it does, the BOOTSEL block-to-port trace failed on real sysfs and the pass is hollow, because the fallback found the board by luck. Report that, together with `readlink -f /sys/class/block/$(basename $(readlink -f /dev/disk/by-id/usb-RPI_RP2_*-part1))`.
 7. Record the result under this step, then tick it.
+
+**Result (2026-09-26):** Vi reports the bench run worked.

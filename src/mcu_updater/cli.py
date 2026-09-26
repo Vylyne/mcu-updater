@@ -44,11 +44,14 @@ from .devices import (
 )
 from .errors import (
     ConfigNotFoundError,
+    FlashError,
     NoFlasherError,
     UnknownSerialError,
+    UnsupportedChipsetError,
     UpdaterError,
 )
-from .flashers.flash import adoptable_devices, flash_initial_bootloader, install_family
+from .flashers import CandidateScan, FirstInstall
+from .flashers.flash import adoptable_devices, flash_initial_bootloader
 from .lock import exclusive
 from .paths import Paths
 from .service import (
@@ -1140,21 +1143,56 @@ def update_all(args: argparse.Namespace) -> None:
     print(f"\nBuilt {len(built)} type(s) and flashed everything tracked.")
 
 
+def _scan_bare_board(c: Context, choice: FirstInstall) -> CandidateScan:
+    """The chosen flasher's own scan, run after the build and right before the
+    write - after, because the user may still be fitting the jumper while
+    menuconfig runs. A board that isn't ready is refused here, naming why."""
+    scanner = flashers.candidate_scanner(flashers.by_name(choice.flasher or ""))
+    if scanner is None:  # first_install only ever names a scanner
+        raise FlashError(f"{choice.flasher} cannot scan for a new board.")
+    tracked = [
+        flashers.TrackedBoard(e.name, s, e.chipset)
+        for e in typelist.load(c.paths)
+        for s in e.serials
+    ]
+    scan = scanner.scan_candidates(c.paths, tracked=tracked, reporter=stdout_reporter)
+    if not scan.ready:
+        raise FlashError(
+            scan.message or f"no board is ready for {choice.flasher}.", reason=scan.reason
+        )
+    return scan
+
+
 def add_mcu(args: argparse.Namespace) -> None:
     c = ctx()
     reg = c.registry()
+    if args.type not in reg.names():
+        entry = next((e for e in typelist.load(c.paths) if e.name == args.type), None)
+        if entry is not None:
+            # add-mcu builds through menuconfig, so it sets up kconfig types.
+            raise UpdaterError(
+                f"'{args.type}' builds with {entry.builder or 'no builder'}, and "
+                f"add-mcu builds through menuconfig, so it sets up kconfig types "
+                f"only. Build it, then add the board from the web panel's "
+                f"'Add new board…'.",
+                type=args.type,
+            )
     mcu = reg.get(args.type)
     chipset = mcu.chipset
 
-    # The board's first image: its bootloader, or with none its own
-    # application - the same rule the agent's fw.add_mcu.start follows.
+    # The board's first image and who writes it - the same question the
+    # agent's fw.add_mcu.start asks, answered before menuconfig runs.
     families = firmware.load(c.paths)
-    install = install_family(mcu.firmwares, families)
+    choice = flashers.first_install(mcu, families)
+    if choice.flasher is None:
+        raise UnsupportedChipsetError(choice.reason or "", chipset=chipset, fw=choice.fw)
+    install = choice.fw
     family = firmware.resolve(c.paths, install, families)
 
     with exclusive(c.paths, f"add-mcu {args.type}"):
         # A brand new type has no saved .config, so this launches menuconfig.
         result = _build_interactive(c, args.type, install)
+        scan = _scan_bare_board(c, choice)
 
         before = set(reg.all_serials()) | {
             d.serial for d in find_untracked(c.paths, reg.all_serials())
@@ -1166,6 +1204,7 @@ def add_mcu(args: argparse.Namespace) -> None:
             result.bin_path,
             fw=install,
             mcu_type=args.type,
+            state=choice.state,
             uf2_bin=result.uf2_path,
             # Where BOOTSEL erases the old application under a bootloader. An
             # application image replaces what boots, so it has none.
@@ -1175,12 +1214,18 @@ def add_mcu(args: argparse.Namespace) -> None:
             reporter=stdout_reporter,
         )
 
+        if scan.port is None:
+            print(
+                f"WARNING: {choice.flasher} could not say which USB port the board "
+                f"is on, so any new board that appears is offered as this one."
+            )
         print(f"Waiting for the device to enumerate as {install}...")
-        candidates = adoptable_devices(c.paths, before, chipset)
+        candidates = adoptable_devices(c.paths, before, port=scan.port)
 
     if not candidates:
+        where = f"on port {scan.port}" if scan.port else f"for chipset '{chipset}'"
         print(
-            f"No new, unassigned {install} device found for chipset '{chipset}'. "
+            f"No new, unassigned {install} device found {where}. "
             f"Check `ls /dev/serial/by-id/` and use 'add-serial' manually."
         )
         return

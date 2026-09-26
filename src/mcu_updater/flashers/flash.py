@@ -977,6 +977,7 @@ def flash_initial_bootloader(
     *,
     fw: str,
     mcu_type: str,
+    state: str,
     uf2_bin: str | None = None,
     katapult_config: str | None = None,
     reporter: Reporter = null_reporter,
@@ -991,6 +992,10 @@ def flash_initial_bootloader(
     BOOTSEL. `[firmware <fw>]`'s `flashers:` list picks the writer, through the
     same `Flasher` protocol a batch uses, so a type with no bootloader needs
     `bootsel` or `dfu_util` on its application's list.
+
+    `state` is the ROM state `flashers.first_install` chose (`STATE_DFU`/
+    `STATE_BOOTSEL`) - the chipset is not asked, so a type whose chipset names
+    no vendor prefix is still set up by what its family lists.
 
     `uf2_bin` is separate from `fw_bin`: BOOTSEL mass storage only accepts a
     `.uf2` - a `.bin` copied there is silently ignored - and a build only
@@ -1013,7 +1018,6 @@ def flash_initial_bootloader(
     from .. import flashers
     from ..artifacts import KIND_BIN, KIND_UF2, Artifact, Staged
 
-    state = STATE_BOOTSEL if chipset.startswith("rp2040") else STATE_DFU
     family = firmware.resolve(paths, fw)
     if state == STATE_BOOTSEL and uf2_bin is None:
         # Before selection, not after: with no uf2 staged, selection would
@@ -1162,23 +1166,19 @@ def _no_services(name: str | None = None) -> Any:
 def adoptable_devices(
     paths: Paths,
     known_serials: set,
-    chipset: str,
     *,
+    port: str | None,
     timeout: float = REENUMERATE_TIMEOUT,
 ) -> list[BusDevice]:
-    """Devices of this chipset that appeared and aren't tracked yet.
+    """Devices that appeared on `port` and aren't tracked yet.
 
-    Not filtered to Katapult: both install routes erase the old application
-    now, but a board bootloadered by an older version or by hand can still
-    carry one, chain-load straight past Katapult on its first boot, and
-    reappear running that firmware instead. Matching is chipset + "wasn't on
-    the bus before" - the same thing a bare board's first boot gives for free.
+    Keyed on the USB port the scan saw, not the chipset: a board's by-id name
+    carries whatever its firmware says (a Roadrunner's is `Roadrunner`), and
+    docs/decisions.md already says that segment is not a filter. Not filtered
+    to Katapult either: an image that survives an install chain-loads past it
+    and reappears running that firmware instead. `port=None` - the scan could
+    not trace one - is any new board; the caller warns.
 
     Replaces the original's fixed `time.sleep(3)` with a real poll.
     """
-    return wait_for_new_device(
-        paths,
-        known_serials,
-        chipset=chipset,
-        timeout=timeout,
-    )
+    return wait_for_new_device(paths, known_serials, port=port, timeout=timeout)

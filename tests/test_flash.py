@@ -742,7 +742,7 @@ def test_stm32_dispatches_to_dfu(paths, ready, monkeypatch):
         lambda *a, **kw: called.setdefault("yes", True),
     )
     flash_initial_bootloader(
-        paths, ready, "stm32f072xb", "x.bin", fw="katapult", mcu_type="board"
+        paths, ready, "stm32f072xb", "x.bin", fw="katapult", mcu_type="board", state="dfu"
     )
     assert called == {"yes": True}
 
@@ -762,7 +762,7 @@ def test_rp2040_dispatches_to_bootsel_when_a_uf2_was_built(paths, settings, tmp_
     uf2, cfg = _katapult_uf2(tmp_path)
 
     flash_initial_bootloader(
-        rp_paths, settings, "rp2040", "unused.bin", fw="katapult", mcu_type="board",
+        rp_paths, settings, "rp2040", "unused.bin", fw="katapult", mcu_type="board", state="bootsel",
         uf2_bin=uf2, katapult_config=cfg
     )
 
@@ -835,7 +835,7 @@ def test_bootsel_copies_katapult_with_the_application_sector_erased(
         original = fh.read()
 
     flash_initial_bootloader(
-        rp_paths, settings, "rp2040", "unused.bin", fw="katapult", mcu_type="board",
+        rp_paths, settings, "rp2040", "unused.bin", fw="katapult", mcu_type="board", state="bootsel",
         uf2_bin=uf2, katapult_config=cfg
     )
 
@@ -860,7 +860,7 @@ def test_bootsel_refuses_without_an_application_address(
 
     with pytest.raises(FlashError) as exc:
         flash_initial_bootloader(
-            rp_paths, settings, "rp2040", "unused.bin", fw="katapult", mcu_type="board",
+            rp_paths, settings, "rp2040", "unused.bin", fw="katapult", mcu_type="board", state="bootsel",
             uf2_bin=uf2, katapult_config=cfg
         )
     assert "LAUNCH_APP_ADDRESS" in str(exc.value)
@@ -872,7 +872,7 @@ def test_bootsel_refuses_with_no_katapult_config(paths, settings, tmp_path):
     uf2, _cfg = _katapult_uf2(tmp_path)
     with pytest.raises(FlashError) as exc:
         flash_initial_bootloader(
-            paths, settings, "rp2040", "unused.bin", fw="katapult", mcu_type="board",
+            paths, settings, "rp2040", "unused.bin", fw="katapult", mcu_type="board", state="bootsel",
             uf2_bin=uf2,
         )
     assert "LAUNCH_APP_ADDRESS" in str(exc.value)
@@ -887,7 +887,7 @@ def test_bootsel_refuses_a_uf2_it_cannot_extend(paths, settings, tmp_path):
     bad.write_bytes(b"\0" * 8)
     with pytest.raises(FlashError) as exc:
         flash_initial_bootloader(
-            paths, settings, "rp2040", "unused.bin", fw="katapult", mcu_type="board",
+            paths, settings, "rp2040", "unused.bin", fw="katapult", mcu_type="board", state="bootsel",
             uf2_bin=str(bad), katapult_config=cfg
         )
     assert "UF2" in str(exc.value)
@@ -899,7 +899,7 @@ def test_bootsel_reports_a_missing_uf2_as_a_flash_error(paths, settings, tmp_pat
     missing = str(tmp_path / "nope.uf2")
     with pytest.raises(FlashError) as exc:
         flash_initial_bootloader(
-            paths, settings, "rp2040", "unused.bin", fw="katapult", mcu_type="board",
+            paths, settings, "rp2040", "unused.bin", fw="katapult", mcu_type="board", state="bootsel",
             uf2_bin=missing, katapult_config=cfg
         )
     assert missing in str(exc.value)
@@ -911,7 +911,7 @@ def test_rp2040_refuses_with_no_uf2_built(paths, settings):
     seed_base_firmwares(paths)
     with pytest.raises(FlashError) as exc:
         flash_initial_bootloader(
-            paths, settings, "rp2040", "x.bin", fw="katapult", mcu_type="board"
+            paths, settings, "rp2040", "x.bin", fw="katapult", mcu_type="board", state="bootsel"
         )
     assert ".uf2" in str(exc.value)
     assert "No bootloader" not in str(exc.value)
@@ -923,7 +923,7 @@ def test_a_klipper_first_install_with_no_uf2_is_told_to_drop_the_offset(paths, s
     seed_base_firmwares(paths)
     with pytest.raises(FlashError) as exc:
         flash_initial_bootloader(
-            paths, settings, "rp2040", "x.bin", fw="klipper", mcu_type="board"
+            paths, settings, "rp2040", "x.bin", fw="klipper", mcu_type="board", state="bootsel"
         )
     assert "No bootloader" in str(exc.value)
     assert "build again" not in str(exc.value)
@@ -935,7 +935,7 @@ def test_dfu_refuses_with_no_bin_built(paths, settings):
     seed_base_firmwares(paths)
     with pytest.raises(FlashError) as exc:
         flash_initial_bootloader(
-            paths, settings, "stm32f072xb", None, fw="katapult", mcu_type="board",
+            paths, settings, "stm32f072xb", None, fw="katapult", mcu_type="board", state="dfu",
             uf2_bin="x.uf2",
         )
     assert ".bin" in str(exc.value)
@@ -945,7 +945,7 @@ def test_an_unknown_chipset_is_reported_clearly(paths, ready):
     seed_base_firmwares(paths)
     with pytest.raises(UnsupportedChipsetError) as exc:
         flash_initial_bootloader(
-            paths, ready, "esp32", "x.bin", fw="katapult", mcu_type="board"
+            paths, ready, "esp32", "x.bin", fw="katapult", mcu_type="board", state="dfu"
         )
     assert exc.value.data["chipset"] == "esp32"
 
@@ -964,7 +964,7 @@ def test_first_install_writes_only_with_what_katapult_lists(paths, settings, tmp
 
     with pytest.raises(UnsupportedChipsetError) as exc:
         flash_initial_bootloader(
-            paths, settings, "rp2040", "unused.bin", fw="katapult", mcu_type="board",
+            paths, settings, "rp2040", "unused.bin", fw="katapult", mcu_type="board", state="bootsel",
             uf2_bin=uf2, katapult_config=cfg
         )
     assert exc.value.data["chipset"] == "rp2040"
@@ -999,7 +999,7 @@ def test_a_first_application_image_is_copied_as_built(paths, settings, tmp_path)
     uf2.write_bytes(image)
 
     flash_initial_bootloader(
-        rp_paths, settings, "rp2040", None, fw="klipper", mcu_type="board",
+        rp_paths, settings, "rp2040", None, fw="klipper", mcu_type="board", state="bootsel",
         uf2_bin=str(uf2),
     )
 
@@ -1019,7 +1019,7 @@ def test_a_first_application_uf2_built_for_an_offset_is_refused(paths, settings,
 
     with pytest.raises(BareImageOffsetError) as exc:
         flash_initial_bootloader(
-            rp_paths, settings, "rp2040", None, fw="klipper", mcu_type="board",
+            rp_paths, settings, "rp2040", None, fw="klipper", mcu_type="board", state="bootsel",
             uf2_bin=str(uf2),
         )
 
@@ -1054,14 +1054,14 @@ def test_a_first_application_bin_is_checked_against_its_build_record(
             json.dump({"app_address": address}, fh)
         with pytest.raises(BareImageOffsetError):
             flash_initial_bootloader(
-                paths, settings, "stm32g0b1xx", fw_bin, fw="klipper", mcu_type="board"
+                paths, settings, "stm32g0b1xx", fw_bin, fw="klipper", mcu_type="board", state="dfu"
             )
     assert written == []
 
     with open(sidecar, "w", encoding="utf-8") as fh:
         json.dump({"app_address": 0x08000000}, fh)
     flash_initial_bootloader(
-        paths, settings, "stm32g0b1xx", fw_bin, fw="klipper", mcu_type="board"
+        paths, settings, "stm32g0b1xx", fw_bin, fw="klipper", mcu_type="board", state="dfu"
     )
     assert written == [fw_bin]
 
@@ -1076,7 +1076,7 @@ def test_a_bootloader_first_image_is_not_offset_checked(paths, settings, monkeyp
     )
 
     flash_initial_bootloader(
-        paths, settings, "stm32g0b1xx", "katapult.bin", fw="katapult", mcu_type="board"
+        paths, settings, "stm32g0b1xx", "katapult.bin", fw="katapult", mcu_type="board", state="dfu"
     )
     assert written == ["katapult.bin"]
 
@@ -1089,7 +1089,7 @@ def test_no_bare_board_writer_on_the_family_names_the_line_to_add(paths, setting
 
     with pytest.raises(UnsupportedChipsetError) as exc:
         flash_initial_bootloader(
-            paths, settings, "rp2040", None, fw="klipper", mcu_type="board",
+            paths, settings, "rp2040", None, fw="klipper", mcu_type="board", state="bootsel",
             uf2_bin=str(uf2),
         )
 

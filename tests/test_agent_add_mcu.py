@@ -504,6 +504,7 @@ def test_bootsel_flash_receives_the_uf2_path(adder, paths, fake_root, monkeypatc
         *,
         fw,
         mcu_type,
+        state=None,
         uf2_bin=None,
         katapult_config=None,
         reporter=None,

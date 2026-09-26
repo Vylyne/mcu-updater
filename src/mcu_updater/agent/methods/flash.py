@@ -837,6 +837,9 @@ class FlashMixin(_Base):
                 fw_bin,
                 fw=install,
                 mcu_type=name,
+                # Interim: Task 5 replaces this with the state `first_install`
+                # chose, the same way the CLI now does.
+                state="bootsel" if is_bootsel else "dfu",
                 # Unconditional, exactly like the CLI's add-mcu - ignored by the
                 # DFU branch, required by BOOTSEL's.
                 uf2_bin=uf2_bin,

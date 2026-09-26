@@ -18,7 +18,7 @@ from .bootsel import Bootsel
 from .dfu_util import DfuUtil
 from .esptool import Esptool
 from .flashtool import Flashtool
-from .spec import KIND_SERIAL, Device, Flasher, FlashTarget
+from .spec import KIND_SERIAL, CandidateScanner, Device, Flasher, FlashTarget
 
 if TYPE_CHECKING:
     from ..firmware import FirmwareFamily
@@ -43,6 +43,12 @@ def by_name(name: str) -> Flasher:
     if flasher is None:
         raise KeyError(f"no flasher {name!r}; known: {sorted(_BY_NAME)}")
     return flasher
+
+
+def candidate_scanner(flasher: Flasher) -> CandidateScanner | None:
+    """`flasher` as a `CandidateScanner`, or None when it cannot find a new
+    board. The one place that asks - the way helper capabilities are reached."""
+    return flasher if isinstance(flasher, CandidateScanner) else None
 
 
 def needs_services_stopped(target: FlashTarget) -> bool:

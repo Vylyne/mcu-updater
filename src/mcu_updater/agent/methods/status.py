@@ -2091,28 +2091,6 @@ class StatusMixin(_Base):
                 out.pop(name, None)
         return out
 
-
-
-
-    # -- DFU: what is waiting to be adopted ---------------------------------
-
-    #: Why a DFU flash cannot start right now. Stable codes; the panel switches on
-    #: them, and each maps to a different physical thing for the user to do.
-    DFU_NO_TOOL = "no_tool"
-    DFU_PERMISSION_DENIED = "permission_denied"
-    DFU_NONE = "none"
-    DFU_AMBIGUOUS = "ambiguous"
-
-    # -- BOOTSEL: what is waiting to be adopted -----------------------------
-
-    #: Why a BOOTSEL flash cannot start right now. No tool/permission code here
-    #: - reading /dev/disk/by-id and a mount point is plain filesystem access,
-    #: no subprocess and no libusb claim to fail. Readiness gates on the mount
-    #: count rather than the device count - see `bootsel_scan`.
-    BOOTSEL_NONE = "none"
-    BOOTSEL_NOT_MOUNTED = "not_mounted"
-    BOOTSEL_AMBIGUOUS = "ambiguous"
-
     #: How long a bootloader-install pairing stays actionable. A class attribute
     #: so tests can shrink it without patching a call site, matching
     #: ADD_MCU_REENUMERATE_TIMEOUT and the klippy timeouts.

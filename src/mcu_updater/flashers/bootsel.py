@@ -23,7 +23,7 @@ from __future__ import annotations
 import contextlib
 import os
 import time
-from collections.abc import Iterator
+from collections.abc import Iterator, Sequence
 from typing import TYPE_CHECKING, Any
 
 from .. import helpers
@@ -41,17 +41,25 @@ from ..uf2 import Uf2Error, image_extent
 from .spec import (
     KIND_SERIAL,
     Bench,
+    CandidateScan,
     Device,
     FlashRecord,
     FlashTarget,
+    TrackedBoard,
     artifact_path,
     chipset_matches,
+    name_tracked,
     staged_record,
 )
 
 if TYPE_CHECKING:
+    from ..build import Reporter
     from ..helpers.spec import BootselRequester, Helper
     from ..paths import Paths
+
+SCAN_NONE = "none"
+SCAN_NOT_MOUNTED = "not_mounted"
+SCAN_AMBIGUOUS = "ambiguous"
 
 
 def ensure_uf2(uf2: str) -> None:
@@ -298,6 +306,7 @@ class Bootsel:
 
     name = "bootsel"
     label = "BOOTSEL (mass storage)"
+    candidate_prefix = "bootsel"
     chipsets: tuple[str, ...] = ("rp2040",)
     states: tuple[str, ...] = (STATE_BOOTSEL,)
     #: False for a board already in BOOTSEL: nothing holds its port. A target
@@ -444,6 +453,104 @@ class Bootsel:
             # one serial - is a warning here. Rewriting a completed write as a
             # failure would invite a re-flash of a board that is already correct.
             ctx.reporter("warn", str(exc))
+
+    def scan_candidates(
+        self, paths: Paths, *, tracked: Sequence[TrackedBoard], reporter: Reporter
+    ) -> CandidateScan:
+        """What is sitting in BOOTSEL, and can this agent actually write it?
+
+        Mirrors `dfu_util.DfuUtil.scan_candidates`'s report-don't-raise shape.
+        Diverges where BOOTSEL genuinely differs: no external tool to be
+        missing or to deny access - reading `/dev/disk/by-id` and a mount
+        point is plain filesystem access, so there is no
+        `no_tool`/`permission_denied` here at all.
+
+        Readiness gates on the **mount** count, not the device count, because
+        that is exactly what the write itself (`_find_mount`) gates on - a
+        board present but unmounted is not writable regardless of how many
+        are attached.
+
+        ``none``
+            Nothing in BOOTSEL. Hold BOOTSEL and replug the board.
+        ``not_mounted``
+            A board is attached but nothing mounted its volume - this host has
+            no automounter. Re-run install.sh to install the udev rule.
+        ``ambiguous``
+            More than one RPI-RP2 volume is mounted at once. Unlike DFU there
+            is no serial to pick one by - the mounts are now distinguishable
+            (each names its USB port), but nothing upstream can yet say which
+            one this write is for, so this stays a refusal rather than a choice.
+
+        Unlike DFU's derived serial, this is an **assumed** identity: the boot
+        ROM's flash-chip unique id is assumed - unverified on real hardware,
+        see the id-collision caveat in docs/agent-api.md's `fw.bootsel.scan`
+        section - to be the same string Katapult later reports as its own
+        running USB serial, so a tracked rp2040 board's serial can be compared
+        to a BOOTSEL device's id directly.
+
+        If that assumption is wrong this simply never matches - every device's
+        `known_serial`/`tracked_by` stays null, exactly what a genuinely new
+        board looks like, never a wrong name. Same collision guard as
+        `DfuUtil.scan_candidates`: two *registry entries* mapping to one id
+        names neither. It does not cover two *physical boards* sharing one id
+        - see docs/agent-api.md's `fw.bootsel.scan` section.
+
+        Tracked identities are canonical hardware serials; the by-id interface
+        suffix belongs only to the transport path. Compare the full string so
+        a legitimate hyphen cannot create a prefix match.
+        """
+        from ..discovery import usb
+
+        present = bootsel_devices(paths)
+        inventory = usb.collect(paths)
+        devices: list[dict[str, Any]] = []
+        for node in present:
+            hardware = usb.device_for_block(inventory, paths, node)
+            devices.append(
+                {
+                    "id": bootsel_id_for(node),
+                    "node": node,
+                    "port": hardware.name if hardware is not None else None,
+                }
+            )
+        owners: dict[str, list[tuple[str, str]]] = {}
+        for board in tracked:
+            if board.chipset.startswith("rp2040"):
+                owners.setdefault(board.serial, []).append((board.type, board.serial))
+        name_tracked(devices, owners, "id")
+
+        mounts = bootsel_scan(paths)
+        extra: dict[str, Any] = {"mounts": mounts, "mount_count": len(mounts)}
+        if not present:
+            return CandidateScan(
+                False,
+                SCAN_NONE,
+                "No RP2040 in BOOTSEL is attached. Hold BOOTSEL and replug the board.",
+                devices,
+                extra,
+            )
+        if not mounts:
+            return CandidateScan(
+                False,
+                SCAN_NOT_MOUNTED,
+                f"An RP2040 in BOOTSEL is attached ({', '.join(present)}) but "
+                f"nothing mounted its volume - this host has no automounter. "
+                f"Re-run install.sh to install the udev rule, which mounts each "
+                f"board under /media/<user>/BOOTSEL/by-path/<port>.",
+                devices,
+                extra,
+            )
+        if len(mounts) > 1:
+            return CandidateScan(
+                False,
+                SCAN_AMBIGUOUS,
+                f"{len(mounts)} RPI-RP2 volumes are mounted at once "
+                f"({', '.join(mounts)}) - which one is this board? Unplug the "
+                f"others and try again.",
+                devices,
+                extra,
+            )
+        return CandidateScan(True, None, None, devices, extra)
 
 
 def _find_mount(paths: Any) -> str:

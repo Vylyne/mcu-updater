@@ -89,7 +89,7 @@ of it. What is still open:
 - [ ] **FEATURE** Support Flashing new devices for other supported flashers. (currently only shows klipper firmware types)
 - [ ] **NEEDS DESIGN** Run config migrations as the first step of agent startup, so that restarting the service migrates an existing install. First check the restrictions the service runs under.
 - [ ] **BUG** A Roadrunner flash reports `Could not confirm that the Roadrunner CDC device disappeared` on an otherwise successful write. `_await_disappearance` in [src/mcu_updater/discovery/roadrunner.py](src/mcu_updater/discovery/roadrunner.py) sets `unknown = True` when `_entry_candidates(paths, strict=True)` raises `OSError`, then treats "I could not look" as "the device is still there" and spins to `REENUMERATE_TIMEOUT`. The usual cause is `/dev/serial/by-id` disappearing entirely once the last CDC device leaves - which is evidence the board *did* go, not absence of evidence. Seen on the bench 2026-09-19; the flash itself succeeded.
-- [ ] Identify a tracked board sitting in BOOTSEL by its boot-ROM ID and hand it to flasher selection, so a helper flash that stopped after the reboot can be finished without a power-cycle. `_identify_bootsel` in [src/mcu_updater/agent/methods/flash.py](src/mcu_updater/agent/methods/flash.py) already maps boot-ROM IDs to tracked serials.
+- [ ] Identify a tracked board sitting in BOOTSEL by its boot-ROM ID and hand it to flasher selection, so a helper flash that stopped after the reboot can be finished without a power-cycle. `Bootsel.scan_candidates` in [src/mcu_updater/flashers/bootsel.py](src/mcu_updater/flashers/bootsel.py) already maps boot-ROM IDs to tracked serials.
 
 ## Requirements
 

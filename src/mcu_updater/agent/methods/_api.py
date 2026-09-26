@@ -43,17 +43,8 @@ class _Api(Protocol):
     _object_names: list[str] | None
     _object_names_at: float
 
-    # -- DFU reason codes and pairing TTL, status.py --------------------
-    DFU_NO_TOOL: str
-    DFU_PERMISSION_DENIED: str
-    DFU_NONE: str
-    DFU_AMBIGUOUS: str
+    # -- pairing TTL, status.py ------------------------------------------
     PAIRING_TTL: float
-
-    # -- BOOTSEL reason codes, status.py --------------------------------
-    BOOTSEL_NONE: str
-    BOOTSEL_NOT_MOUNTED: str
-    BOOTSEL_AMBIGUOUS: str
 
     # -- status.py -----------------------------------------------------
     def settings(self) -> Settings: ...

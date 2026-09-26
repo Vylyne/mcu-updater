@@ -8,9 +8,7 @@ from typing import Any
 from ... import firmware, flashers, helpers, inventory, providers, stop_services
 from ...config import Registry
 from ...errors import (
-    DfuPermissionError,
     FlashError,
-    ToolMissingError,
     UpdaterError,
 )
 from ...paths import REENUMERATE_TIMEOUT
@@ -540,9 +538,10 @@ class FlashMixin(_Base):
           or by hand can still chain-load straight past Katapult and turn up
           running that firmware instead - the pairing-key match below is what
           actually identifies it;
-        * only an **unambiguous** match, for the same reason `_identify_dfu`
-          refuses to name a colliding board: the DFU serial is derived by a sum
-          and two boards could in principle share one;
+        * only an **unambiguous** match, for the same reason
+          `flashers.dfu_util.DfuUtil.scan_candidates` refuses to name a
+          colliding board: the DFU serial is derived by a sum and two boards
+          could in principle share one;
         * only a pairing **within its TTL**, so a board found in a drawer next
           month is the stranger it has become;
         * only if the type still **exists**, since it can have been removed;
@@ -623,220 +622,37 @@ class FlashMixin(_Base):
             self._changed()
         return adopted
 
-    def _identify_dfu(self, devices: list) -> None:
-        """Name the boards in DFU that we already know about.
+    def _tracked_boards(self) -> list[Any]:
+        """Every tracked serial in the type list, of every builder - what a
+        scan names its finds by. Lenient: a scan is a diagnosis, and a config
+        problem is reported elsewhere."""
+        from ... import typelist
+        from ...flashers import TrackedBoard
 
-        A DFU device has no `/dev/serial/by-id` name, so `3941335F3434` connects
-        to nothing on its own - which is what makes several boards in DFU at once
-        so awkward to tell apart. But the DFU serial is *derived* from the same
-        unique id the running serial is built from, so every tracked board's DFU
-        name can be computed and matched.
+        entries, _families = typelist.read_config(self.paths)
+        return [TrackedBoard(e.name, s, e.chipset) for e in entries for s in e.serials]
 
-        A board that matches nothing is not an error - that is what a genuinely
-        new board looks like, and saying so is useful in itself.
-
-        The derivation sums two of the three id words, so a collision is possible
-        in principle. Two known boards mapping to one DFU serial therefore names
-        neither: an unlabelled board is a small annoyance, and a board labelled as
-        the wrong one is how you flash the toolhead you meant to leave alone.
-        """
-        from ...devices import dfu_serial_for
-
-        owners: dict[str, list[tuple[str, str]]] = {}
-        for name, mcu in self.registry().types.items():
-            for serial in mcu.serials:
-                computed = dfu_serial_for(serial)
-                if computed:
-                    owners.setdefault(computed, []).append((name, serial))
-
-        for device in devices:
-            device["known_serial"] = None
-            device["tracked_by"] = None
-            matches = owners.get(str(device.get("serial") or ""), [])
-            if len(matches) == 1:
-                device["tracked_by"], device["known_serial"] = matches[0]
+    def _candidate_report(self, scanner: Any) -> dict[str, Any]:
+        """One `CandidateScanner`'s scan, as its wire result."""
+        scan = scanner.scan_candidates(
+            self.paths, tracked=self._tracked_boards(), reporter=self._log_reporter
+        )
+        return scan.to_json()
 
     def dfu_scan(self, args: dict) -> dict[str, Any]:
         """What is sitting in DFU mode, and can this agent actually open it?
+        Reports rather than raises; the reasons and where each sends the user
+        live on `flashers.dfu_util.DfuUtil.scan_candidates`."""
+        from ... import flashers
 
-        Deliberately **reports** failures instead of raising them. Every other
-        method treats a refusal as an error because the caller asked for work to
-        happen; here, describing the situation *is* the work. "dfu-util is not
-        installed" is this method's answer, not its failure.
-
-        The distinctions are not cosmetic - each sends the user somewhere else:
-
-        ``no_tool``
-            `apt install dfu-util`. Nothing to do with the board.
-        ``permission_denied``
-            libusb saw a board and could not claim it. **The boot jumper worked.**
-            Reporting this as "no device found" is what once sent a user back to
-            redo the one step that had succeeded. The udev rule tags `uaccess`,
-            which grants the *seated* user - and this agent is a daemon, not a
-            login session - so in practice it rides on `GROUP="plugdev"` and the
-            service user being in that group.
-        ``none``
-            Genuinely nothing in DFU. Fit the boot jumper and replug.
-        ``ambiguous``
-            More than one board in DFU, and no serial was named to pick between
-            them. Not a dead end: dfu-util takes `-S/-p/-n`, so naming one is
-            enough - `ready` is false only because the *caller* has not chosen.
-        """
-        from ...devices import dfu_devices
-        from ...flashers.flash import DFU_VID_PID
-
-        out: dict[str, Any] = {
-            "vid_pid": DFU_VID_PID,
-            "devices": [],
-            "count": 0,
-            "ready": False,
-            "reason": None,
-            "message": None,
-        }
-
-        try:
-            devices = dfu_devices(reporter=self._log_reporter)
-        except ToolMissingError as exc:
-            out["reason"] = self.DFU_NO_TOOL
-            out["message"] = str(exc)
-            return out
-        except DfuPermissionError as exc:
-            out["reason"] = self.DFU_PERMISSION_DENIED
-            out["message"] = str(exc)
-            # The raw dfu-util output, because a permissions diagnosis is exactly
-            # the case where the operator wants to see what the tool actually said.
-            # UpdaterError keeps its extras in .data, not as attributes.
-            out["output"] = exc.data.get("output")
-            return out
-        except UpdaterError as exc:
-            out["reason"] = exc.code
-            out["message"] = str(exc)
-            return out
-
-        self._identify_dfu(devices)
-        out["devices"] = devices
-        out["count"] = len(devices)
-        if not devices:
-            out["reason"] = self.DFU_NONE
-            out["message"] = (
-                "No board is in DFU mode. Fit the boot jumper (or hold BOOT0) and "
-                "replug the board."
-            )
-            return out
-        if len(devices) > 1:
-            out["reason"] = self.DFU_AMBIGUOUS
-            out["message"] = (
-                f"{len(devices)} boards are in DFU mode. Pick the one to flash by its "
-                f"serial, or unplug the others."
-            )
-            return out
-
-        out["ready"] = True
-        return out
-
-    def _identify_bootsel(self, devices: list) -> None:
-        """Name the boards in BOOTSEL that we already know about.
-
-        Unlike `_identify_dfu` there is no derivation: this assumes - unverified
-        on real hardware, see the id-collision caveat in docs/agent-api.md's
-        `fw.bootsel.scan` section - that the boot ROM's flash-chip unique id is
-        the same string Katapult later reports as its own running USB serial,
-        so a tracked rp2040 board's serial can be compared to a BOOTSEL
-        device's id directly.
-
-        If that assumption is wrong this simply never matches - every device's
-        `known_serial`/`tracked_by` stays null, exactly what a genuinely new
-        board looks like, never a wrong name. Same collision guard as
-        `_identify_dfu`: two *registry entries* mapping to one id names
-        neither. It does not cover two *physical boards* sharing one id - see
-        docs/agent-api.md's `fw.bootsel.scan` section.
-
-        Tracked identities are canonical hardware serials; the by-id interface
-        suffix belongs only to the transport path. Compare the full string so
-        a legitimate hyphen cannot create a prefix match.
-        """
-        owners: dict[str, list[tuple[str, str]]] = {}
-        for name, mcu in self.registry().types.items():
-            if not mcu.chipset.startswith("rp2040"):
-                continue
-            for serial in mcu.serials:
-                owners.setdefault(serial, []).append((name, serial))
-
-        for device in devices:
-            device["known_serial"] = None
-            device["tracked_by"] = None
-            matches = owners.get(str(device.get("id") or ""), [])
-            if len(matches) == 1:
-                device["tracked_by"], device["known_serial"] = matches[0]
+        return self._candidate_report(flashers.by_name("dfu_util"))
 
     def bootsel_scan(self, args: dict) -> dict[str, Any]:
         """What is sitting in BOOTSEL, and can this agent actually write it?
+        Reports rather than raises; see `flashers.bootsel.Bootsel.scan_candidates`."""
+        from ... import flashers
 
-        Mirrors `dfu_scan`'s report-don't-raise shape. Diverges where BOOTSEL
-        genuinely differs: no external tool to be missing or to deny access -
-        reading `/dev/disk/by-id` and a mount point is plain filesystem access,
-        so there is no `no_tool`/`permission_denied` here at all.
-
-        Readiness gates on the **mount** count, not the device count, because
-        that is exactly what the write itself
-        (`flashers.bootsel._find_mount`) gates on - a board present but
-        unmounted is not writable regardless of how many are attached.
-
-        ``none``
-            Nothing in BOOTSEL. Hold BOOTSEL and replug the board.
-        ``not_mounted``
-            A board is attached but nothing mounted its volume - this host has
-            no automounter. Re-run install.sh to install the udev rule.
-        ``ambiguous``
-            More than one RPI-RP2 volume is mounted at once. Unlike DFU there
-            is no serial to pick one by - the mounts are now distinguishable
-            (each names its USB port), but nothing upstream can yet say which
-            one this write is for, so this stays a refusal rather than a choice.
-        """
-        from ...devices import bootsel_devices, bootsel_id_for
-        from ...devices import bootsel_scan as bootsel_mounts
-
-        present = bootsel_devices(self.paths)
-        devices = [{"id": bootsel_id_for(node), "node": node} for node in present]
-        self._identify_bootsel(devices)
-
-        mounts = bootsel_mounts(self.paths)
-        out: dict[str, Any] = {
-            "devices": devices,
-            "count": len(devices),
-            "mounts": mounts,
-            "mount_count": len(mounts),
-            "ready": False,
-            "reason": None,
-            "message": None,
-        }
-
-        if not present:
-            out["reason"] = self.BOOTSEL_NONE
-            out["message"] = (
-                "No RP2040 in BOOTSEL is attached. Hold BOOTSEL and replug the board."
-            )
-            return out
-        if not mounts:
-            out["reason"] = self.BOOTSEL_NOT_MOUNTED
-            out["message"] = (
-                f"An RP2040 in BOOTSEL is attached ({', '.join(present)}) but "
-                f"nothing mounted its volume - this host has no automounter. "
-                f"Re-run install.sh to install the udev rule, which mounts each "
-                f"board under /media/<user>/BOOTSEL/by-path/<port>."
-            )
-            return out
-        if len(mounts) > 1:
-            out["reason"] = self.BOOTSEL_AMBIGUOUS
-            out["message"] = (
-                f"{len(mounts)} RPI-RP2 volumes are mounted at once "
-                f"({', '.join(mounts)}) - which one is this board? Unplug the "
-                f"others and try again."
-            )
-            return out
-
-        out["ready"] = True
-        return out
+        return self._candidate_report(flashers.by_name("bootsel"))
 
     #: How long to wait for a freshly-flashed board to come back on the bus.
     #: A class attribute so tests can shrink it without patching a call site,

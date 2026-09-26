@@ -1210,6 +1210,15 @@ exposes no `/dev/serial/by-id` name, so those are the only identity it has.
 **`path` is the one to show prominently** — it is the only field corresponding to
 a physical port, and therefore the only hint about which board is which.
 
+Each device also carries `port` — the USB port the device is on (sysfs's
+device name, e.g. `1-1.2`), or null when it can't be traced. Additive. For
+`fw.dfu.scan`, `port` is dfu-util's own `path` (other fields — `vidpid`,
+`raw`, `known_serial`, `tracked_by` — elided below):
+
+```json
+{"serial": "3941335F3434", "path": "6-1.6.6.1.3", "devnum": "51", "port": "6-1.6.6.1.3"}
+```
+
 #### `fw.bootsel.scan`
 
 Mirrors `fw.dfu.scan`'s report-don't-raise shape. Diverges where BOOTSEL
@@ -1242,12 +1251,20 @@ mounts that match the selected topology. A bare board has no running helper or
 provisioned serial, so its first install necessarily stays on the manual rule.
 
 Each device carries `id` (the boot ROM's flash-chip id, parsed from
-`/dev/disk/by-id/usb-RPI_RP2_<id>-...`, or `null` if it couldn't be parsed) and
-`node` (the raw by-id path). Like DFU's `_identify_dfu`, a device already
+`/dev/disk/by-id/usb-RPI_RP2_<id>-...`, or `null` if it couldn't be parsed),
+`node` (the raw by-id path) and `port` — the USB port the device is on
+(sysfs's device name, e.g. `1-1.2`), or null when it can't be traced.
+Additive (`known_serial`/`tracked_by` elided below):
+
+```json
+{"id": "E0C9125B0D9B", "node": "/dev/disk/by-id/usb-RPI_RP2_E0C9125B0D9B-0:0-part1", "port": "1-1.2"}
+```
+
+Like DFU's `scan_candidates`, a device already
 matching a tracked rp2040 board's serial carries `known_serial`/`tracked_by` —
 but the boot-ROM id is not unique; two boards from one batch have been observed
 reporting the same `pico_get_unique_board_id()` on hardware. It is a label on
-the flash, used opportunistically for adoption matching. `_identify_bootsel`'s
+the flash, used opportunistically for adoption matching. `Bootsel.scan_candidates`'s
 collision guard covers only one direction: two *registry entries* claiming the
 same id names neither. It does not cover two *physical boards* sharing one id
 — if two boards from a batch report the same id and only one is tracked, both

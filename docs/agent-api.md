@@ -1378,13 +1378,15 @@ application (see above) — to the board the install family's chosen flasher
 scanned (DFU or BOOTSEL), waits for it to re-enumerate on the port the scan
 saw, and reports what appeared. `fw` names the family that was written,
 `flasher` the flasher that wrote it, and `port` the USB port the wait was keyed
-on — `null` when the scan could not trace one, or when more than one board was
-on the bus (BOOTSEL's `ready` gates on the mount count, not the device count,
-so a second, unmounted board does not make the scan ambiguous on its own, but
-it does mean the write's board cannot be named). `dfu_serial` is populated only
-on the DFU path; `bootsel_id` (the boot-ROM flash-chip id, set only when
-exactly one board was attached — the same rule `port` follows) only on the
-BOOTSEL path — the other is always `null`:
+on — `null` when the scan could not trace one, or, when no `dfu_serial` was
+named, more than one board was in the scan (BOOTSEL's `ready` gates on the
+mount count, not the device count, so a second, unmounted board does not make
+the scan ambiguous on its own, but it does mean the write's board cannot be
+named; a named `dfu_serial` picks one device regardless of how many others are
+present, so this case never applies to it). `dfu_serial` is populated only on
+the DFU path; `bootsel_id` (the boot-ROM flash-chip id, set only when exactly
+one board was attached — the same rule `port` follows, since BOOTSEL has no
+named pick) only on the BOOTSEL path — the other is always `null`:
 
 ```json
 {"type": "bttebb36", "chipset": "stm32g0b1xx", "fw": "katapult",

@@ -555,6 +555,7 @@ def test_two_bootsel_boards_one_mounted_is_not_paired_to_the_wrong_one(
 
     assert job.state == "succeeded", job.error
     assert job.result["port"] is None
+    assert job.result["bootsel_id"] is None
     lines, _, _ = job.log_since(0)
     assert any("could not say which USB port" in line.text for line in lines)
     # No pairing recorded under either candidate's id - recording one against

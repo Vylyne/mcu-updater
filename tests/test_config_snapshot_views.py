@@ -62,6 +62,19 @@ def test_read_doc_refuses_a_duplicate_section(paths):
         typelist.read_doc(paths)
 
 
+def test_a_duplicate_section_error_does_not_hand_out_the_shared_list(paths):
+    """The error travels to handlers and the wire; whatever they do to its
+    value must not reach the parse every other reader shares."""
+    _write(paths, "[type a]\nchipset: x\n\n[type a]\nchipset: y\n")
+    with pytest.raises(ConfigCorruptError) as caught:
+        typelist.read_doc(paths)
+
+    caught.value.data["value"].append("type b")
+
+    shared = cfgsnapshot.read(paths.main_config)
+    assert shared is not None and shared.duplicate_sections == ["type a"]
+
+
 # --- typelist.read_config and firmware.load: lenient ---
 
 

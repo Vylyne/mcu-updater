@@ -163,7 +163,7 @@ def read_doc(paths: Paths, *, fresh: bool = False) -> CfgDocument | None:
             f"{path}: duplicate section(s) {dupes}. Only the first copy is read, so "
             f"everything in the later one is silently ignored - merge them into one.",
             path=path,
-            value=doc.duplicate_sections,
+            value=list(doc.duplicate_sections),
         )
     return doc
 

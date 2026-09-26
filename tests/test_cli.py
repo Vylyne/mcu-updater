@@ -342,6 +342,28 @@ def test_flashing_a_platformio_screen_matches_its_id_case_insensitively(
     ]
 
 
+def test_a_populated_map_selects_without_opening_a_port(
+    c, pio_type, captured, fake_root, monkeypatch
+):
+    """Choosing what to flash is not the write. The map answers instantly, so
+    the six-second listen is kept for the one place that needs it - inside the
+    write, once the ports are free - and is not paid twice for one flash."""
+    from mcu_updater.helpers import knomi_serial as handler
+
+    _device_map(c.paths, pio_type, aaa111=str(fake_root / "ttyUSB0"))
+    asked: list[str] = []
+    monkeypatch.setattr(
+        handler, "discover", lambda p, s, d, **k: asked.append(d.name) or {}
+    )
+    monkeypatch.setattr(cli, "_confirm", lambda prompt: True)
+
+    with pytest.raises(SystemExit):
+        cli.flash_fw_cmd(argparse.Namespace(type=ENV, serial=None, yes=True))
+
+    assert asked == []
+    assert len(captured) == 1
+
+
 def test_a_platformio_type_with_no_watcher_map_says_so(c, pio_type, monkeypatch):
     """Flashing nothing and reporting success is the failure this area exists to
     prevent, so an absent map is "cannot tell" rather than "no devices"."""

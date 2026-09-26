@@ -706,12 +706,12 @@ def _pio_targets(
     identity belongs at flash time rather than to a remembered path, and the
     map is a remembered path.
 
-    Asking needs the ports free. Both callers of this function are inside
-    `_ports_free`, which is why `ask=True` is passed unconditionally rather
-    than through a flag: a caller that had not stopped the services would be
-    a caller in the wrong place, not a caller with the wrong argument.
-    `services_stopped` is idempotent per unit, so the batch's own stop inside
-    that one correctly no-ops.
+    Asking needs the ports free, and both callers of this function are inside
+    `_ports_free`. It still reads the map first (`ask=False`) and asks only
+    when the map is empty: the write confirms identity again inside its own
+    stop, so a populated map is enough to *select* from, and listening here
+    too would hold the ports twice. `services_stopped` is idempotent per unit,
+    so the batch's own stop inside that one correctly no-ops.
 
     An empty answer from both is reported as "cannot tell", not as "no
     devices". Flashing nothing and calling it success is the failure this
@@ -731,9 +731,17 @@ def _pio_targets(
             f"is which, and writing to a guessed port is what this refuses to do."
         )
 
+    # The map first: choosing what to flash is not the write, and the write
+    # asks again inside its own stop. Listening here as well would hold the
+    # ports twice for one flash. Only an empty map is worth the six seconds,
+    # because without an answer there is nothing to select.
     found = identify.identify(
-        c.paths, c.settings, display, ask=True, reporter=stdout_reporter
+        c.paths, c.settings, display, ask=False, reporter=stdout_reporter
     )
+    if not found:
+        found = identify.identify(
+            c.paths, c.settings, display, ask=True, reporter=stdout_reporter
+        )
     units = stop_services.for_platformio(c.paths, display, c.settings)
     if not found:
         where = identify.remembered_at(c.paths, display) or "(nothing remembered)"

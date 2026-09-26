@@ -45,6 +45,11 @@ class WatcherDevice:
     #: these are keyed by an id burned into the chip rather than by path.
     present: bool = False
 
+    #: Did this device answer a listen just now, rather than come from the
+    #: map? Set by the helper that asked. Never on the wire: it is a fact about
+    #: one write-time pass, not about the device.
+    answered: bool = False
+
     def to_json(self) -> dict[str, Any]:
         return {
             "device_id": self.device_id,

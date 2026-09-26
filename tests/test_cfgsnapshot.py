@@ -33,9 +33,9 @@ def parses(monkeypatch) -> list[str]:
     calls: list[str] = []
     real = cfgsnapshot._parse
 
-    def spy(path):
-        calls.append(path)
-        return real(path)
+    def spy(fh):
+        calls.append(fh.name)
+        return real(fh)
 
     monkeypatch.setattr(cfgsnapshot, "_parse", spy)
     return calls
@@ -44,6 +44,37 @@ def parses(monkeypatch) -> list[str]:
 def test_an_unchanged_aged_file_is_parsed_once(tmp_path, parses):
     cfg = tmp_path / "a.cfg"
     _write(cfg, "[a]\nk: v\n")
+
+    first = cfgsnapshot.read(str(cfg))
+    second = cfgsnapshot.read(str(cfg))
+
+    assert first is second
+    assert len(parses) == 1
+
+
+def test_a_path_stat_that_lags_the_handle_still_reuses_the_parse(tmp_path, monkeypatch, parses):
+    """On Windows, Python 3.12+ reports the change time as st_ctime, and
+    `os.stat(path)` can trail `os.fstat` on a handle to the same file until
+    the OS catches up. The check must compare keys taken the same way."""
+    from types import SimpleNamespace
+
+    cfg = tmp_path / "a.cfg"
+    _write(cfg, "[a]\nk: v\n")
+    real_stat = os.stat
+
+    def lagging(path, *args, **kwargs):
+        st = real_stat(path, *args, **kwargs)
+        if isinstance(path, (str, os.PathLike)) and os.path.abspath(path) == os.path.abspath(cfg):
+            return SimpleNamespace(
+                st_dev=st.st_dev,
+                st_ino=st.st_ino,
+                st_size=st.st_size,
+                st_mtime_ns=st.st_mtime_ns,
+                st_ctime_ns=st.st_ctime_ns - 500_000,
+            )
+        return st
+
+    monkeypatch.setattr(os, "stat", lagging)
 
     first = cfgsnapshot.read(str(cfg))
     second = cfgsnapshot.read(str(cfg))

@@ -1526,10 +1526,10 @@ def test_an_unchanged_config_is_parsed_once_across_polls(api, paths, monkeypatch
     parsed: list[str] = []
     real = cfgsnapshot._parse
 
-    def spy(path):
-        if os.path.abspath(path) == os.path.abspath(paths.main_config):
-            parsed.append(path)
-        return real(path)
+    def spy(fh):
+        if os.path.abspath(fh.name) == os.path.abspath(paths.main_config):
+            parsed.append(fh.name)
+        return real(fh)
 
     monkeypatch.setattr(cfgsnapshot, "_parse", spy)
 

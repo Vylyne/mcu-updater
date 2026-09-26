@@ -86,11 +86,18 @@ open.
 - The clock is a module-level seam that tests can pin.
 
 **Read path:**
-1. `os.stat(path)`. `FileNotFoundError` returns `None`; any other `OSError`
+1. Open the file. `FileNotFoundError` returns `None`; any other `OSError`
    propagates.
-2. If there is a cached entry, it is trusted, and its key equals the stat key,
+2. `fstat` the handle. If there is a cached entry and its key equals that key,
    return its doc.
-3. Otherwise open, read and `fstat`, parse, freeze, store, and return.
+3. Otherwise read from the same handle, `fstat` it again, parse, freeze, and
+   store only if the two keys match and the read is outside the window.
+
+Every key comes from the handle, never from `os.stat(path)`. On Windows,
+Python 3.12+ reports the change time as `st_ctime`, and a path stat's can trail
+a handle's to the same file until the OS catches up, so a path stat compared
+against a handle's key misses (and could, in principle, match a stale one).
+The cost is an open per read, not a stat; the parse is still what is saved.
 
 Errors are never cached: an unreadable file is retried on every call.
 

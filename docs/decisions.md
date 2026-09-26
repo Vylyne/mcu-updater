@@ -639,7 +639,10 @@ falling back.
 
 `mcu-updater.cfg` is parsed once per process and reused by every loader until
 its `(st_dev, st_ino, st_size, st_mtime_ns, st_ctime_ns)` changes
-(`cfgsnapshot.py`). One `fw.status` poll used to open it 46 times.
+(`cfgsnapshot.py`). One `fw.status` poll used to parse it 46 times. Every
+reader still opens the file, because the key comes from `fstat` on the handle
+the text is read from, never from `os.stat(path)`: on Windows, Python 3.12+
+reports the change time as `st_ctime`, and a path's can trail the handle's.
 
 A parse is kept only if its read began more than 2 s after the file's mtime -
 git's racy-clean rule. A rewrite in place, at the same size, inside one mtime

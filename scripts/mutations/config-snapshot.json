@@ -13,17 +13,17 @@
   "mutations": [
     {
       "name": "a parse is reused only while the stat key matches",
-      "find": "    if entry is not None and entry.key == _stat_key(st):",
-      "replace": "    if entry is not None:"
+      "find": "        if entry is not None and entry.key == before:",
+      "replace": "        if entry is not None:"
     },
     {
       "name": "a parse read inside the racy window is not kept",
-      "find": "    trusted = steady and started - st.st_mtime_ns > RACY_WINDOW_NS",
-      "replace": "    trusted = steady"
+      "find": "    trusted = key == before and started - st.st_mtime_ns > RACY_WINDOW_NS",
+      "replace": "    trusted = key == before"
     },
     {
       "name": "a parse whose file moved during the read is not kept",
-      "find": "    trusted = steady and started - st.st_mtime_ns > RACY_WINDOW_NS",
+      "find": "    trusted = key == before and started - st.st_mtime_ns > RACY_WINDOW_NS",
       "replace": "    trusted = started - st.st_mtime_ns > RACY_WINDOW_NS"
     },
     {

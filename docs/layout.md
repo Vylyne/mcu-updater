@@ -190,6 +190,7 @@ Every path derives from one `Paths` object, so nothing is hardcoded elsewhere:
 | `MCU_UPDATER_FAKE_CAN_SYSFS` | `/sys/class/net` |
 | `MCU_UPDATER_FAKE_USB_SYSFS` | `/sys/bus/usb/devices` |
 | `MCU_UPDATER_FAKE_TTY_SYSFS` | `/sys/class/tty` |
+| `MCU_UPDATER_FAKE_BLOCK_SYSFS` | `/sys/class/block` |
 
 ## The standalone UI lives outside all of this
 

@@ -229,6 +229,22 @@ def scan(paths: Paths) -> list[BusDevice]:
     return out
 
 
+def port_of(
+    paths: Paths, dev: BusDevice, inventory: list[usb.UsbDevice] | None = None
+) -> str | None:
+    """The USB port (`usb.UsbDevice.name`, e.g. "1-1.2") a by-id device hangs
+    off, or None when sysfs cannot say.
+
+    The port, not the serial, is what survives a reboot into new firmware -
+    the rule `helpers/klipper.py`'s topology wait already follows.
+    """
+    if inventory is None:
+        inventory = usb.collect(paths)
+    tty = os.path.basename(os.path.realpath(dev.path))
+    hardware = usb.device_for_tty(inventory, paths, tty)
+    return hardware.name if hardware is not None else None
+
+
 def find_device(
     paths: Paths,
     chipset: str,
@@ -281,6 +297,7 @@ def find_untracked(
     *,
     fw: str | None = None,
     chipset: str | None = None,
+    port: str | None = None,
 ) -> list[BusDevice]:
     """Boards on the bus whose serial isn't tracked under any MCU type.
 
@@ -294,6 +311,9 @@ def find_untracked(
     adoptable list applies it); the CLI and the TUI did not, so the two front
     ends disagreed about what counted as a board. That is the split
     `validate_type_name` avoids by living in the model, and this now does too.
+
+    `port` keeps only boards on that USB port - the add-mcu wait, where the
+    chipset segment of a by-id name is not a filter (docs/decisions.md).
     """
     known = set(known_serials)
     wanted_group: tuple[str, ...] | None = None
@@ -305,6 +325,7 @@ def find_untracked(
         else:
             wanted_group = (fw.lower(),)
 
+    inventory = usb.collect(paths) if port else None
     out = []
     for dev in scan(paths):
         if not dev.is_mcu:
@@ -314,6 +335,8 @@ def find_untracked(
         if wanted_group is not None and dev.fw.lower() not in wanted_group:
             continue
         if chipset and dev.chipset != chipset:
+            continue
+        if port and port_of(paths, dev, inventory) != port:
             continue
         out.append(dev)
     return out
@@ -377,6 +400,7 @@ def wait_for_new_device(
     *,
     fw: str | None = None,
     chipset: str | None = None,
+    port: str | None = None,
     timeout: float = REENUMERATE_TIMEOUT,
     poll: float = 0.5,
     settle: float = 1.0,
@@ -391,11 +415,11 @@ def wait_for_new_device(
     known = set(baseline)
     deadline = time.monotonic() + timeout
     while True:
-        found = find_untracked(paths, known, fw=fw, chipset=chipset)
+        found = find_untracked(paths, known, fw=fw, chipset=chipset, port=port)
         if found:
             if settle:
                 _sleep_checked(settle, cancel)
-            return find_untracked(paths, known, fw=fw, chipset=chipset) or found
+            return find_untracked(paths, known, fw=fw, chipset=chipset, port=port) or found
         if time.monotonic() >= deadline:
             return []
         _sleep_checked(poll, cancel)

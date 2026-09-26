@@ -8,6 +8,7 @@ tmp_path stands in for a whole printer host - no mocks, no monkeypatching of
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import os
 import pathlib
@@ -265,6 +266,30 @@ def bootsel_device_node(root: pathlib.Path, serial: str = "E0C9125B0D9B") -> str
     node = by_id / f"usb-RPI_RP2_{serial}-0-0-part1"
     node.write_text("", encoding="utf-8")
     return str(node)
+
+
+def on_port(paths: Paths, root: pathlib.Path, port: str) -> Paths:
+    """`paths` with every tty and block device hanging off USB port `port`.
+
+    Real sysfs is symlinks. These are plain nested directories whose *names*
+    carry the port, which is all `usb.device_for_sysfs_path` reads: it walks
+    up the path and splits each component on ':'. No interface directory
+    (`<port>:1.0`) is used, because NTFS reads ':' as an alternate-data-stream
+    separator.
+
+    No `serial` file is written under the fake USB device, deliberately:
+    `byid.scan` swaps in `hardware.serial` whenever one exists, which would
+    collapse every fake board on this port onto that one serial.
+    """
+    usb_root = root / "sys-usb"
+    (usb_root / port).mkdir(parents=True, exist_ok=True)
+    tty = root / "sys-dev" / port / "tty"
+    block = root / "sys-dev" / port / "block"
+    tty.mkdir(parents=True, exist_ok=True)
+    block.mkdir(parents=True, exist_ok=True)
+    return dataclasses.replace(
+        paths, usb_sysfs=str(usb_root), tty_sysfs=str(tty), block_sysfs=str(block)
+    )
 
 
 def display_objects(sections: dict, objects: dict = None) -> dict:

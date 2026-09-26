@@ -326,6 +326,10 @@ class CandidateScan:
     (`vid_pid`, `mounts`, `output`), merged in unchanged by `to_json`.
     Every device dict carries `port` - `usb.UsbDevice.name`, or None when the
     flasher cannot say - which is what the post-write wait is keyed on.
+
+    `message` explains a scan that is not `ready`. On a ready one it is a
+    warning - something the scan could not settle but that does not stop the
+    write - and every caller surfaces it.
     """
 
     ready: bool

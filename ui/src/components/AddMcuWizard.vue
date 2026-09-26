@@ -156,7 +156,12 @@ async function start(): Promise<void> {
       </button>
 
       <div v-if="scan">
-        <p v-if="ready">Ready - one board found.</p>
+        <template v-if="ready">
+          <!-- A ready scan's message is a warning it could not settle (two
+               boards in BOOTSEL, one mounted): the write still goes ahead. -->
+          <p>{{ message ? "Ready." : "Ready - one board found." }}</p>
+          <p v-if="message" class="alert alert--warning">{{ message }}</p>
+        </template>
         <p v-else-if="message" class="muted">{{ message }}</p>
 
         <template v-if="canPick">

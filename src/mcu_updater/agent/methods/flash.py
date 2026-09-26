@@ -900,6 +900,9 @@ class FlashMixin(_Base):
             from ...devices import wait_for_new_device
             from ...flashers.flash import flash_initial_bootloader
 
+            if scan_result.ready and scan_result.message:
+                # A ready scan's message is a warning it could not settle.
+                ctx.reporter("warn", scan_result.message)
             ctx.step(
                 f"Flashing {install} onto the {choice.state.upper()} board for {name}", 0, 2
             )

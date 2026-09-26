@@ -1497,6 +1497,25 @@ def test_add_mcu_scans_after_the_build_and_waits_on_that_port(c, monkeypatch):
     assert seen["wait"]["port"] == "1-1.2"
 
 
+def test_a_ready_scans_warning_is_printed(c, monkeypatch, capsys):
+    """A `message` on a ready scan is a warning, not a refusal: the write goes
+    ahead, and the user is told what the scan could not settle."""
+    scanner = types.SimpleNamespace(
+        name="bootsel",
+        scan_candidates=lambda paths, **k: flashers.CandidateScan(
+            True, None, "2 RP2040s are in BOOTSEL", [{"port": None}, {"port": None}]
+        ),
+    )
+    monkeypatch.setattr(cli.flashers, "candidate_scanner", lambda flasher: scanner)
+    monkeypatch.setattr(cli.flashers, "by_name", lambda name: None)
+    choice = flashers.FirstInstall("katapult", "bootsel", "bootsel", None)
+
+    scan = cli._scan_bare_board(cli.ctx(), choice)
+
+    assert scan.ready
+    assert "2 RP2040s are in BOOTSEL" in capsys.readouterr().err
+
+
 def test_add_mcu_refuses_a_type_no_flasher_can_set_up_before_the_build(c, monkeypatch):
     from mcu_updater.errors import UnsupportedChipsetError
 

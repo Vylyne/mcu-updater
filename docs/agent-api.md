@@ -1262,7 +1262,7 @@ not writable regardless of how many are attached.
 
 | `reason` | What it means, and what to do |
 | --- | --- |
-| `null` | Ready. One board, one mounted volume. |
+| `null` | Ready. One mounted volume. With more boards attached than that, `message` warns that the write goes to the mounted one, which the panel cannot identify — unplug the others to be sure. Otherwise `message` is `null`. |
 | `none` | Nothing in BOOTSEL. Hold BOOTSEL and replug. |
 | `not_mounted` | A board is attached but nothing mounted its volume — this host has no automounter. Re-run `install.sh` to install the udev rule, which mounts each board under `/media/<user>/BOOTSEL/by-path/<port>`. |
 | `ambiguous` | More than one RPI-RP2 volume is mounted at once. |
@@ -1368,7 +1368,10 @@ install family's list can set up is not an error here:
 ```
 
 `message` is `first_install`'s reason, naming the line to change where there is
-one. An unknown type is still `unknown_type`. Read-only, and advertised whether
+one. On a `ready` scan a non-null `message` is a warning rather than a refusal
+(BOOTSEL's more-boards-than-mounts case): the wizard shows it beside the install
+button, and `fw.add_mcu.start` repeats it in the job log before the write. An
+unknown type is still `unknown_type`. Read-only, and advertised whether
 or not flashing is enabled.
 
 #### `fw.add_mcu.start`

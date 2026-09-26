@@ -45,6 +45,28 @@ def test_a_mounted_board_is_ready(api, fake_root):
     assert res["count"] == 1
     assert res["mount_count"] == 1
     assert res["devices"][0]["id"] == "E0C9125B0D9B"
+    assert res["message"] is None
+
+
+def test_a_second_unmounted_board_is_ready_with_a_warning(api, fake_root):
+    """One volume mounted and a second board in BOOTSEL without one: the write
+    can only go to the mounted one, so this stays `ready` - but nobody can
+    tell from the panel which physical board that is, so `message` says so."""
+    root, vol = mounted_bootsel_volume(fake_root)
+    bootsel_device_node(root, serial="AAAAAAAAAAAA")
+    bootsel_device_node(root, serial="E0C9125B0D9B")
+    api.paths = dataclasses.replace(api.paths, bootsel_root=str(root))
+
+    res = api.dispatch("fw.bootsel.scan")
+
+    assert res["ready"] is True
+    assert res["reason"] is None
+    assert res["count"] == 2
+    assert res["mount_count"] == 1
+    message = res["message"] or ""
+    assert "2 RP2040s are in BOOTSEL" in message
+    assert str(vol) in message
+    assert "unplug" in message.lower()
 
 
 def test_nothing_attached_says_to_hold_bootsel(api, fake_root):

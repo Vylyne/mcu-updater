@@ -1160,6 +1160,8 @@ def _scan_bare_board(c: Context, choice: FirstInstall) -> CandidateScan:
         raise FlashError(
             scan.message or f"no board is ready for {choice.flasher}.", reason=scan.reason
         )
+    if scan.message:
+        stdout_reporter("warn", scan.message)
     return scan
 
 

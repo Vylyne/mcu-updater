@@ -558,6 +558,10 @@ def test_two_bootsel_boards_one_mounted_is_not_paired_to_the_wrong_one(
     assert job.result["bootsel_id"] is None
     lines, _, _ = job.log_since(0)
     assert any("could not say which USB port" in line.text for line in lines)
+    # And the job says why, before the write: two boards, one written.
+    assert any(
+        line.stream == "warn" and "2 RP2040s are in BOOTSEL" in line.text for line in lines
+    )
     # No pairing recorded under either candidate's id - recording one against
     # the unmounted board's id would let `adopt_paired` later claim a board
     # that was never written.

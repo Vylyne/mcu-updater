@@ -475,6 +475,10 @@ class Bootsel:
         ``not_mounted``
             A board is attached but nothing mounted its volume - this host has
             no automounter. Re-run install.sh to install the udev rule.
+        Ready with more boards attached than mounted is still ready - the
+        write can only reach the mounted one - but `message` warns that the
+        panel cannot say which physical board that is.
+
         ``ambiguous``
             More than one RPI-RP2 volume is mounted at once. Unlike DFU there
             is no serial to pick one by - the mounts are now distinguishable
@@ -550,7 +554,17 @@ class Bootsel:
                 devices,
                 extra,
             )
-        return CandidateScan(True, None, None, devices, extra)
+        # One mount but more boards than that: the write can only go to the
+        # mounted one, so this stays ready - but nothing on the panel says
+        # which physical board that is, so the caller is told.
+        warning = (
+            f"{len(present)} RP2040s are in BOOTSEL but only one volume is "
+            f"mounted ({mounts[0]}), so the write goes to that board. Unplug "
+            f"the others first if you are not sure which one it is."
+            if len(present) > 1
+            else None
+        )
+        return CandidateScan(True, None, warning, devices, extra)
 
 
 def _find_mount(paths: Any) -> str:

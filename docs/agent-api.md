@@ -608,6 +608,22 @@ A display carries one extra key, `extra`, holding the facts only a screen has
 `firmware` is `null` for a display: PlatformIO builds from its own tree rather
 than from a `[firmware ...]` family, and naming one would be a guess.
 
+Every row also carries `first_install`, `{fw, flasher, reason}` — whether a
+*bare* board of this type (nothing on it yet) could be found and written from
+here, and by what. `fw` is the install family: the bootloader if the type
+declares one, else the application. `flasher` is the name of the flasher on
+that family's list that can scan for and write a bare board, or `null` when
+none can. `reason` is set exactly when `flasher` is `null`, and names the line
+to change - a missing `chipset:`, a family whose flashers: list has no writer
+for this chipset's boot ROM, or nothing on the list that can scan for a new
+board at all. Additive; no `API_VERSION` bump. Two examples:
+
+```json
+{"fw": "katapult", "flasher": "dfu_util", "reason": null}
+{"fw": "knomi_serial", "flasher": null,
+ "reason": "nothing on [firmware knomi_serial]'s flashers: (esptool) can scan for a new board, so this type cannot be set up from bare yet. Flash it by hand, then track it once it enumerates."}
+```
+
 ### Settings
 
 `fw.status`'s `settings` key and `fw.settings.get` both return the full

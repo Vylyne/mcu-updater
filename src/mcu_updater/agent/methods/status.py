@@ -737,7 +737,7 @@ class StatusMixin(_Base):
         # times to be told the same thing.
         families = firmware.load(self.paths)
         configurable = self.kconfig_available(families)
-        return [
+        out = [
             self._mcu_target(reg, payload, allowed, configurable, families)
             for payload in types
         ] + [
@@ -746,6 +746,28 @@ class StatusMixin(_Base):
             self._cmake_target(payload, allowed, families, rows)
             for payload in self.cmake_status()
         ]
+        # One answer for every provider's rows, from the type list: whether a
+        # bare board of this type can be set up, and by which flasher.
+        from ... import typelist
+
+        entries = {e.name: e for e in typelist.read_config(self.paths)[0]}
+        for row in out:
+            row["first_install"] = self._first_install_json(entries.get(row["name"]), families)
+        return out
+
+    @staticmethod
+    def _first_install_json(
+        entry: Any, families: dict[str, firmware.FirmwareFamily]
+    ) -> dict[str, Any]:
+        from ... import flashers
+
+        if entry is None:
+            return {
+                "fw": None,
+                "flasher": None,
+                "reason": "not in the type list, so there is nothing to set up from bare.",
+            }
+        return flashers.first_install(entry, families).to_json()
 
     def _mcu_target(
         self,

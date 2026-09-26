@@ -985,17 +985,16 @@ def flash_initial_bootloader(
 ) -> None:
     """Write the first image onto a bare board of this chipset.
 
-    `fw` is the install family (`install_family`): the type's bootloader
-    when it has one, and otherwise its application. Which ROM bootloader a
-    factory-bare board of this chipset speaks is a single fact about the
-    silicon, not a lookup table: every STM32 answers DFU, every RP2040 answers
-    BOOTSEL. `[firmware <fw>]`'s `flashers:` list picks the writer, through the
-    same `Flasher` protocol a batch uses, so a type with no bootloader needs
+    `fw` is the install family: the type's bootloader when it has one, and
+    otherwise its application - the same choice `flashers.first_install`
+    made to pick `state` below, before the caller ever reaches this call.
+    `[firmware <fw>]`'s `flashers:` list picks the writer, through the same
+    `Flasher` protocol a batch uses, so a type with no bootloader needs
     `bootsel` or `dfu_util` on its application's list.
 
     `state` is the ROM state `flashers.first_install` chose (`STATE_DFU`/
-    `STATE_BOOTSEL`) - the chipset is not asked, so a type whose chipset names
-    no vendor prefix is still set up by what its family lists.
+    `STATE_BOOTSEL`), not derived here from `chipset` - a type whose chipset
+    names no vendor prefix is still set up by what its family lists.
 
     `uf2_bin` is separate from `fw_bin`: BOOTSEL mass storage only accepts a
     `.uf2` - a `.bin` copied there is silently ignored - and a build only

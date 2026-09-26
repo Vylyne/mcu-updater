@@ -16,7 +16,7 @@ Success is:
 - No flasher, kind or `detail` key in `flashers/` names a screen, a display or
   esptool.
 - A family whose helper can identify its devices is confirmed at write time,
-  exactly as strongly as it is today.
+  at least as strongly as it is today (section 4 narrows one case).
 - A family with no identifier writes to its configured port.
 - Every wire shape is unchanged except the `flasher` value.
 
@@ -150,9 +150,9 @@ resolved.
   reporter=ctx.reporter)` once. A type with no identifier contributes `{}`.
 - Yields `{type name: {device_id: WatcherDevice}}`.
 
-It is never fatal. `identify` already turns an `UpdaterError` from the listen
-into a warning and an empty answer, and an empty answer means the configured
-port. That is today's "discovery could not run" softening, unchanged.
+It is never fatal. `identify` turns an `UpdaterError` from the listen into a
+warning and the map's answer (section 4), and an empty answer means the
+configured port. That keeps today's "discovery could not run" softening.
 
 `write()` and `port_for` keep their four cases:
 

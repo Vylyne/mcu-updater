@@ -734,8 +734,9 @@ class StatusMixin(_Base):
         # Read once for the whole projection. Every type asks the same two
         # questions of it - can this tree be configured, and what does it ship -
         # and a ten-type printer would otherwise re-read the config file ten
-        # times to be told the same thing.
-        families = firmware.load(self.paths)
+        # times to be told the same thing. The same read gives the type list
+        # every row's `first_install` is answered from.
+        entries, families = typelist.read_config(self.paths)
         configurable = self.kconfig_available(families)
         out = [
             self._mcu_target(reg, payload, allowed, configurable, families)
@@ -748,11 +749,9 @@ class StatusMixin(_Base):
         ]
         # One answer for every provider's rows, from the type list: whether a
         # bare board of this type can be set up, and by which flasher.
-        from ... import typelist
-
-        entries = {e.name: e for e in typelist.read_config(self.paths)[0]}
+        by_name = {e.name: e for e in entries}
         for row in out:
-            row["first_install"] = self._first_install_json(entries.get(row["name"]), families)
+            row["first_install"] = self._first_install_json(by_name.get(row["name"]), families)
         return out
 
     @staticmethod

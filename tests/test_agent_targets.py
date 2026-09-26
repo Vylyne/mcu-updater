@@ -55,6 +55,25 @@ def api(paths, live_registry_text):
     return Api(paths)
 
 
+def _config_opens(paths, monkeypatch) -> list[str]:
+    """Every open of the main config file from here on, by who opened it."""
+    import builtins
+    import traceback
+
+    real = builtins.open
+    opened: list[str] = []
+
+    def spy(file, *args, **kwargs):
+        if isinstance(file, (str, os.PathLike)) and os.fspath(file) == os.fspath(
+            paths.main_config
+        ):
+            opened.append(" <- ".join(f.name for f in reversed(traceback.extract_stack(limit=5))))
+        return real(file, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "open", spy)
+    return opened
+
+
 def _targets(api, provider=None):
     out = api.dispatch("fw.status")["targets"]
     return {t["name"]: t for t in out if provider is None or t["provider"] == provider}
@@ -1476,3 +1495,20 @@ def test_a_row_first_install_cannot_answer_still_renders(paths, tmp_path):
     row = {t["name"]: t for t in Api(paths).dispatch("fw.status")["targets"]}["roadrunner"]
     assert row["first_install"]["flasher"] is None
     assert "chipset:" in row["first_install"]["reason"]
+
+
+def test_first_install_does_not_read_the_config_file_again(api, paths, monkeypatch):
+    """`targets()` answers every row's `first_install` from the one read that
+    also gives it the families - not from a second read of the same file on
+    every `fw.status` poll. With `rows` supplied, what is left is that one read
+    and `cmake_status`'s own; a third means the second read is back."""
+    reg = api.registry()
+    types = [api.type_status(reg, n, api.mcu_info()) for n in reg.names()]
+    displays = api.pio_status()
+    rows = inventory.index(api.inventory())
+    opened = _config_opens(paths, monkeypatch)
+
+    out = api.targets(reg, types, displays, rows)
+
+    assert all("first_install" in row for row in out)
+    assert len(opened) <= 2, opened

@@ -25,13 +25,18 @@
     },
     {
       "name": "asking is best effort, never a tool error from the fallback",
-      "find": "        except UpdaterError as exc:\n            reporter(\"warn\", f\"could not ask the devices ({exc}) - using the watcher's map instead\")\n            return read_device_map(paths, entry)",
+      "find": "        except UpdaterError as exc:\n            reporter(\"warn\", f\"could not ask the devices ({exc}) - using the watcher's map instead\")\n            return {i: d for i, d in read_device_map(paths, entry).items() if d.present}",
       "replace": "        except UpdaterError:\n            raise"
     },
     {
       "name": "a listen that cannot run falls back to the map",
-      "find": "            return read_device_map(paths, entry)\n        return {i: dataclasses.replace(d, answered=True) for i, d in heard.items()}",
+      "find": "            return {i: d for i, d in read_device_map(paths, entry).items() if d.present}\n        return {i: dataclasses.replace(d, answered=True) for i, d in heard.items()}",
       "replace": "            return {}\n        return {i: dataclasses.replace(d, answered=True) for i, d in heard.items()}"
+    },
+    {
+      "name": "a stale map entry is not a fallback answer",
+      "find": "            return {i: d for i, d in read_device_map(paths, entry).items() if d.present}",
+      "replace": "            return {i: d for i, d in read_device_map(paths, entry).items()}"
     },
     {
       "name": "only what was heard is marked answered",

@@ -196,6 +196,33 @@ def test_a_listen_that_cannot_run_falls_back_to_the_map(paths, settings, monkeyp
     assert [s for s, _ in said] == ["info", "warn"]
 
 
+def test_a_stale_map_entry_is_not_a_fallback_answer(paths, settings, monkeypatch):
+    """The watcher is stopped while the ports are free, so its map is frozen:
+    an entry whose port node is gone names nothing. Offered to the write, it
+    sends the upload to a missing port, or refuses a device that is there."""
+    from mcu_updater.errors import ToolMissingError
+    from mcu_updater.helpers import knomi_serial as handler
+
+    def boom(*a, **kw):
+        raise ToolMissingError("no python3 here", tool="python3")
+
+    monkeypatch.setattr(
+        handler,
+        "read_device_map",
+        lambda p, e: {
+            "aaa111": _device("aaa111", "/dev/ttyUSB0"),
+            "bbb222": WatcherDevice(device_id="bbb222", port="/dev/ttyUSB1", present=False),
+        },
+    )
+    monkeypatch.setattr(handler, "discover", boom)
+
+    found = KnomiSerialHelper().identify(
+        paths, settings, _pio_entry(), ask=True, reporter=null_reporter
+    )
+
+    assert list(found) == ["aaa111"]
+
+
 def test_how_a_device_was_found_stays_off_the_wire():
     """`fw.device.list` puts `to_json` on the wire. `answered` is a fact about
     one write-time listen, not a field of the device list."""

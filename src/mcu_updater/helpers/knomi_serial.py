@@ -69,7 +69,9 @@ class KnomiSerialHelper:
         The map is the fallback only when the listen cannot run at all: it
         needs pyserial out of the module's source tree, and a host missing it
         must reach the caller's own "neither source could tell" refusal - which
-        names both sources - rather than a tool error.
+        names both sources - rather than a tool error. Only its present entries
+        are offered: the watcher is stopped while the ports are free, so the map
+        is frozen, and a port whose node is gone is not an answer.
         """
         if not ask:
             return read_device_map(paths, entry)
@@ -78,7 +80,7 @@ class KnomiSerialHelper:
             heard = discover(paths, settings, entry, reporter=reporter)
         except UpdaterError as exc:
             reporter("warn", f"could not ask the devices ({exc}) - using the watcher's map instead")
-            return read_device_map(paths, entry)
+            return {i: d for i, d in read_device_map(paths, entry).items() if d.present}
         return {i: dataclasses.replace(d, answered=True) for i, d in heard.items()}
 
     def remembered_at(self, paths: Paths, entry: pio.PioType) -> str:

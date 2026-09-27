@@ -202,6 +202,12 @@ def _identify(
     does not rest on every identifier getting it right.
     """
     if identifier is None:
+        ctx.reporter(
+            "warn",
+            f"nothing can confirm which '{env.name}' device is on which port - "
+            f"writing to the configured ports. A helper: on its [firmware ...] "
+            f"section that can identify its devices would.",
+        )
         return {}
     try:
         return identifier.identify(
@@ -265,11 +271,20 @@ def port_for(
 
     found = discovered.get(ident)
     if found is None:
-        return configured, None, (
-            "did not answer when asked which devices are present, so its "
-            "port cannot be confirmed. Writing to the port it used to be on "
-            "could write to a different device."
-        )
+        if any(entry.answered for entry in discovered.values()):
+            reason = (
+                "did not answer when asked which devices are present, so its "
+                "port cannot be confirmed. Writing to the port it used to be "
+                "on could write to a different device."
+            )
+        else:
+            reason = (
+                "is not among the devices its family last saw, and they "
+                "could not be asked directly, so its port cannot be "
+                "confirmed. Writing to the port it used to be on could "
+                "write to a different device."
+            )
+        return configured, None, reason
 
     if found.port != configured:
         ctx.reporter(

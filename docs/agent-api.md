@@ -1759,7 +1759,10 @@ first time, and each display can be asked directly: they broadcast their id
 every couple of seconds unprompted, so listening for a few seconds resolves
 id → port as a fact rather than a memory. That is the order the display project
 documents — ask Klipper, fall back to the watcher's file, then verify before
-writing.
+writing. This write-time check needs the family to name a helper that can
+identify its devices (`helper:` on its `[firmware ...]` section); without one
+the screens are written to their configured ports, unconfirmed, with a
+warning.
 
 A screen that answers on a different port than Klipper reported has moved, and
 is written where it actually is, with a warning. A screen that does **not**
@@ -1772,9 +1775,10 @@ A screen with no hardware id at all — a `serial:` section whose klippy module 
 too old to report one — falls back to its configured port rather than failing.
 And if discovery cannot run at all (no pyserial, no source tree), each screen
 is written where the watcher's map says, or at its configured port when the
-map is empty. That is what every flash did before this existed, and such a
-write records `remembered` or no confidence — never `answered`. The map is
-not a free pass, though: a screen it does not list while it lists others is
+map is empty - the latter being what every flash did before this existed.
+Either way the write records `remembered` or no confidence — never
+`answered`. The map is not a free pass, though: a screen it does not list
+while it lists others is
 refused like a silent one, because the map is the only word on what is
 present and it does not name this screen. A listen that runs and hears
 nothing at all is treated the same way minus the map: nothing was confirmed,

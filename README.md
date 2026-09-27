@@ -590,7 +590,14 @@ platformio_env: knomi_toolchanger      ; REQUIRED - no default, unlike everythin
 is often wrong for it (`knomi_serial` itself ships a `knomi_i2cscan` diagnostic
 env beside the firmware one) and `platformio.ini`'s `default_envs` names what
 builds by default, not a canonical choice - so guessing either would build the
-wrong thing silently. `platformio_bin` in `[updater]` points at `pio` if
+wrong thing silently.
+
+A family's devices are only confirmed at write time if it also names its
+`helper:` (`helper: knomi_serial` above, for a KNOMI). Without one, `flashers:
+platformio` still writes every device to its configured port, just with no
+confidence and a warning that nothing could confirm which device that is.
+
+`platformio_bin` in `[updater]` points at `pio` if
 neither the `PATH` nor `~/.platformio/penv/bin/pio` finds it.
 
 | Key | Meaning |

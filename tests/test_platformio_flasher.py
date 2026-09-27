@@ -136,11 +136,20 @@ def test_a_dry_run_asks_nobody(paths):
 def test_a_family_with_no_identifier_is_written_at_its_configured_port(paths, uploads):
     """Nothing can say which device is which, so the configured port is the
     answer - what every write did before identity existed - and nothing
-    claims it was confirmed."""
-    result, _ = _write_one(paths, _target(paths, _device(_env(), "/dev/ttyUSB0"), None))
+    claims it was confirmed. The caller is told so, once per type, rather
+    than losing verification silently."""
+    result, ctx = _write_one(paths, _target(paths, _device(_env(), "/dev/ttyUSB0"), None))
 
     assert uploads == ["/dev/ttyUSB0"]
     assert result["confidence"] is None
+    assert ctx.said == [
+        (
+            "warn",
+            "nothing can confirm which 'knomi_toolchanger' device is on which "
+            "port - writing to the configured ports. A helper: on its "
+            "[firmware ...] section that can identify its devices would.",
+        )
+    ]
 
 
 def test_an_identifier_that_fails_leaves_the_configured_port(paths, uploads):
@@ -167,6 +176,47 @@ def test_the_confidence_says_how_the_device_was_found(paths, uploads, answered, 
     result, _ = _write_one(paths, _target(paths, _device(env, "/dev/ttyUSB0"), ident))
 
     assert result["confidence"] == reason
+
+
+def test_a_device_that_did_not_answer_is_refused_when_others_did():
+    """`discovered` came from a listen that ran: some entry answered, so the
+    refusal's claim that this one was asked and stayed silent is true."""
+    from mcu_updater.flashers.platformio import port_for
+
+    found = WatcherDevice(device_id="other", port="/dev/ttyUSB1", present=True, answered=True)
+    port, confidence, problem = port_for(
+        {"name": "t0_knomi", "port": "/dev/ttyUSB0", "device_id": "aaa111"},
+        {"other": found},
+        _ctx(),
+    )
+
+    assert (port, confidence) == ("/dev/ttyUSB0", None)
+    assert problem == (
+        "did not answer when asked which devices are present, so its "
+        "port cannot be confirmed. Writing to the port it used to be on "
+        "could write to a different device."
+    )
+
+
+def test_a_device_absent_from_a_remembered_map_is_not_told_it_was_asked():
+    """`discovered` here is the identifier's remembered map - no entry
+    answered a listen, because none could run. Nothing was asked, so the
+    refusal must not claim it was."""
+    from mcu_updater.flashers.platformio import port_for
+
+    found = WatcherDevice(device_id="other", port="/dev/ttyUSB1", present=True, answered=False)
+    port, confidence, problem = port_for(
+        {"name": "t0_knomi", "port": "/dev/ttyUSB0", "device_id": "aaa111"},
+        {"other": found},
+        _ctx(),
+    )
+
+    assert (port, confidence) == ("/dev/ttyUSB0", None)
+    assert problem == (
+        "is not among the devices its family last saw, and they could not be "
+        "asked directly, so its port cannot be confirmed. Writing to the port "
+        "it used to be on could write to a different device."
+    )
 
 
 def test_a_callers_own_detail_rides_along(paths):

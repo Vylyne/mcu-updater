@@ -102,6 +102,18 @@
       "replace": "    reason = discovery.ANSWERED"
     },
     {
+      "name": "no identifier warns",
+      "file": "src/mcu_updater/flashers/platformio.py",
+      "find": "        ctx.reporter(\n            \"warn\",\n            f\"nothing can confirm which '{env.name}' device is on which port - \"\n            f\"writing to the configured ports. A helper: on its [firmware ...] \"\n            f\"section that can identify its devices would.\",\n        )",
+      "replace": "        pass"
+    },
+    {
+      "name": "a fallback refusal does not claim it asked",
+      "file": "src/mcu_updater/flashers/platformio.py",
+      "find": "        if any(entry.answered for entry in discovered.values()):",
+      "replace": "        if True:"
+    },
+    {
       "name": "a record the screen disagrees with is discarded",
       "file": "src/mcu_updater/agent/methods/status.py",
       "find": "        record = flashlog.entry_for(\n            hardware_id_key(ident), reader.running_sha(entry.get(\"firmware_version\"))\n        )",

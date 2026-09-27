@@ -1778,11 +1778,11 @@ is written where the watcher's map says, or at its configured port when the
 map is empty — the latter being what every flash did before this existed.
 Either way the write records `remembered` or no confidence — never
 `answered`. The map is not a free pass, though: a screen it does not list
-while it lists others is
-refused like a silent one, because the map is the only word on what is
-present and it does not name this screen. A listen that runs and hears
-nothing at all is treated the same way minus the map: nothing was confirmed,
-so every screen is written to its configured port with no confidence.
+while it lists others is refused like a silent one, because the map is the
+only word on what is present and it does not name this screen. A listen that
+runs and hears nothing at all is treated the same way minus the map: nothing
+was confirmed, so every screen is written to its configured port with no
+confidence.
 Discovery is skipped entirely on a dry run, since it opens real serial ports.
 
 Klipper is stopped once for the batch, because the klippy module holds the port

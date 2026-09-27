@@ -502,15 +502,37 @@ def test_the_next_write_moves_the_old_key(paths):
     }
 
 
-def test_a_record_under_the_new_prefix_wins_over_the_old(paths):
-    """Both can only be present if a newer build wrote the new key and an older
-    build then wrote the old one beside it. The new key was written by the code
-    that knows about both, so it is kept."""
+def test_the_newer_of_two_records_wins(paths):
+    """Both can only be present if a rolled-back, pre-rename build wrote a
+    fresh `display:` record after the new code had already written a `hwid:`
+    one - or vice versa, if the rollback happened first. Either way it is the
+    later write that should be trusted, not automatically the key it landed
+    under."""
     from mcu_updater.build import FlashLog, hardware_id_key
 
     _write_raw_flashlog(
         paths,
-        {"display:aaa111": {"type": "old"}, "hwid:aaa111": {"type": "new"}},
+        {"display:aaa111": {"type": "old", "at": 200}, "hwid:aaa111": {"type": "new", "at": 100}},
+    )
+
+    assert FlashLog(paths).entry_for(hardware_id_key("aaa111"), None)["type"] == "old"
+
+    _write_raw_flashlog(
+        paths,
+        {"display:aaa111": {"type": "old", "at": 100}, "hwid:aaa111": {"type": "new", "at": 200}},
+    )
+
+    assert FlashLog(paths).entry_for(hardware_id_key("aaa111"), None)["type"] == "new"
+
+
+def test_a_display_record_with_no_stamp_never_beats_a_stamped_hwid_record(paths):
+    """A missing `at` counts as oldest, so a ragged legacy record can never
+    displace a `hwid:` record that has a real timestamp."""
+    from mcu_updater.build import FlashLog, hardware_id_key
+
+    _write_raw_flashlog(
+        paths,
+        {"display:aaa111": {"type": "old"}, "hwid:aaa111": {"type": "new", "at": 100}},
     )
 
     assert FlashLog(paths).entry_for(hardware_id_key("aaa111"), None)["type"] == "new"

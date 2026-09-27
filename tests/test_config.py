@@ -433,7 +433,7 @@ def test_families_built_by_different_tools_are_refused(paths):
     _write(
         paths,
         "[firmware knomi_serial]\nsource: ~/knomi_serial\nbuilder: platformio\n"
-        "helper: knomi_serial\nflashers: esptool\n\n"
+        "helper: knomi_serial\nflashers: platformio\n\n"
         "[type odd]\nchipset: x\nfirmware: klipper, knomi_serial\nserials:\n",
     )
     with pytest.raises(ConfigCorruptError) as exc:

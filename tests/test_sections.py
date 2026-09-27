@@ -100,7 +100,7 @@ def test_a_platformio_type_is_recognised_by_its_declared_firmware(paths):
     with open(paths.main_config, "w", encoding="utf-8") as fh:
         fh.write(
             "[firmware knomi_serial]\nsource: ~/knomi-serial\nbuilder: platformio\n"
-            "helper: knomi_serial\nflashers: esptool\n\n"
+            "helper: knomi_serial\nflashers: platformio\n\n"
             "[type knomi_toolchanger]\nfirmware: knomi_serial\nplatformio_env: knomi_toolchanger\n"
         )
 
@@ -115,7 +115,7 @@ def test_a_pio_type_is_not_picked_up_by_the_mcu_registry(paths):
         fh.write(
             with_base_firmwares(
                 "[firmware knomi_serial]\nsource: ~/knomi-serial\nbuilder: platformio\n"
-                "helper: knomi_serial\nflashers: esptool\n\n"
+                "helper: knomi_serial\nflashers: platformio\n\n"
                 "[type board]\nchipset: stm32f072xb\nfirmware: klipper\n"
                 "[type knomi]\nfirmware: knomi_serial\nplatformio_env: knomi\n"
             )

@@ -158,7 +158,7 @@ def _declare_platformio(paths, fake_root, extra: str = "") -> None:
     _append_config(
         paths,
         f"\n[firmware knomi_serial]\nsource: {tree}\nbuilder: platformio\n"
-        "helper: knomi_serial\nflashers: esptool\n\n"
+        "helper: knomi_serial\nflashers: platformio\n\n"
         f"[type knomi]\nfirmware: knomi_serial\nplatformio_env: knomi\n{extra}",
     )
 

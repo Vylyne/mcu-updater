@@ -934,7 +934,7 @@ def test_flash_all_selects_screens_beside_boards(api, paths, fake_root, screens)
     api.runner.cancel(res["job_id"])
     api.runner.wait(timeout=30)
 
-    assert [d["flasher"] for d in res["displays"]] == ["esptool", "esptool"]
+    assert [d["flasher"] for d in res["displays"]] == ["platformio", "platformio"]
     assert {d["id"] for d in res["displays"]} == {
         screens_port(screens, "t0"),
         screens_port(screens, "t1"),
@@ -969,7 +969,7 @@ def test_a_fleet_flash_writes_boards_and_screens_under_one_stop(
     job = api.runner.get(res["job_id"])
 
     assert job.state == "succeeded", job.error
-    assert [f["flasher"] for f in job.result["flashed"]] == ["esptool", "esptool"]
+    assert [f["flasher"] for f in job.result["flashed"]] == ["platformio", "platformio"]
     # Stopped once for the batch, not once per device.
     assert made["klipper"].actions == ["stop", "start"]
 

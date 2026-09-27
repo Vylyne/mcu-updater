@@ -594,7 +594,7 @@ def test_a_board_its_family_cannot_write_refuses_before_a_job(flashable, paths):
         text = fh.read()
     assert block in text
     with open(paths.registry_file, "w", encoding="utf-8") as fh:
-        fh.write(text.replace(block, block.replace("flashtool", "esptool")))
+        fh.write(text.replace(block, block.replace("flashtool", "platformio")))
 
     with pytest.raises(RpcError) as exc:
         flashable.dispatch("fw.flash", {"serial": TRACKED_SERIAL})

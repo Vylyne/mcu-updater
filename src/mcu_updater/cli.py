@@ -764,7 +764,7 @@ def _pio_targets(
                     chipset="",
                     state=inventory.STATE_UNKNOWN,
                     fw=display.firmware,
-                    kind=flashers.KIND_SCREEN,
+                    kind=flashers.KIND_PORT,
                     detail={
                         "display": display,
                         "screen": {

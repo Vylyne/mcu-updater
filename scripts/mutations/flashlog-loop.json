@@ -61,7 +61,7 @@
     },
     {
       "name": "a screen with no hardware id has nothing to file",
-      "file": "src/mcu_updater/flashers/esptool.py",
+      "file": "src/mcu_updater/flashers/platformio.py",
       "find": "        if not ident:\n            return None",
       "replace": "        if False:\n            return None"
     }

@@ -70,7 +70,7 @@ def display(tree):
 #: some platformio-built family to point a [type ...] section at.
 _KNOMI_SERIAL_FAMILY = (
     "[firmware knomi_serial]\nsource: ~/knomi_serial\nbuilder: platformio\n"
-    "helper: knomi_serial\nflashers: esptool\n\n"
+    "helper: knomi_serial\nflashers: platformio\n\n"
 )
 
 
@@ -209,7 +209,7 @@ def test_a_type_is_pio_when_its_declared_firmware_is_platformio_built(paths, fak
     with open(paths.main_config, "w", encoding="utf-8") as fh:
         fh.write(
             "[firmware knomi_serial]\nsource: ~/knomi_serial\nbuilder: platformio\n"
-            "helper: knomi_serial\nflashers: esptool\n\n"
+            "helper: knomi_serial\nflashers: platformio\n\n"
             "[type knomi]\nchipset: esp32\nfirmware: knomi_serial\nplatformio_env: knomi\n"
         )
 
@@ -227,7 +227,7 @@ def test_a_new_style_pio_type_is_not_picked_up_by_the_mcu_registry(paths, fake_r
     with open(paths.main_config, "w", encoding="utf-8") as fh:
         fh.write(
             "[firmware knomi_serial]\nsource: ~/knomi_serial\nbuilder: platformio\n"
-            "helper: knomi_serial\nflashers: esptool\n\n"
+            "helper: knomi_serial\nflashers: platformio\n\n"
             "[type knomi]\nchipset: esp32\nfirmware: knomi_serial\nplatformio_env: knomi\n"
         )
 
@@ -244,7 +244,7 @@ def test_saving_the_registry_does_not_delete_a_new_style_pio_type(paths, fake_ro
         fh.write(
             with_base_firmwares(
                 "[firmware knomi_serial]\nsource: ~/knomi_serial\nbuilder: platformio\n"
-                "helper: knomi_serial\nflashers: esptool\n\n"
+                "helper: knomi_serial\nflashers: platformio\n\n"
                 "[type knomi]\nchipset: esp32\nfirmware: knomi_serial\nplatformio_env: knomi\n"
             )
         )

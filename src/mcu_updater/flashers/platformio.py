@@ -1,4 +1,4 @@
-"""esptool, through PlatformIO: the screens.
+"""PlatformIO: one env, uploaded to a port.
 
 The flasher that made this seam worth having. Every other write here targets a
 device by an identity it carries on the bus; a display is an indistinguishable
@@ -33,7 +33,7 @@ from typing import TYPE_CHECKING, Any
 from ..artifacts import KIND_PIO_ENV, Artifact
 from ..devices import STATE_ESP_ROM
 from ..errors import FlashError, UpdaterError
-from .spec import KIND_SCREEN, Bench, Device, FlashRecord, FlashTarget
+from .spec import KIND_PORT, Bench, Device, FlashRecord, FlashTarget
 
 if TYPE_CHECKING:
     # Annotation only. `discovery.spec` imports from this package, so a runtime
@@ -46,11 +46,11 @@ if TYPE_CHECKING:
     from ..paths import Paths
 
 
-class Esptool:
+class PlatformIO:
     """Writes one device of one PlatformIO type."""
 
-    name = "esptool"
-    label = "esptool (PlatformIO)"
+    name = "platformio"
+    label = "PlatformIO upload"
     chipsets: tuple[str, ...] = ("esp32",)
     states: tuple[str, ...] = (STATE_ESP_ROM,)
     #: The klippy module holds the port open for the write itself, and
@@ -63,7 +63,7 @@ class Esptool:
     def supports(self, device: Device, helper: Helper | None) -> bool:
         """A PlatformIO device reached through its configured port. Its
         identity is confirmed at write time, in `prepared`."""
-        return device.kind == KIND_SCREEN
+        return device.kind == KIND_PORT
 
     def target(
         self,
@@ -340,7 +340,7 @@ def target_for(
     just carries it onto the target, same as `flasher` and `type`.
     """
     return FlashTarget(
-        flasher=Esptool.name,
+        flasher=PlatformIO.name,
         type=display.name,
         id=screen["configured_path"],
         stop_services=stop_services,

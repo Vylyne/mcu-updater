@@ -79,8 +79,9 @@ class Bench:
 KIND_SERIAL = "serial"
 #: A CAN UUID. Its liveness is often unknown, and flashtool writes it anyway.
 KIND_CANBUS = "canbus_uuid"
-#: A PlatformIO device reached through its configured port.
-KIND_SCREEN = "screen"
+#: A device reached at a configured port; its identity, if its family has a way
+#: to know one, is confirmed at write time.
+KIND_PORT = "port"
 #: A board with no firmware of ours yet, in a ROM bootloader (DFU or BOOTSEL).
 KIND_BARE = "bare"
 
@@ -449,7 +450,7 @@ def staged_record(bench: Bench, target: FlashTarget, *, fw: str, kind: str) -> F
 __all__ = [
     "KIND_BARE",
     "KIND_CANBUS",
-    "KIND_SCREEN",
+    "KIND_PORT",
     "KIND_SERIAL",
     "Bench",
     "CandidateScan",

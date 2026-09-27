@@ -18,8 +18,8 @@ from ..errors import NoFlasherError
 from ..firmware import missing_section_message
 from .bootsel import Bootsel
 from .dfu_util import DfuUtil
-from .esptool import Esptool
 from .flashtool import Flashtool
+from .platformio import PlatformIO
 from .spec import KIND_BARE, KIND_SERIAL, CandidateScanner, Device, Flasher, FlashTarget
 
 if TYPE_CHECKING:
@@ -32,7 +32,7 @@ if TYPE_CHECKING:
 #:
 FLASHERS: tuple[Flasher, ...] = (
     Flashtool(),
-    Esptool(),
+    PlatformIO(),
     DfuUtil(),
     Bootsel(),
 )

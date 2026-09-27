@@ -58,7 +58,7 @@ BUILDERS: tuple[str, ...] = ("cmake", "kconfig_make", "platformio")
 #: Every name a `flashers:` list may use - `flashers.registry`'s names, spelled
 #: out here because that package imports hardware code this module must not. A
 #: test holds the two equal.
-FLASHERS: tuple[str, ...] = ("bootsel", "dfu_util", "esptool", "flashtool")
+FLASHERS: tuple[str, ...] = ("bootsel", "dfu_util", "flashtool", "platformio")
 
 #: Every `helper:` value a registered helper answers to - `helpers.registry`'s
 #: names, for the same reason. A test holds the two equal.
@@ -76,7 +76,7 @@ PROVISIONING_HELPERS: tuple[str, ...] = ("roadrunner",)
 _SUGGESTED_FLASHERS: dict[str, str] = {
     "cmake": "bootsel",
     "kconfig_make": "flashtool",
-    "platformio": "esptool",
+    "platformio": "platformio",
 }
 
 #: Keys install.sh writes into the two sections it seeds, beside `source:`.

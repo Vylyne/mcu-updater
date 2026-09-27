@@ -186,7 +186,7 @@ def test_a_display_build_is_blocked_by_a_missing_source_tree(api, paths, fake_ro
     with open(paths.main_config, "a", encoding="utf-8") as fh:
         fh.write(
             "\n[firmware knomi_missing]\nsource: /nope/not/here\nbuilder: platformio\n"
-            "helper: knomi_serial\nflashers: esptool\n\n"
+            "helper: knomi_serial\nflashers: platformio\n\n"
             f"[type {ENV}]\nchipset: esp32\nfirmware: knomi_missing\nplatformio_env: {ENV}\n"
         )
     api = Api(

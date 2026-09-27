@@ -44,9 +44,9 @@
       "replace": "(\"stm32\", \"rp2040\")"
     },
     {
-      "name": "esptool writes screens only",
-      "file": "src/mcu_updater/flashers/esptool.py",
-      "find": "        return device.kind == KIND_SCREEN",
+      "name": "platformio writes port devices only",
+      "file": "src/mcu_updater/flashers/platformio.py",
+      "find": "        return device.kind == KIND_PORT",
       "replace": "        return True"
     },
     {

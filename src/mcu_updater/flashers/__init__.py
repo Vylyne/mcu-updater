@@ -19,8 +19,8 @@ from __future__ import annotations
 from .batch import PlainContext, write_all
 from .bootsel import Bootsel
 from .dfu_util import DfuUtil
-from .esptool import Esptool
 from .flashtool import Flashtool
+from .platformio import PlatformIO
 from .registry import (
     FLASHERS,
     FirstInstall,
@@ -40,7 +40,7 @@ from .registry import (
 from .spec import (
     KIND_BARE,
     KIND_CANBUS,
-    KIND_SCREEN,
+    KIND_PORT,
     KIND_SERIAL,
     Bench,
     CandidateScan,
@@ -59,7 +59,7 @@ __all__ = [
     "FLASHERS",
     "KIND_BARE",
     "KIND_CANBUS",
-    "KIND_SCREEN",
+    "KIND_PORT",
     "KIND_SERIAL",
     "Bench",
     "Bootsel",
@@ -67,13 +67,13 @@ __all__ = [
     "CandidateScanner",
     "Device",
     "DfuUtil",
-    "Esptool",
     "FirstInstall",
     "FlashRecord",
     "FlashTarget",
     "Flasher",
     "Flashtool",
     "PlainContext",
+    "PlatformIO",
     "TrackedBoard",
     "artifact_path",
     "by_flasher",

@@ -621,7 +621,7 @@ board at all. Additive; no `API_VERSION` bump. Two examples:
 ```json
 {"fw": "katapult", "flasher": "dfu_util", "reason": null}
 {"fw": "knomi_serial", "flasher": null,
- "reason": "nothing on [firmware knomi_serial]'s flashers: (esptool) can scan for a new board, so this type cannot be set up from bare yet. Flash it by hand, then track it once it enumerates."}
+ "reason": "nothing on [firmware knomi_serial]'s flashers: (platformio) can scan for a new board, so this type cannot be set up from bare yet. Flash it by hand, then track it once it enumerates."}
 ```
 
 ### Settings
@@ -1084,7 +1084,7 @@ in its confirmation:
              "chipset": "stm32f072xb", "state": "unknown", "bridge": true,
              "reason": "unknown_liveness"}],
  "displays": [{"type": "knomi_toolchanger", "id": "/dev/knomi_t0",
-               "flasher": "esptool", "name": "t0_knomi",
+               "flasher": "platformio", "name": "t0_knomi",
                "section": "knomi_serial t0_knomi", "reason": "source_changed"}]}
 ```
 
@@ -1139,10 +1139,11 @@ flashtool result because that is what a board's id has always been called here.
 
 For a screen, that "configured port" is deliberately still the port, and from
 here on it can differ from the `id` the screen's `targets[]` row reports. This
-half of the wire says what esptool actually wrote to; a `device_id:` screen is
-addressed by an id and written to a tty. The row's `path` carries that same
-tty, which is how a caller correlates the two. A screen's flash *action* is the
-row's side of that line, not this one: it carries the identity, in `port`.
+half of the wire says what the `platformio` flasher actually wrote to; a
+`device_id:` screen is addressed by an id and written to a tty. The row's
+`path` carries that same tty, which is how a caller correlates the two. A
+screen's flash *action* is the row's side of that line, not this one: it
+carries the identity, in `port`.
 
 #### Grouped by requirement, not by kind
 
@@ -1179,8 +1180,9 @@ builder, and never a chipset prefix: it is the install family's (below) first
 `flashers:` entry that can both scan for a bare board and write one of the
 type's `chipset` (`flashers.first_install`). What that resolves to today: a
 kconfig type over DFU (STM32) or BOOTSEL (RP2040), and a cmake type over
-BOOTSEL (RP2040). A PlatformIO type has no candidate scanner yet — esptool
-detection is deferred — so its `first_install` names no flasher. The whole
+BOOTSEL (RP2040). A PlatformIO type has no candidate scanner yet — detecting
+a bare device for the `platformio` flasher is deferred — so its
+`first_install` names no flasher. The whole
 flow is four calls of which only two are new:
 
 | Step | Call | New? |
@@ -1369,7 +1371,7 @@ install family's list can set up is not an error here:
 
 ```json
 {"devices": [], "count": 0, "ready": false, "reason": "no_scanner",
- "message": "nothing on [firmware knomi_serial]'s flashers: (esptool) can scan ...",
+ "message": "nothing on [firmware knomi_serial]'s flashers: (platformio) can scan ...",
  "flasher": null}
 ```
 
@@ -1768,8 +1770,13 @@ path now. The batch carries on, as it does for any other per-screen failure.
 Two deliberate softenings, both to avoid taking away something that works today.
 A screen with no hardware id at all — a `serial:` section whose klippy module is
 too old to report one — falls back to its configured port rather than failing.
-And if discovery cannot run at all (no pyserial, no source tree) every screen
-falls back, because that is exactly what every flash did before this existed.
+And if discovery cannot run at all (no pyserial, no source tree), each screen
+is written where the watcher's map says, or at its configured port when the
+map has nothing. That is what every flash did before this existed, and such a
+write records `remembered` or no confidence — never `answered`. A listen that
+runs and hears nothing at all is treated the same way minus the map: nothing
+was confirmed, so every screen is written to its configured port with no
+confidence.
 Discovery is skipped entirely on a dry run, since it opens real serial ports.
 
 Klipper is stopped once for the batch, because the klippy module holds the port
@@ -1782,7 +1789,7 @@ could be skipped.
 
 ```json
 {"env": "knomi_toolchanger",
- "flashed": [{"type": "knomi_toolchanger", "id": "/dev/knomi_t0", "flasher": "esptool",
+ "flashed": [{"type": "knomi_toolchanger", "id": "/dev/knomi_t0", "flasher": "platformio",
               "name": "t0_knomi", "port": "/dev/knomi_t0",
               "chip": "ESP32-S3 (QFN56) (revision v0.2)"}],
  "failures": []}

@@ -159,8 +159,9 @@ So, going forward:
   system* - PlatformIO, CMake, kconfig+make. Nothing in `providers/` should
   name a vendor or a board.
 - **Flashers are generic.** A flasher answers questions about a *transport* -
-  flashtool over USB/CAN, esptool, DFU, BOOTSEL mass-storage. `dfu` and
-  `bootsel` are the shape to copy: they describe a mechanism, not a product.
+  flashtool over USB/CAN, a PlatformIO upload to a port (`platformio`), DFU,
+  BOOTSEL mass-storage. `dfu` and `bootsel` are the shape to copy: they
+  describe a mechanism, not a product.
 - **Discovery may be firmware-specific, and legitimately is.** How a board
   announces itself is a property of its firmware, so `discovery/roadrunner.py`
   and `discovery/knomi_serial/` are in the right place. `byid` is generic.
@@ -528,9 +529,9 @@ confirms it never consults it anywhere today.
 Setting up a bare board is a question for the install family's `flashers:`
 list, not for the builder or a chipset prefix: `flashers.first_install` walks
 that list and takes the first `CandidateScanner` whose `supports()` takes a
-bare device of the type's `chipset`. A new mechanism (PlatformIO's `esptool`,
-say) is one capability on its flasher module, with no change to the agent, the
-wire, or the wizard.
+bare device of the type's `chipset`. A new mechanism (a bare-device scanner
+for the `platformio` flasher, say) is one capability on its flasher module,
+with no change to the agent, the wire, or the wizard.
 
 Identification lives in the scanner, not in a caller: it is handed the type
 list's tracked boards, because deriving a ROM id from a running serial is
@@ -585,21 +586,42 @@ is one its *firmware* knows and will state if asked — which makes "what is thi
 thing" a question about the firmware, not about the host, and therefore a
 `helpers.Identifier` rather than a `discovery.Source`.
 
-Both seams stay, and they compose: the handler's answer is a sighting like any
-other, and `confirm()` still decides what to trust at write time.
+Both seams stay, and each has its own caller. The identifier answers at write
+time too: the `platformio` flasher asks it with `ask=True` inside the stop,
+and never runs `confirm()`. `confirm()` ranks sightings for boards.
 
 The capability carries `ask` as a required keyword because the two sources cost
 three orders of magnitude apart — reading `devices.json` versus opening every
 free serial port for six seconds — and only the caller knows whether it has
 stopped the services holding those ports. `fw.device.list` passes False and
-takes the remembered answer or nothing; the CLI passes True from inside
-`_ports_free` and takes the authoritative one. There is no default, so that
-cost cannot be acquired by omission.
+takes the remembered answer or nothing. The CLI, choosing what to flash
+inside `_ports_free`, passes False first and True only when the map is
+empty, because the write asks again anyway. For knomi_serial, True means the
+listen is the answer: the map is used only when the listen cannot run, and a
+device the listen did not hear is not reported with a remembered port. There
+is no default, so that cost cannot be acquired by omission.
 
 One consequence worth stating: `providers.pio` no longer re-exports
 `read_device_map`, `discover` or `device_map_path`. A provider is handed its
 configuration and builds from it; going looking for devices was never its job,
 and the shim that made it look like it was is gone.
+
+### The PlatformIO flasher is `platformio`, not `esptool`
+
+It runs `pio run -t upload` for any PlatformIO env and does not implement
+esptool; PlatformIO runs esptool underneath for an ESP32, and would run
+something else for another target. The name `esptool` stays free for a real
+ESP32 image flasher, one that writes an image without PlatformIO - nothing
+needs one yet. The old name was dropped without an alias because the
+`flashers:` key had not reached `main`.
+
+Its kind is `KIND_PORT`, and its `detail` names an env and a port, not a
+display or a screen. That vocabulary still survives on the wire (`displays`,
+`screens`, `display_flash`); removing it is a wire change with its own
+`API_VERSION` bump, tracked in the README's TODO. The flash log's keys were
+not wire, so they moved here: `hwid:<id>`, with `FlashLog` reading an old
+`display:<id>` under its new name until every host has flashed since; if a
+rolled-back build left both, the later-written record wins.
 
 ### One loop per operation, and handlers for everything else
 

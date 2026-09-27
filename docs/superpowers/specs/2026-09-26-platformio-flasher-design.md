@@ -144,9 +144,10 @@ The function is renamed, and its callers (`flashers/platformio.py`,
 flash log's keys never leave the agent - it is read only through `entry_for`,
 `record` and `forget`, and no method puts a key on the wire - so the prefix moves
 here rather than with the wire cleanup. `FlashLog._read` hands back every
-`display:<id>` record under its `hwid:` name (a record already under the new
-name wins), and the next write persists that, so no host loses a record. The
-old prefix is removed once hestia and athena have each flashed since.
+`display:<id>` record under its `hwid:` name (if both exist - a rolled-back
+build wrote the old key after the new one - the one with the later `at`
+wins), and the next write persists that, so no host loses a record. The old
+prefix is removed once hestia and athena have each flashed since.
 
 ### 3. Rediscovery through the helper
 

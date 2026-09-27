@@ -362,7 +362,7 @@ def first_install(entry: _Declared, families: dict[str, FirmwareFamily]) -> Firs
     bare board of it - the first, in list order, that is a `CandidateScanner`
     and whose `supports()` takes a bare device in one of its own states.
 
-    No builder and no flasher name is compared: `flashtool` and `esptool`
+    No builder and no flasher name is compared: `flashtool` and `platformio`
     refuse `KIND_BARE` and cannot scan, so they are never chosen.
 
     Pure - no bus, no subprocess, no file read - because `fw.status` asks it

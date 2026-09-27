@@ -912,24 +912,47 @@ def build(
 # --------------------------------------------------------------------------
 
 
-def display_key(ident: str) -> str:
-    """A display's flash-log key, from its hardware id.
+#: The prefix of a hardware-id key, and what `hardware_id_key` wrote before it
+#: was renamed. The old one is read, never written: `FlashLog._read` moves each
+#: such key to its new name, and the next write persists that. Delete the old
+#: one, and `_migrated`, once every host has flashed since (hestia, athena).
+_HARDWARE_ID_PREFIX = "hwid:"
+_LEGACY_HARDWARE_ID_PREFIX = "display:"
+
+
+def hardware_id_key(ident: str) -> str:
+    """A flash-log key for a device known by a hardware id rather than a serial.
 
     Prefixed because the log is one flat dict and these are two identity
-    namespaces: a board is keyed by its `/dev/serial/by-id` serial, a screen by
-    the six hex characters of its eFuse MAC. They cannot collide in practice,
-    but sharing a keyspace unprefixed leaves nothing in the file saying which
-    kind of name a key is.
+    namespaces: a board is keyed by its `/dev/serial/by-id` serial, a device
+    reached at a port by the id its firmware states (a KNOMI's six hex
+    characters of eFuse MAC). They cannot collide in practice, but sharing a
+    keyspace unprefixed leaves nothing in the file saying which kind of name a
+    key is.
 
     **Never a port.** `docs/decisions.md` rules out per-port tracking, and the
-    hardware id is exactly what made dropping it safe - it follows the screen
-    into any socket. A screen with no id gets no record at all rather than one
+    hardware id is exactly what made dropping it safe - it follows the device
+    into any socket. A device with no id gets no record at all rather than one
     keyed by where it happened to be.
 
     Lowercased on the way in: the id is emitted lowercase at both ends, but the
     vendor's own docs say not to depend on that.
     """
-    return f"display:{ident.lower()}"
+    return f"{_HARDWARE_ID_PREFIX}{ident.lower()}"
+
+
+def _migrated(data: dict[str, Any]) -> dict[str, Any]:
+    """`data` with every `display:` key under its `hwid:` name.
+
+    In place on the dict `_read` just loaded, so every reader sees new keys and
+    every writer - which all start from `_read` - persists them.
+    """
+    for key in [k for k in data if k.startswith(_LEGACY_HARDWARE_ID_PREFIX)]:
+        entry = data.pop(key)
+        # A record already under the new name was written by a build that
+        # knows both, so it is the newer of the two.
+        data.setdefault(_HARDWARE_ID_PREFIX + key.removeprefix(_LEGACY_HARDWARE_ID_PREFIX), entry)
+    return data
 
 
 class FlashLog:
@@ -951,9 +974,10 @@ class FlashLog:
     :meth:`entry_for` discards it rather than reporting a stale answer with a
     straight face.
 
-    Screens live here too, under :func:`display_key` rather than a serial, for
-    the same reason and with the same discard rule - what a screen reports
-    running is compared against the tree commit we recorded writing to it.
+    Devices known by a hardware id live here too, under :func:`hardware_id_key`
+    rather than a serial, for the same reason and with the same discard rule -
+    what a screen reports running is compared against the tree commit we
+    recorded writing to it.
     """
 
     def __init__(self, paths: Paths) -> None:
@@ -965,7 +989,9 @@ class FlashLog:
                 data = json.load(fh)
         except (OSError, ValueError):
             return {}
-        return data if isinstance(data, dict) else {}
+        if not isinstance(data, dict):
+            return {}
+        return _migrated(data)
 
     def all(self) -> dict[str, Any]:
         """Every record. A corrupt or missing file reads as empty, never raises -

@@ -737,7 +737,7 @@ def test_a_listen_that_hears_nothing_writes_the_configured_port_unconfirmed(
     assert _flash_one(api, screens).state == "succeeded"
 
     assert ports == [screens_port(screens, "t0")]
-    assert _flashlog(paths)["display:aaa111"]["confidence"] is None
+    assert _flashlog(paths)["hwid:aaa111"]["confidence"] is None
 
 
 def test_a_listen_that_cannot_run_writes_where_the_map_says(
@@ -761,7 +761,7 @@ def test_a_listen_that_cannot_run_writes_where_the_map_says(
     assert _flash_one(api, screens).state == "succeeded"
 
     assert ports == [moved_to]
-    assert _flashlog(paths)["display:aaa111"]["confidence"] == "remembered"
+    assert _flashlog(paths)["hwid:aaa111"]["confidence"] == "remembered"
 
 
 # --------------------------------------------------------------------------
@@ -812,7 +812,7 @@ def test_a_confirmed_screen_records_how_it_was_identified(
 
     assert _flash_one(api, screens).state == "succeeded"
 
-    assert _flashlog(paths)["display:aaa111"]["confidence"] == "answered"
+    assert _flashlog(paths)["hwid:aaa111"]["confidence"] == "answered"
 
 
 def test_the_record_is_keyed_by_hardware_id_and_never_by_port(
@@ -834,7 +834,7 @@ def test_the_record_is_keyed_by_hardware_id_and_never_by_port(
     assert _flash_one(api, screens).state == "succeeded"
 
     keys = list(_flashlog(paths))
-    assert keys == ["display:aaa111"]
+    assert keys == ["hwid:aaa111"]
     assert moved_to not in keys and screens_port(screens, "t0") not in keys
 
 
@@ -857,7 +857,7 @@ def test_a_write_to_a_remembered_port_records_no_confidence(
 
     assert _flash_one(api, screens).state == "succeeded"
 
-    assert _flashlog(paths)["display:aaa111"]["confidence"] is None
+    assert _flashlog(paths)["hwid:aaa111"]["confidence"] is None
 
 
 def test_a_screen_with_no_hardware_id_is_recorded_nowhere(
@@ -901,10 +901,10 @@ def test_a_dry_run_records_nothing(api, paths, no_pio, screens, monkeypatch):
 
 
 def _record(paths, ident="aaa111", *, fw_sha=None, confidence="answered") -> None:
-    from mcu_updater.build import FlashLog, display_key
+    from mcu_updater.build import FlashLog, hardware_id_key
 
     FlashLog(paths).record(
-        display_key(ident),
+        hardware_id_key(ident),
         mcu_type=ENV,
         fw=ENV,
         bin_sha256=None,

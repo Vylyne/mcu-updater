@@ -1415,13 +1415,13 @@ class StatusMixin(_Base):
         exactly as for a board: no record yet, a record discarded as stale, or -
         the display-only one - no hardware id to have filed a record under.
         """
-        from ...build import display_key
+        from ...build import hardware_id_key
 
         ident = (entry.get("device_id") or entry.get("reported_id") or "").lower()
         if not ident:
             return None
         record = flashlog.entry_for(
-            display_key(ident), reader.running_sha(entry.get("firmware_version"))
+            hardware_id_key(ident), reader.running_sha(entry.get("firmware_version"))
         )
         return (record or {}).get("confidence")
 

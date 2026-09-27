@@ -64,6 +64,18 @@
       "file": "src/mcu_updater/flashers/platformio.py",
       "find": "        if not ident:\n            return None",
       "replace": "        if False:\n            return None"
+    },
+    {
+      "name": "a record under the old display: prefix is still found",
+      "file": "src/mcu_updater/build.py",
+      "find": "        return _migrated(data)",
+      "replace": "        return data"
+    },
+    {
+      "name": "a record under the new prefix wins over the old",
+      "file": "src/mcu_updater/build.py",
+      "find": "        data.setdefault(_HARDWARE_ID_PREFIX + key.removeprefix(_LEGACY_HARDWARE_ID_PREFIX), entry)",
+      "replace": "        data[_HARDWARE_ID_PREFIX + key.removeprefix(_LEGACY_HARDWARE_ID_PREFIX)] = entry"
     }
   ]
 }

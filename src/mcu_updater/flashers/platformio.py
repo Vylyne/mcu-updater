@@ -161,9 +161,9 @@ class PlatformIO:
         """The image this device now holds, filed under its hardware id.
 
         `None` for a device with no hardware id: the port it was written on is
-        not a durable name for it - see `build.display_key`.
+        not a durable name for it - see `build.hardware_id_key`.
         """
-        from ..build import display_key
+        from ..build import hardware_id_key
         from ..providers import pio as pio_mod
 
         env = target.detail["env"]
@@ -174,7 +174,7 @@ class PlatformIO:
         # them here would be a second answer to a question with a recorded one.
         side = pio_mod.read_sidecar(bench.paths, env) or {}
         return FlashRecord(
-            key=display_key(ident),
+            key=hardware_id_key(ident),
             mcu_type=env.name,
             fw=env.env,
             bin_sha256=side.get("bin_sha256"),

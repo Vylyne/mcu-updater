@@ -178,7 +178,7 @@ class FlashRecord:
 
     `key` is what the entry is filed under and is *not* always `target.id`: a
     screen's id is a port, which is not durable, so it files under
-    `build.display_key` of its hardware id instead.
+    `build.hardware_id_key` of its hardware id instead.
     """
 
     key: str

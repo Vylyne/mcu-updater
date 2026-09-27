@@ -1775,7 +1775,7 @@ A screen with no hardware id at all — a `serial:` section whose klippy module 
 too old to report one — falls back to its configured port rather than failing.
 And if discovery cannot run at all (no pyserial, no source tree), each screen
 is written where the watcher's map says, or at its configured port when the
-map is empty - the latter being what every flash did before this existed.
+map is empty — the latter being what every flash did before this existed.
 Either way the write records `remembered` or no confidence — never
 `answered`. The map is not a free pass, though: a screen it does not list
 while it lists others is

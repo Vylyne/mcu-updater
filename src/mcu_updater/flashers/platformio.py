@@ -242,9 +242,11 @@ def port_for(
       one it used to be on. If those differ it moved, and saying so is the only
       warning anybody would ever get. The confidence says whether it answered
       just now or was remembered.
-    * **Others were found and this one was not** - it is not there. The ports
-      were free and every other device spoke, so a silent write to its old
-      port would be a write to whatever is on that port now.
+    * **Others were found and this one was not** - it is not there. If a
+      listen ran, the ports were free and every other device spoke. If only
+      the remembered map was available, it is the only word on what is
+      present, and it does not name this device. Either way, a silent write
+      to its old port could hit whatever is there now.
 
     A device with no id at all is the fourth case and falls back rather than
     failing. A `serial:` section names a socket, and its identity only arrives

@@ -337,7 +337,7 @@ def test_flashing_a_platformio_screen_matches_its_id_case_insensitively(
         cli.flash_fw_cmd(argparse.Namespace(type=ENV, serial="AAA111", yes=True))
 
     assert len(captured) == 1
-    assert [target.detail["screen"]["device_id"] for target in captured[0]] == [
+    assert [target.detail["device_id"] for target in captured[0]] == [
         "aaa111"
     ]
 

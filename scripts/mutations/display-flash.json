@@ -9,6 +9,7 @@
     "tests/test_agent_displays.py",
     "tests/test_agent_targets.py",
     "tests/test_flashlog_loop.py",
+    "tests/test_platformio_flasher.py",
     "-q"
   ],
   "mutations": [
@@ -37,17 +38,29 @@
     {
       "name": "identity is verified once the ports are free",
       "file": "src/mcu_updater/flashers/platformio.py",
-      "find": "        yield {\n            name: discover(bench, display, ctx)\n            for name, display in families.items()\n        }",
-      "replace": "        yield {}"
+      "find": "        return identifier.identify(\n            bench.paths, bench.settings, env, ask=True, reporter=ctx.reporter\n        )",
+      "replace": "        return {}"
     },
     {
-      "name": "a screen is written where it answered, not where it was",
+      "name": "the write asks with the ports free rather than reading the map",
+      "file": "src/mcu_updater/flashers/platformio.py",
+      "find": "            bench.paths, bench.settings, env, ask=True, reporter=ctx.reporter",
+      "replace": "            bench.paths, bench.settings, env, ask=False, reporter=ctx.reporter"
+    },
+    {
+      "name": "an identifier that cannot answer is never fatal",
+      "file": "src/mcu_updater/flashers/platformio.py",
+      "find": "    except UpdaterError as exc:\n        ctx.reporter(\n            \"warn\",\n            f\"could not ask the '{env.name}' devices",
+      "replace": "    except ZeroDivisionError as exc:\n        ctx.reporter(\n            \"warn\",\n            f\"could not ask the '{env.name}' devices"
+    },
+    {
+      "name": "a device is written where it was found, not where it was",
       "file": "src/mcu_updater/flashers/platformio.py",
       "find": "    if found.port != configured:",
       "replace": "    return configured, None, None\n    if found.port != configured:"
     },
     {
-      "name": "a screen that did not answer is not flashed at its old port",
+      "name": "a device that did not answer is not flashed at its old port",
       "file": "src/mcu_updater/flashers/platformio.py",
       "find": "        if problem is not None:",
       "replace": "        if False:"
@@ -55,11 +68,11 @@
     {
       "name": "a dry run never opens a serial port",
       "file": "src/mcu_updater/flashers/platformio.py",
-      "find": "    if bench.settings.dry_run:\n        ctx.reporter(\"info\", \"[dry-run] would ask the displays which they are\")\n        return {}",
-      "replace": "    if False:\n        ctx.reporter(\"info\", \"[dry-run] would ask the displays which they are\")\n        return {}"
+      "find": "        if bench.settings.dry_run:\n            ctx.reporter(\"info\", \"[dry-run] would ask the devices which they are\")",
+      "replace": "        if False:\n            ctx.reporter(\"info\", \"[dry-run] would ask the devices which they are\")"
     },
     {
-      "name": "a confirmed write records how the screen was identified",
+      "name": "a confirmed write records how the device was identified",
       "file": "src/mcu_updater/flashers/platformio.py",
       "find": "            \"confidence\": confidence.reason if confidence is not None else None,",
       "replace": "            \"confidence\": None,"
@@ -71,16 +84,22 @@
       "replace": "                        if True:\n                            record = flasher.record(bench, target)"
     },
     {
-      "name": "a screen with no hardware id is recorded nowhere",
+      "name": "a device with no hardware id is recorded nowhere",
       "file": "src/mcu_updater/flashers/platformio.py",
-      "find": "        ident = (screen.get(\"device_id\") or screen.get(\"reported_id\") or \"\").lower()\n        if not ident:\n            return None",
-      "replace": "        ident = (screen.get(\"device_id\") or screen.get(\"reported_id\") or \"\").lower()\n        if False:\n            return None"
+      "find": "        ident = target.detail[\"device_id\"]\n        if not ident:\n            return None",
+      "replace": "        ident = target.detail[\"device_id\"]\n        if False:\n            return None"
     },
     {
       "name": "an unconfirmed write is not recorded as confirmed",
       "file": "src/mcu_updater/flashers/platformio.py",
       "find": "            \"confidence\": confidence.reason if confidence is not None else None,",
       "replace": "            \"confidence\": \"answered\","
+    },
+    {
+      "name": "a remembered device is not recorded as answered",
+      "file": "src/mcu_updater/flashers/platformio.py",
+      "find": "    reason = discovery.ANSWERED if found.answered else discovery.REMEMBERED",
+      "replace": "    reason = discovery.ANSWERED"
     },
     {
       "name": "a record the screen disagrees with is discarded",

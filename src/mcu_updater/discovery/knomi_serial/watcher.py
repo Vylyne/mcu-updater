@@ -132,9 +132,10 @@ def _as_sighting(display: PioType, device: WatcherDevice) -> Sighting:
         # device.firmware_version - the same reasoning applies here.
         state=STATE_KLIPPER,
         source=Watcher.name,
-        # `family` is what a caller needing per-family grouping (esptool's
-        # discover(), which is called once per family) matches on - Sighting
-        # itself carries no family field by design.
+        # `family` names the `[type]` this sighting belongs to - Sighting itself
+        # carries no family field by design. Nothing groups on it since the
+        # `platformio` flasher moved to the helper's `Identifier`; it stays
+        # because removing it is not that change.
         detail={
             "fw": device.firmware_version,
             "var": device.build_variant,

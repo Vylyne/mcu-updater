@@ -2395,8 +2395,8 @@ def test_a_download_that_succeeds_then_fails_unrecognisably_still_raises(
 
 def test_the_board_and_screen_lookups_answer_in_the_same_shape():
     """`device_for`'s docstring says it was written "in the shape
-    `platformio.port_for` already uses for displays". That claim is only worth
-    anything while it stays true, and nothing else checks it - the two are
+    `platformio.port_for` already uses for PlatformIO devices". That claim is
+    only worth anything while it stays true, and nothing else checks it - the two are
     called from different flashers and could drift apart silently, which is
     exactly how a display ended up reporting a literal null confidence while a
     board reported a real one.

@@ -7,7 +7,7 @@ system. The tuple is the seam.
 
 The two knomi sources (`knomi_serial/listen.py`, `knomi_serial/watcher.py`)
 implement `discovery.spec.Source`, and so does `byid.py`, alongside
-`esptool.port_for`'s board-side counterpart in `flash_katapult`. `dfu.py`/`bootsel.py` still do not - nothing needs them yet;
+`flash_katapult`'s board lookup (`flashers.flash.device_for`). `dfu.py`/`bootsel.py` still do not - nothing needs them yet;
 they back `flash_initial_bootloader`'s first-time-flash path, which computes
 its own state rather than consulting `confirm()`.
 """

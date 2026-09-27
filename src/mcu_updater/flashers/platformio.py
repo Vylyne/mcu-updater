@@ -1,35 +1,30 @@
 """PlatformIO: one env, uploaded to a port.
 
-The flasher that made this seam worth having. Every other write here targets a
-device by an identity it carries on the bus; a display is an indistinguishable
-CH340 and has to be *rediscovered* at the moment of the write, which is only
-possible once Klipper is down and the ports are free.
+`pio run -t upload` for any PlatformIO env, at the port its caller configured.
+Every other write here targets a device by an identity it carries on the bus.
+A device reached at a configured port may carry none the host can read, so if
+its family has a way to tell its devices apart, they are asked again at the
+moment of the write - which is only possible once the services holding the
+ports are down.
 
 That is one step, in one place, and it is the whole reason `prepared()` exists
-on the protocol. Without it the batch loop would have to know that screens need
-a discovery pass and boards do not - which is the branching this removes.
+on the protocol. Who can answer is the family's helper, through the
+`helpers.Identifier` capability; this module only asks, and names no vendor. A
+family with no identifier is written at its configured ports, which is what
+every write did before identity existed.
 
-:mod:`mcu_updater.providers.pio` keeps its body, including the parts with no MCU
-counterpart at all: never letting PlatformIO choose its own upload port, and
-following a udev symlink to the device PlatformIO can actually see.
-
-**The display vocabulary here is a caller's, not a limit.** esptool writes any
-ESP32 and PlatformIO builds for far more than screens; what is display-shaped is
-this module's private `detail` payload and the Klipper-side list it comes from.
-The protocol slot is already device-shaped - `FlashTarget` says `type` and `id`,
-not `display` and `screen` - so generalising to "a PlatformIO env written to a
-port" is a change contained to this file and its target builder. That it *is*
-contained is the point of the seam; doing it before something needs it would be
-guessing at the shape of the second caller.
+:mod:`mcu_updater.providers.pio` keeps the upload itself, including the parts
+with no MCU counterpart at all: never letting PlatformIO choose its own upload
+port, and following a udev symlink to the device PlatformIO can actually see.
 """
 
 from __future__ import annotations
 
 import contextlib
-import dataclasses
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from typing import TYPE_CHECKING, Any
 
+from .. import helpers
 from ..artifacts import KIND_PIO_ENV, Artifact
 from ..devices import STATE_ESP_ROM
 from ..errors import FlashError, UpdaterError
@@ -38,12 +33,12 @@ from .spec import KIND_PORT, Bench, Device, FlashRecord, FlashTarget
 if TYPE_CHECKING:
     # Annotation only. `discovery.spec` imports from this package, so a runtime
     # import here closes a cycle - and `from __future__ import annotations`
-    # means nothing needs the symbol at run time. The sweep that produces these
-    # is already imported lazily inside `_sightings_by_family` for the same
-    # reason.
+    # means nothing needs the symbol at run time. `port_for` imports the module
+    # it builds one from lazily, for the same reason.
     from ..discovery.spec import Confidence
-    from ..helpers.spec import Helper
+    from ..helpers.spec import Helper, Identifier
     from ..paths import Paths
+    from ..providers.pio import PioType
 
 
 class PlatformIO:
@@ -54,15 +49,16 @@ class PlatformIO:
     chipsets: tuple[str, ...] = ("esp32",)
     states: tuple[str, ...] = (STATE_ESP_ROM,)
     #: The klippy module holds the port open for the write itself, and
-    #: pyserial's exclusive open is an advisory flock that both it and esptool
-    #: take. Unlike flashtool, this one is about the write and not about
+    #: pyserial's exclusive open is an advisory flock that both it and the
+    #: upload take. Unlike flashtool, this one is about the write and not about
     #: getting somewhere first.
     needs_services_stopped = True
     accepts: tuple[str, ...] = (KIND_PIO_ENV,)
 
     def supports(self, device: Device, helper: Helper | None) -> bool:
         """A PlatformIO device reached through its configured port. Its
-        identity is confirmed at write time, in `prepared`."""
+        identity, if its family has a way to know one, is confirmed at write
+        time, in `prepared`."""
         return device.kind == KIND_PORT
 
     def target(
@@ -74,45 +70,60 @@ class PlatformIO:
         *,
         stop_services: tuple[str, ...],
     ) -> FlashTarget:
-        target = target_for(
-            device.detail["display"],
-            device.detail["screen"],
+        """The device as its caller described it, plus who can say which one
+        it is.
+
+        The identifier comes from the helper selection already resolved, so
+        `prepared` needs no second config load. `None` for a family without
+        the capability.
+        """
+        return FlashTarget(
+            flasher=self.name,
+            type=device.type,
+            id=device.id,
             stop_services=stop_services,
-        )
-        # Anything else the caller put in `detail` (bulk's `reason`) rides
-        # along; the screen's own keys win.
-        return dataclasses.replace(
-            target, detail={**device.detail, **target.detail}, artifact=artifact
+            # Anything else the caller put in `detail` (bulk's `reason`) rides
+            # along; the flasher's own key wins.
+            detail={**device.detail, "identifier": helpers.identifier(helper)},
+            artifact=artifact,
         )
 
     @contextlib.contextmanager
     def prepared(
         self, bench: Bench, targets: list[FlashTarget], ctx: Any
     ) -> Iterator[dict[str, dict[str, Any]]]:
-        """Ask the screens which they are, now that the ports are free.
+        """Ask each type's devices which they are, now that the ports are free.
 
-        The watcher pause that used to happen here is gone: it is now part of
-        the outer stop `write_all` opens over the batch's own
-        `stop_services` union, verified and journaled rather than best-effort
-        - see `flashers.batch.write_all` and `service.services_stopped`.
+        The watcher pause that used to happen here is part of the outer stop
+        `write_all` opens over the batch's own `stop_services` union, verified
+        and journaled - see `flashers.batch.write_all` and
+        `service.services_stopped`.
 
-        Discovery needs the ports free, and it is the only moment identity
-        can be *resolved* rather than remembered. The screen list was read
-        before the stop, so its paths describe where these screens were; a
-        remembered path is what the whole device-id scheme exists to avoid.
+        The device list was read before the stop, so its ports describe where
+        these devices were; a remembered port is what the whole device-id
+        scheme exists to avoid. This is the one moment identity can be
+        resolved rather than remembered, so the family's identifier is asked
+        with `ask=True`: the ports are free, and the caller wants to be sure.
+        What that costs, and what it falls back to, is the helper's policy.
 
-        Once per family rather than once per screen: a single listen covers
-        every port at once, and doing it per screen would multiply the six
-        seconds by the number of displays.
+        Once per type rather than once per device: a single listen covers
+        every port at once, and doing it per device would multiply its cost by
+        the number of devices.
+
+        Skipped entirely on a dry run: asking can open real serial ports, and
+        a rehearsal that touches hardware is not a rehearsal.
         """
-        families = {}
+        if bench.settings.dry_run:
+            ctx.reporter("info", "[dry-run] would ask the devices which they are")
+            yield {}
+            return
+        by_type: dict[str, tuple[PioType, Identifier | None]] = {}
         for target in targets:
-            display = target.detail["display"]
-            families[display.name] = display
-
+            env = target.detail["env"]
+            by_type[env.name] = (env, target.detail["identifier"])
         yield {
-            name: discover(bench, display, ctx)
-            for name, display in families.items()
+            name: _identify(bench, env, identifier, ctx)
+            for name, (env, identifier) in by_type.items()
         }
 
     def write(
@@ -120,26 +131,24 @@ class PlatformIO:
     ) -> dict[str, Any]:
         from ..providers import pio as pio_mod
 
-        display = target.detail["display"]
-        screen = target.detail["screen"]
-
+        env = target.detail["env"]
         port, confidence, problem = port_for(
-            screen, (session or {}).get(display.name) or {}, ctx
+            target.detail, (session or {}).get(env.name) or {}, ctx
         )
         if problem is not None:
             # Raised rather than collected, because a batch records a failure by
-            # catching one. The check itself is unchanged: a screen that stayed
+            # catching one. The check itself is unchanged: a device that stayed
             # silent while every other one answered is not there, and writing to
-            # the path it used to be on would write to whatever is on that path
+            # the port it used to be on would write to whatever is on that port
             # now.
-            raise FlashError(problem, type=display.name, port=port)
+            raise FlashError(problem, type=env.name, port=port)
 
         result = pio_mod.upload(
-            bench.paths, bench.settings, display, port, reporter=ctx.reporter
+            bench.paths, bench.settings, env, port, reporter=ctx.reporter
         )
 
         return {
-            "name": screen["name"],
+            "name": target.detail["name"],
             "port": port,
             # Taken back off by `write_all` - the ports are free exactly once,
             # inside this batch's stop, and this is the only moment the answer
@@ -149,160 +158,106 @@ class PlatformIO:
         }
 
     def record(self, bench: Bench, target: FlashTarget) -> FlashRecord | None:
-        """The image this screen now holds, filed under its hardware id.
+        """The image this device now holds, filed under its hardware id.
 
-        `None` for a screen with no hardware id: the port it answered on is not
-        a durable name for it - see `build.display_key`.
+        `None` for a device with no hardware id: the port it was written on is
+        not a durable name for it - see `build.display_key`.
         """
         from ..build import display_key
         from ..providers import pio as pio_mod
 
-        display = target.detail["display"]
-        screen = target.detail["screen"]
-        ident = (screen.get("device_id") or screen.get("reported_id") or "").lower()
+        env = target.detail["env"]
+        ident = target.detail["device_id"]
         if not ident:
             return None
         # The build already hashed the image and noted its commit; re-deriving
         # them here would be a second answer to a question with a recorded one.
-        side = pio_mod.read_sidecar(bench.paths, display) or {}
+        side = pio_mod.read_sidecar(bench.paths, env) or {}
         return FlashRecord(
             key=display_key(ident),
-            mcu_type=display.name,
-            fw=display.env,
+            mcu_type=env.name,
+            fw=env.env,
             bin_sha256=side.get("bin_sha256"),
-            # The display sidecar calls the tree commit `sha`; the flash log
+            # The PlatformIO sidecar calls the tree commit `sha`; the flash log
             # calls it `fw_sha`. One rename at the boundary.
             fw_sha=side.get("sha"),
         )
 
     def settled(self, bench: Bench, target: FlashTarget, ctx: Any) -> None:
-        """Nothing to wait for. A screen is not on the Klipper bus, so there is
-        no device node whose absence would bring Klipper up in an error state -
-        which is the only thing the MCU wait is protecting against."""
+        """Nothing to wait for. A device written here is not on the Klipper
+        bus, so there is no device node whose absence would bring Klipper up
+        in an error state - which is the only thing the MCU wait is protecting
+        against."""
 
 
-@dataclasses.dataclass(frozen=True)
-class _Answered:
-    """One `discovery.Sighting`, in the shape `port_for` already reads.
+def _identify(
+    bench: Bench, env: PioType, identifier: Identifier | None, ctx: Any
+) -> dict[str, Any]:
+    """One type's answer, or `{}` - never an exception.
 
-    `port_for` was written against `discovery.knomi_serial.WatcherDevice` and reads
-    `.port` - kept exactly as it is, per this step's own rule, rather than
-    switched onto `Sighting.address` under a different name.
-
-    `confidence` is the `Confidence` that came with the sighting, carried
-    whole rather than reduced to its reason: which source answered is a fact
-    about the sweep, and by the time `port_for` runs the sweep is over. Kept as
-    the object because that is what `flash.device_for` hands back for a board,
-    and because `tone`/`safe_to_write` are derived from the reason rather than
-    stored beside it - reducing to a string here would mean rebuilding it to
-    ask anything but "which reason". A `Listen` sighting is `ANSWERED`.
+    A host that cannot ask was writing to configured ports perfectly well
+    before identity existed, and degrading to that is strictly what it used to
+    do; refusing to flash would be a new way to fail. The knomi helper already
+    softens its own listen this way. Holding it here too means the guarantee
+    does not rest on every identifier getting it right.
     """
-
-    port: str
-    confidence: Confidence | None = None
-
-
-def _sightings_by_family(bench: Bench, ctx: Any) -> dict[str, dict[str, _Answered]]:
-    """One `discovery.confirm()` sweep per batch, cached on `ctx`, grouped back
-    into per-family maps.
-
-    `discover()` below is called once per display family - a single listen
-    pass already covers every configured family's ports at once, so
-    re-sweeping per family would multiply the six seconds by the number of
-    families in the batch. `confirm()`'s sources scan every configured family
-    in one pass regardless of who asks, so the sweep itself only needs to
-    happen once; this caches that on `ctx`, which lives for exactly one
-    `prepared()`/`write()` batch, so it needs no cache key and cannot leak
-    between batches.
-
-    Grouped by `detail["family"]` - `Sighting` carries no family field of its
-    own (`detail` is deliberately a source's private payload, not a second
-    identity scheme), so `Listen`/`Watcher` stash it there for exactly this.
-    """
-    cached = getattr(ctx, "_esptool_sightings_by_family", None)
-    if cached is not None:
-        return cached
-
-    from ..discovery.confirm import confirm
-    from ..discovery.registry import SOURCES
-
-    result: dict[str, dict[str, _Answered]] = {}
-    for sighting, confidence in confirm(bench, sources=SOURCES).values():
-        family = sighting.detail.get("family")
-        if not isinstance(family, str):
-            continue
-        result.setdefault(family, {})[sighting.id] = _Answered(
-            port=sighting.address, confidence=confidence
-        )
-
-    ctx._esptool_sightings_by_family = result
-    return result
-
-
-def discover(bench: Bench, display: Any, ctx: Any) -> dict[str, Any]:
-    """Ask every screen of one family which it is, now that the ports are free.
-
-    Never fatal. Discovery needs pyserial and the display source tree, and a
-    host missing either was flashing by configured path perfectly well before
-    this existed - degrading to that is strictly what it used to do, whereas
-    refusing to flash would be a new way to fail.
-
-    Skipped entirely on a dry run: it opens real serial ports, and a rehearsal
-    that touches hardware is not a rehearsal.
-    """
-    if bench.settings.dry_run:
-        ctx.reporter("info", "[dry-run] would ask the displays which they are")
+    if identifier is None:
         return {}
     try:
-        return _sightings_by_family(bench, ctx).get(display.name, {})
+        return identifier.identify(
+            bench.paths, bench.settings, env, ask=True, reporter=ctx.reporter
+        )
     except UpdaterError as exc:
         ctx.reporter(
             "warn",
-            f"could not ask the displays which they are ({exc}) - falling back to "
-            f"the ports Klipper reported before it stopped.",
+            f"could not ask the '{env.name}' devices which they are ({exc}) - "
+            f"writing to their configured ports.",
         )
         return {}
 
 
 def port_for(
-    screen: dict, discovered: dict[str, Any], ctx: Any
+    device: Mapping[str, Any], discovered: dict[str, Any], ctx: Any
 ) -> tuple[str, Confidence | None, str | None]:
-    """Where to write this screen, how sure we are, and why not if no answer.
+    """Where to write this device, how sure we are, and why not if no answer.
 
-    `(port, confidence, refusal reason)` - the same three-tuple
-    `flash.device_for` returns for a board, which was written to match this
-    function and now matches it in shape as well as in spirit. `confidence` is
-    None when nothing confirmed the identity and the port is a remembered one.
+    `device` is the target's `detail`. `(port, confidence, refusal reason)` -
+    the same three-tuple `flash.device_for` returns for a board. `confidence`
+    is None when nothing confirmed the identity and the port is a remembered
+    one.
 
     Three cases, and the middle one is the point:
 
-    * **Nothing was discovered at all** - no pyserial, no source tree, or a dry
-      run. Fall back to the configured path, which is what every flash did
-      before this. No worse than it was, and confirmed by nothing, so None.
-    * **This screen answered** - write to the port it answered on, not the one
-      it used to be on. If those differ it moved, and saying so is the only
-      warning anybody would ever get. This is the case that carries a real
-      confidence: the screen was asked directly, with the ports free.
-    * **Others answered and this one did not** - it is not there. The ports were
-      free and every other screen spoke, so a silent write to its old path would
-      be a write to whatever is on that path now.
+    * **Nothing was identified at all** - no identifier, one that could not
+      run or heard nothing, or a dry run. Fall back to the configured port,
+      which is what every write did before this. No worse than it was, and
+      confirmed by nothing, so None.
+    * **This device was found** - write to the port it was found on, not the
+      one it used to be on. If those differ it moved, and saying so is the only
+      warning anybody would ever get. The confidence says whether it answered
+      just now or was remembered.
+    * **Others were found and this one was not** - it is not there. The ports
+      were free and every other device spoke, so a silent write to its old
+      port would be a write to whatever is on that port now.
 
-    A screen with no id at all is the fourth case and falls back rather than
+    A device with no id at all is the fourth case and falls back rather than
     failing. A `serial:` section names a socket, and its identity only arrives
-    from the module's own report - so a module too old to send one, or a screen
+    from the module's own report - so a module too old to send one, or a device
     that was silent when the list was read, has nothing to match on. Failing
     those would take flashing away from installs that have it today, to punish
     them for what their klippy module does not say.
     """
-    configured = screen["configured_path"]
+    from ..discovery import spec as discovery
+
+    configured = device["port"]
     if not discovered:
         return configured, None, None
 
-    ident = (screen.get("device_id") or screen.get("reported_id") or "").lower()
+    ident = device["device_id"]
     if not ident:
         ctx.reporter(
             "warn",
-            f"{screen['name']} reports no hardware id, so the screen on "
+            f"{device['name']} reports no hardware id, so the device on "
             f"{configured} cannot be confirmed as the one meant. Writing to the "
             f"configured port.",
         )
@@ -311,38 +266,16 @@ def port_for(
     found = discovered.get(ident)
     if found is None:
         return configured, None, (
-            "did not answer when asked which displays are present, so its "
+            "did not answer when asked which devices are present, so its "
             "port cannot be confirmed. Writing to the port it used to be on "
-            "could write to a different screen."
+            "could write to a different device."
         )
 
     if found.port != configured:
         ctx.reporter(
             "warn",
-            f"{screen['name']} ({ident}) answered on {found.port}, not "
+            f"{device['name']} ({ident}) is on {found.port}, not "
             f"{configured} - it has moved. Writing to where it actually is.",
         )
-    return found.port, found.confidence, None
-
-
-def target_for(
-    display: Any, screen: dict, *, stop_services: tuple[str, ...] = ()
-) -> FlashTarget:
-    """One screen Klipper reported, as a target.
-
-    Both the family and the screen entry are carried whole. The family is what
-    `pio run -e` needs; the screen entry is what `port_for` matches on, and it
-    has to be the one read *before* the stop - only a running Klipper can
-    produce it.
-
-    `stop_services` is resolved by the caller (`stop_services.py`, against the
-    display's own config, its firmware family and `[updater]`) - this factory
-    just carries it onto the target, same as `flasher` and `type`.
-    """
-    return FlashTarget(
-        flasher=PlatformIO.name,
-        type=display.name,
-        id=screen["configured_path"],
-        stop_services=stop_services,
-        detail={"display": display, "screen": screen},
-    )
+    reason = discovery.ANSWERED if found.answered else discovery.REMEMBERED
+    return found.port, discovery.Confidence(reason), None

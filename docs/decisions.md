@@ -619,9 +619,11 @@ Its kind is `KIND_PORT`, and its `detail` names an env and a port, not a
 display or a screen. That vocabulary still survives on the wire (`displays`,
 `screens`, `display_flash`); removing it is a wire change with its own
 `API_VERSION` bump, tracked in the README's TODO. The flash log's keys were
-not wire, so they moved here: `hwid:<id>`, with `FlashLog` reading an old
-`display:<id>` under its new name until every host has flashed since; if a
-rolled-back build left both, the later-written record wins.
+not wire, so they moved here, to `hwid:<id>`. There is no migration from the
+old `display:<id>` keys: one shipped briefly on `develop` and was dropped
+(2026-09-28) once every host running the agent had reflashed its screens, and
+nobody else is known to run it. A log that still holds a `display:` key just
+reports that screen's image as unknown until its next flash.
 
 ### One loop per operation, and handlers for everything else
 

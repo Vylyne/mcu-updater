@@ -442,22 +442,6 @@ def test_bootsel_has_nothing_to_file_for_a_bare_board(bench, cmake_type, tmp_pat
     assert flashers.Bootsel().record(bench, target) is None
 
 
-def _write_raw_flashlog(paths, data):
-    import json
-    import os
-
-    os.makedirs(os.path.dirname(paths.flashlog_file), exist_ok=True)
-    with open(paths.flashlog_file, "w", encoding="utf-8") as fh:
-        json.dump(data, fh)
-
-
-def _read_raw_flashlog(paths):
-    import json
-
-    with open(paths.flashlog_file, encoding="utf-8") as fh:
-        return json.load(fh)
-
-
 def test_a_hardware_id_files_under_its_own_prefix():
     """A board is keyed by its by-id serial; a device known by a hardware id
     gets a prefix saying so, and the prefix names the kind of id, not a kind of
@@ -466,73 +450,3 @@ def test_a_hardware_id_files_under_its_own_prefix():
 
     assert hardware_id_key("AAA111") == "hwid:aaa111"
 
-
-def test_a_record_under_the_old_prefix_is_still_found(paths):
-    """Every flash log written before the rename files its KNOMIs under
-    `display:`. Losing those records would report every screen's image as
-    unknown until it was flashed again."""
-    from mcu_updater.build import FlashLog, hardware_id_key
-
-    _write_raw_flashlog(paths, {"display:aaa111": {"fw_sha": "abc123", "type": "knomi"}})
-
-    entry = FlashLog(paths).entry_for(hardware_id_key("aaa111"), "abc123")
-
-    assert entry is not None
-    assert entry["type"] == "knomi"
-
-
-def test_the_next_write_moves_the_old_key(paths):
-    """The migration is carried by the first write after the upgrade, so no
-    host keeps an old key for longer than one flash."""
-    from mcu_updater.build import FlashLog
-
-    _write_raw_flashlog(
-        paths,
-        {"display:aaa111": {"fw_sha": "abc123"}, "usb-Klipper_rp2040_X": {"fw_sha": "def"}},
-    )
-
-    FlashLog(paths).record(
-        "usb-Klipper_rp2040_Y", mcu_type="t", fw="f", bin_sha256=None, fw_sha=None
-    )
-
-    assert set(_read_raw_flashlog(paths)) == {
-        "hwid:aaa111",
-        "usb-Klipper_rp2040_X",
-        "usb-Klipper_rp2040_Y",
-    }
-
-
-def test_the_newer_of_two_records_wins(paths):
-    """Both can only be present if a rolled-back, pre-rename build wrote a
-    fresh `display:` record after the new code had already written a `hwid:`
-    one - or vice versa, if the rollback happened first. Either way it is the
-    later write that should be trusted, not automatically the key it landed
-    under."""
-    from mcu_updater.build import FlashLog, hardware_id_key
-
-    _write_raw_flashlog(
-        paths,
-        {"display:aaa111": {"type": "old", "at": 200}, "hwid:aaa111": {"type": "new", "at": 100}},
-    )
-
-    assert FlashLog(paths).entry_for(hardware_id_key("aaa111"), None)["type"] == "old"
-
-    _write_raw_flashlog(
-        paths,
-        {"display:aaa111": {"type": "old", "at": 100}, "hwid:aaa111": {"type": "new", "at": 200}},
-    )
-
-    assert FlashLog(paths).entry_for(hardware_id_key("aaa111"), None)["type"] == "new"
-
-
-def test_a_display_record_with_no_stamp_never_beats_a_stamped_hwid_record(paths):
-    """A missing `at` counts as oldest, so a ragged legacy record can never
-    displace a `hwid:` record that has a real timestamp."""
-    from mcu_updater.build import FlashLog, hardware_id_key
-
-    _write_raw_flashlog(
-        paths,
-        {"display:aaa111": {"type": "old"}, "hwid:aaa111": {"type": "new", "at": 100}},
-    )
-
-    assert FlashLog(paths).entry_for(hardware_id_key("aaa111"), None)["type"] == "new"

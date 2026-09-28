@@ -912,12 +912,8 @@ def build(
 # --------------------------------------------------------------------------
 
 
-#: The prefix of a hardware-id key, and what `hardware_id_key` wrote before it
-#: was renamed. The old one is read, never written: `FlashLog._read` moves each
-#: such key to its new name, and the next write persists that. Delete the old
-#: one, and `_migrated`, once every host has flashed since (hestia, athena).
+#: The prefix of a hardware-id key.
 _HARDWARE_ID_PREFIX = "hwid:"
-_LEGACY_HARDWARE_ID_PREFIX = "display:"
 
 
 def hardware_id_key(ident: str) -> str:
@@ -939,36 +935,6 @@ def hardware_id_key(ident: str) -> str:
     vendor's own docs say not to depend on that.
     """
     return f"{_HARDWARE_ID_PREFIX}{ident.lower()}"
-
-
-def _stamp(entry: Any) -> float:
-    """`entry`'s `at`, or negative infinity if it has none worth trusting.
-
-    A missing or non-numeric stamp loses every comparison against a real one,
-    so a record this ragged never displaces a record that has a timestamp.
-    """
-    try:
-        return float(entry.get("at"))
-    except (AttributeError, TypeError, ValueError):
-        return float("-inf")
-
-
-def _migrated(data: dict[str, Any]) -> dict[str, Any]:
-    """`data` with every `display:` key under its `hwid:` name.
-
-    In place on the dict `_read` just loaded, so every reader sees new keys and
-    every writer - which all start from `_read` - persists them.
-    """
-    for key in [k for k in data if k.startswith(_LEGACY_HARDWARE_ID_PREFIX)]:
-        entry = data.pop(key)
-        new_key = _HARDWARE_ID_PREFIX + key.removeprefix(_LEGACY_HARDWARE_ID_PREFIX)
-        # Both keys can coexist only if a rolled-back, pre-rename build wrote
-        # a fresh `display:` record after the new one - so the newer record
-        # wins, not automatically the one already under the new name.
-        existing = data.get(new_key)
-        if existing is None or _stamp(entry) > _stamp(existing):
-            data[new_key] = entry
-    return data
 
 
 class FlashLog:
@@ -1005,9 +971,7 @@ class FlashLog:
                 data = json.load(fh)
         except (OSError, ValueError):
             return {}
-        if not isinstance(data, dict):
-            return {}
-        return _migrated(data)
+        return data if isinstance(data, dict) else {}
 
     def all(self) -> dict[str, Any]:
         """Every record. A corrupt or missing file reads as empty, never raises -

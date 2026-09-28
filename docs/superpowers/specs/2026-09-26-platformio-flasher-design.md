@@ -146,8 +146,9 @@ flash log's keys never leave the agent - it is read only through `entry_for`,
 here rather than with the wire cleanup. `FlashLog._read` hands back every
 `display:<id>` record under its `hwid:` name (if both exist - a rolled-back
 build wrote the old key after the new one - the one with the later `at`
-wins), and the next write persists that, so no host loses a record. The old
-prefix is removed once hestia and athena have each flashed since.
+wins), and the next write persists that, so no host loses a record.
+(Superseded 2026-09-28: the migration was removed before release, once hestia
+and elpis - the only hosts running the agent - had reflashed their screens.)
 
 ### 3. Rediscovery through the helper
 

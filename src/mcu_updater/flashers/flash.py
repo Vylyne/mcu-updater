@@ -101,10 +101,10 @@ def device_for(
     serial: str,
     sources: Sequence[Source] = SOURCES,
 ) -> tuple[BusDevice | None, Confidence | None, str | None]:
-    """Look up one board via `discovery.confirm`, in the shape `esptool.port_for`
-    already uses for displays: `(device, confidence, refusal reason)`. `device`
-    is `None` and `reason` is set when the board cannot be confirmed present -
-    never raises, same as `port_for`.
+    """Look up one board via `discovery.confirm`, in the shape
+    `platformio.port_for` already uses for PlatformIO devices: `(device,
+    confidence, refusal reason)`. `device` is `None` and `reason` is set when
+    the board cannot be confirmed present - never raises, same as `port_for`.
 
     A `UNIQUE_BUS_ID` by-id sighting is the confirmed-at-write-time counterpart
     to a display's `ANSWERED` listen-pass sighting: die-derived, not remembered.

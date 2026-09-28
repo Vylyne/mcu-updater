@@ -1,5 +1,5 @@
 {
-  "_comment": "Spec §3: a KNOMI is behind a CH340K that reports no USB serial, so the only stable name it has is one its firmware will state if asked. Two failures live here. Writing firmware to the wrong screen, which is what a remembered path preferred over a broadcast produces. And a status poll that opens every free serial port, which is a six-second stall on a call that rides along in every fw.status - so `ask` is a required keyword and the guards that pass it False are as load-bearing as the ones that pass True.",
+  "_comment": "Spec §3: a KNOMI is behind a CH340K that reports no USB serial, so the only stable name it has is one its firmware will state if asked. Two failures live here. Writing firmware to the wrong screen, which is what a remembered path preferred over a broadcast produces. And a status poll that opens every free serial port, which is a six-second stall on a call that rides along in every fw.status - so `ask` is a required keyword and the guards that pass it False are as load-bearing as the ones that pass True. At ask=True the listen is the answer and the map only its fallback; the CLI's own map-first read is where the remembered answer is preferred.",
   "file": "src/mcu_updater/helpers/knomi_serial.py",
   "command": [
     "python",
@@ -15,18 +15,33 @@
   "mutations": [
     {
       "name": "a caller that did not free the ports is never asked to",
-      "find": "        if found or not ask:\n            return found",
-      "replace": "        if found:\n            return found"
+      "find": "        if not ask:\n            return read_device_map(paths, entry)",
+      "replace": "        if False:\n            return read_device_map(paths, entry)"
     },
     {
-      "name": "the remembered answer is preferred to six seconds of held ports",
-      "find": "        if found or not ask:\n            return found",
-      "replace": "        if not ask:\n            return found"
+      "name": "ask=True listens even when a map exists",
+      "find": "        if not ask:\n            return read_device_map(paths, entry)",
+      "replace": "        if not ask or read_device_map(paths, entry):\n            return read_device_map(paths, entry)"
     },
     {
       "name": "asking is best effort, never a tool error from the fallback",
-      "find": "        except UpdaterError as exc:\n            reporter(\"warn\", f\"could not ask the devices ({exc})\")\n            return {}",
+      "find": "        except UpdaterError as exc:\n            reporter(\"warn\", f\"could not ask the devices ({exc}) - using the watcher's map instead\")\n            return {i: d for i, d in read_device_map(paths, entry).items() if d.present}",
       "replace": "        except UpdaterError:\n            raise"
+    },
+    {
+      "name": "a listen that cannot run falls back to the map",
+      "find": "            return {i: d for i, d in read_device_map(paths, entry).items() if d.present}\n        return {i: dataclasses.replace(d, answered=True) for i, d in heard.items()}",
+      "replace": "            return {}\n        return {i: dataclasses.replace(d, answered=True) for i, d in heard.items()}"
+    },
+    {
+      "name": "a stale map entry is not a fallback answer",
+      "find": "            return {i: d for i, d in read_device_map(paths, entry).items() if d.present}",
+      "replace": "            return {i: d for i, d in read_device_map(paths, entry).items()}"
+    },
+    {
+      "name": "only what was heard is marked answered",
+      "find": "        return {i: dataclasses.replace(d, answered=True) for i, d in heard.items()}",
+      "replace": "        return heard"
     },
     {
       "name": "a screen is addressed by its id wherever its config names one",
@@ -59,10 +74,16 @@
       "replace": "                or want.lower() in {i.lower() for i in (d[\"device_id\"],) if i}"
     },
     {
-      "name": "the ports are free by here, so the devices are asked",
+      "name": "the ports are free by here, so an empty map asks the devices",
       "file": "src/mcu_updater/cli.py",
-      "find": "        c.paths, c.settings, display, ask=True, reporter=stdout_reporter",
-      "replace": "        c.paths, c.settings, display, ask=False, reporter=stdout_reporter"
+      "find": "            c.paths, c.settings, display, ask=True, reporter=stdout_reporter",
+      "replace": "            c.paths, c.settings, display, ask=False, reporter=stdout_reporter"
+    },
+    {
+      "name": "the remembered answer is preferred to six seconds of held ports",
+      "file": "src/mcu_updater/cli.py",
+      "find": "        c.paths, c.settings, display, ask=False, reporter=stdout_reporter",
+      "replace": "        c.paths, c.settings, display, ask=True, reporter=stdout_reporter"
     },
     {
       "name": "the CLI matches a firmware-reported identity case-insensitively",

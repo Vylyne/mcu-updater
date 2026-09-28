@@ -86,7 +86,7 @@ def pio_type(c, fake_root):
     with open(c.paths.main_config, "a", encoding="utf-8") as fh:
         fh.write(
             f"\n[firmware knomi_serial]\nsource: {tree}\nbuilder: platformio\n"
-            "helper: knomi_serial\nflashers: esptool\n\n"
+            "helper: knomi_serial\nflashers: platformio\n\n"
             f"[type {ENV}]\nfirmware: knomi_serial\nplatformio_env: {ENV}\nservice:\n"
         )
     return tree
@@ -202,7 +202,7 @@ def test_update_all_names_what_it_skipped_rather_than_dropping_it(
     with open(c.paths.main_config, "a", encoding="utf-8") as fh:
         fh.write(
             "\n[firmware no_tree_fw]\nbuilder: platformio\n"
-            "helper: knomi_serial\nflashers: esptool\n\n"
+            "helper: knomi_serial\nflashers: platformio\n\n"
             "[type no_tree]\nfirmware: no_tree_fw\nplatformio_env: no_tree\n"
         )
 
@@ -292,7 +292,7 @@ def test_a_board_its_family_cannot_write_is_reported_not_written(c, monkeypatch)
         text = fh.read()
     assert text.count("flashers: flashtool") == 1
     with open(c.paths.main_config, "w", encoding="utf-8") as fh:
-        fh.write(text.replace("flashers: flashtool", "flashers: esptool"))
+        fh.write(text.replace("flashers: flashtool", "flashers: platformio"))
     written: list = []
     refusals: list = []
 
@@ -324,7 +324,7 @@ def test_flashing_a_platformio_type_uses_the_watcher_map(
         cli.flash_fw_cmd(argparse.Namespace(type=ENV, serial=None, yes=True))
 
     assert len(captured) == 1
-    assert {t.flasher for t in captured[0]} == {"esptool"}
+    assert {t.flasher for t in captured[0]} == {"platformio"}
 
 
 def test_flashing_a_platformio_screen_matches_its_id_case_insensitively(
@@ -337,9 +337,31 @@ def test_flashing_a_platformio_screen_matches_its_id_case_insensitively(
         cli.flash_fw_cmd(argparse.Namespace(type=ENV, serial="AAA111", yes=True))
 
     assert len(captured) == 1
-    assert [target.detail["screen"]["device_id"] for target in captured[0]] == [
+    assert [target.detail["device_id"] for target in captured[0]] == [
         "aaa111"
     ]
+
+
+def test_a_populated_map_selects_without_opening_a_port(
+    c, pio_type, captured, fake_root, monkeypatch
+):
+    """Choosing what to flash is not the write. The map answers instantly, so
+    the six-second listen is kept for the one place that needs it - inside the
+    write, once the ports are free - and is not paid twice for one flash."""
+    from mcu_updater.helpers import knomi_serial as handler
+
+    _device_map(c.paths, pio_type, aaa111=str(fake_root / "ttyUSB0"))
+    asked: list[str] = []
+    monkeypatch.setattr(
+        handler, "discover", lambda p, s, d, **k: asked.append(d.name) or {}
+    )
+    monkeypatch.setattr(cli, "_confirm", lambda prompt: True)
+
+    with pytest.raises(SystemExit):
+        cli.flash_fw_cmd(argparse.Namespace(type=ENV, serial=None, yes=True))
+
+    assert asked == []
+    assert len(captured) == 1
 
 
 def test_a_platformio_type_with_no_watcher_map_says_so(c, pio_type, monkeypatch):
@@ -385,7 +407,7 @@ def test_building_a_platformio_type_with_no_tree_refuses_before_the_lock(
     with open(c.paths.main_config, "a", encoding="utf-8") as fh:
         fh.write(
             "\n[firmware no_tree_fw]\nbuilder: platformio\n"
-            "helper: knomi_serial\nflashers: esptool\n\n"
+            "helper: knomi_serial\nflashers: platformio\n\n"
             "[type no_tree]\nfirmware: no_tree_fw\nplatformio_env: no_tree\n"
         )
 

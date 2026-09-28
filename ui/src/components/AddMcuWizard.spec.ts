@@ -170,7 +170,7 @@ describe("AddMcuWizard", () => {
   it("shows why a type with no flasher cannot be set up", async () => {
     newAgent();
     const reason =
-      "nothing on [firmware knomi_serial]'s flashers: (esptool) can scan for a new board";
+      "nothing on [firmware knomi_serial]'s flashers: (platformio) can scan for a new board";
     state.status = {
       targets: [
         row("platformio", "knomi", {

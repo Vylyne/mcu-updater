@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 import os
-from typing import Any
+from collections.abc import Mapping
+from typing import TYPE_CHECKING, Any
 
 from ... import firmware, flashers, helpers, inventory, providers, stop_services
 from ...config import Registry
@@ -15,6 +16,26 @@ from ...paths import REENUMERATE_TIMEOUT
 from ...settings import Settings
 from ..rpc import ERR_INVALID_PARAMS, RpcError
 from ._api import _Base
+
+if TYPE_CHECKING:
+    from ...providers.pio import PioType
+
+
+def port_detail(display: PioType, screen: Mapping[str, Any]) -> dict[str, Any]:
+    """A klippy-reported PlatformIO device, as the `platformio` flasher reads it.
+
+    The id is resolved the way the flasher always has - the configured one,
+    else the one the firmware reported - so nothing changes about which id a
+    device is matched on. Shared with `bulk`, whose fleet selection reads the
+    same payload.
+    """
+    return {
+        "env": display,
+        "port": screen["configured_path"],
+        "device_id": (screen.get("device_id") or screen.get("reported_id") or "").lower(),
+        "name": screen["name"],
+        "section": screen["section"],
+    }
 
 
 class FlashMixin(_Base):
@@ -474,9 +495,9 @@ class FlashMixin(_Base):
 
         # Built from the list read *before* the stop, which is the only list a
         # running Klipper can produce. Everything after this - the stop, the
-        # watcher pause, the discovery, the writes - is the same machinery a
-        # fleet flash uses, because there was never anything display-shaped
-        # about it beyond the two steps the esptool flasher now owns.
+        # watcher pause, the identity check, the writes - is the same machinery
+        # a fleet flash uses; the `platformio` flasher owns the two steps that
+        # are specific to a device reached at a port.
         units = stop_services.for_platformio(self.paths, display, settings)
         families = firmware.load(self.paths)
         screens, refused = flashers.select_each(
@@ -490,8 +511,8 @@ class FlashMixin(_Base):
                         chipset="",
                         state=inventory.STATE_UNKNOWN,
                         fw=display.firmware,
-                        kind=flashers.KIND_SCREEN,
-                        detail={"display": display, "screen": s},
+                        kind=flashers.KIND_PORT,
+                        detail=port_detail(display, s),
                     ),
                     units,
                 )

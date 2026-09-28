@@ -44,7 +44,7 @@ Flashing:
 
 - [x] `flashtool.py` - Katapult over USB, STM32 and RP2040
 - [x] `dfu-util` - bare STM32, first bootloader install
-- [x] `esptool` - ESP32, via PlatformIO
+- [x] `platformio` - any PlatformIO env, uploaded to its configured port
 - [x] RP2040 BOOTSEL - copy a `.uf2` to the mounted volume
 - [x] CAN - unified `flashtool.py` transport, with live interface discovery
 - [x] Per-firmware `flashers:` lists - a family declares which tools may write it, tried in order; each tool takes the first file its builder staged of a kind it accepts (`bin`, `uf2`, `pio_env`), and a device no tool can write is refused by name - naming the missing build when that is the reason
@@ -85,6 +85,8 @@ Interfaces:
 [docs/decisions.md](docs/decisions.md) for the standing decisions that came out
 of it. What is still open:
 
+- [ ] **NEXT** Remove the remaining screen/display vocabulary from the wire, left out of the `platformio` flasher rename because each is a wire change of its own: the `displays` keys (`fw.device.list`, `fw.flash`'s PlatformIO response, `fw.flash_all`), the status payload's `screens`, the `display_flash` job kind, and `pio_status`. Any wire rename bumps `API_VERSION`, so the UI release is promoted first - see AGENTS.md's release ordering.
+- [ ] **NEEDS DESIGN** First-time flashing of a PlatformIO device that cannot answer the listen pass yet (a blank ESP32, or firmware that does not broadcast its id) while others of its type do. The `platformio` flasher refuses it at write time; the fix belongs in first install, where a PlatformIO type has no candidate scanner yet.
 - [ ] **TEST ERROR** Reproduce and fix the flaky teardown `RuntimeError` in `test_an_unknown_inbound_method_gets_an_error_not_silence`.
 - [ ] **NEEDS DESIGN** Run config migrations as the first step of agent startup, so that restarting the service migrates an existing install. First check the restrictions the service runs under.
 - [ ] **BUG** A Roadrunner flash reports `Could not confirm that the Roadrunner CDC device disappeared` on an otherwise successful write. `_await_disappearance` in [src/mcu_updater/discovery/roadrunner.py](src/mcu_updater/discovery/roadrunner.py) sets `unknown = True` when `_entry_candidates(paths, strict=True)` raises `OSError`, then treats "I could not look" as "the device is still there" and spins to `REENUMERATE_TIMEOUT`. The usual cause is `/dev/serial/by-id` disappearing entirely once the last CDC device leaves - which is evidence the board *did* go, not absence of evidence. Seen on the bench 2026-09-19; the flash itself succeeded.
@@ -320,9 +322,9 @@ Per-type keys:
   naming convention that belongs to one vendor's `CMakeLists.txt`. A mixed
   RGB/GRB fleet needs two `[type]` sections, since `cmake_target:` is per-type.
 - **`flashers`** - required on every `[firmware ...]`. The flashers that may write
-  this family, tried in order: `flashtool`, `esptool`, `dfu_util`, `bootsel`.
+  this family, tried in order: `flashtool`, `platformio`, `dfu_util`, `bootsel`.
   Each takes one kind of staged file - `flashtool` and `dfu_util` a `.bin`,
-  `bootsel` a `.uf2`, `esptool` a PlatformIO env - and one whose file was not
+  `bootsel` a `.uf2`, `platformio` a PlatformIO env - and one whose file was not
   staged is passed over for the next. So `flashtool, bootsel` reaches bootsel,
   through the family's helper, only when no `.bin` was staged - which, for an
   RP2040 Klipper build, is exactly a build with no bootloader offset (see
@@ -376,7 +378,7 @@ stop_services: klipper
 
 [firmware knomi_serial]
 stop_services: klipper, knomi_serial     ; OVERRIDE - replaces, never merges
-flashers: esptool
+flashers: platformio
 
 [type bttebb36]
 stop_services: klipper                   ; OVERRIDE - only the last tier applies
@@ -576,7 +578,7 @@ from, which is why `chipset` still has to be given by hand (`esp32`):
 source: ~/knomi_serial      ; one repo, shared by every env
 builder: platformio
 helper: knomi_serial
-flashers: esptool
+flashers: platformio
 
 [type knomi_toolchanger]
 chipset: esp32
@@ -588,7 +590,14 @@ platformio_env: knomi_toolchanger      ; REQUIRED - no default, unlike everythin
 is often wrong for it (`knomi_serial` itself ships a `knomi_i2cscan` diagnostic
 env beside the firmware one) and `platformio.ini`'s `default_envs` names what
 builds by default, not a canonical choice - so guessing either would build the
-wrong thing silently. `platformio_bin` in `[updater]` points at `pio` if
+wrong thing silently.
+
+A family's devices are only confirmed at write time if it also names its
+`helper:` (`helper: knomi_serial` above, for a KNOMI). Without one, `flashers:
+platformio` still writes every device to its configured port, just with no
+confidence and a warning that nothing could confirm which device that is.
+
+`platformio_bin` in `[updater]` points at `pio` if
 neither the `PATH` nor `~/.platformio/penv/bin/pio` finds it.
 
 | Key | Meaning |

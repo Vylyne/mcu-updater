@@ -217,7 +217,7 @@ def test_a_screen_types_klipper_section_comes_from_its_reader(paths, monkeypatch
     write_main_config(
         paths,
         with_base_firmwares(
-            "[firmware knomi]\nsource: ~/knomi\nbuilder: platformio\nflashers: esptool\n"
+            "[firmware knomi]\nsource: ~/knomi\nbuilder: platformio\nflashers: platformio\n"
             "helper: knomi_serial\n\n"
             "[type screen]\nfirmware: knomi\nplatformio_env: knomi\n"
         ),

@@ -20,6 +20,7 @@ from ...errors import (
 from ...settings import Settings
 from ..rpc import ERR_INVALID_PARAMS, RpcError
 from ._api import _Base
+from .flash import port_detail
 
 
 def _board_request(board: dict) -> tuple[flashers.Device, tuple[str, ...]]:
@@ -54,8 +55,8 @@ def _platformio_json(target: flashers.FlashTarget) -> dict[str, Any]:
     """
     return {
         **target.to_json(),
-        "name": target.detail["screen"]["name"],
-        "section": target.detail["screen"]["section"],
+        "name": target.detail["name"],
+        "section": target.detail["section"],
         "reason": target.detail.get("reason"),
     }
 
@@ -388,10 +389,9 @@ class BulkMixin(_Base):
                             chipset="",
                             state=inventory.STATE_UNKNOWN,
                             fw=display.firmware,
-                            kind=flashers.KIND_SCREEN,
+                            kind=flashers.KIND_PORT,
                             detail={
-                                "display": display,
-                                "screen": screen,
+                                **port_detail(display, screen),
                                 "reason": "forced" if scope == "all" else status.reason,
                             },
                         ),

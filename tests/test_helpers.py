@@ -123,9 +123,10 @@ def test_nothing_remembered_and_no_permission_to_ask_is_empty(paths, settings, m
     )
 
 
-def test_the_remembered_answer_wins_over_asking(paths, settings, monkeypatch):
-    """Cheapest source first. The listen pass costs six seconds of held ports,
-    so it runs when the map has nothing - not alongside it."""
+def test_asking_listens_even_when_the_map_has_an_answer(paths, settings, monkeypatch):
+    """`ask=True` is a caller saying the ports are free and it wants to be
+    sure - the write-time confirmation. The map is where a device was; only
+    the listen says where it is, so a populated map must not stand in for it."""
     from mcu_updater.helpers import knomi_serial as handler
 
     monkeypatch.setattr(
@@ -133,12 +134,102 @@ def test_the_remembered_answer_wins_over_asking(paths, settings, monkeypatch):
         "read_device_map",
         lambda p, e: {"aaa111": _device("aaa111", "/dev/ttyUSB0")},
     )
-    monkeypatch.setattr(handler, "discover", _never_asked)
+    monkeypatch.setattr(
+        handler,
+        "discover",
+        lambda p, s, e, **kw: {"aaa111": _device("aaa111", "/dev/ttyUSB3")},
+    )
 
     found = KnomiSerialHelper().identify(
         paths, settings, _pio_entry(), ask=True, reporter=null_reporter
     )
+    assert found["aaa111"].port == "/dev/ttyUSB3"
+    assert found["aaa111"].answered is True
+
+
+def test_a_listen_that_hears_nothing_is_not_the_map(paths, settings, monkeypatch):
+    """The ports were free and nothing spoke. Handing back the map's port would
+    call a remembered path a confirmed one."""
+    from mcu_updater.helpers import knomi_serial as handler
+
+    monkeypatch.setattr(
+        handler,
+        "read_device_map",
+        lambda p, e: {"aaa111": _device("aaa111", "/dev/ttyUSB0")},
+    )
+    monkeypatch.setattr(handler, "discover", lambda p, s, e, **kw: {})
+
+    assert (
+        KnomiSerialHelper().identify(
+            paths, settings, _pio_entry(), ask=True, reporter=null_reporter
+        )
+        == {}
+    )
+
+
+def test_a_listen_that_cannot_run_falls_back_to_the_map(paths, settings, monkeypatch):
+    """No pyserial, no source tree: the map is the best answer left, and it is
+    marked as remembered rather than heard."""
+    from mcu_updater.errors import ToolMissingError
+    from mcu_updater.helpers import knomi_serial as handler
+
+    def boom(*a, **kw):
+        raise ToolMissingError("no python3 here", tool="python3")
+
+    said: list[tuple[str, str]] = []
+    monkeypatch.setattr(
+        handler,
+        "read_device_map",
+        lambda p, e: {"aaa111": _device("aaa111", "/dev/ttyUSB0")},
+    )
+    monkeypatch.setattr(handler, "discover", boom)
+
+    found = KnomiSerialHelper().identify(
+        paths,
+        settings,
+        _pio_entry(),
+        ask=True,
+        reporter=lambda stream, line: said.append((stream, line)),
+    )
     assert list(found) == ["aaa111"]
+    assert found["aaa111"].answered is False
+    assert [s for s, _ in said] == ["info", "warn"]
+
+
+def test_a_stale_map_entry_is_not_a_fallback_answer(paths, settings, monkeypatch):
+    """The watcher is stopped while the ports are free, so its map is frozen:
+    an entry whose port node is gone names nothing. Offered to the write, it
+    sends the upload to a missing port, or refuses a device that is there."""
+    from mcu_updater.errors import ToolMissingError
+    from mcu_updater.helpers import knomi_serial as handler
+
+    def boom(*a, **kw):
+        raise ToolMissingError("no python3 here", tool="python3")
+
+    monkeypatch.setattr(
+        handler,
+        "read_device_map",
+        lambda p, e: {
+            "aaa111": _device("aaa111", "/dev/ttyUSB0"),
+            "bbb222": WatcherDevice(device_id="bbb222", port="/dev/ttyUSB1", present=False),
+        },
+    )
+    monkeypatch.setattr(handler, "discover", boom)
+
+    found = KnomiSerialHelper().identify(
+        paths, settings, _pio_entry(), ask=True, reporter=null_reporter
+    )
+
+    assert list(found) == ["aaa111"]
+
+
+def test_how_a_device_was_found_stays_off_the_wire():
+    """`fw.device.list` puts `to_json` on the wire. `answered` is a fact about
+    one write-time listen, not a field of the device list."""
+    device = WatcherDevice(
+        device_id="aaa111", port="/dev/ttyUSB0", present=True, answered=True
+    )
+    assert "answered" not in device.to_json()
 
 
 def test_an_empty_map_asks_the_devices_themselves(paths, settings, monkeypatch):
@@ -158,6 +249,7 @@ def test_an_empty_map_asks_the_devices_themselves(paths, settings, monkeypatch):
         paths, settings, _pio_entry(), ask=True, reporter=null_reporter
     )
     assert list(found) == ["bbb222"]
+    assert found["bbb222"].answered is True
 
 
 def test_asking_is_best_effort_and_never_raises(paths, settings, monkeypatch):

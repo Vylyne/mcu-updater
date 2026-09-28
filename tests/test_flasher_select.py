@@ -29,7 +29,7 @@ from mcu_updater.firmware import FirmwareFamily
 from mcu_updater.flashers import (
     KIND_BARE,
     KIND_CANBUS,
-    KIND_SCREEN,
+    KIND_PORT,
     KIND_SERIAL,
     Device,
 )
@@ -121,7 +121,7 @@ def _bare_rp2040() -> Device:
         (_device(chipset="lpc1769"), True),
         (_device(kind=KIND_CANBUS, state="unknown", id="bcb5346fc731"), True),
         (_device(chipset="esp32"), False),
-        (_device(kind=KIND_SCREEN, chipset="esp32"), False),
+        (_device(kind=KIND_PORT, chipset="esp32"), False),
         (_device(kind=KIND_BARE, state=STATE_DFU), False),
     ],
 )
@@ -132,14 +132,14 @@ def test_flashtool_writes_serial_and_can_boards(device, expected):
 @pytest.mark.parametrize(
     "device, expected",
     [
-        (_device(kind=KIND_SCREEN, chipset="esp32", state="unknown"), True),
-        (_device(kind=KIND_SCREEN, chipset="", state="unknown"), True),
+        (_device(kind=KIND_PORT, chipset="esp32", state="unknown"), True),
+        (_device(kind=KIND_PORT, chipset="", state="unknown"), True),
         (_device(chipset="esp32"), False),
         (_device(), False),
     ],
 )
-def test_esptool_writes_screens(device, expected):
-    assert flashers.Esptool().supports(device, None) is expected
+def test_platformio_writes_port_devices(device, expected):
+    assert flashers.PlatformIO().supports(device, None) is expected
 
 
 @pytest.mark.parametrize(
@@ -168,7 +168,7 @@ def test_bootsel_writes_a_running_board_whose_helper_can_request_bootsel():
     assert flashers.Bootsel().supports(_roadrunner(), _Requester()) is True
 
 
-@pytest.mark.parametrize("kind", [KIND_SCREEN, KIND_CANBUS])
+@pytest.mark.parametrize("kind", [KIND_PORT, KIND_CANBUS])
 def test_bootsel_does_not_claim_a_non_serial_handoff(kind):
     device = _device(
         chipset="rp2040",
@@ -220,7 +220,7 @@ def test_first_install_goes_through_the_katapult_list():
 
 def test_a_flasher_the_family_does_not_list_is_never_chosen():
     """flashtool could write this board; the family did not list it."""
-    assert flashers.resolve(_family("esptool"), _device(), None, _staged(bin="/x.bin", uf2="/x.uf2")) is None
+    assert flashers.resolve(_family("platformio"), _device(), None, _staged(bin="/x.bin", uf2="/x.uf2")) is None
 
 
 def test_a_family_with_no_list_resolves_nothing():
@@ -231,7 +231,7 @@ def test_a_family_with_no_list_resolves_nothing():
 
 
 def test_nothing_supporting_the_device_is_refused_by_name(paths):
-    family = _family("esptool", name="klipper")
+    family = _family("platformio", name="klipper")
     device = _device(type="ebb36", id="usb-Klipper_stm32g0b1xx_1-if00")
 
     with pytest.raises(NoFlasherError) as exc:
@@ -241,11 +241,11 @@ def test_nothing_supporting_the_device_is_refused_by_name(paths):
 
     message = str(exc.value)
     assert "[firmware klipper]" in message
-    assert "flashers: esptool" in message
+    assert "flashers: platformio" in message
     assert "ebb36" in message
     assert exc.value.code == "no_flasher"
     assert exc.value.data["family"] == "klipper"
-    assert exc.value.data["flashers"] == ["esptool"]
+    assert exc.value.data["flashers"] == ["platformio"]
     assert exc.value.data["state"] == STATE_KLIPPER
     assert exc.value.data["missing"] == []
 
@@ -377,7 +377,7 @@ def _screen_device(fw: str = "knomi") -> Device:
         chipset="",
         state="unknown",
         fw=fw,
-        kind=KIND_SCREEN,
+        kind=KIND_PORT,
         detail={},
     )
 
@@ -431,7 +431,7 @@ def test_a_refusal_is_reported_with_the_failures_and_nothing_waits(paths):
         "type": "ebb36",
         "id": "usb-x",
         "flasher": None,
-        "error": "nothing in [firmware klipper] (flashers: esptool) can write it",
+        "error": "nothing in [firmware klipper] (flashers: platformio) can write it",
     }
     bench = flashers.Bench(paths=paths, settings=Settings(), controller=_no_controller)
 

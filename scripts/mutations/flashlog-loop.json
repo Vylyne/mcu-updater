@@ -61,9 +61,27 @@
     },
     {
       "name": "a screen with no hardware id has nothing to file",
-      "file": "src/mcu_updater/flashers/esptool.py",
+      "file": "src/mcu_updater/flashers/platformio.py",
       "find": "        if not ident:\n            return None",
       "replace": "        if False:\n            return None"
+    },
+    {
+      "name": "a record under the old display: prefix is still found",
+      "file": "src/mcu_updater/build.py",
+      "find": "        return _migrated(data)",
+      "replace": "        return data"
+    },
+    {
+      "name": "the newer of two records wins",
+      "file": "src/mcu_updater/build.py",
+      "find": "        if existing is None or _stamp(entry) > _stamp(existing):",
+      "replace": "        if existing is None:"
+    },
+    {
+      "name": "a missing stamp is never the oldest",
+      "file": "src/mcu_updater/build.py",
+      "find": "        return float(\"-inf\")",
+      "replace": "        return float(\"inf\")"
     }
   ]
 }

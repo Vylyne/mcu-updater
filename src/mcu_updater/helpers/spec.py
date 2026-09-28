@@ -152,10 +152,11 @@ class Identifier(Protocol):
     capability rather than a source.
 
     `ask` is the cost. False is the remembered answer: a file, instant, and
-    safe while Klipper holds every port. True additionally opens the free
-    ports and reads what broadcasts back - authoritative, and only possible
-    once the caller has stopped the services holding them. No default, so
-    that cost is never acquired by omission.
+    safe while Klipper holds every port. True opens the free ports and reads
+    what broadcasts back - authoritative, and only possible once the caller
+    has stopped the services holding them. What True falls back to when it
+    cannot ask is the helper's policy; a device it heard is returned with
+    `answered` set. No default, so that cost is never acquired by omission.
 
     Keyed by device id. The value is knomi's own `WatcherDevice` because
     `fw.device.list` already puts it on the wire and a five-field copy here

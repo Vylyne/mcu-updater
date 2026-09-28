@@ -33,7 +33,7 @@ BASE = {
     "klipper": fam("klipper", ["flashtool"]),
     "katapult": fam("katapult", ["dfu_util", "bootsel"], bootloader=True),
     "roadrunner": fam("roadrunner", ["bootsel"], builder="cmake"),
-    "knomi_serial": fam("knomi_serial", ["esptool"], builder="platformio"),
+    "knomi_serial": fam("knomi_serial", ["platformio"], builder="platformio"),
 }
 
 

@@ -29,7 +29,7 @@ from mcu_updater.providers import cmake, pio
 
 KLIPPER = FirmwareFamily(name="klipper", flashers=("flashtool",))
 ROADRUNNER = FirmwareFamily(name="roadrunner", builder="cmake", flashers=("bootsel",))
-KNOMI = FirmwareFamily(name="knomi", builder="platformio", flashers=("esptool",))
+KNOMI = FirmwareFamily(name="knomi", builder="platformio", flashers=("platformio",))
 
 
 def _sha(data: bytes) -> str:

@@ -379,7 +379,7 @@ def read_sidecar(paths: Paths, display: PioType) -> dict | None:
 
     The display counterpart of `build.read_sidecar`, and read by the same two
     kinds of caller: `artifact_status` asking whether the image is current, and
-    the esptool flasher noting which image a screen was just given. Degrades to
+    the `platformio` flasher noting which image a device was just given. Degrades to
     None on every failure - a missing, unreadable or non-dict record all mean
     "no provenance", and telling them apart would not change any answer.
     """

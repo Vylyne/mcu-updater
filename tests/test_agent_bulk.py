@@ -458,7 +458,7 @@ def test_a_display_with_no_source_tree_is_skipped_but_never_silently(bulk, paths
     with open(paths.main_config, "a", encoding="utf-8") as fh:
         fh.write(
             "\n[firmware knomi_missing]\nsource: /nope/not/here\nbuilder: platformio\n"
-            "helper: knomi_serial\nflashers: esptool\n\n"
+            "helper: knomi_serial\nflashers: platformio\n\n"
             "[type knomi_toolchanger]\nchipset: esp32\nfirmware: knomi_missing\n"
             "platformio_env: knomi_toolchanger\n"
         )

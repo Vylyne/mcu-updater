@@ -18,8 +18,8 @@ from ..errors import NoFlasherError
 from ..firmware import missing_section_message
 from .bootsel import Bootsel
 from .dfu_util import DfuUtil
-from .esptool import Esptool
 from .flashtool import Flashtool
+from .platformio import PlatformIO
 from .spec import KIND_BARE, KIND_SERIAL, CandidateScanner, Device, Flasher, FlashTarget
 
 if TYPE_CHECKING:
@@ -32,7 +32,7 @@ if TYPE_CHECKING:
 #:
 FLASHERS: tuple[Flasher, ...] = (
     Flashtool(),
-    Esptool(),
+    PlatformIO(),
     DfuUtil(),
     Bootsel(),
 )
@@ -362,7 +362,7 @@ def first_install(entry: _Declared, families: dict[str, FirmwareFamily]) -> Firs
     bare board of it - the first, in list order, that is a `CandidateScanner`
     and whose `supports()` takes a bare device in one of its own states.
 
-    No builder and no flasher name is compared: `flashtool` and `esptool`
+    No builder and no flasher name is compared: `flashtool` and `platformio`
     refuse `KIND_BARE` and cannot scan, so they are never chosen.
 
     Pure - no bus, no subprocess, no file read - because `fw.status` asks it

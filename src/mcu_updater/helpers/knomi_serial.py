@@ -9,6 +9,7 @@ checked when the config loads.
 
 from __future__ import annotations
 
+import dataclasses
 from typing import TYPE_CHECKING
 
 from ..discovery.knomi_serial import device_map_path, discover, read_device_map
@@ -51,34 +52,36 @@ class KnomiSerialHelper:
         ask: bool,
         reporter: Reporter,
     ) -> dict[str, WatcherDevice]:
-        """The watcher's map, and failing that the devices themselves.
+        """What is remembered, or what the devices say now.
 
-        In order of what it costs. `devices.json` is written by the klippy
-        module's own watcher process for exactly this moment and answers
-        instantly. The listen pass is six seconds of held ports, so it runs
-        only when the map has nothing to say and only when the caller has
-        said the ports are free.
+        `ask=False` is the watcher's map and nothing else. `devices.json` is
+        written by knomi_serial's own watcher for the ports Klipper does not
+        hold, answers instantly, and costs no port - which is what a status
+        poll, and a CLI choosing what to flash, want.
 
-        The map is a remembered path and the broadcast is the authority -
-        knomi_serial's own docs put identity at flash time for that reason,
-        and a map is by definition not flash time. But a remembered path
-        that is still right is worth more than six seconds, and the write
-        itself verifies the port again before it touches anything.
+        `ask=True` is a caller saying the ports are free and it wants to be
+        sure: the listen pass, six seconds of held ports, and the only answer
+        taken at flash time. It is not merged with the map. A device that stays
+        silent while others answer is not there, and one the listen never heard
+        must not come back with a remembered port dressed as a confirmed one -
+        so what was heard is marked `answered`, and nothing else is.
 
-        Asking is best effort: it needs pyserial out of the module's source
-        tree, and a host missing it must reach the caller's own "neither
-        source could tell" refusal - which names both sources - rather than
-        a tool error from the fallback.
+        The map is the fallback only when the listen cannot run at all: it
+        needs pyserial out of the module's source tree, and a host missing it
+        must reach the caller's own "neither source could tell" refusal - which
+        names both sources - rather than a tool error. Only its present entries
+        are offered: the watcher is stopped while the ports are free, so the map
+        is frozen, and a port whose node is gone is not an answer.
         """
-        found = read_device_map(paths, entry)
-        if found or not ask:
-            return found
-        reporter("info", f"No device map for '{entry.name}' - asking the devices which they are...")
+        if not ask:
+            return read_device_map(paths, entry)
+        reporter("info", f"Asking the '{entry.name}' devices which they are...")
         try:
-            return discover(paths, settings, entry, reporter=reporter)
+            heard = discover(paths, settings, entry, reporter=reporter)
         except UpdaterError as exc:
-            reporter("warn", f"could not ask the devices ({exc})")
-            return {}
+            reporter("warn", f"could not ask the devices ({exc}) - using the watcher's map instead")
+            return {i: d for i, d in read_device_map(paths, entry).items() if d.present}
+        return {i: dataclasses.replace(d, answered=True) for i, d in heard.items()}
 
     def remembered_at(self, paths: Paths, entry: pio.PioType) -> str:
         return device_map_path(paths, entry)

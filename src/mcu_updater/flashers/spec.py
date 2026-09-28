@@ -3,8 +3,9 @@
 The build half of this project had two parallel implementations; the flash half
 has three, and they were written at three different times. `flash_katapult`
 reboots a board into its bootloader and hands the binary to katapult's
-`flashtool.py`. `displays.upload` drives PlatformIO's esptool at a port it has
-to *rediscover* first, because every screen here is an indistinguishable CH340.
+`flashtool.py`. `providers.pio.upload` drives PlatformIO at a port whose device
+may have to be *rediscovered* first, because a KNOMI is an indistinguishable
+CH340.
 `flash_dfu_stm32` writes to a bare board holding BOOT0, before any bootloader
 exists to speak a protocol.
 
@@ -79,8 +80,9 @@ class Bench:
 KIND_SERIAL = "serial"
 #: A CAN UUID. Its liveness is often unknown, and flashtool writes it anyway.
 KIND_CANBUS = "canbus_uuid"
-#: A PlatformIO device reached through its configured port.
-KIND_SCREEN = "screen"
+#: A device reached at a configured port; its identity, if its family has a way
+#: to know one, is confirmed at write time.
+KIND_PORT = "port"
 #: A board with no firmware of ours yet, in a ROM bootloader (DFU or BOOTSEL).
 KIND_BARE = "bare"
 
@@ -95,7 +97,8 @@ class Device:
 
     `detail` is the caller's addressing payload, carried onto the target for
     the flasher that ends up owning it: the board dict for flashtool,
-    `{"display", "screen"}` for esptool. It never names a file. Which file a
+    `{"env", "port", "device_id", "name", "section"}` for platformio. It never
+    names a file. Which file a
     flasher writes is selection's answer (`FlashTarget.artifact`), read from
     what the family's builder staged, so no caller can hand a flasher a file
     of a kind it cannot write.
@@ -116,13 +119,14 @@ class FlashTarget:
 
     A key plus an envelope. `type` and `id` are the two facts every caller needs
     and are the same two slots `targets[].devices[]` already uses - the board's
-    `[type]` name and its serial, the display's `[type]` name and its
+    `[type]` name and its serial, a PlatformIO device's `[type]` name and its
     configured port.
 
     `detail` is the owning flasher's private payload and nothing else reads it.
-    That is deliberate: a chipset means nothing to esptool and a klippy section
-    means nothing to flashtool, and inventing a union of the two would be a
-    third description of a device to keep in step with the two that exist.
+    That is deliberate: a chipset means nothing to a PlatformIO upload and a
+    klippy section means nothing to flashtool, and inventing a union of the two
+    would be a third description of a device to keep in step with the two that
+    exist.
     Mutable, deliberately: `write` and `settled` for the same target share one
     `FlashTarget` instance, and `detail` is the one channel a flasher has to
     carry something `write` only learns partway through (Bootsel's handoff
@@ -174,7 +178,7 @@ class FlashRecord:
 
     `key` is what the entry is filed under and is *not* always `target.id`: a
     screen's id is a port, which is not durable, so it files under
-    `build.display_key` of its hardware id instead.
+    `build.hardware_id_key` of its hardware id instead.
     """
 
     key: str
@@ -209,7 +213,7 @@ class Flasher(Protocol):
     #: Scoped to the write and to any state transition the flasher performs
     #: itself - not to the device's lifetime. flashtool needs it not because the
     #: write does but because *getting there* does: the reboot-into-katapult
-    #: request goes over the serial port Klipper is holding. esptool needs it
+    #: request goes over the serial port Klipper is holding. platformio needs it
     #: because the klippy module holds the port for the write itself.
     #:
     #: `False` means `FlashTarget.stop_services` is never consulted at all -
@@ -259,9 +263,9 @@ class Flasher(Protocol):
         anything requiring free ports belongs here and nowhere else.
 
         Yields a session, which is opaque to the batch and handed back to this
-        same flasher's `write`. Untyped on purpose: what esptool needs to carry
-        across a batch is a map of which screen answered on which port, and
-        what flashtool needs is nothing at all.
+        same flasher's `write`. Untyped on purpose: what platformio needs to
+        carry across a batch is each type's answer to "which device is on which
+        port", and what flashtool needs is nothing at all.
         """
         ...
 
@@ -274,7 +278,8 @@ class Flasher(Protocol):
         board, so the batch checks between targets and never inside one.
 
         Returns whatever is worth recording beside the uniform result - the chip
-        esptool reported, a board's serial under the name it has always had.
+        a PlatformIO upload reported, a board's serial under the name it has
+        always had.
 
         A `"confidence"` key is special: `write_all` takes it off the result
         and passes it to the ledger, so it never reaches the wire. How a board
@@ -449,7 +454,7 @@ def staged_record(bench: Bench, target: FlashTarget, *, fw: str, kind: str) -> F
 __all__ = [
     "KIND_BARE",
     "KIND_CANBUS",
-    "KIND_SCREEN",
+    "KIND_PORT",
     "KIND_SERIAL",
     "Bench",
     "CandidateScan",

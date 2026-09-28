@@ -289,7 +289,7 @@ def test_the_key_is_refused_on_a_family_that_cannot_auto_provision(paths):
         fh.write(
             "\n[firmware knomi]\n"
             "builder: platformio\n"
-            "flashers: esptool\n"
+            "flashers: platformio\n"
             "helper: knomi_serial\n"
             "auto_provision: true\n"
         )

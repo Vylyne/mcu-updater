@@ -7,10 +7,10 @@ to be stopped, and stopping Klipper removes the only other source.
 Split out of `test_agent_displays.py` alongside
 `read_device_map()`/`device_map_path()`/`WatcherDevice`'s own move to
 `discovery/watcher.py`; moved again into `discovery/knomi_serial/`,
-the subpackage named for the firmware this module integrates with. The two
-tests that exercise `api.device_list` stayed behind - they are agent-level,
-not `providers.pio`-level. The re-export shim that used to carry these names
-through `providers.pio` is gone: the only module that reaches for them now is
+the subpackage named for the firmware this module integrates with.
+Agent-level listing is tested in `test_agent_platformio_devices.py`, against a
+fake lister. The re-export shim that used to carry these names through
+`providers.pio` is gone: the only module that reaches for them now is
 `helpers.knomi_serial`, the firmware's own identity handler.
 """
 

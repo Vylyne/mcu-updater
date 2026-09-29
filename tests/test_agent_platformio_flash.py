@@ -165,13 +165,13 @@ def test_the_screens_are_read_before_klipper_is_stopped(api, no_pio, monkeypatch
 
     monkeypatch.setattr(svc, "stop", watched_stop)
 
-    original = api.device_list
+    original = api.platformio_devices
 
-    def watched_list(args):
+    def watched_list():
         order.append("listed")
-        return original(args)
+        return original()
 
-    monkeypatch.setattr(api, "device_list", watched_list)
+    monkeypatch.setattr(api, "platformio_devices", watched_list)
 
     res = api.dispatch("fw.flash", {"name": ENV})
     assert api.runner.wait(timeout=30)
@@ -984,7 +984,7 @@ def _built(api, paths, fake_root) -> None:
     """An image on disk for the display env, so there is something to write."""
     from mcu_updater.providers import pio as dm
 
-    display = api.pio_types()[ENV]
+    display = api.platformio_types()[ENV]
     path = pathlib.Path(dm.firmware_bin(display))
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(b"\0" * 512)

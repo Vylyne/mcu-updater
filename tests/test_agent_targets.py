@@ -4,13 +4,13 @@
 panel needed a component per wire shape. `targets[]` is those two projected
 onto one shape, so one component renders both - and renders whatever comes
 next without being taught to. The two originals retired at API_VERSION 2;
-`type_status()`/`pio_status()`, the richer per-type computations `targets[]` is
+`type_status()`/`platformio_status()`, the richer per-type computations `targets[]` is
 built from, did not - they still
 back `fw.type.list` and feed the projection directly.
 
 **It is a projection, not a second source of truth.** The load-bearing test in
 this file is `test_every_fact_in_the_old_keys_survives_the_projection`: if a
-fact lives in `type_status()`/`pio_status()` and cannot be found here,
+fact lives in `type_status()`/`platformio_status()` and cannot be found here,
 that is a bug in the projection rather than a reason to add a key.
 """
 
@@ -162,9 +162,9 @@ def test_a_display_projects_onto_the_same_shape(api, paths, fake_root):
     display = _targets(api, "platformio")[ENV]
 
     mcu_keys = set(_targets(api, "kconfig_make")["bttebb36"])
-    # The whole point: a display carries everything an MCU does, plus a bag of
-    # things only a screen has. A reader that never opens `extra` renders both.
-    assert set(display) == mcu_keys | {"extra"}
+    # Everything an MCU row carries, plus the three uniform keys Task 4 gives
+    # every row. Not `extra`: that bag is what this refactor removes.
+    assert set(display) == mcu_keys | {"source", "extras", "devices_note"}
     assert set(display["devices"][0]) == set(_targets(api, "kconfig_make")["bttebb36"]["devices"][0])
     assert display["provider"] == "platformio"
     assert display["descriptor"] == ENV
@@ -211,14 +211,12 @@ def test_a_display_with_its_tree_can_be_built(api, paths, fake_root):
     assert _action(_targets(api, "platformio")[ENV], "build")["blocked"] is None
 
 
-def test_a_display_has_no_firmware_family_and_says_so(api, paths, fake_root):
-    """PlatformIO builds from its own tree, not from a `[firmware ...]` family.
-
-    None rather than a guess: naming klipper here is exactly the reflex that put
-    a cartographer type's artifact under `artifacts.klipper`.
-    """
+def test_a_platformio_row_names_the_family_it_was_declared_under(api, paths, fake_root):
+    """The row's `firmware` is the `[firmware ...]` family its `[type]` names -
+    the same axis every other builder's row reports, and what selects its
+    helper."""
     _add_display(paths, fake_root, api)
-    assert _targets(api, "platformio")[ENV]["firmware"] is None
+    assert _targets(api, "platformio")[ENV]["firmware"] == "knomi_serial"
 
 
 # --------------------------------------------------------------------------
@@ -740,7 +738,7 @@ def test_configure_is_absent_where_the_source_tree_is_not_checked_out(paths, liv
 
 
 def test_every_fact_in_the_old_keys_survives_the_projection(api, paths, fake_root):
-    """`targets[]` must carry everything `type_status()`/`pio_status()`
+    """`targets[]` must carry everything `type_status()`/`platformio_status()`
     produce - the two richer per-type computations it is built from.
 
     Deliberately checks identity of the *facts*, not of the wording: the point
@@ -752,10 +750,10 @@ def test_every_fact_in_the_old_keys_survives_the_projection(api, paths, fake_roo
 
     reg = api.registry()
     legacy_types = [api.type_status(reg, n, api.mcu_info()) for n in reg.names()]
-    legacy_displays = api.pio_status()
-    targets = {t["name"]: t for t in api.targets(reg, legacy_types, legacy_displays)}
+    legacy_platformio = api.platformio_status()
+    targets = {t["name"]: t for t in api.targets(reg, legacy_types, legacy_platformio)}
 
-    assert set(targets) == {t["name"] for t in legacy_types} | {d["name"] for d in legacy_displays}
+    assert set(targets) == {t["name"] for t in legacy_types} | {d["name"] for d in legacy_platformio}
 
     for legacy in legacy_types:
         target = targets[legacy["name"]]
@@ -778,17 +776,20 @@ def test_every_fact_in_the_old_keys_survives_the_projection(api, paths, fake_roo
             assert device["version"] == can["running_version"]
             assert device["name"] == can.get("mcu")
 
-    for legacy in legacy_displays:
+    for legacy in legacy_platformio:
         target = targets[legacy["name"]]
         assert target["descriptor"] == legacy["env"]
-        assert [d["id"] for d in target["devices"]] == [s["configured_path"] for s in legacy["screens"]]
-        assert target["extra"]["module_version"] == legacy["module_version"]
-        assert target["extra"]["source_version"] == legacy["source_version"]
-        assert target["extra"]["reachable"] == legacy["reachable"]
-        for device, screen in zip(target["devices"], legacy["screens"], strict=True):
-            assert device["present"] == screen["present"]
-            assert device["version"] == screen["firmware_version"]
-            assert device["name"] == screen["section"]
+        assert target["firmware"] == legacy["firmware"]
+        assert [d["id"] for d in target["devices"]] == [d["id"] for d in legacy["devices"]]
+        assert target["source"] == legacy["source"]
+        assert target["extras"] == legacy["extras"]
+        assert target["devices_note"] == legacy["devices_note"]
+        for device, listed in zip(target["devices"], legacy["devices"], strict=True):
+            assert device["present"] == listed["present"]
+            assert device["version"] == listed["version"]
+            assert device["name"] == listed["section"]
+            assert device["path"] == listed["resolved_path"]
+            assert device["confidence"] == listed["confidence"]
     assert targets[ENV]["devices"][0]["id"] == port
 
 
@@ -1318,7 +1319,7 @@ def test_a_misspelled_helper_blocks_its_own_row_not_the_whole_panel(
 
 
 def test_a_misspelled_helper_on_a_non_cmake_family_does_not_blank_the_panel(api):
-    """`type_status`/`pio_status` call `device_info.reader_for(family)` with
+    """`type_status`/`platformio_status` call `device_info.reader_for(family)` with
     no guard of their own - unlike `_cmake_target`, which resolves its
     helper itself and reports the problem on its own row. Before
     `reader_for` swallowed `ConfigCorruptError`, a typo in the cartographer
@@ -1505,11 +1506,11 @@ def test_first_install_does_not_read_the_config_file_again(api, paths, monkeypat
     and `cmake_status`'s own; a third means the second read is back."""
     reg = api.registry()
     types = [api.type_status(reg, n, api.mcu_info()) for n in reg.names()]
-    displays = api.pio_status()
+    platformio = api.platformio_status()
     rows = inventory.index(api.inventory())
     opened = _config_opens(paths, monkeypatch)
 
-    out = api.targets(reg, types, displays, rows)
+    out = api.targets(reg, types, platformio, rows)
 
     assert all("first_install" in row for row in out)
     assert len(opened) <= 2, opened

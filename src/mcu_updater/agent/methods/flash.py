@@ -21,20 +21,19 @@ if TYPE_CHECKING:
     from ...providers.pio import PioType
 
 
-def port_detail(display: PioType, screen: Mapping[str, Any]) -> dict[str, Any]:
-    """A klippy-reported PlatformIO device, as the `platformio` flasher reads it.
+def port_detail(entry: PioType, device: Mapping[str, Any]) -> dict[str, Any]:
+    """A listed PlatformIO device, as the `platformio` flasher reads it.
 
+    `device` is `ListedDevice.to_json()`, with or without the status fields.
     The id is resolved the way the flasher always has - the configured one,
-    else the one the firmware reported - so nothing changes about which id a
-    device is matched on. Shared with `bulk`, whose fleet selection reads the
-    same payload.
+    else the one the firmware reported. Shared with `bulk`.
     """
     return {
-        "env": display,
-        "port": screen["configured_path"],
-        "device_id": (screen.get("device_id") or screen.get("reported_id") or "").lower(),
-        "name": screen["name"],
-        "section": screen["section"],
+        "env": entry,
+        "port": device["configured_path"],
+        "device_id": (device.get("configured_id") or device.get("reported_id") or "").lower(),
+        "name": device["label"],
+        "section": device["section"],
     }
 
 
@@ -445,42 +444,45 @@ class FlashMixin(_Base):
             )
 
         name = self._require_str(args, "name")
-        types = self.pio_types()
+        types = self.platformio_types()
         if name not in types:
             raise RpcError(
                 f"no PlatformIO type '{name}' is configured.",
                 data={"code": "unknown_type", "message": "no such type",
                       "data": {"name": name, "known": sorted(types)}},
             )
-        display = types[name]
+        entry = types[name]
 
         # Read the devices NOW, while Klipper can still answer.
-        listed = self.device_list({})
+        listed, reachable = self.platformio_devices()
         # Either spelling of the one identity. `port` is what this call has
         # always taken; `id` is the uniform slot, and either can name the
-        # configured path, printer.cfg's burned-in device id, or the identity
-        # the firmware itself reported. The path stays exact because it is a
-        # POSIX filesystem path; only identities are compared case-insensitively.
+        # configured path, the configured id, or the identity the firmware
+        # itself reported. The path stays exact because it is a POSIX
+        # filesystem path; only identities are compared case-insensitively.
         wanted = args.get("port") or args.get("id")
         want = None if wanted is None else str(wanted)
         targets = [
             d
-            for d in listed["displays"]
-            if d["present"]
+            for d in listed.get(name, [])
+            if d.present
             and (
                 want is None
-                or want == d["configured_path"]
-                or want.lower() in {i.lower() for i in (d["device_id"], d["reported_id"]) if i}
+                or want == d.configured_path
+                or want.lower() in {i.lower() for i in (d.configured_id, d.reported_id) if i}
             )
         ]
         if not targets:
             raise RpcError(
                 "no device is reachable to flash. Check that the configured ports "
-                "exist - fw.device.list shows which are missing.",
+                "exist - fw.target.get shows which are missing.",
                 data={
                     "code": "nothing_to_do",
-                    "message": "no reachable displays",
-                    "data": {"displays": listed["displays"], "reachable": listed["reachable"]},
+                    "message": "no reachable devices",
+                    "data": {
+                        "devices": [d.to_json() for d in listed.get(name, [])],
+                        "reachable": reachable,
+                    },
                 },
             )
 
@@ -498,37 +500,37 @@ class FlashMixin(_Base):
         # watcher pause, the identity check, the writes - is the same machinery
         # a fleet flash uses; the `platformio` flasher owns the two steps that
         # are specific to a device reached at a port.
-        units = stop_services.for_platformio(self.paths, display, settings)
+        units = stop_services.for_platformio(self.paths, entry, settings)
         families = firmware.load(self.paths)
-        screens, refused = flashers.select_each(
+        selected, refused = flashers.select_each(
             self.paths,
             families,
             [
                 (
                     flashers.Device(
-                        type=display.name,
-                        id=s["configured_path"],
+                        type=entry.name,
+                        id=d.configured_path or "",
                         chipset="",
                         state=inventory.STATE_UNKNOWN,
-                        fw=display.firmware,
+                        fw=entry.firmware,
                         kind=flashers.KIND_PORT,
-                        detail=port_detail(display, s),
+                        detail=port_detail(entry, d.to_json()),
                     ),
                     units,
                 )
-                for s in targets
+                for d in targets
             ],
         )
 
         def run(ctx) -> dict[str, Any]:
-            result = self._do_flash_all(ctx, screens, refused=refused)
+            result = self._do_flash_all(ctx, selected, refused=refused)
             # Projected back onto this method's own documented shape rather
             # than leaking the uniform one. The batch says `type`/`id`; a
-            # display caller has always been told `name`/`port`, and `id` for a
-            # screen *is* its configured port.
-            named = {d["configured_path"]: d["name"] for d in targets}
+            # caller of this route has always been told `name`/`port`, and
+            # `id` for a device *is* its configured port.
+            named = {d.configured_path: d.label for d in targets}
             return {
-                "env": display.env,
+                "env": entry.env,
                 "flashed": result["flashed"],
                 "failures": [
                     {
@@ -541,7 +543,7 @@ class FlashMixin(_Base):
             }
 
         job = runner.submit("display_flash", {"name": name, "count": len(targets)}, run)
-        return {"job_id": job.id, "job": job.to_dict(), "displays": targets}
+        return {"job_id": job.id, "job": job.to_dict(), "displays": [d.to_json() for d in targets]}
 
     def adopt_paired(self) -> list[dict[str, str]]:
         """Track boards that arrived late from a bootloader install we did.

@@ -7,7 +7,7 @@
     "pytest",
     "tests/test_verdict.py",
     "tests/test_agent_methods.py",
-    "tests/test_agent_displays.py",
+    "tests/test_agent_platformio_devices.py",
     "tests/test_agent_targets.py",
     "-q"
   ],

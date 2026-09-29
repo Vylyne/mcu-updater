@@ -8,7 +8,7 @@
     "tests/test_flashlog_loop.py",
     "tests/test_flash.py",
     "tests/test_flash_can.py",
-    "tests/test_agent_display_jobs.py",
+    "tests/test_agent_platformio_flash.py",
     "tests/test_artifacts.py",
     "-q"
   ],

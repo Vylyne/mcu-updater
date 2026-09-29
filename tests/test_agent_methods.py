@@ -289,12 +289,13 @@ def test_target_get_for_an_unknown_mcu_carries_the_stable_code(api):
     assert exc.value.data["code"] == "unknown_target"
 
 
-def test_target_get_returns_the_same_detail_as_device_list_for_a_display(api):
+def test_target_get_returns_the_same_detail_as_status_for_a_platformio_type(api):
     from_status = next(t for t in api.dispatch("fw.status")["targets"] if t["provider"] == "platformio")
     res = api.dispatch("fw.target.get", {"name": from_status["name"], "provider": "platformio"})
     assert res["provider"] == "platformio"
     assert res["target"]["name"] == from_status["name"]
     assert res["target"]["env"] == from_status["descriptor"]
+    assert "devices" in res["target"] and "screens" not in res["target"]
 
 
 def test_target_get_for_an_unknown_display_carries_the_stable_code(api):

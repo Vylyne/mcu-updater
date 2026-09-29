@@ -5,8 +5,8 @@
     "python",
     "-m",
     "pytest",
-    "tests/test_agent_display_jobs.py",
-    "tests/test_agent_displays.py",
+    "tests/test_agent_platformio_flash.py",
+    "tests/test_agent_platformio_devices.py",
     "tests/test_agent_targets.py",
     "tests/test_flashlog_loop.py",
     "tests/test_platformio_flasher.py",
@@ -24,15 +24,15 @@
       "replace": "        # Built from the list read *before* the stop"
     },
     {
-      "name": "screens are matched by their type's own section prefix",
+      "name": "devices are matched by their lister's own section prefix",
       "file": "src/mcu_updater/agent/methods/status.py",
-      "find": "            objects.extend(self._object_names_for(prefix))",
-      "replace": "            objects.extend(self._all_object_names())"
+      "find": "        objects = {prefix: self._object_names_for(prefix) for prefix in prefixes}",
+      "replace": "        objects = {prefix: self._all_object_names() for prefix in prefixes}"
     },
     {
       "name": "displays are projected into targets too",
       "file": "src/mcu_updater/agent/methods/status.py",
-      "find": "            self._pio_target(payload, allowed) for payload in displays",
+      "find": "            self._platformio_target(payload, allowed) for payload in platformio",
       "replace": ""
     },
     {
@@ -116,14 +116,14 @@
     {
       "name": "a record the screen disagrees with is discarded",
       "file": "src/mcu_updater/agent/methods/status.py",
-      "find": "        record = flashlog.entry_for(\n            hardware_id_key(ident), reader.running_sha(entry.get(\"firmware_version\"))\n        )",
+      "find": "        record = flashlog.entry_for(\n            hardware_id_key(ident), reader.running_sha(device.version)\n        )",
       "replace": "        record = flashlog.entry_for(hardware_id_key(ident), None)"
     },
     {
       "name": "a recorded confidence reaches the wire",
       "file": "src/mcu_updater/agent/methods/status.py",
-      "find": "                    \"confidence\": screen.get(\"confidence\"),",
-      "replace": "                    \"confidence\": None,"
+      "find": "                    \"path\": device[\"resolved_path\"],\n                    \"version\": device[\"version\"],\n                    # Our record of how this device was identified at write\n                    # time, in the same slot and vocabulary an MCU device uses.\n                    \"confidence\": device[\"confidence\"],",
+      "replace": "                    \"path\": device[\"resolved_path\"],\n                    \"version\": device[\"version\"],\n                    # Our record of how this device was identified at write\n                    # time, in the same slot and vocabulary an MCU device uses.\n                    \"confidence\": None,"
     }
   ]
 }

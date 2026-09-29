@@ -64,7 +64,7 @@ class BuildMixin(_Base):
     def _cmake_types(self) -> dict:
         """Configured types whose declared family is cmake-built.
 
-        Mirrors `pio_types()`, and read the same way: from the config each
+        Mirrors `platformio_types()`, and read the same way: from the config each
         time, because a type added over `fw.type.add` has to be answerable
         without restarting the agent.
         """
@@ -158,7 +158,7 @@ class BuildMixin(_Base):
         """Compile one PlatformIO env. Touches no hardware."""
         runner = self._require_runner()
         name = self._require_str(args, "name")
-        types = self.pio_types()
+        types = self.platformio_types()
         if name not in types:
             raise RpcError(
                 f"no PlatformIO type '{name}' is configured.",

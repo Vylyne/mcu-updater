@@ -159,10 +159,10 @@ class Identifier(Protocol):
     cannot ask is the helper's policy; a device it heard is returned with
     `answered` set. No default, so that cost is never acquired by omission.
 
-    Keyed by device id. The value is knomi's own `WatcherDevice` because
-    `fw.device.list` already puts it on the wire and a five-field copy here
-    would be a second description of one thing; knomi_serial is the only
-    identifier, and a second one is when to generalise it.
+    Keyed by device id. The value is knomi's own `WatcherDevice` because a
+    five-field copy here would be a second description of one thing;
+    knomi_serial is the only identifier, and a second one is when to
+    generalise it.
     """
 
     name: str

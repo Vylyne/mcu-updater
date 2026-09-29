@@ -224,8 +224,8 @@ def test_a_stale_map_entry_is_not_a_fallback_answer(paths, settings, monkeypatch
 
 
 def test_how_a_device_was_found_stays_off_the_wire():
-    """`fw.device.list` puts `to_json` on the wire. `answered` is a fact about
-    one write-time listen, not a field of the device list."""
+    """`answered` is a fact about one write-time listen, not a field of the
+    device map, so `to_json` never carries it."""
     device = WatcherDevice(
         device_id="aaa111", port="/dev/ttyUSB0", present=True, answered=True
     )

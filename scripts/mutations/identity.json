@@ -7,8 +7,8 @@
     "pytest",
     "tests/test_helpers.py",
     "tests/test_agent_targets.py",
-    "tests/test_agent_displays.py",
-    "tests/test_agent_display_jobs.py",
+    "tests/test_agent_platformio_devices.py",
+    "tests/test_agent_platformio_flash.py",
     "tests/test_cli.py",
     "-q"
   ],
@@ -45,33 +45,20 @@
     },
     {
       "name": "a screen is addressed by its id wherever its config names one",
-      "file": "src/mcu_updater/agent/methods/status.py",
-      "find": "        if screen.get(\"addressed_by\") == \"device_id\":\n            return screen.get(\"device_id\")",
-      "replace": "        if False:\n            return screen.get(\"device_id\")"
-    },
-    {
-      "name": "a status read never asks the devices",
-      "file": "src/mcu_updater/agent/methods/status.py",
-      "find": "                    self.paths, settings, display, ask=False, reporter=null_reporter",
-      "replace": "                    self.paths, settings, display, ask=True, reporter=null_reporter"
-    },
-    {
-      "name": "the watcher block's mtime is the handler's own file",
-      "file": "src/mcu_updater/agent/methods/status.py",
-      "find": "                    _mtime(identify.remembered_at(self.paths, display))",
-      "replace": "                    None"
+      "find": "            id=configured_id or configured_path,",
+      "replace": "            id=configured_path,"
     },
     {
       "name": "either spelling of a screen's identity is accepted",
       "file": "src/mcu_updater/agent/methods/flash.py",
-      "find": "                or want.lower() in {i.lower() for i in (d[\"device_id\"], d[\"reported_id\"]) if i}",
-      "replace": "                or want.lower() in {i.lower() for i in (d[\"reported_id\"],) if i}"
+      "find": "                or want.lower() in {i.lower() for i in (d.configured_id, d.reported_id) if i}",
+      "replace": "                or want.lower() in {i.lower() for i in (d.reported_id,) if i}"
     },
     {
       "name": "a serial screen is accepted by its firmware-reported identity",
       "file": "src/mcu_updater/agent/methods/flash.py",
-      "find": "                or want.lower() in {i.lower() for i in (d[\"device_id\"], d[\"reported_id\"]) if i}",
-      "replace": "                or want.lower() in {i.lower() for i in (d[\"device_id\"],) if i}"
+      "find": "                or want.lower() in {i.lower() for i in (d.configured_id, d.reported_id) if i}",
+      "replace": "                or want.lower() in {i.lower() for i in (d.configured_id,) if i}"
     },
     {
       "name": "the ports are free by here, so an empty map asks the devices",

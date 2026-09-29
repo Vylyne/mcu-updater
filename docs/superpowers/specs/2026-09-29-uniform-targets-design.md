@@ -92,7 +92,7 @@ class DeviceLister(Protocol):
     #: The Klipper section prefix whose objects are this firmware's devices.
     klipper_prefix: str
 
-    def from_klipper(self, section: str, values: Mapping[str, Any]) -> ListedDevice:
+    def device_from_klipper(self, section: str, values: Mapping[str, Any]) -> ListedDevice:
         """One device from its printer object. `section` is the object's own
         capitalisation, which is what printer.cfg says."""
         ...
@@ -135,7 +135,7 @@ missed one. It must not add a firmware's field.
   prefix's objects, and collect `ListedDevice`s plus one `reachable` flag.
   Every knomi-specific line (the klippy field names, the `device_id:`/
   `serial:` addressing rule, the eFuse-MAC comments) moves into
-  `KnomiSerialHelper.from_klipper`.
+  `KnomiSerialHelper.device_from_klipper`.
 - `platformio_status` (renamed from `pio_status`) and the PlatformIO flash
   selection consume `ListedDevice`, not raw dicts.
 - `_watcher_map` is deleted: only `fw.device.list` used it. The flash path
@@ -188,7 +188,7 @@ bootloader's).
   scalar (string, number, boolean or null).
 - Ordered by seam (builders, then flashers, then helpers), then as the seam
   returned them.
-- The UI renders `label: value` and never branches on `key`, `seam` or `name`.
+- The UI renders `label value` and never branches on `key`, `seam` or `name`.
 - One dataclass, `Extra`, in a neutral module (`mcu_updater/extras.py`), with
   `to_json()`. Seams produce `Extra`s; `targets()` collects them.
 
@@ -292,7 +292,7 @@ actions from the helper is additive (no bump) and becomes a README TODO entry.
 
 | Where | Examples | Becomes |
 |---|---|---|
-| agent methods | `pio_status`, `pio_types`, `_screen_id`, `_screens_to_flash`, `display`/`screen` locals, docstrings, comments | `platformio_status`, `platformio_types`, `_device_id`, `_platformio_to_flash`, `entry`/`device` |
+| agent methods | `pio_status`, `pio_types`, `_screen_id`, `_screens_to_flash`, `display`/`screen` locals, docstrings, comments | `platformio_status`, `platformio_types`, (deleted: the lister supplies `id`), `_platformio_to_flash`, `entry`/`device` |
 | `providers/pio.py` | module docstring "ESP32 displays: PlatformIO builds, esptool uploads" | PlatformIO builds for any env |
 | generic seams | a knomi screen as the worked example (`flashers/spec.py`, `discovery/byid.py`, ...) | generic ("a USB-serial bridge such as a CH340") |
 | `cli.py` | `display` variables, any user-facing "screen" text | `device` |
@@ -438,8 +438,8 @@ For the plan's Review Focus:
   `present: false`, its `id` the configured id, `resolved_path` null.
 - A family with a `DeviceLister` and no sections in printer.cfg: the
   reachable `devices_note`.
-- Two PlatformIO types sharing one Klipper prefix: each lists only its own
-  sections, and the prefix is queried once.
+- Two PlatformIO types sharing one Klipper prefix: both list every section
+  under that prefix, and the prefix is queried once (amendment A2).
 - A sidecar still at `data_dir/displays/`: the type reports `no_provenance`,
   not an error.
 - `fw.serial.add` withholding provisioning (read-only or flashing off): refuses
@@ -453,3 +453,57 @@ For the plan's Review Focus:
 - Generalising `Identifier`'s `WatcherDevice` return type.
 - Per-device `extras`, and per-device helper actions (the UI's Roadrunner
   detection stays until then; README TODO).
+
+## Amendments
+
+Rulings the implementation plan
+(`docs/superpowers/plans/2026-09-29-uniform-targets.md`) made where this spec
+was wrong or silent. They bind like the rest of the spec. Inline text above
+already reflects A1, A2 and A10.
+
+- **A1. `from_klipper` is `device_from_klipper`.** One helper implements
+  several capabilities. A bare `from_klipper` would read as the helper's only
+  job.
+- **A2. A shared prefix is listed by both types.** Klipper's printer objects
+  do not say which `[type]` a section belongs to. Two PlatformIO types under
+  one prefix therefore both list every section under it. The core queries
+  that prefix once and hands the same `ListedDevice`s to both. Splitting them
+  would need a per-section type key that no config has today.
+- **A3. The flash tests use the real knomi helper.** `Identifier` still
+  returns knomi's own `WatcherDevice` (out of scope below). The PlatformIO
+  flash tests therefore run against `KnomiSerialHelper`, not a fake lister.
+  The listing tests use a fake `DeviceLister`.
+- **A4. The PlatformIO build job is kind `build`, with params `{name, fw}`**,
+  as the cmake route. `display_build` goes with `display_flash`. The
+  Removed-or-changed table above missed it.
+- **A5. `profile_apply` joins the UI's `JobKind` and `DEFERRED_CANCEL_KINDS`.**
+  The agent already submits it. The new contract test ("every kind the agent
+  submits is in `JobKind`") fails without it.
+- **A6. `nothing_to_do`'s data names `devices`, not `displays`.** The same
+  `ListedDevice.to_json()` list, under the generic key.
+- **A7. Only the renamed test files are swept.** `tests/` is not scanned by
+  the vocabulary guard. A test may name the thing it guards against, and the
+  guard's own file must. Test names and docstrings inside the two renamed
+  files do say "device".
+- **A8. `PioType.to_json` still rides `fw.target.get`.** That covers
+  `klipper_section`, `service` and `device_map` in the PlatformIO payload.
+  They are config echoes, not listing output. Removing them is a separate
+  wire change, out of scope here.
+- **A9. `ListedDevice` has an `answering` field** (`bool | None`). The core
+  already derives `online`/`silent`/`reachable` from whether a present device
+  answers. The table missed it, and section 1 permits a field the core
+  already uses.
+- **A10. `_screen_id` is deleted, not renamed to `_device_id`.** Its only job
+  was choosing between the configured id and the path. `ListedDevice.id` is
+  now that choice, made by the lister.
+- **A11. A kconfig_make row's `source.dirty` is `null`.** Its staleness check
+  never asks whether the tree is dirty. `null` means "not asked", not
+  "clean".
+- **A12. The `no such platformio type` message has no test.** `_provider_of`
+  refuses an unknown name before `target_get` can reach that branch. The
+  vocabulary guard keeps the old word out.
+- **A13. The vocabulary guard is its own file, `tests/test_vocabulary.py`**,
+  not part of the hygiene tests. It reads words rather than substrings
+  (`screen_id` and `roadrunnerDisplaySerial` are caught; `displayed` is not).
+  Its allowlist is exact lines, each with a reason, and a second test fails
+  on any allowance whose line has gone.

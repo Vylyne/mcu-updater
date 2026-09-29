@@ -1992,10 +1992,11 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 - Modify: `src/mcu_updater/agent/methods/bulk.py` (`_platformio_json` 50-61, `flash_all` return ~627-637)
 - Modify: `src/mcu_updater/agent/methods/flash.py` (`_pio_flash` submit and return)
 - Modify: `src/mcu_updater/agent/methods/build.py` (the `display_build` submit, ~183)
-- Modify: `src/mcu_updater/agent/methods/status.py` (`target_get`'s platformio error message)
+- Modify: `src/mcu_updater/agent/methods/status.py` (`target_get`'s platformio error message; `platformio_status`'s `**entry.to_json()` spread)
+- Modify: `src/mcu_updater/providers/pio.py` (delete `PioType.to_json` and `_compat_service`, 103-128)
 - Modify: `src/mcu_updater/__init__.py` (`API_VERSION` and its history comment)
 - Modify: `ui/src/api/jobs.ts`, `ui/src/api/agent.ts`
-- Test: `tests/test_ui_contract.py`, `tests/test_agent_bulk.py`, `tests/test_agent_platformio_flash.py`
+- Test: `tests/test_ui_contract.py`, `tests/test_agent_bulk.py`, `tests/test_agent_platformio_flash.py`, `tests/test_agent_methods.py`
 
 **Interfaces:**
 - Consumes: `Api._platformio_to_flash` (Task 3).
@@ -2139,10 +2140,26 @@ In `tests/test_agent_platformio_flash.py`:
   ```
   The cancel test reads the kind rather than cancelling. With `no_pio` the job may finish before a cancel lands, and a finished job's answer has no `immediate` in it.
 
+In `tests/test_agent_methods.py`, after `test_target_get_returns_the_same_detail_as_status_for_a_platformio_type` (renamed in Task 3):
+
+```python
+def test_target_get_echoes_no_firmware_specific_config_for_a_platformio_type(api):
+    """`klipper_section` and `device_map` are the helper's own business since
+    `DeviceLister` (a knomi prefix, a knomi watcher's map), and `service` is a
+    compatibility echo of the retired key that `stop_services` replaced.
+    Nothing reads any of them; version 5 removes them rather than leaving a
+    second bump for later."""
+    from_status = next(t for t in api.dispatch("fw.status")["targets"] if t["provider"] == "platformio")
+    res = api.dispatch("fw.target.get", {"name": from_status["name"], "provider": "platformio"})
+
+    assert not {"klipper_section", "device_map", "service"} & set(res["target"])
+    assert {"name", "env", "firmware", "stop_services", "source", "devices"} <= set(res["target"])
+```
+
 - [ ] **Step 4: Run them to verify they fail**
 
-Run: `PY=../../.venv/Scripts/python.exe; $PY -m pytest tests/test_ui_contract.py tests/test_agent_bulk.py tests/test_agent_platformio_flash.py -q`
-Expected: FAIL. The contract test names `display_build`, `display_flash` and `profile_apply`, and the new wire tests see `displays` and `boards` still in the responses.
+Run: `PY=../../.venv/Scripts/python.exe; $PY -m pytest tests/test_ui_contract.py tests/test_agent_bulk.py tests/test_agent_platformio_flash.py tests/test_agent_methods.py -q`
+Expected: FAIL. The contract test names `display_build`, `display_flash` and `profile_apply`, the new wire tests see `displays` and `boards` still in the responses, and `fw.target.get` still carries `klipper_section`, `device_map` and `service`.
 
 - [ ] **Step 5: Implement the agent half**
 
@@ -2176,6 +2193,17 @@ What the batch will write is the job's business now: its `flashed[]` and `failur
 
 (`display` becomes `entry` in Task 9. Leave the name alone here.)
 
+`status.py` `platformio_status`: replace the `**entry.to_json(),` line (Task 3) with the keys the wire keeps. `"source"` is already set further down, from `_source_json`:
+
+```python
+                    "name": entry.name,
+                    "env": entry.env,
+                    "firmware": entry.firmware,
+                    "stop_services": entry.stop_services,
+```
+
+`providers/pio.py`: delete `PioType.to_json` and `_compat_service`: `platformio_status` was their only caller. `PioType.klipper_section` and `PioType.device_map` stay: the helper and `Identifier` still read them.
+
 `status.py` `target_get`: change the platformio branch's `f"no such display: {name}"` to `f"no such platformio type: {name}"`. Keep the error code `unknown_target`. This task adds no test for it: an unknown name is refused earlier, by `_provider_of`, so the branch is reachable only when a type disappears between two reads. Task 9's vocabulary guard is what keeps the old word out.
 
 `src/mcu_updater/__init__.py`: set `API_VERSION = 5` and add this entry under `# 4: ...`:
@@ -2185,7 +2213,8 @@ What the batch will write is the job's business now: its `flashed[]` and `failur
 #    it on every row, and a platformio row names its `firmware`. `fw.device.list`
 #    is gone. `fw.flash_all` and the PlatformIO `fw.flash` answer `{job_id, job}`
 #    only; PlatformIO jobs are kinds `flash` and `build`. `fw.target.get` names
-#    a PlatformIO type's `devices`.
+#    a PlatformIO type's `devices`, and no longer echoes `klipper_section`,
+#    `device_map` or the retired `service`.
 ```
 
 Task 6 adds the identity renames to this entry.
@@ -2219,7 +2248,7 @@ Expected: all pass. A spec that asserts `apiVersion` 4 is refused, or that pins 
 
 - [ ] **Step 8: Check the mutation specs**
 
-Run: `git grep -n "display_build\|display_flash\|_platformio_json\|\"boards\"" -- scripts/mutations`
+Run: `git grep -n "display_build\|display_flash\|_platformio_json\|\"boards\"\|_compat_service\|def to_json" -- scripts/mutations`
 Expected: no output. If a spec anchors one of the lines this task removed, re-anchor it per the ground rule, then run that spec alone and the hygiene test.
 
 - [ ] **Step 9: Gate and commit**
@@ -2228,7 +2257,7 @@ Run the full gate and the UI gate. Expected: green.
 
 ```bash
 git add src tests scripts ui/src
-git commit -m "feat(api): drop the intermediate wire outputs, name platformio jobs flash and build, and bump api_version to 5
+git commit -m "feat(api): drop the intermediate wire outputs and platformio config echoes, name platformio jobs flash and build, and bump api_version to 5
 
 Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 ```
@@ -3221,7 +3250,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 5. The "ESP32 displays" section (~1563) becomes "PlatformIO devices". Describe the listing from the helper's `DeviceLister`, addressing by `configured_id` or `configured_path`, and the sidecar at `data_dir/platformio/<env>.build.json`.
 6. Delete the `fw.device.list` section (~1619) and "The watcher's map" section (~1668).
 7. `fw.flash` for a PlatformIO type and `fw.flash_all` answer `{job_id, job}`. Delete the `displays` and `boards` keys from their examples (~1086 and wherever else `git grep -n '"displays"\|"boards"' docs/agent-api.md` finds them). The job-kind list: PlatformIO jobs are `flash` and `build` with params `{name, port?}` and `{name, fw}`; `display_flash` and `display_build` are gone. `nothing_to_do`'s data names `devices`.
-8. `fw.target.get` for a PlatformIO type carries `devices`, not `screens`.
+8. `fw.target.get` for a PlatformIO type carries `devices`, not `screens`, and no longer carries `klipper_section`, `device_map` or `service`. Its keys are `name`, `env`, `firmware`, `stop_services`, `source`, `devices`, `extras`, `devices_note` and the verdict fields.
 
 Run: `git grep -n "fw\.device\.list\|fw\.roadrunner\|display_flash\|display_build\|\"screens\"\|\"displays\"\|\"extra\"\|targets\[\]\.extra\b" docs/agent-api.md`
 Expected: only lines inside the version-history paragraph and the "Codes renamed in version 5" table.

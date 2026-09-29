@@ -218,6 +218,7 @@ The three sentences the UI hardcodes today (`TargetRow.vue`'s
 | `fw.flash`, PlatformIO route | `{job_id, job, displays}` | `{job_id, job}`, as the board route |
 | PlatformIO flash job | kind `display_flash`, params `{name, count}` | kind `flash`, params `{name, port?}` - the address the call named, as the board route echoes `serial`/`uuid` |
 | `fw.target.get`, `provider: "platformio"` | `target.screens` | `target.devices` (a list of `ListedDevice` plus the verdict fields `platformio_status` adds) |
+| `fw.target.get`, `provider: "platformio"` | `klipper_section`, `device_map`, `service` | removed (amendment A8) |
 | `fw.target.get` unknown platformio name | `no such display: <name>` | `no such platformio type: <name>`; code stays `unknown_target` |
 
 The job results' `flashed[]` and `failures[]` are unchanged; they already use
@@ -459,7 +460,7 @@ For the plan's Review Focus:
 Rulings the implementation plan
 (`docs/superpowers/plans/2026-09-29-uniform-targets.md`) made where this spec
 was wrong or silent. They bind like the rest of the spec. Inline text above
-already reflects A1, A2 and A10.
+already reflects A1, A2, A8 and A10.
 
 - **A1. `from_klipper` is `device_from_klipper`.** One helper implements
   several capabilities. A bare `from_klipper` would read as the helper's only
@@ -485,10 +486,13 @@ already reflects A1, A2 and A10.
   the vocabulary guard. A test may name the thing it guards against, and the
   guard's own file must. Test names and docstrings inside the two renamed
   files do say "device".
-- **A8. `PioType.to_json` still rides `fw.target.get`.** That covers
-  `klipper_section`, `service` and `device_map` in the PlatformIO payload.
-  They are config echoes, not listing output. Removing them is a separate
-  wire change, out of scope here.
+- **A8. `fw.target.get` stops echoing PlatformIO config.** Its PlatformIO
+  payload spread `PioType.to_json()`, which carried `klipper_section` (knomi's
+  prefix, now the helper's), `device_map` (knomi's watcher map) and `service`
+  (a compatibility echo of the key `stop_services` replaced). Nothing reads
+  them. Removing them in version 5 costs nothing; leaving them would cost a
+  version 6. The payload keeps `name`, `env`, `firmware` and `stop_services`;
+  `PioType.to_json` and `_compat_service` are deleted.
 - **A9. `ListedDevice` has an `answering` field** (`bool | None`). The core
   already derives `online`/`silent`/`reachable` from whether a present device
   answers. The table missed it, and section 1 permits a field the core

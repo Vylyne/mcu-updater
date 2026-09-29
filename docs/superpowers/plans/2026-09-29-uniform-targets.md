@@ -2451,7 +2451,9 @@ def test_no_wire_code_is_named_for_a_firmware():
 - [ ] **Step 2: Run them to verify they fail**
 
 Run: `PY=../../.venv/Scripts/python.exe; $PY -m pytest tests/test_identity_provisioning.py -q`
-Expected: FAIL. The dispatch answers `-32601` for `fw.identity.provision`, and the code scan lists every `roadrunner_*` literal.
+Expected: FAIL. The dispatch answers `-32601` for `fw.identity.provision`, and the code scan lists every `roadrunner_*` literal. At planning time every such literal was a wire code in the rename table, or a `METHODS` value (`roadrunner_provision`, `roadrunner_clear`) that Step 4 replaces.
+
+The real `RoadrunnerHelper` stays registered beside the fake. That is safe because its patterns (`discovery/roadrunner.py:24-25`, `^RR-UNPROVISIONED-[0-9A-F]{16}$` and `^RR-[0-9A-HJKMNP-TV-Z]{26}$`) match neither `FAKE-*` serial nor `E6614103E7452D2F`, so it never becomes a third claimant.
 
 - [ ] **Step 3: Extend the capability and the registry**
 
@@ -2695,6 +2697,8 @@ Create `scripts/mutations/identity-routing.json`:
   ]
 }
 ```
+
+No existing spec anchors a line this task rewrites. At planning time, `git grep -nE "roadrunner_|fw\.roadrunner|provision Roadrunner|token_bytes|_roadrunner_(refusal|untracked)" -- scripts/mutations/` found only `roadrunner-info-digest.json`, which anchors `scripts/roadrunner_usb.py`, a file this task does not touch. Run the grep again before editing. If it finds more, re-anchor those specs in this commit.
 
 A mutation replaces the first occurrence, and `identity_provision` is defined before `identity_clear`, so the third mutation removes provision's check. The `fw.identity.provision` case of `test_a_tracked_serial_is_refused_before_anything_is_written` kills it.
 
@@ -3219,7 +3223,7 @@ Co-Authored-By: Claude Opus 5.5 <noreply@anthropic.com>"
 7. `fw.flash` for a PlatformIO type and `fw.flash_all` answer `{job_id, job}`. Delete the `displays` and `boards` keys from their examples (~1086 and wherever else `git grep -n '"displays"\|"boards"' docs/agent-api.md` finds them). The job-kind list: PlatformIO jobs are `flash` and `build` with params `{name, port?}` and `{name, fw}`; `display_flash` and `display_build` are gone. `nothing_to_do`'s data names `devices`.
 8. `fw.target.get` for a PlatformIO type carries `devices`, not `screens`.
 
-Run: `git grep -n "fw\.device\.list\|fw\.roadrunner\|display_flash\|display_build\|\"screens\"\|\"displays\"\|extra\b" docs/agent-api.md`
+Run: `git grep -n "fw\.device\.list\|fw\.roadrunner\|display_flash\|display_build\|\"screens\"\|\"displays\"\|\"extra\"\|targets\[\]\.extra\b" docs/agent-api.md`
 Expected: only lines inside the version-history paragraph and the "Codes renamed in version 5" table.
 
 - [ ] **Step 2: `README.md`**

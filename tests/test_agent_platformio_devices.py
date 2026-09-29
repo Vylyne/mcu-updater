@@ -305,7 +305,10 @@ def test_an_undiscovered_device_id_section_is_a_blocked_row_not_a_missing_one(pa
     """Review Focus 2. A section addressed by id, which discovery has not
     found yet: listed, addressed by its id, and its flash refused rather than
     aimed at a stale path."""
+    import pathlib
+
     from mcu_updater.jobs import JobRunner
+    from mcu_updater.providers import pio as pio_mod
     from mcu_updater.settings import load_settings
 
     from .conftest import write_settings
@@ -313,6 +316,10 @@ def test_an_undiscovered_device_id_section_is_a_blocked_row_not_a_missing_one(pa
     write_settings(paths, enable_flashing="true", service_backend="null")
     runner = JobRunner(paths, lambda: load_settings(paths.settings_file))
     api = Api(paths, runner=runner, call=serve_klipper({"fake_dev t0": {"hwid": "aa11"}}))
+
+    artifact = pathlib.Path(pio_mod.firmware_bin(api.platformio_types()["fake_a"]))
+    artifact.parent.mkdir(parents=True, exist_ok=True)
+    artifact.write_bytes(b"\0" * 512)
 
     device = _row(api)["devices"][0]
     flash = next(a for a in device["actions"] if a["id"] == "flash")
@@ -324,7 +331,7 @@ def test_an_undiscovered_device_id_section_is_a_blocked_row_not_a_missing_one(pa
         "missing",
     )
     assert flash["params"] == {"name": "fake_a", "port": "aa11"}
-    assert flash["blocked"]["code"] in (Api.BLOCKED_NO_DEVICE, Api.BLOCKED_NO_ARTIFACT)
+    assert flash["blocked"]["code"] == Api.BLOCKED_NO_DEVICE
 
 
 @pytest.mark.parametrize(

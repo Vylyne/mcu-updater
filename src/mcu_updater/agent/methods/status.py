@@ -1019,7 +1019,7 @@ class StatusMixin(_Base):
     def cmake_status(self) -> list[dict[str, Any]]:
         """One payload per cmake type: what it builds, and whether it is current.
 
-        The cmake counterpart of `pio_status()`. Each row carries the chipset
+        The cmake counterpart of `platformio_status()`. Each row carries the chipset
         and serials a board declares. Rows are listed regardless of whether a
         helper is configured; a type without one still gets chipset and serials
         but cannot be flashed. `fw.flash` resolves a cmake name through its

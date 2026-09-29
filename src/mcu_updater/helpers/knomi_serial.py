@@ -10,11 +10,15 @@ checked when the config loads.
 from __future__ import annotations
 
 import dataclasses
-from typing import TYPE_CHECKING
+import os
+from collections.abc import Mapping, Sequence
+from typing import TYPE_CHECKING, Any
 
 from ..discovery.knomi_serial import device_map_path, discover, read_device_map
 from ..errors import UpdaterError
+from ..extras import Extra
 from ..providers import pio
+from .spec import ListedDevice
 
 if TYPE_CHECKING:
     from ..build import Reporter
@@ -85,6 +89,74 @@ class KnomiSerialHelper:
 
     def remembered_at(self, paths: Paths, entry: pio.PioType) -> str:
         return device_map_path(paths, entry)
+
+    def device_from_klipper(self, section: str, values: Mapping[str, Any]) -> ListedDevice:
+        """One `[knomi_serial ...]` printer object, as the core's `ListedDevice`.
+
+        The module refuses both `serial:` and `device_id:` and requires one, so
+        which of them loaded says how the section is addressed. `port` is the
+        module's merged value: the configured `serial:` where there is one, the
+        path discovery found otherwise. A `device_id:` section therefore has no
+        port until discovery finds it, and it still belongs in the list rather
+        than vanishing, because a screen that cannot be found is the one to
+        say so about. See knomi_serial's docs/protocol.md, "The device map".
+
+        Every live field is None against a module too old for `get_status`, so
+        None means unknown here, never False.
+        """
+        configured_id = values.get("device_id") or None
+        configured_path = values.get("port") or None
+        # A symlink is the point: the whole scheme is "a stable name udev keeps
+        # pointed at the right tty". A discovered path is already a real tty, so
+        # for it this is only an existence check.
+        resolved = None
+        if configured_path:
+            try:
+                if os.path.exists(configured_path):
+                    resolved = os.path.realpath(configured_path)
+            except OSError:
+                resolved = None
+        # False means the screen speaks a different wire protocol than the
+        # module expects: the one authoritative "this needs reflashing" a
+        # screen can produce, because the device itself declares it.
+        compatible = values.get("protocol_match")
+        answering = values.get("device_online")
+        return ListedDevice(
+            # A `device_id:` section is addressed by the id burned into its chip:
+            # the discovered path changes when the screen moves socket.
+            id=configured_id or configured_path,
+            section=section,
+            label=section.split(" ", 1)[1] if " " in section else section,
+            configured_id=configured_id,
+            # Six hex characters from the low three bytes of the screen's eFuse
+            # MAC. Burned in, so it survives a reflash, an erase_flash and a move
+            # to another socket: the only stable name a KNOMI has, because the
+            # CH340K in front of it reports no USB serial. Lowered because the
+            # vendor's own docs say not to depend on its case.
+            reported_id=(values.get("reported_id") or "").lower() or None,
+            configured_path=configured_path,
+            resolved_path=resolved,
+            version=values.get("firmware_version"),
+            compatible=compatible if isinstance(compatible, bool) else None,
+            answering=answering if isinstance(answering, bool) else None,
+            raw=dict(values),
+        )
+
+    def extras(self, devices: Sequence[ListedDevice]) -> list[Extra]:
+        """The klippy module's version: one module serves every screen of a
+        type, so the first screen that reports one speaks for them all."""
+        version = next(
+            (d.raw.get("module_version") for d in devices if d.raw.get("module_version")),
+            None,
+        )
+        if version is None:
+            return []
+        return [Extra("helper", self.name, "module_version", "Module", str(version))]
+
+    def devices_note(self, *, reachable: bool) -> str:
+        if not reachable:
+            return "Could not reach Klipper to check for screens."
+        return f"No screens found under [{self.klipper_prefix} ...]."
 
 
 __all__ = ["KnomiSerialHelper"]

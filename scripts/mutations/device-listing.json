@@ -1,0 +1,17 @@
+{
+  "_comment": "Spec 2026-09-29 uniform targets, section 1: device listing is a helper capability. The helper decides what a device is (its addressing rule, its compatibility), the core owns the query and the reachable answer. Each guard here is one of those decisions.",
+  "file": "src/mcu_updater/helpers/knomi_serial.py",
+  "command": ["python", "-m", "pytest", "tests/test_knomi_serial_helper.py", "-q"],
+  "mutations": [
+    {
+      "name": "a protocol mismatch reaches the core as an incompatible device",
+      "find": "            compatible=compatible if isinstance(compatible, bool) else None,",
+      "replace": "            compatible=None,"
+    },
+    {
+      "name": "an unreachable Klipper is not reported as an empty list",
+      "find": "        if not reachable:\n            return \"Could not reach Klipper to check for screens.\"",
+      "replace": "        if False:\n            return \"Could not reach Klipper to check for screens.\""
+    }
+  ]
+}

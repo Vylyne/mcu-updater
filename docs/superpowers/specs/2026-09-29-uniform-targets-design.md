@@ -1,6 +1,6 @@
 # Uniform targets: one row shape per builder, and no display vocabulary on the wire
 
-Date: 2026-09-29. Status: approved in brainstorming, awaiting written-spec review.
+Date: 2026-09-29. Status: approved; identity provisioning (goal 5) added and approved the same day.
 Follows the `platformio` flasher refactor (PRs #13, #14). Closes the README
 TODO entry marked **NEXT**.
 
@@ -22,6 +22,9 @@ the wire. Concretely:
    `status.py`, behind a helper capability.
 4. Remove "display"/"screen" as a description of a device from everywhere but
    firmware-specific code, and keep it removed with a guard test.
+5. Route identity provisioning (`fw.roadrunner.provision`/`.clear`) through
+   the helper's `Provisioner` capability under generic method names and
+   generic error codes, so the one API bump carries every breaking rename.
 
 `API_VERSION` goes from 4 to 5. The UI is released alongside it.
 
@@ -33,6 +36,12 @@ whose firmware is for a display: today `helpers/knomi_serial.py` and
 (providers such as `pio`, flashers, generic discovery), never on the wire.
 Text a firmware-specific seam produces for a person to read (a
 `devices_note`, an `extras` label) is firmware-specific and may use them.
+
+The same split governs firmware names on the wire generally: **machine-readable
+names - methods, error codes, keys - are generic; human text a firmware-specific
+seam produces may name its firmware.** So `roadrunner_timeout` becomes
+`reenumerate_timeout`, while its message, "Roadrunner did not re-enumerate with
+the expected identity", stays.
 
 ## Background: what is there today
 
@@ -214,6 +223,69 @@ The three sentences the UI hardcodes today (`TargetRow.vue`'s
 The job results' `flashed[]` and `failures[]` are unchanged; they already use
 the uniform `{type, id, flasher}`.
 
+### Identity provisioning
+
+`fw.roadrunner.provision` and `fw.roadrunner.clear` become
+`fw.identity.provision` and `fw.identity.clear`. Params (`{serial}`), return
+(`{serial, prior_serial, state}`), and gating (`HARDWARE_METHODS`: off by
+default, withheld from a read-only agent) are unchanged. `fw.identity.*`, not
+`fw.device.*`, so it does not read as a sibling of the removed `fw.device.list`.
+
+**Routing.** The call names no family - the board is untracked, often before any
+type for it exists - so the core asks every registered helper
+(`helpers.registry.HELPERS`) that is a `Provisioner` for
+`identity_state(serial)`:
+
+- exactly one helper must answer `"unprovisioned"` (provision) or
+  `"provisioned"` (clear);
+- none, or more than one, refuses with `not_provisionable`, `data.helpers`
+  naming any claimants;
+- then the untracked check (`device_tracked`), then the op lock (`provision
+  <serial>` / `clear <serial>`), then `helper.provision(paths, serial)` /
+  `helper.clear(paths, serial)`.
+
+`status.py`'s own copy of find-then-provision is deleted; the helper's
+`provision` is the one path, as it already is for `fw.serial.add`.
+
+**Capability.** `Provisioner` gains two methods:
+
+```python
+def identity_state(self, serial: str) -> Literal["unprovisioned", "provisioned"] | None:
+    """Whether `serial` is this firmware's identity, and in which state.
+    A string test, like `is_trackable`; never opens a port."""
+
+def clear(self, paths: Paths, serial: str) -> str:
+    """Return the board answering to `serial` to its unprovisioned identity;
+    return the serial it came back under. The caller holds the op lock."""
+```
+
+One capability, not two: giving an identity and taking it back are one firmware
+feature. Split it when a firmware has only one half.
+
+**Codes.** Every wire code becomes generic. `discovery/roadrunner.py` raises the
+new codes (its `_TRANSIENT_READINESS_CODES` follows); `RoadrunnerError` keeps its
+name, being firmware-specific code.
+
+| Old | New |
+|---|---|
+| `roadrunner_tracked` | `device_tracked` |
+| `roadrunner_no_candidate` | `device_not_found` |
+| `roadrunner_ambiguous` | `device_ambiguous` |
+| `roadrunner_invalid_probe` | `identity_unconfirmed` |
+| `roadrunner_helper` | `helper_failed` |
+| `roadrunner_timeout` | `reenumerate_timeout` |
+| `roadrunner_mismatch` | `identity_mismatch` |
+| `roadrunner_unprovisioned` (`UnprovisionedSerialError`, also from `fw.serial.add`) | `serial_unprovisioned` |
+| - | `not_provisionable` (new) |
+
+`RoadrunnerHelper.is_trackable`'s reason text names `fw.identity.provision`.
+
+**UI, this branch.** The store's `provisionRoadrunner`/`clearRoadrunner`
+become `provisionIdentity`/`clearIdentity`, calling the new methods; BusPanel's
+capability checks follow. BusPanel still decides which rows get the buttons from
+`isRoadrunnerDevice` and the serial shape. Replacing that with per-device
+actions from the helper is additive (no bump) and becomes a README TODO entry.
+
 ## 3. Renames, vocabulary, persisted state, docs
 
 **Code.** Outside the two knomi_serial paths:
@@ -249,16 +321,25 @@ Adding an entry is a reviewed decision, not a way round the rule.
   responses and the job kind updated; "ESP32 displays" becomes "PlatformIO
   devices", with knomi_serial as a clearly labelled example of a
   `DeviceLister`.
+  The `fw.roadrunner.*` section becomes `fw.identity.*`, with the routing
+  rule, the code table, and the "retained for wire compatibility" wording
+  about `roadrunner_unprovisioned` removed.
 - `docs/decisions.md`: the "vocabulary still survives on the wire" paragraph
   in "The PlatformIO flasher is `platformio`" is replaced by the rule itself;
   a new entry, "`targets[]` extras are contributed by a seam, never typed per
   builder"; "Identity is a helper capability" gains the `DeviceLister`
-  sibling.
+  sibling. The trackability entry's "renaming it is a separate wire decision"
+  (`roadrunner_unprovisioned`) records that this is that decision, and the
+  generic-names rule; the provisioning-gate entry names `fw.identity.provision`
+  and `serial_unprovisioned`.
 - `README.md`: the **NEXT** TODO entry closed and a Features line checked;
   "ESP32 displays" reworded the same way; the stale `[type ...]`/`[display
   ...]` precedence line fixed; an upgrade note that PlatformIO types need one
-  rebuild.
-- `docs/layout.md`: checked for the renamed test files and the sidecar path.
+  rebuild; the provisioning paragraph names `fw.identity.*`; a TODO entry for
+  per-device helper actions replacing the UI's Roadrunner detection.
+- `docs/layout.md`: checked for the renamed test files and the sidecar path;
+  its `fw.roadrunner.*` mention renamed.
+- `tracking.py`'s `add_serial` docstring: the method and code names.
 
 ## 4. UI and release
 
@@ -315,6 +396,15 @@ it needs Vi's go-ahead:
 - `fw.flash_all` and the PlatformIO `fw.flash` return exactly
   `{job_id, job}`; the PlatformIO job's kind is `flash`.
 - `fw.target.get` for platformio returns `devices`, not `screens`.
+- `fw.roadrunner.*` are in neither the dispatch table nor `capabilities`;
+  `fw.identity.*` are, under the same gate.
+- No wire error code starts with `roadrunner_`.
+
+**Identity routing** runs against fake provisioners: no claimant; two
+claimants; a tracked serial (`device_tracked`, nothing written); provision
+asked of a serial its helper calls `"provisioned"` (`not_provisionable`), and
+clear asked of an `"unprovisioned"` one. The existing Roadrunner and
+provision-on-track tests move to the new names and codes.
 
 **The contract** (`tests/test_ui_contract.py`), both halves in one commit:
 
@@ -331,8 +421,9 @@ These two would have caught the `display_flash` bug.
 **Mutation specs.** Before rewriting any line, grep `scripts/mutations/` for
 it. A spec anchored on a rewritten line is re-anchored in the same commit, and
 renamed if the rule it proves widened. New guards get a spec: the `compatible`
-→ `protocol_mismatch` mapping, and the reachable/unreachable `devices_note`
-choice. Sweeps run one spec at a time, with the hygiene test after each.
+→ `protocol_mismatch` mapping, the reachable/unreachable `devices_note`
+choice, and identity routing's "exactly one claimant in the right state".
+Sweeps run one spec at a time, with the hygiene test after each.
 
 **Gate.** pytest on the 3.11 floor venv; ruff; mypy; the line-ending check;
 the UI's vitest, type-check and build.
@@ -351,6 +442,8 @@ For the plan's Review Focus:
   sections, and the prefix is queried once.
 - A sidecar still at `data_dir/displays/`: the type reports `no_provenance`,
   not an error.
+- `fw.serial.add` withholding provisioning (read-only or flashing off): refuses
+  with `serial_unprovisioned`, the helper's reason as message, nothing written.
 
 ## Out of scope
 
@@ -358,6 +451,5 @@ For the plan's Review Focus:
   inventory"). They still come from Klipper's printer objects, now through the
   helper.
 - Generalising `Identifier`'s `WatcherDevice` return type.
-- Per-device `extras`.
-- The `roadrunner_unprovisioned` wire code (a separate wire decision, per
-  `decisions.md`).
+- Per-device `extras`, and per-device helper actions (the UI's Roadrunner
+  detection stays until then; README TODO).

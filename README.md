@@ -24,7 +24,7 @@ invoked with `sys.executable`, can import apt's `python3-serial`.
 - [Configuration](#configuration)
   - [Firmware families](#firmware-families)
   - [Profiles](#profiles)
-  - [ESP32 displays](#esp32-displays)
+  - [PlatformIO devices](#platformio-devices)
 - [Layout](#layout)
 - [Development](#development)
   - [The release gate](#the-release-gate)
@@ -71,6 +71,7 @@ Firmware and boards:
 - [x] Firmware-specific behaviour behind reviewed helper capabilities - device info, identity, BOOTSEL entry and provisioning, never a caller branch
 - [x] One verdict per device, from one inventory join, whatever builds or flashes it
 - [x] A screen's identity comes from its firmware, and is what `targets[]` reports it as
+- [x] One `targets[]` row shape for every builder: `source`, `extras` and `devices_note`, with no builder-specific bag
 
 Interfaces:
 
@@ -85,7 +86,8 @@ Interfaces:
 [docs/decisions.md](docs/decisions.md) for the standing decisions that came out
 of it. What is still open:
 
-- [ ] **NEXT** Remove the remaining screen/display vocabulary from the wire, left out of the `platformio` flasher rename because each is a wire change of its own: the `displays` keys (`fw.device.list`, `fw.flash`'s PlatformIO response, `fw.flash_all`), the status payload's `screens`, the `display_flash` job kind, and `pio_status`. Any wire rename bumps `API_VERSION`, so the UI release is promoted first - see AGENTS.md's release ordering.
+- [x] ~~**NEXT** Remove the remaining screen/display vocabulary from the wire, left out of the `platformio` flasher rename because each is a wire change of its own: the `displays` keys (`fw.device.list`, `fw.flash`'s PlatformIO response, `fw.flash_all`), the status payload's `screens`, the `display_flash` job kind, and `pio_status`. Any wire rename bumps `API_VERSION`, so the UI release is promoted first - see AGENTS.md's release ordering.~~ Done in `api_version` 5: `targets[]` rows carry `source`/`extras`/`devices_note` uniformly, `fw.device.list` is gone, `fw.flash_all` and the PlatformIO `fw.flash` answer `{job_id, job}`, and job kinds are `flash`/`build` - see [docs/agent-api.md](docs/agent-api.md).
+- [ ] Per-device helper actions: a helper contributes a device's action rows (identity provision/clear today is chosen in `BusPanel.vue` by `isRoadrunnerDevice`) so the UI stops naming a firmware.
 - [ ] **NEEDS DESIGN** First-time flashing of a PlatformIO device that cannot answer the listen pass yet (a blank ESP32, or firmware that does not broadcast its id) while others of its type do. The `platformio` flasher refuses it at write time; the fix belongs in first install, where a PlatformIO type has no candidate scanner yet.
 - [ ] **TEST ERROR** Reproduce and fix the flaky teardown `RuntimeError` in `test_an_unknown_inbound_method_gets_an_error_not_silence`.
 - [ ] **NEEDS DESIGN** Run config migrations as the first step of agent startup, so that restarting the service migrates an existing install. First check the restrictions the service runs under.
@@ -105,6 +107,14 @@ of it. What is still open:
 - `dfu-util`, only for the first install onto a brand-new STM32 board
 - `systemd-mount`, only for the first install onto a brand-new RP2040 board - it mounts the BOOTSEL mass-storage volume so `add-mcu` can copy the `.uf2` onto it without root; `install.sh` offers to add the udev rule that wires it up
 - Passwordless `sudo` for `systemctl {start,stop} klipper`(for cli)
+
+### Upgrading to API version 5
+
+PlatformIO build records now live under `platformio/` in the data tree, and
+are not migrated from where they used to live, so each PlatformIO type reports
+`no_provenance` until it is rebuilt once. The UI and the agent must both be on
+this release - see AGENTS.md's "one ordering rule". Any caller of
+`fw.roadrunner.provision`/`.clear` moves to `fw.identity.provision`/`.clear`.
 
 ## CLI Usage
 
@@ -181,7 +191,7 @@ abandoned rather than guessed at if the chipset does not resolve cleanly:
 
 ![settings panel](docs/img/panel_settings.png)
 
-**ESP32 displays tracked alongside the MCUs:**
+**PlatformIO devices tracked alongside the MCUs:**
 
 ![knomi displays panel](docs/img/panel_knomi_serial.png)
 
@@ -192,7 +202,7 @@ abandoned rather than guessed at if the chipset does not resolve cleanly:
 A Roadrunner shows up here the same as any other untracked board - discovery
 is entirely read-only, and identifying one takes no board-specific server
 field, just its own USB descriptor (see `docs/agent-api.md`'s
-`fw.roadrunner.provision`/`.clear`). An unprovisioned one offers **Provision
+`fw.identity.provision`/`.clear`). An unprovisioned one offers **Provision
 Roadrunner**; a provisioned one offers **Clear identity**; both require an
 explicit confirmation naming the board before anything is written - there is
 no automatic-provision setting, and neither action tracks the board under an
@@ -260,7 +270,7 @@ one is refused with the exact lines to add. Within a section every key is
 optional: no `source:` means `~/<name>`.
 
 `builder:` takes three values: `kconfig_make` (the default, above), `platformio`
-(see [ESP32 displays](#esp32-displays)) and `cmake` (see
+(see [PlatformIO devices](#platformio-devices)) and `cmake` (see
 [RP2040 cmake trees](#rp2040-cmake-trees)); any other value refuses the config
 when it loads. A cmake family also takes
 `cmake_args:`, split shell-style and appended to the configure step - quoting
@@ -384,9 +394,9 @@ flashers: platformio
 stop_services: klipper                   ; OVERRIDE - only the last tier applies
 ```
 
-`[type ...]`/`[display ...]` beats `[firmware ...]` beats `[updater]` beats the
+`[type ...]` beats `[firmware ...]` beats `[updater]` beats the
 built-in default (`klipper` alone for a plain board; `klipper, knomi_serial`
-for a PlatformIO display). Absent inherits the next level out; a bare key with
+for a PlatformIO type). Absent inherits the next level out; a bare key with
 nothing after it means *stop nothing at all* for that level:
 
 ```ini
@@ -565,7 +575,7 @@ config is always left alone. `build --no-reseed` skips the check for one build.
 > sets `STM32_DFU_ROM_ADDRESS` to 0 without USB), and the **bootloader offset**.
 > The rest is genuinely inert for a board like this.
 
-### ESP32 displays
+### PlatformIO devices
 
 Knomis and anything else PlatformIO builds, managed alongside the MCUs. A
 PlatformIO env already names the board, its partitions and its build flags,
@@ -603,26 +613,26 @@ neither the `PATH` nor `~/.platformio/penv/bin/pio` finds it.
 | Key | Meaning |
 | --- | --- |
 | `platformio_env` | The PlatformIO env to build. **Required, no default.** |
-| `source` | This display's own source tree, overriding the firmware family's |
-| `stop_services` | Units stopped before flashing this display, overriding `[firmware ...]`/`[updater]`. Default `klipper, knomi_serial`. See [Which services stop before a write](#which-services-stop-before-a-write) |
+| `source` | This device's own source tree, overriding the firmware family's |
+| `stop_services` | Units stopped before flashing this type, overriding `[firmware ...]`/`[updater]`. Default `klipper, knomi_serial`. See [Which services stop before a write](#which-services-stop-before-a-write) |
 | `knomi_serial_device_map` | Where that watcher writes its id → port map, relative to `printer_data`. Default `knomi/devices.json` |
 
 Every key but `platformio_env` defaults to what a Knomi needs - the three that usually
-change are for a second display family with its own klippy module and port
-watcher.
+change are for a second PlatformIO device family with its own klippy module
+and port watcher.
 
-The screens themselves are not listed here - `[knomi_serial T0_knomi]` in
+The devices themselves are not listed here - `[knomi_serial T0_knomi]` in
 `printer.cfg` already names them, and a second copy would only be something to
-disagree with. A section names *either* a port (`serial:`) or the screen's own
+disagree with. A section names *either* a port (`serial:`) or the device's own
 burned-in id (`device_id:`), and that choice is what identifies it: `status`,
-`fw.status` and `fw.flash` all address a `device_id:` screen by its id and a
-`serial:` screen by its path. The port a `device_id:` screen is actually on is
+`fw.status` and `fw.flash` all address a `device_id:` device by its id and a
+`serial:` device by its path. The port a `device_id:` device is actually on is
 whatever discovery found this boot, and is reported beside its id rather than
 standing in for it.
 
 `fw.flash` accepts more than it reports, because a caller may hold an identity
-this tool never configured: the path, the configured id, or the id the screen
-itself reported - so a `serial:` screen can still be named by its burned-in id
+this tool never configured: the path, the configured id, or the id the device
+itself reported - so a `serial:` device can still be named by its burned-in id
 even though its section carries none. Ids compare case-insensitively, the
 vendor's docs being explicit that their lowercase output is not a guarantee;
 the path does not, because a path is a path.
@@ -630,8 +640,8 @@ the path does not, because a path is a path.
 A few things to know:
 
 - **A port is never inferred.** `pio run -t upload` picks one on its own when
-  told nothing, and every screen is an indistinguishable CH340 - so an upload
-  that guesses writes firmware to the wrong display. Every write pins its port.
+  told nothing, and every KNOMI screen is an indistinguishable CH340 - so an
+  upload that guesses writes firmware to the wrong one. Every write pins its port.
 - **A udev symlink is resolved first.** `pio device list` enumerates through
   pyserial, which reports `/dev/ttyUSB0` and never the `/dev/knomi_t0` pointing
   at it, so PlatformIO handed the symlink looks for a board on a port it cannot
@@ -656,7 +666,8 @@ A few things to know:
   the error names the file, the section and the line to add.
 - **A missing screen is otherwise invisible.** The klippy module runs as a no-op
   when a port won't open, so Klipper starts happily with a blank display and no
-  error. `fw.device.list` is the only thing that says so.
+  error. `present: false` on that device's row in `fw.status`'s `targets[]`
+  (there is no separate listing call any more) is the only thing that says so.
 
 ### RP2040 cmake trees
 

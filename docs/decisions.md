@@ -490,21 +490,22 @@ in `tracking.py` because "already tracked under another type" is one shared fact
 about the registry, not firmware knowledge. Helpers are not passed `Paths` or
 taught to read the registry to answer trackability.
 
-The refusal remains `UnprovisionedSerialError` with wire code
-`roadrunner_unprovisioned`. That firmware-named code is a legacy contract a
-panel may branch on; renaming it is a separate wire decision. Only the message
-now comes from the helper. A held lock still refuses rather than waits: the
+The refusal remains `UnprovisionedSerialError`, with wire code
+`serial_unprovisioned` since the version-5 rename (was
+`roadrunner_unprovisioned`; see "Codes renamed in version 5" in
+`docs/agent-api.md`). Only the message now comes from the helper. A held lock
+still refuses rather than waits: the
 write is irreversible, and a caller queued behind a flash would perform it at
 a moment nobody chose.
 
 ### The provisioning gate lives on the branch, not the method
 
 `fw.serial.add` performs the same irreversible hardware write
-`fw.roadrunner.provision` does whenever the type it is asked to track under
+`fw.identity.provision` does whenever the type it is asked to track under
 has an unprovisioned board and a family that can provision it - reached from
 ordinary tracking rather than the dedicated maintenance call. Left alone,
 that write would sit in the ungated `METHODS` table: a read-only agent, or
-one with `enable_flashing` off, already cannot reach `fw.roadrunner.provision`
+one with `enable_flashing` off, already cannot reach `fw.identity.provision`
 for exactly this reason, and would otherwise reach the identical write through
 `fw.serial.add` regardless.
 
@@ -516,8 +517,8 @@ hardware and must keep working under any deployment. Instead
 itself, and the agent passes `_hardware_writes_allowed()` - the same
 expression `available_methods` already uses to decide whether
 `HARDWARE_METHODS` is advertised, shared rather than re-derived so the two
-cannot drift. Withheld, the write refuses with the pre-Task-6 code,
-`roadrunner_unprovisioned`, exactly as a family with no provisioner would -
+cannot drift. Withheld, the write refuses with the same generic code,
+`serial_unprovisioned`, exactly as a family with no provisioner would -
 not a new code for what is, from the caller's side, the same "I can't do
 that here" answer. The CLI passes no such gate and provisions unconditionally
 by default: `enable_flashing` is documented as an agent-only safety gate the
@@ -593,13 +594,16 @@ and never runs `confirm()`. `confirm()` ranks sightings for boards.
 The capability carries `ask` as a required keyword because the two sources cost
 three orders of magnitude apart — reading `devices.json` versus opening every
 free serial port for six seconds — and only the caller knows whether it has
-stopped the services holding those ports. `fw.device.list` passes False and
-takes the remembered answer or nothing. The CLI, choosing what to flash
-inside `_ports_free`, passes False first and True only when the map is
-empty, because the write asks again anyway. For knomi_serial, True means the
-listen is the answer: the map is used only when the listen cannot run, and a
-device the listen did not hear is not reported with a remembered port. There
-is no default, so that cost cannot be acquired by omission.
+stopped the services holding those ports. `fw.status`'s `targets[]` row no
+longer calls this at all: a device's listing comes from the klippy module's
+own printer objects (`DeviceLister.device_from_klipper`), which is read-only
+and costs no port, so there is nothing left for a status poll to `identify()`
+for. The CLI, choosing what to flash inside `_ports_free`, passes False first
+and True only when the map is empty, because the write asks again anyway. For
+knomi_serial, True means the listen is the answer: the map is used only when
+the listen cannot run, and a device the listen did not hear is not reported
+with a remembered port. There is no default, so that cost cannot be acquired
+by omission.
 
 One consequence worth stating: `providers.pio` no longer re-exports
 `read_device_map`, `discover` or `device_map_path`. A provider is handed its
@@ -616,14 +620,49 @@ needs one yet. The old name was dropped without an alias because the
 `flashers:` key had not reached `main`.
 
 Its kind is `KIND_PORT`, and its `detail` names an env and a port, not a
-display or a screen. That vocabulary still survives on the wire (`displays`,
-`screens`, `display_flash`); removing it is a wire change with its own
-`API_VERSION` bump, tracked in the README's TODO. The flash log's keys were
+display or a screen. That vocabulary no longer survives on the wire either
+(`displays`, `screens`, `display_flash` are all gone as of `API_VERSION` 5 -
+see "Screen and display are firmware words" below). The flash log's keys were
 not wire, so they moved here, to `hwid:<id>`. There is no migration from the
 old `display:<id>` keys: one shipped briefly on `develop` and was dropped
 (2026-09-28) once every host running the agent had reflashed its screens, and
 nobody else is known to run it. A log that still holds a `display:` key just
 reports that screen's image as unknown until its next flash.
+
+### Screen and display are firmware words
+
+Only `helpers/knomi_serial.py` and `discovery/knomi_serial/` may use "screen"
+or "display" for a device; everywhere else - the wire, the core seams, every
+other helper - the word is "device". `tests/test_vocabulary.py` enforces it,
+with a line-by-line allowlist for the other meanings the words have - a
+menuconfig "screen", a CSS `display: none`. Why: the wire grew a second
+vocabulary once - `displays`, `screens`, `display_flash` alongside `targets`,
+`devices`, `flash` - and every consumer of the API paid for carrying both
+until version 5 removed the first set outright. One vocabulary, enforced,
+costs a test; two vocabularies cost every reader forever.
+
+### `extras` is a list the UI renders blind
+
+A seam that knows a fact worth showing on a `targets[]` row returns an
+`Extra` (`{seam, name, key, label, value}`); the row collects them and the UI
+renders `label value`, never branching on `key`. Why: a new builder, flasher
+or helper should not need a UI release to show one field - the per-builder
+`extra` bag this replaced grew one TypeScript type per builder, which is
+exactly the branching a uniform list exists to remove. Reversing it means
+putting the branch back in the UI, and relearning why that was the wrong
+place for it.
+
+### Identity writes route by claim, not by name
+
+`fw.identity.provision`/`.clear` name no family - every registered helper
+with the provisioning capability is asked whether the serial is its identity
+and in which state, and the one that claims it takes the call. None, or more
+than one, refuses `not_provisionable` rather than guessing. Why: the board is
+untracked at the point this runs, so there is no family to name, and picking
+one claimant over another ahead of an irreversible write is not a call this
+tool gets to make on a caller's behalf. Reversing it - routing by a `family`
+param instead - would need the caller to already know which firmware a board
+that has, by definition, no durable identity yet is running.
 
 ### One loop per operation, and handlers for everything else
 

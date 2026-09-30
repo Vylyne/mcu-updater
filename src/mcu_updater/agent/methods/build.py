@@ -192,7 +192,7 @@ class BuildMixin(_Base):
         machinery would outweigh the work and a progress bar for it would be a
         lie. It does take the exclusive lock, for the one way this could do
         damage - removing a build directory out from under a compile using it -
-        which is why `fw.roadrunner.*` takes it for its own synchronous work.
+        which is why `fw.identity.*` takes it for its own synchronous work.
 
         Answers `removed: null` rather than failing for a build system that
         keeps no such directory, so a panel can offer the action on any type

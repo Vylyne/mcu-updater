@@ -613,9 +613,9 @@ def test_serial_add_omits_prior_serial_when_nothing_moved(api, monkeypatch):
     assert "prior_serial" not in result
 
 
-def test_serial_add_withholds_provisioning_from_a_runner_less_agent(api, monkeypatch):
+def test_serial_add_refuses_an_unprovisioned_serial_with_the_generic_code(api, monkeypatch):
     """Fix 2 / the coordinator's ruling: `fw.serial.add` performs the same
-    irreversible hardware write `fw.roadrunner.provision` does, so a
+    irreversible hardware write `fw.identity.provision` does, so a
     deployment `available_methods` already withholds that method from must
     not still reach the write through ordinary tracking. This `api` fixture
     has no job runner - the same state
@@ -639,9 +639,15 @@ def test_serial_add_withholds_provisioning_from_a_runner_less_agent(api, monkeyp
                 )
             return helpers.TrackVerdict(ok=True)
 
+        def identity_state(self, serial):
+            return "unprovisioned" if serial.startswith("RR-UNPROVISIONED-") else None
+
         def provision(self, paths, serial: str) -> str:
             self.calls.append(serial)
             return "RR-SHOULD-NEVER-HAPPEN"
+
+        def clear(self, paths, serial):
+            raise AssertionError("nothing in this test clears an identity")
 
     helper = _FakeRoadrunner()
     monkeypatch.setitem(helpers_registry._BY_NAME, "roadrunner", helper)
@@ -666,10 +672,13 @@ def test_serial_add_withholds_provisioning_from_a_runner_less_agent(api, monkeyp
             {"name": "roadrunner", "serial": "RR-UNPROVISIONED-50543165187A4D1C"},
         )
 
-    assert exc.value.data["code"] == "roadrunner_unprovisioned"
+    assert exc.value.data["code"] == "serial_unprovisioned"
     assert exc.value.message == "fake helper says provision this identity first"
     assert exc.value.data["message"] == exc.value.message
     assert helper.calls == [], "withheld, not attempted and then queued"
+
+    with open(api.paths.main_config, encoding="utf-8") as fh:
+        assert "RR-UNPROVISIONED-50543165187A4D1C" not in fh.read(), "nothing tracked"
 
 
 def test_serial_add_refuses_a_serial_tracked_under_another_type(api, fake_root):

@@ -45,11 +45,17 @@ class _FakeRoadrunner:
             )
         return helpers.TrackVerdict(ok=True)
 
+    def identity_state(self, serial):
+        return "unprovisioned" if serial.startswith("RR-UNPROVISIONED-") else None
+
     def provision(self, paths, serial: str) -> str:
         self.calls.append(serial)
         if self.error is not None:
             raise self.error
         return PROVISIONED
+
+    def clear(self, paths, serial):
+        raise AssertionError("nothing in this test clears an identity")
 
 
 class _ProvisionerOnly:
@@ -58,9 +64,15 @@ class _ProvisionerOnly:
     def __init__(self) -> None:
         self.calls: list[str] = []
 
+    def identity_state(self, serial):
+        return "unprovisioned" if serial.startswith("RR-UNPROVISIONED-") else None
+
     def provision(self, paths, serial: str) -> str:
         self.calls.append(serial)
         return PROVISIONED
+
+    def clear(self, paths, serial):
+        raise AssertionError("nothing in this test clears an identity")
 
 
 class _TrackableOnly:

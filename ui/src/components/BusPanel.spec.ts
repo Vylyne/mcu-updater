@@ -76,8 +76,8 @@ const provisionedRoadrunner: BusDevice = {
 };
 
 const roadrunnerCapabilities = [
-  "fw.roadrunner.provision",
-  "fw.roadrunner.clear",
+  "fw.identity.provision",
+  "fw.identity.clear",
 ];
 
 const fullCapabilities = [
@@ -742,7 +742,7 @@ describe("BusPanel", () => {
       state.bus = [unprovisionedRoadrunner];
       state.ping = { capabilities: roadrunnerCapabilities };
       const spy = vi
-        .spyOn(store, "provisionRoadrunner")
+        .spyOn(store, "provisionIdentity")
         .mockResolvedValue(true);
       const wrapper = mount(BusPanel);
 
@@ -762,11 +762,11 @@ describe("BusPanel", () => {
       expect(dialog.text()).toContain("diagnostic UID");
     });
 
-    it("confirming Provision invokes fw.roadrunner.provision once and refreshes afterward", async () => {
+    it("confirming Provision invokes fw.identity.provision once and refreshes afterward", async () => {
       state.bus = [unprovisionedRoadrunner];
       state.ping = { capabilities: roadrunnerCapabilities };
       const spy = vi
-        .spyOn(store, "provisionRoadrunner")
+        .spyOn(store, "provisionIdentity")
         .mockResolvedValue(true);
       const wrapper = mount(BusPanel);
 
@@ -775,7 +775,7 @@ describe("BusPanel", () => {
 
       expect(spy).toHaveBeenCalledTimes(1);
       expect(spy).toHaveBeenCalledWith(unprovisionedRoadrunner.serial);
-      // provisionRoadrunner itself is responsible for the refreshStatus()
+      // provisionIdentity itself is responsible for the refreshStatus()
       // call (mirroring adoptSerial/ignoreSerial) - store/agent.spec.ts
       // asserts that refresh happens; this only asserts the panel called it.
     });
@@ -783,7 +783,7 @@ describe("BusPanel", () => {
     it("Clear identity, from the overflow menu, opens its own confirmation naming only the serial and closes the menu", async () => {
       state.bus = [provisionedRoadrunner];
       state.ping = { capabilities: roadrunnerCapabilities };
-      const spy = vi.spyOn(store, "clearRoadrunner").mockResolvedValue(true);
+      const spy = vi.spyOn(store, "clearIdentity").mockResolvedValue(true);
       const wrapper = mount(BusPanel);
 
       expect(wrapper.find(".dialog-backdrop").exists()).toBe(false);
@@ -800,10 +800,10 @@ describe("BusPanel", () => {
       expect(dialog.text()).not.toContain("diagnostic UID");
     });
 
-    it("confirming Clear invokes fw.roadrunner.clear once with the serial", async () => {
+    it("confirming Clear invokes fw.identity.clear once with the serial", async () => {
       state.bus = [provisionedRoadrunner];
       state.ping = { capabilities: roadrunnerCapabilities };
-      const spy = vi.spyOn(store, "clearRoadrunner").mockResolvedValue(true);
+      const spy = vi.spyOn(store, "clearIdentity").mockResolvedValue(true);
       const wrapper = mount(BusPanel);
 
       await wrapper.get('[aria-label="Roadrunner actions"]').trigger("click");
@@ -818,7 +818,7 @@ describe("BusPanel", () => {
       state.bus = [unprovisionedRoadrunner];
       state.ping = { capabilities: roadrunnerCapabilities };
       const spy = vi
-        .spyOn(store, "provisionRoadrunner")
+        .spyOn(store, "provisionIdentity")
         .mockResolvedValue(true);
       const wrapper = mount(BusPanel);
 
@@ -835,7 +835,7 @@ describe("BusPanel", () => {
       state.bus = [unprovisionedRoadrunner];
       state.ping = { capabilities: roadrunnerCapabilities };
       const spy = vi
-        .spyOn(store, "provisionRoadrunner")
+        .spyOn(store, "provisionIdentity")
         .mockResolvedValue(true);
       const wrapper = mount(BusPanel);
 

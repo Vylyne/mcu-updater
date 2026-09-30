@@ -169,7 +169,7 @@ export type RoadrunnerIdentityState = "unprovisioned" | "provisioned" | null;
  * `fw.toLowerCase()` for a source with no state vocabulary of its own, i.e.
  * literally `"vylyne"`, and carries no Roadrunner-specific meaning. `null`
  * means the serial matches neither shape, the same refusal
- * `fw.roadrunner.provision`/`.clear` would give it server-side. */
+ * `fw.identity.provision`/`.clear` would give it server-side. */
 export function roadrunnerIdentityState(
   serial: string,
 ): RoadrunnerIdentityState {

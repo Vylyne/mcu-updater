@@ -45,6 +45,10 @@ __version__ = "0.4.0"
 #    only; PlatformIO jobs are kinds `flash` and `build`. `fw.target.get` names
 #    a PlatformIO type's `devices`, and no longer echoes `klipper_section`,
 #    `device_map` or the retired `service`.
+#    `fw.roadrunner.provision`/`.clear` are `fw.identity.provision`/`.clear`,
+#    routed to whichever helper claims the serial, and no error code names a
+#    firmware any more (`roadrunner_unprovisioned` is `serial_unprovisioned`;
+#    docs/agent-api.md has the full table).
 API_VERSION = 5
 
 AGENT_NAME = "mcu_updater"

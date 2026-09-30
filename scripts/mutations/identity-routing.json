@@ -1,0 +1,29 @@
+{
+  "_comment": "fw.identity.* writes an identity only through the one helper that claims the serial, in the state the call needs, and never to a tracked board.",
+  "file": "src/mcu_updater/agent/methods/status.py",
+  "command": [
+    "python",
+    "-m",
+    "pytest",
+    "tests/test_identity_provisioning.py",
+    "tests/test_roadrunner.py",
+    "-q"
+  ],
+  "mutations": [
+    {
+      "name": "two claimants refuse rather than picking one",
+      "find": "        if len(claimants) != 1:",
+      "replace": "        if not claimants:"
+    },
+    {
+      "name": "a claimant must be in the state the call needs",
+      "find": "        claimants = [prov for prov in provisioners if states[prov.name] == want]",
+      "replace": "        claimants = [prov for prov in provisioners if states[prov.name] is not None]"
+    },
+    {
+      "name": "a tracked board is refused before its identity is written",
+      "find": "        self._identity_untracked(serial)",
+      "replace": "        pass"
+    }
+  ]
+}

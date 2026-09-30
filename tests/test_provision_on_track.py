@@ -44,11 +44,17 @@ class _FakeRoadrunner:
             )
         return helpers.TrackVerdict(ok=True)
 
+    def identity_state(self, serial):
+        return "unprovisioned" if serial.startswith("RR-UNPROVISIONED-") else None
+
     def provision(self, paths, serial: str) -> str:
         self.calls.append(serial)
         if self.error is not None:
             raise self.error
         return self.result
+
+    def clear(self, paths, serial):
+        raise AssertionError("nothing in this test clears an identity")
 
 
 class _TrackableOnly:
@@ -219,7 +225,7 @@ def test_the_real_roadrunner_helper_judges_trackability_without_hardware(paths):
     assert refused.reason == (
         f"'{UNPROVISIONED}' is an unprovisioned Roadrunner's diagnostic identity, "
         "not a stable serial - provision it first (the web UI's Provision "
-        "Roadrunner action, or fw.roadrunner.provision), then track the "
+        "Roadrunner action, or fw.identity.provision), then track the "
         "resulting RR-... serial."
     )
     assert refused.remedy == "provision"
@@ -234,7 +240,7 @@ def test_a_helper_without_the_capability_offers_none(paths):
 def test_may_provision_false_refuses_an_unprovisioned_serial_without_writing(paths, rr):
     """Fix 2: a deployment that must withhold the write - the agent, when it
     is read-only or `enable_flashing` is off, the same test that already
-    withholds `fw.roadrunner.provision` - passes `may_provision=False` and
+    withholds `fw.identity.provision` - passes `may_provision=False` and
     gets the pre-Task-6 refusal, not a provisioned board."""
     with pytest.raises(UnprovisionedSerialError) as excinfo:
         tracking.add_serial(paths, "roadrunner", UNPROVISIONED, may_provision=False)

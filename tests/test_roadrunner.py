@@ -170,7 +170,7 @@ def test_helper_json_failure_is_distinct_from_a_bad_info_response(paths, monkeyp
     monkeypatch.setattr(roadrunner.subprocess, "run", run)
     with pytest.raises(roadrunner.RoadrunnerError) as exc:
         roadrunner._helper(paths, "info", "/dev/ttyACM0")
-    assert exc.value.code == "roadrunner_helper"
+    assert exc.value.code == "helper_failed"
     assert exc.value.data["error"] == "bad_crc"
 
 
@@ -197,7 +197,7 @@ def test_explicit_probe_reports_invalid_info_not_no_candidate(paths, fake_root, 
     monkeypatch.setattr(roadrunner, "_helper", lambda *_args: bad_info)
     with pytest.raises(roadrunner.RoadrunnerError) as exc:
         roadrunner.find_untracked(paths, UNPROVISIONED)
-    assert exc.value.code == "roadrunner_invalid_probe"
+    assert exc.value.code == "identity_unconfirmed"
 
 
 def test_provision_reenumerates_on_the_same_transient_topology(paths, fake_root, monkeypatch):
@@ -270,7 +270,7 @@ def test_await_reenumeration_times_out_when_nothing_reappears(paths, monkeypatch
     with pytest.raises(roadrunner.RoadrunnerError) as exc:
         roadrunner._await_same_topology(paths, topology, "RR-0123456789ABCDEFGHJKMNPQRS", provisioned=True)
 
-    assert exc.value.code == "roadrunner_timeout"
+    assert exc.value.code == "reenumerate_timeout"
     assert helper_calls == []  # never even probed - nothing was on the bus to probe
 
 
@@ -287,7 +287,7 @@ def test_await_reenumeration_reports_mismatch_when_wrong_identity_reappears(path
     with pytest.raises(roadrunner.RoadrunnerError) as exc:
         roadrunner._await_same_topology(paths, topology, expected, provisioned=True)
 
-    assert exc.value.code == "roadrunner_mismatch"
+    assert exc.value.code == "identity_mismatch"
     assert exc.value.data["serial"] == expected
     assert exc.value.data["observed_serial"] == observed
     assert exc.value.data["observed_state"] == "provisioned"
@@ -312,7 +312,7 @@ def test_await_reenumeration_diagnoses_the_wire_identity_not_the_descriptor(path
     with pytest.raises(roadrunner.RoadrunnerError) as exc:
         roadrunner._await_same_topology(paths, topology, expected, provisioned=True)
 
-    assert exc.value.code == "roadrunner_mismatch"
+    assert exc.value.code == "identity_mismatch"
     assert exc.value.data["observed_serial"] == stale_wire_serial
     assert exc.value.data["observed_state"] == "unprovisioned"
 
@@ -326,7 +326,7 @@ def test_clear_reenumeration_times_out_when_nothing_reappears(paths, monkeypatch
     with pytest.raises(roadrunner.RoadrunnerError) as exc:
         roadrunner.clear_roadrunner(paths, device)
 
-    assert exc.value.code == "roadrunner_timeout"
+    assert exc.value.code == "reenumerate_timeout"
 
 
 def test_clear_reenumeration_reports_mismatch_when_still_provisioned(paths, monkeypatch):
@@ -348,7 +348,7 @@ def test_clear_reenumeration_reports_mismatch_when_still_provisioned(paths, monk
     with pytest.raises(roadrunner.RoadrunnerError) as exc:
         roadrunner.clear_roadrunner(paths, device)
 
-    assert exc.value.code == "roadrunner_mismatch"
+    assert exc.value.code == "identity_mismatch"
     assert exc.value.data["observed_serial"] == PROVISIONED
     assert exc.value.data["observed_state"] == "provisioned"
 
@@ -398,7 +398,7 @@ def test_request_bootsel_times_out_while_the_old_cdc_topology_remains(paths, mon
     with pytest.raises(roadrunner.RoadrunnerError) as exc:
         roadrunner.Roadrunner().request_bootsel(paths, device)
 
-    assert exc.value.code == "roadrunner_timeout"
+    assert exc.value.code == "reenumerate_timeout"
     assert "did not disappear" in str(exc.value)
     assert commands == [("bootsel", device.port, PROVISIONED)]
 
@@ -441,7 +441,7 @@ def test_request_bootsel_times_out_when_inventory_remains_unknown(paths, monkeyp
     with pytest.raises(roadrunner.RoadrunnerError) as exc:
         roadrunner.Roadrunner().request_bootsel(paths, device)
 
-    assert exc.value.code == "roadrunner_timeout"
+    assert exc.value.code == "reenumerate_timeout"
     assert "could not confirm" in str(exc.value).lower()
 
 
@@ -496,7 +496,7 @@ def test_firmware_helper_refuses_before_bootsel_when_confirmation_fails(
         "find_provisioned",
         lambda _paths, serial: (_ for _ in ()).throw(
             roadrunner._error(
-                "roadrunner_no_candidate",
+                "device_not_found",
                 "No confirmed provisioned Roadrunner matched that serial",
                 serial=serial,
             )
@@ -559,7 +559,7 @@ def test_firmware_helper_wait_ready_retries_until_serial_and_info_are_confirmed(
         attempts.append(serial)
         if len(attempts) < 3:
             raise roadrunner._error(
-                "roadrunner_no_candidate", "Roadrunner has not re-enumerated"
+                "device_not_found", "Roadrunner has not re-enumerated"
             )
         return device
 
@@ -584,7 +584,7 @@ def test_firmware_helper_wait_ready_has_a_bounded_reenumeration_timeout(
     def missing(_paths, serial):
         attempts.append(serial)
         raise roadrunner._error(
-            "roadrunner_no_candidate", "Roadrunner has not re-enumerated"
+            "device_not_found", "Roadrunner has not re-enumerated"
         )
 
     monkeypatch.setattr(roadrunner, "find_provisioned", missing)
@@ -603,7 +603,7 @@ def test_firmware_helper_wait_ready_has_a_bounded_reenumeration_timeout(
     assert len(attempts) == 5
 
 
-@pytest.mark.parametrize("code", ["roadrunner_invalid_probe", "roadrunner_helper"])
+@pytest.mark.parametrize("code", ["identity_unconfirmed", "helper_failed"])
 def test_firmware_helper_wait_ready_retries_a_transient_probe_failure(
     paths, settings, monkeypatch, code
 ):
@@ -640,7 +640,7 @@ def test_firmware_helper_wait_ready_retries_a_transient_probe_failure(
     assert len(attempts) == 5
 
 
-@pytest.mark.parametrize("code", ["roadrunner_invalid_probe", "roadrunner_helper"])
+@pytest.mark.parametrize("code", ["identity_unconfirmed", "helper_failed"])
 def test_firmware_helper_wait_ready_accepts_a_board_that_settles_late(
     paths, settings, monkeypatch, code
 ):
@@ -672,7 +672,7 @@ def test_firmware_helper_wait_ready_stops_waiting_on_ambiguity(
     """Two devices answering to one serial is not a slow return, so the wait
     ends at once. Post-copy it is still only a warning - see
     `test_bootsel_handoff_settled_warns_on_non_timeout_roadrunner_errors`."""
-    error = roadrunner._error("roadrunner_ambiguous", "Roadrunner readiness failed")
+    error = roadrunner._error("device_ambiguous", "Roadrunner readiness failed")
     attempts: list[str] = []
 
     def fail(_paths, serial):
@@ -696,9 +696,9 @@ def test_firmware_helper_wait_ready_stops_waiting_on_ambiguity(
 
 def _ready_api(paths) -> Api:
     """A non-read-only, flashing-enabled agent - what every dispatch test here
-    needs, now that `fw.roadrunner.provision`/`fw.roadrunner.clear` are gated
+    needs, now that `fw.identity.provision`/`fw.identity.clear` are gated
     on `enable_flashing`/read-only exactly like every other hardware-writing
-    method (see `test_roadrunner_methods_are_gated_*` below for the gate
+    method (see `test_identity_methods_are_gated_*` below for the gate
     itself).
     """
     write_settings(paths, dry_run="true", service_backend="null", enable_flashing="true")
@@ -706,7 +706,7 @@ def _ready_api(paths) -> Api:
     return Api(paths, runner=runner)
 
 
-def test_roadrunner_methods_are_not_advertised_by_default(paths):
+def test_identity_methods_are_not_advertised_by_default(paths):
     """Installing an update must never silently grant a browser the ability to
     provision or clear a board's identity - the same invariant `fw.flash`
     already upholds."""
@@ -714,17 +714,17 @@ def test_roadrunner_methods_are_not_advertised_by_default(paths):
     api = Api(paths, runner=runner)  # enable_flashing omitted -> false
 
     capabilities = api.dispatch("fw.ping")["capabilities"]
-    assert "fw.roadrunner.provision" not in capabilities
-    assert "fw.roadrunner.clear" not in capabilities
+    assert "fw.identity.provision" not in capabilities
+    assert "fw.identity.clear" not in capabilities
     with pytest.raises(RpcError) as exc:
-        api.dispatch("fw.roadrunner.provision", {"serial": UNPROVISIONED})
+        api.dispatch("fw.identity.provision", {"serial": UNPROVISIONED})
     assert exc.value.code == ERR_METHOD_NOT_FOUND
     with pytest.raises(RpcError) as exc:
-        api.dispatch("fw.roadrunner.clear", {"serial": PROVISIONED})
+        api.dispatch("fw.identity.clear", {"serial": PROVISIONED})
     assert exc.value.code == ERR_METHOD_NOT_FOUND
 
 
-def test_roadrunner_methods_are_not_advertised_when_read_only(paths):
+def test_identity_methods_are_not_advertised_when_read_only(paths):
     """A read-only agent (no job runner) must withhold these too, even though
     neither call goes through the runner - read-only means no writes, not just
     no jobs."""
@@ -732,20 +732,20 @@ def test_roadrunner_methods_are_not_advertised_when_read_only(paths):
     api = Api(paths)  # no runner -> read-only
 
     capabilities = api.dispatch("fw.ping")["capabilities"]
-    assert "fw.roadrunner.provision" not in capabilities
-    assert "fw.roadrunner.clear" not in capabilities
+    assert "fw.identity.provision" not in capabilities
+    assert "fw.identity.clear" not in capabilities
     with pytest.raises(RpcError) as exc:
-        api.dispatch("fw.roadrunner.provision", {"serial": UNPROVISIONED})
+        api.dispatch("fw.identity.provision", {"serial": UNPROVISIONED})
     assert exc.value.code == ERR_METHOD_NOT_FOUND
     with pytest.raises(RpcError) as exc:
-        api.dispatch("fw.roadrunner.clear", {"serial": PROVISIONED})
+        api.dispatch("fw.identity.clear", {"serial": PROVISIONED})
     assert exc.value.code == ERR_METHOD_NOT_FOUND
 
 
-def test_roadrunner_methods_are_advertised_once_enabled(paths):
+def test_identity_methods_are_advertised_once_enabled(paths):
     api = _ready_api(paths)
-    assert "fw.roadrunner.provision" in api.dispatch("fw.ping")["capabilities"]
-    assert "fw.roadrunner.clear" in api.dispatch("fw.ping")["capabilities"]
+    assert "fw.identity.provision" in api.dispatch("fw.ping")["capabilities"]
+    assert "fw.identity.clear" in api.dispatch("fw.ping")["capabilities"]
 
 
 def test_agent_provisions_once_without_tracking(paths, monkeypatch):
@@ -761,11 +761,11 @@ def test_agent_provisions_once_without_tracking(paths, monkeypatch):
         lambda _paths, device, uuid: calls.append((device, uuid)) or result,
     )
     monkeypatch.setattr(
-        "mcu_updater.agent.methods.status.secrets.token_bytes",
+        "secrets.token_bytes",
         lambda size: generated.append(size) or bytes(range(size)),
     )
 
-    response = api.dispatch("fw.roadrunner.provision", {"serial": UNPROVISIONED})
+    response = api.dispatch("fw.identity.provision", {"serial": UNPROVISIONED})
 
     assert response == {"serial": PROVISIONED, "prior_serial": UNPROVISIONED, "state": "provisioned"}
     assert generated == [16]
@@ -780,13 +780,13 @@ def test_agent_refuses_ambiguous_candidate_before_writing(paths, monkeypatch):
         roadrunner,
         "find_untracked",
         lambda *_args: (_ for _ in ()).throw(
-            roadrunner._error("roadrunner_ambiguous", "ambiguous")
+            roadrunner._error("device_ambiguous", "ambiguous")
         ),
     )
     monkeypatch.setattr(roadrunner, "provision_roadrunner", lambda *_args: wrote.append(True))
     with pytest.raises(RpcError) as exc:
-        api.dispatch("fw.roadrunner.provision", {"serial": UNPROVISIONED})
-    assert exc.value.data["code"] == "roadrunner_ambiguous"
+        api.dispatch("fw.identity.provision", {"serial": UNPROVISIONED})
+    assert exc.value.data["code"] == "device_ambiguous"
     assert wrote == []
 
 
@@ -799,11 +799,11 @@ def test_agent_does_not_retry_after_a_provision_timeout(paths, monkeypatch):
         roadrunner,
         "provision_roadrunner",
         lambda *_args: writes.append(True)
-        or (_ for _ in ()).throw(roadrunner._error("roadrunner_timeout", "timed out")),
+        or (_ for _ in ()).throw(roadrunner._error("reenumerate_timeout", "timed out")),
     )
     with pytest.raises(RpcError) as exc:
-        api.dispatch("fw.roadrunner.provision", {"serial": UNPROVISIONED})
-    assert exc.value.data["code"] == "roadrunner_timeout"
+        api.dispatch("fw.identity.provision", {"serial": UNPROVISIONED})
+    assert exc.value.data["code"] == "reenumerate_timeout"
     assert writes == [True]
 
 
@@ -813,7 +813,7 @@ def test_agent_clear_returns_to_unprovisioned_without_tracking(paths, monkeypatc
     cleared = roadrunner.RoadrunnerDevice(UNPROVISIONED, "/dev/ttyACM1", _topology())
     monkeypatch.setattr(roadrunner, "find_provisioned", lambda *_args: original)
     monkeypatch.setattr(roadrunner, "clear_roadrunner", lambda *_args: cleared)
-    response = api.dispatch("fw.roadrunner.clear", {"serial": PROVISIONED})
+    response = api.dispatch("fw.identity.clear", {"serial": PROVISIONED})
     assert response == {"serial": UNPROVISIONED, "prior_serial": PROVISIONED, "state": "unprovisioned"}
     assert api.registry().find_types_for_serial(UNPROVISIONED) == []
 
@@ -826,8 +826,8 @@ def test_agent_refuses_maintenance_for_a_cmake_tracked_roadrunner(paths):
             f"serials:\n    {PROVISIONED}\n"
         )
     with pytest.raises(RpcError) as exc:
-        _ready_api(paths).dispatch("fw.roadrunner.clear", {"serial": PROVISIONED})
-    assert exc.value.data["code"] == "roadrunner_tracked"
+        _ready_api(paths).dispatch("fw.identity.clear", {"serial": PROVISIONED})
+    assert exc.value.data["code"] == "device_tracked"
     assert exc.value.data["data"]["tracked_under"] == ["roadrunner"]
 
 

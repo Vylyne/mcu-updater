@@ -1347,9 +1347,15 @@ def test_the_flash_prompt_provisions_an_unprovisioned_roadrunner_then_flashes_it
                 )
             return helpers.TrackVerdict(ok=True)
 
+        def identity_state(self, serial):
+            return "unprovisioned" if serial.startswith("RR-UNPROVISIONED-") else None
+
         def provision(self, paths, serial: str) -> str:
             self.calls.append(serial)
             return RR_SERIAL
+
+        def clear(self, paths, serial):
+            raise AssertionError("nothing in this test clears an identity")
 
     helper = _FakeRoadrunner()
     monkeypatch.setitem(helpers_registry._BY_NAME, "roadrunner", helper)

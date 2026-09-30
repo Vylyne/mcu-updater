@@ -19,11 +19,11 @@ import { flipMenuIfOffscreen, useClickOutsideToClose } from "../clickOutside";
 import {
   adoptSerial,
   adoptCanbus,
-  clearRoadrunner,
+  clearIdentity,
   hasCapability,
   ignoreCanbus,
   ignoreSerial,
-  provisionRoadrunner,
+  provisionIdentity,
   state,
   unignoreCanbus,
   unignoreSerial,
@@ -90,9 +90,9 @@ const canUnignoreCan = computed(() => hasCapability("fw.canbus.unignore"));
 // server-supplied action list - see api/targets.ts's isRoadrunnerDevice for
 // why there is no Roadrunner-specific wire field to key off instead.
 const canProvisionRoadrunner = computed(() =>
-  hasCapability("fw.roadrunner.provision"),
+  hasCapability("fw.identity.provision"),
 );
-const canClearRoadrunner = computed(() => hasCapability("fw.roadrunner.clear"));
+const canClearRoadrunner = computed(() => hasCapability("fw.identity.clear"));
 
 /** "unprovisioned" | "provisioned" | null - null both for a non-Roadrunner
  * device and for a Vylyne/Roadrunner serial matching neither known shape
@@ -299,7 +299,7 @@ async function confirmProvision(): Promise<void> {
   if (busy[device.serial]) return;
   busy[device.serial] = true;
   try {
-    await provisionRoadrunner(device.serial);
+    await provisionIdentity(device.serial);
   } finally {
     busy[device.serial] = false;
     provisionConfirmFor.value = null;
@@ -312,7 +312,7 @@ async function confirmClear(): Promise<void> {
   if (busy[device.serial]) return;
   busy[device.serial] = true;
   try {
-    await clearRoadrunner(device.serial);
+    await clearIdentity(device.serial);
   } finally {
     busy[device.serial] = false;
     clearConfirmFor.value = null;

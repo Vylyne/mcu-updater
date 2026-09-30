@@ -5,7 +5,6 @@ from __future__ import annotations
 import dataclasses
 import os
 import platform
-import secrets
 import threading
 import time
 from collections.abc import Callable, Iterable
@@ -41,7 +40,7 @@ from ...errors import (
 )
 from ...extras import ordered
 from ...flashers.pairings import PAIRING_TTL as _PAIRING_TTL
-from ...helpers import DeviceInfoReader, DeviceLister, ImageReporter, ListedDevice
+from ...helpers import DeviceInfoReader, DeviceLister, ImageReporter, ListedDevice, Provisioner
 from ...lock import exclusive
 from ...paths import Paths
 from ...settings import Settings, load_settings
@@ -1645,52 +1644,74 @@ class StatusMixin(_Base):
             ],
         }
 
-    def _roadrunner_refusal(self, exc: UpdaterError) -> RpcError:
-        return RpcError(exc.message, data=exc.to_dict())
+    def _identity_claimant(self, serial: str, want: str) -> Provisioner:
+        """The one helper that calls `serial` its identity, in state `want`.
 
-    def _roadrunner_untracked(self, serial: str) -> None:
+        Every registered provisioner is asked, and asking is a string test.
+        None, or more than one, refuses: an irreversible write goes to a
+        helper that is unambiguously the owner, or nowhere.
+        """
+        provisioners = [
+            prov
+            for prov in (helpers.provisioner(h) for h in helpers.all_helpers())
+            if prov is not None
+        ]
+        states = {prov.name: prov.identity_state(serial) for prov in provisioners}
+        claimants = [prov for prov in provisioners if states[prov.name] == want]
+        if len(claimants) != 1:
+            verb = "provision" if want == "unprovisioned" else "clear"
+            raise RpcError(
+                f"No single firmware can {verb} '{serial}'.",
+                data={
+                    "code": "not_provisionable",
+                    "message": f"exactly one helper must be able to {verb} this serial",
+                    "data": {
+                        "serial": serial,
+                        "helpers": sorted(n for n, s in states.items() if s is not None),
+                    },
+                },
+            )
+        return claimants[0]
+
+    def _identity_untracked(self, serial: str) -> None:
         owners = self.registry().find_declared_types_for_serial(serial)
         if owners:
             raise RpcError(
-                f"Roadrunner '{serial}' is already tracked under '{owners[0]}'.",
+                f"'{serial}' is already tracked under '{owners[0]}'.",
                 data={
-                    "code": "roadrunner_tracked",
-                    "message": "Roadrunner must be untracked before maintenance",
+                    "code": "device_tracked",
+                    "message": "untrack the device before changing its identity",
                     "data": {"serial": serial, "tracked_under": owners},
                 },
             )
 
-    def roadrunner_provision(self, args: dict) -> dict[str, Any]:
-        """Explicitly provision one confirmed, untracked USB Roadrunner."""
-        from ...discovery import roadrunner
-
+    def identity_provision(self, args: dict) -> dict[str, Any]:
+        """Give one confirmed, untracked board its durable identity."""
         serial = self._require_str(args, "serial")
-        self._roadrunner_untracked(serial)
+        prov = self._identity_claimant(serial, "unprovisioned")
+        self._identity_untracked(serial)
         try:
             # The lock covers selection, the irreversible write, and its
             # re-enumeration handoff. A timeout never retries the write.
-            with exclusive(self.paths, f"provision Roadrunner {serial}"):
-                device = roadrunner.find_untracked(self.paths, serial)
-                result = roadrunner.provision_roadrunner(self.paths, device, secrets.token_bytes(16))
+            with exclusive(self.paths, f"provision {serial}"):
+                provisioned = prov.provision(self.paths, serial)
         except UpdaterError as exc:
-            raise self._roadrunner_refusal(exc) from exc
+            raise RpcError(exc.message, data=exc.to_dict()) from exc
         self._changed()
-        return {"serial": result.serial, "prior_serial": serial, "state": "provisioned"}
+        return {"serial": provisioned, "prior_serial": serial, "state": "provisioned"}
 
-    def roadrunner_clear(self, args: dict) -> dict[str, Any]:
-        """Explicitly clear one confirmed, untracked USB Roadrunner."""
-        from ...discovery import roadrunner
-
+    def identity_clear(self, args: dict) -> dict[str, Any]:
+        """Return one confirmed, untracked board to its unprovisioned identity."""
         serial = self._require_str(args, "serial")
-        self._roadrunner_untracked(serial)
+        prov = self._identity_claimant(serial, "provisioned")
+        self._identity_untracked(serial)
         try:
-            with exclusive(self.paths, f"clear Roadrunner {serial}"):
-                device = roadrunner.find_provisioned(self.paths, serial)
-                result = roadrunner.clear_roadrunner(self.paths, device)
+            with exclusive(self.paths, f"clear {serial}"):
+                cleared = prov.clear(self.paths, serial)
         except UpdaterError as exc:
-            raise self._roadrunner_refusal(exc) from exc
+            raise RpcError(exc.message, data=exc.to_dict()) from exc
         self._changed()
-        return {"serial": result.serial, "prior_serial": serial, "state": "unprovisioned"}
+        return {"serial": cleared, "prior_serial": serial, "state": "unprovisioned"}
 
     def canbus_scan(self, args: dict) -> dict[str, Any]:
         if not self._canbus_scan_lock.acquire(blocking=False):
@@ -1963,8 +1984,8 @@ class StatusMixin(_Base):
         "fw.canbus.scan": "canbus_scan",
         "fw.canbus.ignore": "canbus_ignore",
         "fw.canbus.unignore": "canbus_unignore",
-        "fw.roadrunner.provision": "roadrunner_provision",
-        "fw.roadrunner.clear": "roadrunner_clear",
+        "fw.identity.provision": "identity_provision",
+        "fw.identity.clear": "identity_clear",
         "fw.artifacts": "artifacts",
         "fw.settings.get": "settings_get",
         "fw.settings.set": "settings_set",
@@ -2045,8 +2066,8 @@ class StatusMixin(_Base):
     #: below, so a read-only agent withholds it too rather than relying on an
     #: overlap that doesn't exist for it.
     HARDWARE_METHODS = (
-        "fw.roadrunner.provision",
-        "fw.roadrunner.clear",
+        "fw.identity.provision",
+        "fw.identity.clear",
     )
 
     def _hardware_writes_allowed(self) -> bool:

@@ -29,7 +29,7 @@ REENUMERATE_TIMEOUT = 15.0
 
 
 class RoadrunnerError(UpdaterError):
-    code = "roadrunner_helper"
+    code = "helper_failed"
 
 
 @dataclasses.dataclass(frozen=True)
@@ -66,14 +66,14 @@ def _helper(paths: Paths, operation: str, port: str, argument: str | None = None
     try:
         result = subprocess.run(argv, text=True, capture_output=True, check=False, timeout=8)
     except (OSError, subprocess.SubprocessError) as exc:
-        raise _error("roadrunner_helper", f"Roadrunner helper could not run: {exc}") from exc
+        raise _error("helper_failed", f"Roadrunner helper could not run: {exc}") from exc
     try:
         data = json.loads(result.stdout)
     except ValueError as exc:
-        raise _error("roadrunner_helper", "Roadrunner helper returned invalid JSON") from exc
+        raise _error("helper_failed", "Roadrunner helper returned invalid JSON") from exc
     if not isinstance(data, dict) or result.returncode:
         detail = data.get("error") if isinstance(data, dict) else None
-        raise _error("roadrunner_helper", "Roadrunner helper failed", error=detail or result.stderr.strip())
+        raise _error("helper_failed", "Roadrunner helper failed", error=detail or result.stderr.strip())
     return data
 
 
@@ -185,32 +185,32 @@ def discover(paths: Paths) -> list[RoadrunnerDevice]:
 
 def find_untracked(paths: Paths, serial: str) -> RoadrunnerDevice:
     if not UNPROVISIONED_RE.fullmatch(serial):
-        raise _error("roadrunner_invalid_probe", "Roadrunner serial is not an unprovisioned canonical serial")
+        raise _error("identity_unconfirmed", "Roadrunner serial is not an unprovisioned canonical serial")
     candidates = [item for item in _entry_candidates(paths) if item[0] == serial]
     if not candidates:
-        raise _error("roadrunner_no_candidate", "No confirmed unprovisioned Roadrunner matched that serial", serial=serial)
+        raise _error("device_not_found", "No confirmed unprovisioned Roadrunner matched that serial", serial=serial)
     if len(candidates) != 1:
-        raise _error("roadrunner_ambiguous", "More than one Roadrunner matched that serial", serial=serial)
+        raise _error("device_ambiguous", "More than one Roadrunner matched that serial", serial=serial)
     candidate_serial, port, topology = candidates[0]
     info = _helper(paths, "info", port)
     if not _valid_info(info, serial, provisioned=False):
-        raise _error("roadrunner_invalid_probe", "Roadrunner INFO did not confirm the unprovisioned descriptor", serial=serial)
+        raise _error("identity_unconfirmed", "Roadrunner INFO did not confirm the unprovisioned descriptor", serial=serial)
     return RoadrunnerDevice(candidate_serial, port, topology, **provenance(info))
 
 
 def find_provisioned(paths: Paths, serial: str) -> RoadrunnerDevice:
     """Confirm one already-provisioned Roadrunner without writing to it."""
     if not PROVISIONED_RE.fullmatch(serial):
-        raise _error("roadrunner_invalid_probe", "Roadrunner serial is not a provisioned canonical serial")
+        raise _error("identity_unconfirmed", "Roadrunner serial is not a provisioned canonical serial")
     candidates = [item for item in _entry_candidates(paths) if item[0] == serial]
     if not candidates:
-        raise _error("roadrunner_no_candidate", "No confirmed provisioned Roadrunner matched that serial", serial=serial)
+        raise _error("device_not_found", "No confirmed provisioned Roadrunner matched that serial", serial=serial)
     if len(candidates) != 1:
-        raise _error("roadrunner_ambiguous", "More than one Roadrunner matched that serial", serial=serial)
+        raise _error("device_ambiguous", "More than one Roadrunner matched that serial", serial=serial)
     candidate_serial, port, topology = candidates[0]
     info = _helper(paths, "info", port)
     if not _valid_info(info, serial, provisioned=True):
-        raise _error("roadrunner_invalid_probe", "Roadrunner INFO did not confirm the provisioned descriptor", serial=serial)
+        raise _error("identity_unconfirmed", "Roadrunner INFO did not confirm the provisioned descriptor", serial=serial)
     return RoadrunnerDevice(candidate_serial, port, topology, **provenance(info))
 
 
@@ -218,12 +218,12 @@ def find_provisioned(paths: Paths, serial: str) -> RoadrunnerDevice:
 #: three are retried rather than believed. The `/dev/serial/by-id` symlink
 #: appears before the tty can reliably be opened - udev is still settling and
 #: ModemManager may still be probing - so an INFO probe in that window fails
-#: (`roadrunner_helper`) or answers incompletely (`roadrunner_invalid_probe`)
+#: (`helper_failed`) or answers incompletely (`identity_unconfirmed`)
 #: for a board that is about to be perfectly fine. Ambiguity is deliberately
 #: not here: two devices answering to one serial is a real condition that
 #: waiting cannot resolve.
 _TRANSIENT_READINESS_CODES = frozenset(
-    {"roadrunner_no_candidate", "roadrunner_helper", "roadrunner_invalid_probe"}
+    {"device_not_found", "helper_failed", "identity_unconfirmed"}
 )
 
 
@@ -270,8 +270,8 @@ def _await_reenumeration(
     back with the *wrong* identity (a corrupted write, or a different device
     now sitting on that port) is distinguished from one that never comes
     back at all: the last such observed (serial, state) is remembered, and if
-    the deadline expires having seen one, `roadrunner_mismatch` is raised
-    instead of the generic `roadrunner_timeout`.
+    the deadline expires having seen one, `identity_mismatch` is raised
+    instead of the generic `reenumerate_timeout`.
     """
     deadline = time.monotonic() + REENUMERATE_TIMEOUT
     last_mismatch: tuple[str, bool] | None = None
@@ -300,14 +300,14 @@ def _await_reenumeration(
             if last_mismatch is not None:
                 observed_serial, observed_provisioned = last_mismatch
                 raise _error(
-                    "roadrunner_mismatch",
+                    "identity_mismatch",
                     "Roadrunner re-enumerated with an unexpected identity",
                     serial=error_serial,
                     observed_serial=observed_serial,
                     observed_state="provisioned" if observed_provisioned else "unprovisioned",
                 )
             raise _error(
-                "roadrunner_timeout",
+                "reenumerate_timeout",
                 "Roadrunner did not re-enumerate with the expected identity",
                 serial=error_serial,
             )
@@ -344,7 +344,7 @@ def _await_disappearance(paths: Paths, device: RoadrunnerDevice) -> usb.UsbDevic
                 else "Roadrunner CDC device did not disappear after the BOOTSEL request"
             )
             raise _error(
-                "roadrunner_timeout",
+                "reenumerate_timeout",
                 message,
                 serial=device.serial,
             )
@@ -360,7 +360,7 @@ def provision_roadrunner(paths: Paths, device: RoadrunnerDevice, uuid: bytes) ->
         raise
     serial = response.get("serial")
     if not isinstance(serial, str) or not PROVISIONED_RE.fullmatch(serial):
-        raise _error("roadrunner_invalid_probe", "Roadrunner returned an invalid provisioned serial")
+        raise _error("identity_unconfirmed", "Roadrunner returned an invalid provisioned serial")
     return _await_same_topology(paths, device.topology, serial, provisioned=True)
 
 

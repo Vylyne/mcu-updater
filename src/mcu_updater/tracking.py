@@ -107,10 +107,10 @@ def add_serial(
     gated. It defaults to True - an operator at the CLI, or a caller with no
     policy of its own - so a deployment that must withhold the write (the
     agent, when it is read-only or `enable_flashing` is off - the same test
-    that already withholds `fw.roadrunner.provision`) passes False rather
+    that already withholds `fw.identity.provision`) passes False rather
     than inheriting this default. With `may_provision=False`, a serial that
     would have been provisioned refuses with the helper's reason and the
-    existing `UnprovisionedSerialError` / `roadrunner_unprovisioned`, not a new
+    existing `UnprovisionedSerialError` / `serial_unprovisioned`, not a new
     code.
     """
     provisioned_from: str | None = None

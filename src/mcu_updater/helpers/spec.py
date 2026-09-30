@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import dataclasses
 from collections.abc import Callable, Mapping, Sequence
-from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Literal, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from ..build import Reporter
@@ -111,12 +111,26 @@ class Provisioner(Protocol):
     must not interleave with a flash or with a second provision, and the lock
     covering all three is the caller's to take (`lock.exclusive`), because the
     caller is the one that knows what to call the operation.
+
+    Giving an identity and taking it back are one firmware feature, so they are
+    one capability. `identity_state` is how a caller that names no family finds
+    the helper to ask: a string test, like `is_trackable`, that never opens a
+    port.
     """
 
     name: str
 
+    def identity_state(self, serial: str) -> Literal["unprovisioned", "provisioned"] | None:
+        """Whether `serial` is this firmware's identity, and in which state."""
+        ...
+
     def provision(self, paths: Paths, serial: str) -> str:
         """Provision the board answering to `serial`; return its new serial."""
+        ...
+
+    def clear(self, paths: Paths, serial: str) -> str:
+        """Return the board answering to `serial` to its unprovisioned
+        identity; return the serial it came back under."""
         ...
 
 

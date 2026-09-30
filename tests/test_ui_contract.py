@@ -103,3 +103,37 @@ def test_the_ui_defers_exactly_the_kinds_the_agent_defers():
     from mcu_updater.jobs import IMMEDIATELY_CANCELLABLE
 
     assert _ui_deferred_kinds() == _ui_job_kinds() - set(IMMEDIATELY_CANCELLABLE)
+
+
+# --------------------------------------------------------------------------
+# the targets[] row shape - ui/src/api/targets.ts's `Target` against a real row
+# --------------------------------------------------------------------------
+
+_TARGET_INTERFACE_RE = re.compile(r"export interface Target \{([^}]*)\}", re.DOTALL)
+_INTERFACE_FIELD_RE = re.compile(r"^\s*(\w+)\??:", re.MULTILINE)
+
+
+def _ui_target_fields() -> set[str]:
+    text = (UI_SRC / "api" / "targets.ts").read_text(encoding="utf-8")
+    match = _TARGET_INTERFACE_RE.search(text)
+    assert match is not None, "ui/src/api/targets.ts must define interface Target"
+    return set(_INTERFACE_FIELD_RE.findall(match.group(1)))
+
+
+def test_the_ui_target_declares_the_uniform_row_fields(paths, live_registry_text):
+    """`source`, `extras` and `devices_note` replaced the old per-row `extra`
+    bag (API_VERSION 5). Nothing fails if the UI's `Target` or the agent's row
+    renamed or dropped one of the three - the panel would just show nothing
+    for that field. Pin the UI's declared fields against a row the agent
+    actually built, the way `tests/test_agent_targets.py`'s
+    `test_a_tracked_type_has_no_devices_note` does."""
+    from mcu_updater.agent.methods import Api
+
+    fields = _ui_target_fields()
+    assert {"source", "extras", "devices_note"} <= fields
+    assert "extra" not in fields
+
+    with open(paths.registry_file, "w", encoding="utf-8") as fh:
+        fh.write(live_registry_text)
+    row = Api(paths).dispatch("fw.status")["targets"][0]
+    assert {"source", "extras", "devices_note"} <= set(row)

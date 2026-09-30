@@ -50,7 +50,7 @@ const body = computed(() => {
     return "Build every target whose artifact needs it. Nothing is written to a board.";
   }
   if (props.operation === "flash_all") {
-    return "Flash every board and screen that needs it. This stops Klipper once for the whole batch.";
+    return "Flash every device that needs it. This stops Klipper once for the whole batch.";
   }
   return "Build what needs it, then flash what needs it. This stops Klipper once, after the builds finish.";
 });

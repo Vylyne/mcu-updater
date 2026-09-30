@@ -52,6 +52,9 @@ function target(overrides: Partial<Target> = {}): Target {
     needs_flash: false,
     devices: [],
     actions: [],
+    source: null,
+    extras: [],
+    devices_note: "No serial devices are tracked for this type yet.",
     ...overrides,
   };
 }

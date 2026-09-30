@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// One targets[] row, rendered the same way for an MCU or a display - see
+// One targets[] row, rendered the same way whatever builds it - see
 // docs/decisions.md and docs/agent-api.md's "targets" section for why the
 // two are one shape. Actions ride on the same row's own actions[] /
 // devices[].actions[] - ActionButton.vue is the {id, label, method, params,
@@ -54,30 +54,6 @@ const removing = ref(false);
 const detailText = computed(() =>
   detail.value ? JSON.stringify(detail.value, null, 2) : "",
 );
-
-// A display always carries `extra.klipper_section`; an MCU row carries no
-// `extra`, while CMake carries source metadata without that display-specific
-// field. Reading the field's presence, not `target.provider`, keeps this row
-// generic - provider describes how to build, not what a target is.
-//
-// `extra.reachable` gets its own branch first: docs/agent-api.md's
-// fw.device.list section is explicit that "no displays configured" and "we
-// could not ask Klipper" must not look the same, because the module that
-// would otherwise report a screen missing is exactly the thing an
-// unreachable Klipper takes down too.
-const noDevicesHint = computed(() => {
-  const extra = props.target.extra;
-  if (!extra || !("klipper_section" in extra)) {
-    return "No serial devices are tracked for this type yet.";
-  }
-  if (!extra.reachable) return "Could not reach Klipper to check for screens.";
-  return `No screens found under [${extra.klipper_section} ...].`;
-});
-
-const moduleVersion = computed(() => {
-  const extra = props.target.extra;
-  return extra && "module_version" in extra ? extra.module_version : null;
-});
 
 const deviceSummary = computed(() => {
   const present = props.target.devices.filter((d) => d.present).length;
@@ -273,10 +249,15 @@ async function toggle(): Promise<void> {
       >
         {{ target.descriptor }}
       </span>
-      <span v-if="moduleVersion" class="text-caption text--disabled">
-        {{ moduleVersion }}
-      </span>
       <span class="text-caption text--disabled">{{ deviceSummary }}</span>
+      <span
+        v-for="extra in target.extras"
+        :key="`${extra.seam}:${extra.name}:${extra.key}`"
+        data-extra
+        class="text-caption text--disabled"
+      >
+        {{ extra.label }} {{ extra.value }}
+      </span>
 
       <span class="spacer" />
 
@@ -391,7 +372,7 @@ async function toggle(): Promise<void> {
       </li>
     </ul>
     <p v-else class="muted">
-      {{ noDevicesHint }}
+      {{ target.devices_note }}
     </p>
 
     <button type="button" class="detail-toggle text-caption" @click="toggle">

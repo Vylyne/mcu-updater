@@ -31,13 +31,16 @@ const mcuTarget: Target = {
       actions: [],
     },
   ],
+  source: null,
+  extras: [],
+  devices_note: null,
 };
 
-const displayTarget: Target = {
+const platformioTarget: Target = {
   provider: "platformio",
   name: "knomi",
   descriptor: "esp32dev",
-  firmware: null,
+  firmware: "knomi_serial",
   artifact: {
     state: "stale",
     tone: "attention",
@@ -48,13 +51,17 @@ const displayTarget: Target = {
   needs_flash: null,
   actions: [],
   devices: [],
-  extra: {
-    module_version: "0.5.0",
-    source_version: "d34db33",
-    source_dirty: false,
-    klipper_section: "knomi_serial",
-    reachable: true,
-  },
+  source: { path: "/home/pi/knomi_serial", version: "d34db33", dirty: false },
+  extras: [
+    {
+      seam: "helper",
+      name: "knomi_serial",
+      key: "module_version",
+      label: "Module",
+      value: "0.5.0",
+    },
+  ],
+  devices_note: "Nothing is declared under [fake_dev ...].",
 };
 
 const flashAction: Action = {
@@ -124,46 +131,40 @@ describe("TargetRow", () => {
     expect(deviceIcon.find("svg").attributes("data-tone")).toBe("ok");
   });
 
-  it("shows the display-specific hint when there are no devices", () => {
-    const wrapper = mount(TargetRow, { props: { target: displayTarget } });
-    expect(wrapper.text()).toContain("knomi_serial");
-    expect(wrapper.text()).not.toContain("No serial devices");
+  it("says what the agent says when a type lists no devices", () => {
+    const wrapper = mount(TargetRow, { props: { target: platformioTarget } });
+    expect(wrapper.text()).toContain("Nothing is declared under [fake_dev ...].");
   });
 
-  it("says Klipper was unreachable rather than implying a confirmed empty list", () => {
-    // docs/agent-api.md's fw.device.list section: "no displays configured"
-    // and "we could not ask Klipper" must not look the same.
-    const target: Target = {
-      ...displayTarget,
-      extra: { ...displayTarget.extra!, reachable: false },
-    };
-    const wrapper = mount(TargetRow, { props: { target } });
-    expect(wrapper.text()).toContain("Could not reach Klipper");
-    expect(wrapper.text()).not.toContain("No screens found");
-  });
-
-  it("shows the MCU-generic hint when there are no devices and no extra", () => {
-    const target: Target = { ...mcuTarget, devices: [] };
-    const wrapper = mount(TargetRow, { props: { target } });
-    expect(wrapper.text()).toContain("No serial devices are tracked");
-  });
-
-  it("does not describe a CMake target's source metadata as a screen", () => {
+  it("does not invent its own empty-row wording", () => {
+    // The sentence is the agent's, so a new builder or helper never needs a
+    // UI release to explain an empty row.
     const target: Target = {
       ...mcuTarget,
-      provider: "cmake",
       devices: [],
-      extra: {
-        source: "/home/pi/roadrunner/rp2040",
-        source_version: "d34db33",
-        source_dirty: false,
-        flashable: false,
-      },
+      devices_note: "Something only the agent knows.",
     };
     const wrapper = mount(TargetRow, { props: { target } });
+    expect(wrapper.text()).toContain("Something only the agent knows.");
+    expect(wrapper.text()).not.toContain("No serial devices are tracked");
+  });
 
-    expect(wrapper.text()).toContain("No serial devices are tracked");
-    expect(wrapper.text()).not.toContain("screen");
+  it("renders every extra as label and value, without knowing any of them", () => {
+    const target: Target = {
+      ...mcuTarget,
+      extras: [
+        ...platformioTarget.extras,
+        { seam: "builder", name: "cmake", key: "anything", label: "Board rev", value: 3 },
+      ],
+    };
+    const wrapper = mount(TargetRow, { props: { target } });
+    expect(wrapper.text()).toContain("Module 0.5.0");
+    expect(wrapper.text()).toContain("Board rev 3");
+  });
+
+  it("renders a row with no extras without an empty caption", () => {
+    const wrapper = mount(TargetRow, { props: { target: mcuTarget } });
+    expect(wrapper.findAll("[data-extra]")).toHaveLength(0);
   });
 
   it("offers a scope override on a flash whose stale preview is empty", async () => {

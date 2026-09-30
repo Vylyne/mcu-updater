@@ -25,6 +25,9 @@ function makeTarget(
     needs_flash: false,
     actions: [],
     devices: [],
+    source: null,
+    extras: [],
+    devices_note: "No serial devices are tracked for this type yet.",
   };
 }
 

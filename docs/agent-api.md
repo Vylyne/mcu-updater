@@ -173,10 +173,11 @@ which state, and needs exactly one to answer in the state the call needs.
 None, or several, refuses `not_provisionable`, with `data: {serial, helpers}`
 naming every helper that recognised the serial (whatever state it was in) -
 picking one over an irreversible write is not acceptable, and with no answers
-at all the serial simply belongs to no registered firmware. A serial already
-tracked under a type is refused `device_tracked`, with
-`data: {serial, tracked_under}`, before either the routing or the write -
-untrack it first.
+at all the serial simply belongs to no registered firmware. Routing is
+checked first; only once exactly one helper claims the serial is it checked
+against the type list, and a serial already tracked under a type is refused
+`device_tracked`, with `data: {serial, tracked_under}` - both checks happen
+before the write - untrack it first.
 
 Today Roadrunner is the one registered claimant. It recognises exactly one
 canonical serial shape per state - `RR-UNPROVISIONED-<flash-id>` for
@@ -574,7 +575,7 @@ A PlatformIO row carries the same keys, with its own `extras` and a non-null
 ```json
 {"provider": "platformio", "name": "knomi_toolchanger", "descriptor": "knomi_toolchanger",
  "firmware": "knomi_serial",
- "source": {"path": "/home/biqu/knomi_serial", "version": "v1.2.0", "dirty": false},
+ "source": {"path": "/home/biqu/knomi_serial", "version": "5509d4f", "dirty": false},
  "extras": [{"seam": "helper", "name": "knomi_serial", "key": "module_version",
              "label": "Module", "value": "0.5.0+54.g5509d4f"}],
  "devices_note": null,
@@ -680,7 +681,9 @@ own builder and helper: `extras` is whatever facts a builder, flasher or
 helper seam returned for this row (`Extra.to_json()` - `{seam, name, key,
 label, value}`, rendered as `label value`; a client never branches on `key`),
 and `devices_note` is that type's helper's own sentence for why it lists no
-devices, `null` once it lists at least one. `firmware` names the PlatformIO
+devices - or, when the type's `[firmware ...]` family names no helper that can
+list them at all, the core's own sentence saying so - `null` once it lists at
+least one. `firmware` names the PlatformIO
 type's declared `[firmware ...]` family - it is never `null` there, because
 `firmware:` is required for a PlatformIO type to load at all.
 
@@ -1662,11 +1665,11 @@ has to let go before esptool can have one. It is stopped **inside** the
 Klipper stop and started before it — Klipper holds the port outright, the
 watcher only contends for it.
 
-Unlike the Klipper stop this one is never verified and never fatal: if the
-watcher will not stop, the worst case is the flake it exists to remove — the
-upload fails cleanly and a retry works — and refusing to flash at all would be
-worse. A unit systemd has never heard of is simply never active, so an install
-without one pays nothing.
+Like the Klipper stop this one is verified too: every unit in the stop list,
+watcher included, must confirm stopped before the write, and one that will not
+go down raises and restarts everything already stopped rather than letting a
+write race a service still holding the port. A unit systemd has never heard of
+is simply never active, so an install without one pays nothing.
 
 **The device list is Klipper's, not ours.** `[knomi_serial T0_knomi]` names how
 to find its port one of two ways: `serial:` writes it in printer.cfg directly, or
@@ -1726,7 +1729,7 @@ different wire protocol than its helper expects - the one authoritative
 {"provider": "platformio",
  "target": {"name": "knomi_toolchanger", "env": "knomi_toolchanger",
             "firmware": "knomi_serial", "stop_services": null,
-            "source": {"path": "/home/biqu/knomi_serial", "version": "v1.2.0",
+            "source": {"path": "/home/biqu/knomi_serial", "version": "5509d4f",
                        "dirty": false},
             "devices": ["..."], "extras": ["..."], "devices_note": null,
             "has_firmware": true, "artifact_reason": null,
@@ -1781,10 +1784,10 @@ nothing — and was observed on this printer picking between two indistinguishab
 CH340s, with no way for the user to know which it took. The upload refuses an
 empty port and always passes `--upload-port`.
 
-**The device list is read before Klipper stops.** It comes from
-`configfile.settings`, which only a *running* Klipper can answer, so reading it
-after the stop would find nothing and flash nothing. Every other flow in this API
-can query mid-job; this one cannot.
+**The device list is read before Klipper stops.** It comes from the printer
+objects (`printer.objects.query`), which only a *running* Klipper can answer, so
+reading it after the stop would find nothing and flash nothing. Every other
+flow in this API can query mid-job; this one cannot.
 
 **And it is verified after, when the family names a helper that can identify
 its devices** (`helper:` on its `[firmware ...]` section). That list says

@@ -139,6 +139,9 @@ def test_an_mcu_type_projects_onto_the_shared_shape(api):
         "devices",
         "actions",
         "first_install",
+        "source",
+        "extras",
+        "devices_note",
     }
     assert set(ebb["artifact"]) == {"state", "tone", "label", "reason"}
     assert set(ebb["devices"][0]) == {
@@ -162,9 +165,8 @@ def test_a_display_projects_onto_the_same_shape(api, paths, fake_root):
     display = _targets(api, "platformio")[ENV]
 
     mcu_keys = set(_targets(api, "kconfig_make")["bttebb36"])
-    # Everything an MCU row carries, plus the three uniform keys Task 4 gives
-    # every row. Not `extra`: that bag is what this refactor removes.
-    assert set(display) == mcu_keys | {"source", "extras", "devices_note"}
+    # One shape: every key an MCU row has, and nothing it lacks.
+    assert set(display) == mcu_keys
     assert set(display["devices"][0]) == set(_targets(api, "kconfig_make")["bttebb36"]["devices"][0])
     assert display["provider"] == "platformio"
     assert display["descriptor"] == ENV
@@ -759,6 +761,7 @@ def test_every_fact_in_the_old_keys_survives_the_projection(api, paths, fake_roo
         target = targets[legacy["name"]]
         assert target["descriptor"] == legacy["chipset"]
         assert target["firmware"] == legacy["firmware"]
+        assert target["source"] == legacy["source"]
         assert target["needs_flash"] in (legacy["needs_flash"], True, None)
         assert [d["id"] for d in target["devices"]] == [
             s["serial"] for s in legacy["serials"]
@@ -1046,7 +1049,7 @@ def test_a_cmake_type_gets_a_row_in_targets(paths, tmp_path):
     # would advertise a write that cannot happen.
     assert row["devices"] == []
     assert row["needs_flash"] is None
-    assert row["extra"]["flashable"] is False
+    assert row["devices_note"] == "No serial devices are tracked for this type yet."
 
 
 def test_a_helper_backed_cmake_type_projects_real_serial_devices(
@@ -1064,7 +1067,7 @@ def test_a_helper_backed_cmake_type_projects_real_serial_devices(
 
     row = _targets(Api(paths, runner=_runner()), "cmake")["roadrunner"]
 
-    assert row["extra"]["flashable"] is True
+    assert "flash" in _ids(row["devices"][0])
     assert row["needs_flash"] is None
     assert len(row["devices"]) == 1
     device = row["devices"][0]
@@ -1284,7 +1287,6 @@ def test_a_cmake_type_without_a_helper_does_not_advertise_device_actions(
 
     row = _targets(Api(paths, runner=_runner()), "cmake")["roadrunner"]
 
-    assert row["extra"]["flashable"] is False
     assert row["devices"][0]["actions"] == []
 
 
@@ -1308,8 +1310,6 @@ def test_a_misspelled_helper_blocks_its_own_row_not_the_whole_panel(
 
     row = _targets(Api(paths, runner=_runner()), "cmake")["roadrunner"]
 
-    # Not flashable: an unresolvable helper is not a helper.
-    assert row["extra"]["flashable"] is False
     device = row["devices"][0]
     blocked = _action(device, "flash")["blocked"]
     assert blocked["code"] == Api.BLOCKED_CONFIG_CORRUPT
@@ -1538,3 +1538,91 @@ def test_an_unchanged_config_is_parsed_once_across_polls(api, paths, monkeypatch
     assert len(parsed) == 1, parsed
     api.dispatch("fw.status")
     assert len(parsed) == 1, parsed
+
+
+# --------------------------------------------------------------------------
+# the uniform keys
+# --------------------------------------------------------------------------
+
+_SCALAR = (str, int, float, bool, type(None))
+
+
+def _assert_uniform(row):
+    from mcu_updater.extras import SEAMS
+
+    assert {"source", "extras", "devices_note"} <= set(row), row["name"]
+    assert "extra" not in row, row["name"]
+    # Set exactly when there is nothing to list, so a reader never has to
+    # decide which of the two to believe.
+    assert (row["devices_note"] is None) == bool(row["devices"]), row["name"]
+    for entry in row["extras"]:
+        assert set(entry) == {"seam", "name", "key", "label", "value"}
+        assert entry["seam"] in SEAMS
+        assert isinstance(entry["value"], _SCALAR)
+    if row["source"] is not None:
+        assert set(row["source"]) == {"path", "version", "dirty"}
+        assert row["source"]["version"]
+
+
+def test_every_kconfig_and_platformio_row_has_the_uniform_keys(api, paths, fake_root):
+    _add_display(paths, fake_root, api)
+
+    rows = _targets(api)
+
+    assert {r["provider"] for r in rows.values()} == {"kconfig_make", "platformio"}
+    for row in rows.values():
+        _assert_uniform(row)
+
+
+@pytest.mark.parametrize("serial", [None, "RR-5K3DNTFCR1B3C9D0RZMYA3Y720"])
+def test_every_cmake_row_has_the_uniform_keys(paths, tmp_path, serial):
+    _cmake_config(paths, tmp_path, helper=True, serial=serial)
+
+    _assert_uniform(_targets(Api(paths), "cmake")["roadrunner"])
+
+
+def test_an_mcu_rows_source_is_its_application_tree_not_its_bootloaders(
+    api, paths, monkeypatch
+):
+    """The tree whose commit a board is judged against. A katapult checkout
+    beside it would be a second, wrong answer."""
+    monkeypatch.setattr("mcu_updater.build.git_head", lambda d, **_: f"head:{d}")
+    families = firmware.load(paths)
+    klipper = firmware.resolve(paths, "klipper", families).source_dir(paths)
+
+    row = _targets(api)["bttebb36"]
+
+    assert row["source"] == {
+        "path": os.path.expanduser(klipper),
+        "version": f"head:{klipper}",
+        "dirty": None,
+    }
+
+
+def test_an_mcu_row_with_no_checkout_has_no_source(api, monkeypatch):
+    monkeypatch.setattr("mcu_updater.build.git_head", lambda d, **_: None)
+
+    assert _targets(api)["bttebb36"]["source"] is None
+
+
+def test_a_cmake_rows_source_is_what_its_staleness_check_compares(
+    paths, tmp_path, monkeypatch
+):
+    source = _cmake_config(paths, tmp_path)
+    monkeypatch.setattr(
+        cmake,
+        "source_state",
+        lambda _src: cmake.SourceState(sha="deadbee", dirty=True, version="v1.0-2-gdeadbee-dirty"),
+    )
+
+    row = _targets(Api(paths), "cmake")["roadrunner"]
+
+    assert row["source"] == {
+        "path": str(source),
+        "version": "v1.0-2-gdeadbee-dirty",
+        "dirty": True,
+    }
+
+
+def test_a_tracked_type_has_no_devices_note(api):
+    assert _targets(api)["bttebb36"]["devices_note"] is None

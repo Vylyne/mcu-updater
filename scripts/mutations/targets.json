@@ -105,6 +105,11 @@
       "name": "first_install is answered from the projection's one config read",
       "find": "        by_name = {e.name: e for e in entries}",
       "replace": "        by_name = {e.name: e for e in typelist.read_config(self.paths)[0]}"
+    },
+    {
+      "name": "a row with devices carries no devices_note",
+      "find": "            \"devices_note\": None if devices else NO_TRACKED_DEVICES,",
+      "replace": "            \"devices_note\": NO_TRACKED_DEVICES,"
     }
   ]
 }

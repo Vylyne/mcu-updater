@@ -94,6 +94,11 @@ def _source_json(
     return {"path": os.path.expanduser(path), "version": version, "dirty": dirty}
 
 
+#: What a kconfig_make or cmake row with no devices says. A PlatformIO row's
+#: comes from its family's `DeviceLister`, which knows where its devices live.
+NO_TRACKED_DEVICES = "No serial devices are tracked for this type yet."
+
+
 def _has_staged(artifact: dict[str, Any]) -> bool:
     """Has this type's build staged anything, from an `artifact()` dict.
 
@@ -414,6 +419,9 @@ class StatusMixin(_Base):
             # where a cartographer type reads "never built" forever because the
             # only artifact anyone looks at is artifacts.klipper.
             "firmware": application,
+            # The tree the application builds from, at the HEAD its staleness
+            # check compares. `dirty` is None: this builder never asks.
+            "source": _source_json(family.source_dir(self.paths), fw_head, None),
             "serials": serials,
             "canbus": canbus_devices,
             "artifacts": {fw: self.artifact(name, fw) for fw in mcu.fw_order()},
@@ -936,6 +944,10 @@ class StatusMixin(_Base):
             "needs_flash": self._aggregate(devices),
             "devices": devices,
             "actions": actions,
+            "source": payload["source"],
+            # No kconfig_make seam contributes any yet.
+            "extras": [],
+            "devices_note": None if devices else NO_TRACKED_DEVICES,
         }
 
     def _profile_json(
@@ -1255,12 +1267,13 @@ class StatusMixin(_Base):
             "needs_flash": self._aggregate(devices),
             "devices": devices,
             "actions": actions,
-            "extra": {
-                "source": payload["source"],
-                "source_version": payload["source_version"],
-                "source_dirty": payload["source_dirty"],
-                "flashable": helper_configured,
-            },
+            "source": _source_json(
+                payload["source"], payload["source_version"], payload["source_dirty"]
+            ),
+            # No cmake seam contributes any yet. `flashable` went with `extra`:
+            # the device's flash action already says it, blocked or not.
+            "extras": [],
+            "devices_note": None if devices else NO_TRACKED_DEVICES,
         }
 
     def _platformio_target(

@@ -100,33 +100,6 @@ class PioType:
     #: watcher map, and is what a family with no watcher would set too.
     device_map: str = "knomi/devices.json"
 
-    def _compat_service(self) -> str | None:
-        """The old single-unit `service` field, derived rather than stored.
-
-        `to_json` keeps emitting it so a Mainsail panel built against the old
-        wire shape still gets a sensible answer - see the `targets[]`
-        wire-shape rule (don't reverse a projection). Not resolved across
-        levels: this is exactly what the retired field used to report, which
-        was this type's own setting or the built-in default, never anything
-        inherited from `[firmware ...]`/`[updater]`.
-        """
-        if self.stop_services is None:
-            return "knomi_serial"  # today's default, unresolved
-        watchers = [s for s in self.stop_services if s != "klipper"]
-        return watchers[0] if watchers else None
-
-    def to_json(self) -> dict:
-        return {
-            "name": self.name,
-            "env": self.env,
-            "source": self.source,
-            "firmware": self.firmware,
-            "klipper_section": self.klipper_section,
-            "service": self._compat_service(),
-            "stop_services": self.stop_services,
-            "device_map": self.device_map,
-        }
-
 
 def load(paths: Paths) -> dict[str, PioType]:
     """The PlatformIO types: the one type list, filtered by builder.

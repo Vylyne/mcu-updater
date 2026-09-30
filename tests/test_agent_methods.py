@@ -298,6 +298,19 @@ def test_target_get_returns_the_same_detail_as_status_for_a_platformio_type(api)
     assert "devices" in res["target"] and "screens" not in res["target"]
 
 
+def test_target_get_echoes_no_firmware_specific_config_for_a_platformio_type(api):
+    """`klipper_section` and `device_map` are the helper's own business since
+    `DeviceLister` (a knomi prefix, a knomi watcher's map), and `service` is a
+    compatibility echo of the retired key that `stop_services` replaced.
+    Nothing reads any of them; version 5 removes them rather than leaving a
+    second bump for later."""
+    from_status = next(t for t in api.dispatch("fw.status")["targets"] if t["provider"] == "platformio")
+    res = api.dispatch("fw.target.get", {"name": from_status["name"], "provider": "platformio"})
+
+    assert not {"klipper_section", "device_map", "service"} & set(res["target"])
+    assert {"name", "env", "firmware", "stop_services", "source", "devices"} <= set(res["target"])
+
+
 def test_target_get_for_an_unknown_display_carries_the_stable_code(api):
     with pytest.raises(RpcError) as exc:
         api.dispatch("fw.target.get", {"name": "nope", "provider": "platformio"})

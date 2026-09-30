@@ -47,20 +47,6 @@ def _board_request(board: dict) -> tuple[flashers.Device, tuple[str, ...]]:
     )
 
 
-def _platformio_json(target: flashers.FlashTarget) -> dict[str, Any]:
-    """A selected screen, for a caller naming what is about to happen.
-
-    The uniform slots plus the two facts a confirmation actually reads out: the
-    klipper section a human recognises, and why this one was picked.
-    """
-    return {
-        **target.to_json(),
-        "name": target.detail["name"],
-        "section": target.detail["section"],
-        "reason": target.detail.get("reason"),
-    }
-
-
 class BulkMixin(_Base):
     # -- bulk operations ----------------------------------------------------
 
@@ -625,17 +611,7 @@ class BulkMixin(_Base):
             {"scope": scope, "name": only, "count": len(targets) + len(refused)},
             run,
         )
-        return {
-            "job_id": job.id,
-            "job": job.to_dict(),
-            "boards": boards,
-            # Beside `boards` rather than merged into it: the two selections
-            # answer with different facts - a board has a chipset and a serial,
-            # a device has a port and a section - and flattening them would
-            # invent nulls for half of each.
-            # A device its family cannot write is not here; it is in the job's failures[].
-            "displays": [_platformio_json(t) for t in platformio],
-        }
+        return {"job_id": job.id, "job": job.to_dict()}
 
     def update_all(self, args: dict) -> dict[str, Any]:
         """Build what is stale, then flash what is behind - one Klipper stop.

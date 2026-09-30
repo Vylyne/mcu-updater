@@ -778,7 +778,7 @@ def test_a_batch_stops_klipper_once_not_once_per_board(bulk, paths, fake_root, m
     monkey_head(bulk, paths)
 
     res = bulk.dispatch("fw.flash_all", {})
-    assert len(res["boards"]) == 2
+    assert set(res) == {"job_id", "job"}
     assert bulk.runner.wait(timeout=60)
 
     job = bulk.runner.get(res["job_id"])
@@ -813,11 +813,11 @@ def test_a_board_its_family_cannot_write_is_a_failure_not_an_abort(
     bulk._await_klippy_ready = waited.append
 
     res = bulk.dispatch("fw.flash_all", {})
-    assert [b["serial"] for b in res["boards"]] == [EBB_A]
     assert bulk.runner.wait(timeout=60)
 
     job = bulk.runner.get(res["job_id"])
-    assert job.params["count"] == len(res["boards"])
+    assert job.params["count"] == 1
+    assert [f["id"] for f in job.result["failures"]] == [EBB_A]
     assert job.state == "succeeded", job.error
     assert job.result["flashed"] == []
     [failure] = job.result["failures"]
@@ -1317,10 +1317,10 @@ def test_flash_all_selects_cmake_boards_beside_the_others(bulk, paths, fake_root
     _declare_cmake(paths, fake_root, serials=[RR_SERIAL], helper=True, staged=True)
     make_device(fake_root / "bus", "Klipper", RR_CHIPSET, RR_SERIAL)
 
-    res = bulk.dispatch("fw.flash_all", {"scope": "all"})
+    bulk.dispatch("fw.flash_all", {"scope": "all"})
 
-    assert RR_SERIAL in [board["serial"] for board in res["boards"]]
-    assert RR in [board["type"] for board in res["boards"]]
+    selected = bulk._cmake_boards_to_flash("all", None)
+    assert (RR, RR_SERIAL) in [(b["type"], b["serial"]) for b in selected]
     assert bulk.runner.wait(timeout=60)
 
 
@@ -1328,9 +1328,9 @@ def test_a_cmake_type_is_no_longer_refused_by_name(bulk, paths, fake_root):
     _declare_cmake(paths, fake_root, serials=[RR_SERIAL], helper=True, staged=True)
     make_device(fake_root / "bus", "Klipper", RR_CHIPSET, RR_SERIAL)
 
-    res = bulk.dispatch("fw.flash_all", {"name": RR, "scope": "all"})
+    bulk.dispatch("fw.flash_all", {"name": RR, "scope": "all"})
 
-    assert [board["serial"] for board in res["boards"]] == [RR_SERIAL]
+    assert [b["serial"] for b in bulk._cmake_boards_to_flash("all", RR)] == [RR_SERIAL]
     assert bulk.runner.wait(timeout=60)
 
 

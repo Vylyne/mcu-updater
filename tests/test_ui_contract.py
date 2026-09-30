@@ -57,3 +57,49 @@ def test_ui_supported_api_version_matches_the_agent():
         "against one it cannot actually understand - see docs/agent-api.md's "
         "fw.ping section."
     )
+
+
+SRC = REPO_ROOT / "src"
+
+_SUBMIT_RE = re.compile(r"""runner\.submit\(\s*["']([a-z_]+)["']""")
+_JOB_KIND_RE = re.compile(r"export type JobKind\s*=([^;]+);")
+_DEFERRED_RE = re.compile(r"DEFERRED_CANCEL_KINDS[^=]*=\s*new Set\(\[([^\]]*)\]")
+_QUOTED_RE = re.compile(r"""["']([a-z_]+)["']""")
+
+
+def _agent_job_kinds() -> set[str]:
+    kinds: set[str] = set()
+    for path in SRC.rglob("*.py"):
+        kinds |= set(_SUBMIT_RE.findall(path.read_text(encoding="utf-8")))
+    return kinds
+
+
+def _jobs_ts() -> str:
+    return (UI_SRC / "api" / "jobs.ts").read_text(encoding="utf-8")
+
+
+def _ui_job_kinds() -> set[str]:
+    match = _JOB_KIND_RE.search(_jobs_ts())
+    assert match is not None, "ui/src/api/jobs.ts must define JobKind"
+    return set(_QUOTED_RE.findall(match.group(1)))
+
+
+def _ui_deferred_kinds() -> set[str]:
+    match = _DEFERRED_RE.search(_jobs_ts())
+    assert match is not None, "ui/src/api/jobs.ts must define DEFERRED_CANCEL_KINDS"
+    return set(_QUOTED_RE.findall(match.group(1)))
+
+
+def test_every_job_kind_the_agent_submits_is_one_the_ui_names():
+    """A kind the UI has never heard of falls through `cancelIsImmediate` as
+    immediately cancellable. `display_flash` did exactly that, telling the user
+    a flash would stop mid-write when the agent was correctly deferring it."""
+    agent = _agent_job_kinds()
+    assert agent, "the runner.submit scan found nothing; the pattern has rotted"
+    assert agent <= _ui_job_kinds(), sorted(agent - _ui_job_kinds())
+
+
+def test_the_ui_defers_exactly_the_kinds_the_agent_defers():
+    from mcu_updater.jobs import IMMEDIATELY_CANCELLABLE
+
+    assert _ui_deferred_kinds() == _ui_job_kinds() - set(IMMEDIATELY_CANCELLABLE)

@@ -180,7 +180,9 @@ class BuildMixin(_Base):
             ctx.step(f"Built {display.env}", 1, 1)
             return {"name": name, "env": display.env, "firmware": path}
 
-        job = runner.submit("display_build", {"name": name}, run)
+        # Kind `build`, as the cmake route: a compile like any other, and so
+        # immediately cancellable (`pio_mod.build` takes `cancel=ctx.cancel`).
+        job = runner.submit("build", {"name": name, "fw": display.firmware}, run)
         return {"job_id": job.id, "job": job.to_dict()}
 
     def clean(self, args: dict) -> dict[str, Any]:

@@ -604,7 +604,10 @@ class StatusMixin(_Base):
                 note = lister.devices_note(reachable=reachable)
             out.append(
                 {
-                    **entry.to_json(),
+                    "name": entry.name,
+                    "env": entry.env,
+                    "firmware": entry.firmware,
+                    "stop_services": entry.stop_services,
                     "devices": devices,
                     "extras": ordered(lister.extras(listed.get(name, []))) if lister else [],
                     "devices_note": note,
@@ -1597,7 +1600,7 @@ class StatusMixin(_Base):
                 if payload["name"] == name:
                     return {"provider": provider, "target": payload}
             raise RpcError(
-                f"no such display: {name}",
+                f"no such platformio type: {name}",
                 data={
                     "code": "unknown_target",
                     "message": "target not found",

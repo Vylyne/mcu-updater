@@ -542,8 +542,13 @@ class FlashMixin(_Base):
                 ],
             }
 
-        job = runner.submit("display_flash", {"name": name, "count": len(targets)}, run)
-        return {"job_id": job.id, "job": job.to_dict(), "displays": [d.to_json() for d in targets]}
+        # The same kind the board routes use, so a client already knows it
+        # cancels between devices and never inside one.
+        params: dict[str, Any] = {"name": name}
+        if want is not None:
+            params["port"] = want
+        job = runner.submit("flash", params, run)
+        return {"job_id": job.id, "job": job.to_dict()}
 
     def adopt_paired(self) -> list[dict[str, str]]:
         """Track boards that arrived late from a bootloader install we did.

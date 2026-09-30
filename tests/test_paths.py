@@ -105,12 +105,33 @@ def test_per_type_layout(tmp_path):
     assert p.sidecar_file("bttebb36", "klipper").endswith("klipper.build.json")
 
 
-def test_the_platformio_sidecar_keeps_its_on_disk_path(paths):
-    """Renamed accessor, same file: a build record already on a printer must
-    still be found."""
+def test_the_platformio_sidecar_lives_under_platformio(paths):
     assert paths.platformio_sidecar("knomi") == os.path.join(
-        paths.data_dir, "displays", "knomi.build.json"
+        paths.data_dir, "platformio", "knomi.build.json"
     )
+
+
+def test_a_record_left_in_the_old_folder_is_no_provenance_not_an_error(paths, tmp_path):
+    """No migration: one rebuild restores provenance, and until then the type
+    says it cannot vouch for its image - never that it is current, and never
+    an exception on the status poll."""
+    from mcu_updater.providers import pio
+    from mcu_updater.states import NO_PROVENANCE
+
+    entry = pio.PioType(name="knomi", env="knomi", source=str(tmp_path / "src"), firmware="knomi_serial")
+    image = pio.firmware_bin(entry)
+    os.makedirs(os.path.dirname(image))
+    with open(image, "wb") as fh:
+        fh.write(b"\xe9" * 64)
+    state = pio.SourceState(head="deadbee", version="v1.0-1-gdeadbee", dirty=False)
+    pio.record_build(paths, entry, state)
+    assert pio.artifact_status(paths, entry, state).reason is None
+
+    old = os.path.join(paths.data_dir, "displays", "knomi.build.json")
+    os.makedirs(os.path.dirname(old), exist_ok=True)
+    os.replace(paths.platformio_sidecar("knomi"), old)
+
+    assert pio.artifact_status(paths, entry, state).reason == NO_PROVENANCE
 
 
 def test_paths_are_frozen():

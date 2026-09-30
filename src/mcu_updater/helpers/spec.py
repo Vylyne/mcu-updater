@@ -160,7 +160,7 @@ class Identifier(Protocol):
     Every other device in this tool is found by something the host can see
     without asking: a serial in `/dev/serial/by-id`, a DFU descriptor, an
     `RPI-RP2` volume. `discovery`'s sources exist to decide which of those
-    sightings to trust. A KNOMI screen has none of them - the CH340K in
+    sightings to trust. A KNOMI has none of them - the CH340K in
     front of it reports no USB serial at all - so the only stable name it
     has is one its *firmware* knows and will state if asked. That is
     firmware-specific by construction, which is what makes it a helper

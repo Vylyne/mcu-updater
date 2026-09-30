@@ -88,10 +88,10 @@ class BulkMixin(_Base):
         decision rather than a second copy of the vocabulary.
 
         Walking providers rather than the `[mcu ...]` registry is what puts
-        screens in a fleet build. The registry was the only list this had, so
-        "build everything" meant "build every MCU" and every display was left on
-        whatever it was running - silently, because nothing enumerated them to
-        notice they were missing.
+        PlatformIO devices in a fleet build. The registry was the only list this
+        had, so "build everything" meant "build every MCU" and every PlatformIO
+        type was left on whatever it was running - silently, because nothing
+        enumerated them to notice they were missing.
 
         `only` narrows to one target, which is what makes "update this one board
         type" the same operation with a filter rather than another loop. `fw`
@@ -401,8 +401,8 @@ class BulkMixin(_Base):
 
         Each target names its own provider and family, so one pass compiles
         cartographer for the probe, klipper for the boards and PlatformIO for the
-        screens - rather than one build system for everything and silence about
-        whatever did not fit.
+        PlatformIO devices - rather than one build system for everything and
+        silence about whatever did not fit.
 
         The same config snapshot selects and builds the targets. A change made
         after submission belongs to the next operation; mixing its fresh maps
@@ -434,7 +434,7 @@ class BulkMixin(_Base):
         """The host, as a flasher needs to see it.
 
         A controller *factory* rather than a controller: the units are not known
-        until the batch is - a display family names its own port watcher, and a
+        until the batch is - a PlatformIO family names its own port watcher, and a
         batch spanning two families needs two. Sharing the factory keeps the
         backend choice in one place, which is what stops a dry run from stopping
         a real service.
@@ -474,15 +474,15 @@ class BulkMixin(_Base):
         """Build everything that needs it. Touches no board and stops nothing.
 
         Everything, across every build system: an MCU's kconfig families and a
-        display's PlatformIO env are both things this host builds, and the only
-        reason screens were left out was that the registry was the only list
-        this had to walk.
+        PlatformIO type's own env are both things this host builds, and the only
+        reason PlatformIO devices were left out was that the registry was the
+        only list this had to walk.
 
         `fw` is an optional *filter* - "rebuild katapult everywhere" - not the
         family to build for everything. It used to be the latter, defaulting to
         klipper, which meant a type running any other application was skipped
         for want of a klipper config and the batch reported success regardless.
-        A named `fw` also excludes displays, which is correct rather than
+        A named `fw` also excludes PlatformIO types, which is correct rather than
         incidental: a PlatformIO env has no family to be one of.
         """
         runner = self._require_runner()
@@ -539,9 +539,10 @@ class BulkMixin(_Base):
     def flash_all(self, args: dict) -> dict[str, Any]:
         """Flash everything that needs it, or everything of one type.
 
-        Boards and screens both. `flash_all` walked the `[mcu ...]` registry
-        because that was the only selection it had, so "Flash All" meant "flash
-        all the boards" and every display was left behind without a word.
+        Boards and PlatformIO devices both. `flash_all` walked the `[mcu ...]`
+        registry because that was the only selection it had, so "Flash All" meant
+        "flash all the boards" and every PlatformIO type was left behind without
+        a word.
 
         `name` narrows it to a single type - that is `flash_type`, which is the same
         operation with a filter rather than a second implementation of it.
@@ -627,9 +628,9 @@ class BulkMixin(_Base):
 
         Both halves cover every provider, because each is literally `build_all`
         and `flash_all` - which is the composition paying off rather than a
-        special case. A screen gained the build half when the provider seam
-        landed and the flash half when the flasher seam did, both times without
-        this method being edited.
+        special case. A PlatformIO device gained the build half when the
+        provider seam landed and the flash half when the flasher seam did, both
+        times without this method being edited.
         """
         runner = self._require_runner()
         settings = self.settings()
@@ -672,8 +673,9 @@ class BulkMixin(_Base):
             )
             # Selected *after* building, because a build is what makes a device
             # stale: choosing up front would use provenance the build has just
-            # invalidated. Screens included - a fleet update that rebuilt a
-            # screen's firmware and then declined to write it is half a job.
+            # invalidated. PlatformIO devices included - a fleet update that
+            # rebuilt a device's firmware and then declined to write it is half
+            # a job.
             reg_now = self.registry()
             boards = (
                 self._boards_to_flash(reg_now, scope, only)

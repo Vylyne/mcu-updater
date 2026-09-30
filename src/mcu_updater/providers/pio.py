@@ -1,9 +1,9 @@
-"""ESP32 displays: PlatformIO builds, esptool uploads.
+"""PlatformIO types: PlatformIO builds and uploads.
 
 Different enough from an MCU to live apart. There is no Kconfig, no Katapult, no
 chipset to reason about - a PlatformIO env already names the board, the partition
-table and the build flags, so the env *is* the type. Adding the second display
-is another `[type <name>]` section and nothing structural.
+table and the build flags, so the env *is* the type. Adding a second PlatformIO
+type is another `[type <name>]` section and nothing structural.
 
 The device list is not here either: `[knomi_serial T0_knomi]` in Klipper's config
 already names how to find its port - directly with `serial:`, or by chip identity
@@ -12,9 +12,9 @@ the result back through `get_status()`. Either way, a second copy here would onl
 be something to disagree with.
 
 **Nothing here ever lets PlatformIO choose a port.** Its auto-detect picks one
-device arbitrarily when several match, and every display on this printer is an
-indistinguishable CH340 - so an upload without an explicit port writes firmware
-to whichever one answered first. See `upload()`.
+device arbitrarily when several match, and every device of one type on this
+printer is an indistinguishable CH340 - so an upload without an explicit port
+writes firmware to whichever one answered first. See `upload()`.
 
 The two knomi discovery sources - the broadcast listen pass and the watcher's
 `devices.json` map - live in `discovery.knomi_serial`, the subpackage named
@@ -64,9 +64,9 @@ _CHIP_RE = re.compile(r"^Chip is (.+?)\s*$", re.MULTILINE)
 
 #: PlatformIO giving up inside WaitForNewSerialPort. The board manifest for a
 #: native-USB ESP32-S3 tells it to reset the board and then adopt whatever *new*
-#: serial port appears. A display wired through a CH340 keeps the same port -
+#: serial port appears. A device wired through a CH340 keeps the same port -
 #: the CH340 is a separate always-powered chip and never leaves the bus - so no
-#: new port ever appears and it times out on a perfectly healthy screen.
+#: new port ever appears and it times out on a perfectly healthy device.
 #:
 #: Matched so the failure can explain itself. It cannot be fixed from here:
 #: board_upload.* is settable only in platformio.ini, and `pio run` has no
@@ -85,7 +85,7 @@ class PioType:
     #: `load()` - so this is never empty for an instance it returns. Used as
     #: the `fw` axis providers.select() filters on.
     firmware: str = ""
-    #: The Klipper section prefix whose entries are displays of this type.
+    #: The Klipper section prefix whose entries are devices of this type.
     #: `[knomi_serial T0_knomi]` -> `knomi_serial`. Set by `load()` from the
     #: family helper's reader; never read from a `[type]` - see
     #: `typelist.REMOVED_KEYS`.
@@ -175,7 +175,7 @@ def find_pio(settings: Settings) -> str:
 
 
 # --------------------------------------------------------------------------
-# is the screen running the current source tree
+# is the device running the current source tree
 # --------------------------------------------------------------------------
 
 #: The git short sha inside a reported firmware version. knomi-serial's
@@ -199,7 +199,7 @@ _FW_DIRTY_RE = re.compile(r"\.dirty\b", re.IGNORECASE)
 
 @dataclasses.dataclass(frozen=True)
 class SourceState:
-    """What the display source tree would build right now."""
+    """What the PlatformIO source tree would build right now."""
 
     head: str | None = None
     version: str | None = None
@@ -222,7 +222,7 @@ def _git(directory: str, *args: str) -> str | None:
 
 
 def source_state(source: str) -> SourceState:
-    """Read the display source tree's identity. Everything optional."""
+    """Read the PlatformIO source tree's identity. Everything optional."""
     path = os.path.expanduser(source or "")
     if not path or not os.path.isdir(path):
         return SourceState()
@@ -248,11 +248,11 @@ def source_state(source: str) -> SourceState:
 
 
 def running_sha(running: str | None) -> str | None:
-    """The git short sha inside what a screen reports running, if it carries one.
+    """The git short sha inside what a device reports running, if it carries one.
 
     Public because the status projection and fleet selection both need it and
     must not disagree when they assemble evidence for `verdict.decide`. A
-    screen sitting exactly on a version tag reports no sha at all, which is None
+    device sitting exactly on a version tag reports no sha at all, which is None
     here rather than an error - see `_FW_SHA_RE`.
     """
     match = _FW_SHA_RE.search(running or "")
@@ -260,7 +260,7 @@ def running_sha(running: str | None) -> str | None:
 
 
 def is_dirty(running: str | None) -> bool:
-    """Whether what a screen reports running was built from uncommitted changes."""
+    """Whether what a device reports running was built from uncommitted changes."""
     return bool(_FW_DIRTY_RE.search(running or ""))
 
 
@@ -268,12 +268,12 @@ def is_dirty(running: str | None) -> bool:
 # is the BUILT IMAGE current
 #
 # Separate from the device verdict assembled for `verdict.decide`. This asks
-# about the .bin, and it earns its place because flashing a display uploads
+# about the .bin, and it earns its place because flashing a device uploads
 # whatever is in .pio/build without building first - so a source tree that has
-# moved since the last build writes old firmware to every screen, silently.
+# moved since the last build writes old firmware to every device, silently.
 # --------------------------------------------------------------------------
 
-def record_build(paths: Paths, display: PioType, state: SourceState) -> None:
+def record_build(paths: Paths, entry: PioType, state: SourceState) -> None:
     """Note which commit produced the image now sitting in .pio/build.
 
     Records a hash of the binary itself, which is what makes "is this still our
@@ -284,10 +284,10 @@ def record_build(paths: Paths, display: PioType, state: SourceState) -> None:
     a size.
 
     Without this, claiming "up to date" about a binary we know nothing about is
-    the failure - it flashes every screen of a type with firmware from before
+    the failure - it flashes every device of a type with firmware from before
     the fix you just made.
     """
-    path = firmware_bin(display)
+    path = firmware_bin(entry)
     try:
         stat = os.stat(path)
     except OSError:
@@ -304,7 +304,7 @@ def record_build(paths: Paths, display: PioType, state: SourceState) -> None:
         "bin_mtime": stat.st_mtime,
         "artifacts": sidecar_field({KIND_PIO_ENV: bin_sha256}),
     }
-    sidecar = paths.platformio_sidecar(display.env)
+    sidecar = paths.platformio_sidecar(entry.env)
     os.makedirs(os.path.dirname(sidecar), exist_ok=True)
     tmp = sidecar + ".tmp"
     with open(tmp, "w", encoding="utf-8") as fh:
@@ -325,7 +325,7 @@ def _is_our_image(record: dict, path: str, stat: os.stat_result) -> bool:
     for. It exists because mtime alone was wrong in both directions: a rebuild
     producing a byte-identical image moves the mtime and would have been called
     somebody else's work, and two genuinely different images can share a size.
-    The bytes are the only thing that reaches the screen, so the bytes decide.
+    The bytes are the only thing that reaches the device, so the bytes decide.
 
     Measured on a BTT Pi 2 running from eMMC: a 770 KiB knomi image hashes in
     5.0 ms at 159 MB/s, against 57 us for the stat. So the gate saves about
@@ -347,35 +347,35 @@ def _is_our_image(record: dict, path: str, stat: os.stat_result) -> bool:
     return sha256_file(path) == recorded
 
 
-def read_sidecar(paths: Paths, display: PioType) -> dict | None:
+def read_sidecar(paths: Paths, entry: PioType) -> dict | None:
     """This env's build record, or None when there isn't a usable one.
 
-    The display counterpart of `build.read_sidecar`, and read by the same two
+    The PlatformIO counterpart of `build.read_sidecar`, and read by the same two
     kinds of caller: `artifact_status` asking whether the image is current, and
     the `platformio` flasher noting which image a device was just given. Degrades to
     None on every failure - a missing, unreadable or non-dict record all mean
     "no provenance", and telling them apart would not change any answer.
     """
     try:
-        with open(paths.platformio_sidecar(display.env), encoding="utf-8") as fh:
+        with open(paths.platformio_sidecar(entry.env), encoding="utf-8") as fh:
             record = json.load(fh)
     except (OSError, ValueError):
         return None
     return record if isinstance(record, dict) else None
 
 
-def artifact_status(paths: Paths, display: PioType, state: SourceState) -> ArtifactStatus:
+def artifact_status(paths: Paths, entry: PioType, state: SourceState) -> ArtifactStatus:
     """Does the built image match the source tree?
 
     Never a guess when the provenance cannot be trusted - no sidecar, a binary
     someone else rebuilt, or no git checkout to compare against. The cost of a
-    wrong "current" here is flashing six screens with firmware from before the
+    wrong "current" here is flashing six devices with firmware from before the
     fix you just made.
 
     The bar for `current` is that the bytes on disk are the bytes we recorded.
     Anything else is `no_provenance` - not because nothing happened, but because
     knowing *that* an image changed says nothing about *what it now contains*,
-    and only the second question matters before flashing six screens with it.
+    and only the second question matters before flashing six devices with it.
 
     `foreign_build` is reserved for an image some *other* tool can vouch for -
     PlatformIO knows whether .pio/build is current against its own dependency
@@ -384,13 +384,13 @@ def artifact_status(paths: Paths, display: PioType, state: SourceState) -> Artif
     poll path, so attestation belongs behind an explicit request rather than
     being paid for every few seconds.
     """
-    path = firmware_bin(display)
+    path = firmware_bin(entry)
     try:
         stat = os.stat(path)
     except OSError:
         return ArtifactStatus(NEVER_BUILT)
 
-    record = read_sidecar(paths, display)
+    record = read_sidecar(paths, entry)
     if record is None:
         return ArtifactStatus(NO_PROVENANCE)
 
@@ -416,7 +416,7 @@ def resolve_port(port: str) -> str:
     `pio device list` enumerates through pyserial, which reports real devices -
     `/dev/ttyUSB0` - and never the `/dev/knomi_t0` symlink pointing at one. Hand
     PlatformIO the symlink and it looks for a board on a port that is not in its
-    list, which is why an upload to a perfectly healthy display failed with
+    list, which is why an upload to a perfectly healthy device failed with
     "Couldn't find a board on the selected port".
 
     Resolved here, at the moment of the write, rather than in the config: the
@@ -433,10 +433,10 @@ def resolve_port(port: str) -> str:
         return port
 
 
-def firmware_bin(display: PioType) -> str:
+def firmware_bin(entry: PioType) -> str:
     """Where PlatformIO leaves the image for this env."""
     return os.path.join(
-        os.path.expanduser(display.source), ".pio", "build", display.env, "firmware.bin"
+        os.path.expanduser(entry.source), ".pio", "build", entry.env, "firmware.bin"
     )
 
 
@@ -445,14 +445,14 @@ def staged(paths: Paths, type_name: str, family: firmware.FirmwareFamily) -> Sta
 
     Offered for every configured env, built or not: `pio run -t upload` builds
     before it uploads, so an unbuilt env is still writable, and refusing it
-    would refuse every screen nobody had built by hand. Provenance only when
+    would refuse every device nobody had built by hand. Provenance only when
     the image on disk is the one we recorded.
     """
-    display = load(paths).get(type_name)
-    if display is None:
+    entry = load(paths).get(type_name)
+    if entry is None:
         return Staged(fw=family.name)
-    path = firmware_bin(display)
-    record = read_sidecar(paths, display) or {}
+    path = firmware_bin(entry)
+    record = read_sidecar(paths, entry) or {}
     try:
         ours = bool(record) and _is_our_image(record, path, os.stat(path))
     except OSError:
@@ -469,18 +469,18 @@ def staged(paths: Paths, type_name: str, family: firmware.FirmwareFamily) -> Sta
 def build(
     paths: Paths,
     settings: Settings,
-    display: PioType,
+    entry: PioType,
     *,
     reporter: Reporter = null_reporter,
     cancel: threading.Event | None = None,
 ) -> str:
     """Compile one env. Returns the path to the image it produced."""
-    source = _source_dir(display)
+    source = _source_dir(entry)
     pio = find_pio(settings)
 
-    reporter("info", f"Building {display.env} in {source}...")
+    reporter("info", f"Building {entry.env} in {source}...")
     rc = run_streamed(
-        [pio, "run", "-e", display.env],
+        [pio, "run", "-e", entry.env],
         cwd=source,
         reporter=reporter,
         cancel=cancel,
@@ -488,9 +488,9 @@ def build(
     )
     if rc != 0:
         raise BuildError(
-            f"PlatformIO build failed for display '{display.name}': pio exited {rc}.",
-            type=display.name,
-            fw=display.env,
+            f"PlatformIO build failed for '{entry.name}': pio exited {rc}.",
+            type=entry.name,
+            fw=entry.env,
             returncode=rc,
         )
 
@@ -498,40 +498,40 @@ def build(
     # rather than passed in: this is the commit the binary was actually built
     # from, and taking it from before the build would be a different question.
     if not settings.dry_run:
-        record_build(paths, display, source_state(source))
-    return firmware_bin(display)
+        record_build(paths, entry, source_state(source))
+    return firmware_bin(entry)
 
 
 def upload(
     paths: Paths,
     settings: Settings,
-    display: PioType,
+    entry: PioType,
     port: str,
     *,
     reporter: Reporter = null_reporter,
     cancel: threading.Event | None = None,
 ) -> dict[str, str | None]:
-    """Write this env's firmware to the display at `port`.
+    """Write this env's firmware to the device at `port`.
 
     **`port` is required and is never inferred.** PlatformIO auto-detects an
     upload port when none is given, and with several identical CH340s attached it
     picks whichever it finds first - observed doing exactly that on this printer,
-    choosing between two displays with no way for the user to know which. An
-    upload that guesses its target writes firmware to the wrong screen.
+    choosing between two devices with no way for the user to know which. An
+    upload that guesses its target writes firmware to the wrong device.
 
     esptool's ROM handshake is what verifies the target: it refuses to write to
     anything that is not an ESP32, so the check is inherent rather than a step
     that could be skipped. Its banner also carries the MAC, which is the only
-    durable identity a display has - returned here so a caller can record it.
+    durable identity a device has - returned here so a caller can record it.
     """
     if not port:
         raise FlashError(
             "refusing to upload without an explicit port: PlatformIO would pick a "
-            "device on its own, and every display here is an identical CH340.",
-            type=display.name,
+            "device on its own, and devices of one type can be identical USB-serial bridges.",
+            type=entry.name,
         )
 
-    source = _source_dir(display)
+    source = _source_dir(entry)
     pio = find_pio(settings)
 
     transcript: list[str] = []
@@ -541,7 +541,7 @@ def upload(
         reporter(stream, line)
 
     target = resolve_port(port)
-    reporter("info", f"Uploading {display.env} to {port}...")
+    reporter("info", f"Uploading {entry.env} to {port}...")
     if target != port:
         # Say which real device is about to be written. The stable name is what
         # the config uses; this is the only place it and the tty behind it are
@@ -553,7 +553,7 @@ def upload(
             pio,
             "run",
             "-e",
-            display.env,
+            entry.env,
             "-t",
             "upload",
             "--upload-port",
@@ -577,23 +577,23 @@ def upload(
     if rc != 0:
         if _WAITING_FOR_PORT_RE.search(text):
             raise FlashError(
-                f"upload failed for display '{display.name}' on {port}: PlatformIO reset "
+                f"upload failed for '{entry.name}' on {port}: PlatformIO reset "
                 f"the board and then waited for a *new* serial port to appear. One never "
-                f"will - this display talks through a CH340, which stays on the bus and "
+                f"will - this device talks through a CH340, which stays on the bus and "
                 f"keeps the same port.\n"
-                f"Add this to the [env:{display.env}] section of "
+                f"Add this to the [env:{entry.env}] section of "
                 f"{os.path.join(source, 'platformio.ini')}:\n"
                 f"    board_upload.wait_for_upload_port = no\n"
                 f"It has to go there: board_upload.* is a platformio.ini setting and "
                 f"'pio run' has no command-line option for it.",
-                type=display.name,
+                type=entry.name,
                 port=port,
                 returncode=rc,
                 remedy="board_upload.wait_for_upload_port = no",
             )
         raise FlashError(
-            f"upload failed for display '{display.name}' on {port}: pio exited {rc}.",
-            type=display.name,
+            f"upload failed for '{entry.name}' on {port}: pio exited {rc}.",
+            type=entry.name,
             port=port,
             returncode=rc,
         )

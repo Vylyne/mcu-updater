@@ -34,7 +34,7 @@ if TYPE_CHECKING:
 DEFAULT_MCU: tuple[str, ...] = ("klipper",)
 
 #: What a PlatformIO type stops when nothing at any level says otherwise.
-#: Klipper first, then the display's own port watcher - what the PlatformIO
+#: Klipper first, then the device's own port watcher - what the PlatformIO
 #: flasher hardcoded before this existed.
 DEFAULT_PLATFORMIO: tuple[str, ...] = ("klipper", "knomi_serial")
 

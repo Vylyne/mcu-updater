@@ -136,7 +136,8 @@ def serialize_device(
         # Whether "track this" may be offered for it. Anything with two
         # underscores in its by-id name parses as a device, so the list also
         # contains USB serial adapters - and offering to adopt a Knomi's CH340 is
-        # one tap from building Klipper firmware for a display.
+        # one tap from building Klipper firmware for a device whose firmware is
+        # PlatformIO, not Klipper.
         "is_mcu": dev.is_mcu,
         # Dismissed via fw.bus.ignore. A flag, not a filter - the device stays
         # in the list either way, see `bus_scan`'s docstring.
@@ -635,7 +636,7 @@ class StatusMixin(_Base):
 
     # -- the uniform projection --------------------------------------------
     #
-    # `types[]` and `displays[]` say the same things in different words, and the
+    # `types[]` and the platformio type list say the same things in different words, and the
     # panel needs a component per shape to read them. `targets[]` is those two
     # projected onto one shape so that one component renders both - and renders
     # a cartographer probe, or whatever comes next, without being taught to.
@@ -1447,9 +1448,9 @@ class StatusMixin(_Base):
         Per device rather than only per target, because the reasons differ per
         device: one board of a type can be offline while its neighbour is
         waiting in Katapult. Carrying it here is also what lets a reader render
-        a board row and a screen row with the same code - the flash of a board
-        and the flash of a screen are different RPCs, and this is the only place
-        that difference needs to exist.
+        a board row and a PlatformIO device row with the same code - the flash
+        of a board and the flash of a PlatformIO device are different RPCs, and
+        this is the only place that difference needs to exist.
         """
         method, params = flash
         out: list[dict[str, Any]] = []
@@ -1570,8 +1571,8 @@ class StatusMixin(_Base):
         calls, and knowledge of which one to make, to get.
 
         `provider` is required alongside `name`, not inferred: nothing stops
-        an MCU type and a display sharing a name across their separate config
-        files, which is exactly why the panel keys targets on `provider:name`
+        an MCU type and a PlatformIO type sharing a name across their separate
+        config files, which is exactly why the panel keys targets on `provider:name`
         rather than `name` alone. Additive - `targets[]` still carries no more
         than the projection it always has, this just gives a caller wanting
         more than a row a single place to ask for it.
@@ -2182,8 +2183,8 @@ class StatusMixin(_Base):
         `printer.objects.list` is a separate round trip and fw.status has a
         sub-second budget. And the answer only changes when Klipper restarts.
 
-        One list serves every prefix, so adding displays costs no extra round
-        trip on top of the MCU lookup that was already happening.
+        One list serves every prefix, so adding PlatformIO devices costs no
+        extra round trip on top of the MCU lookup that was already happening.
         """
         now = time.time()
         if self._object_names is not None and now - self._object_names_at < MCU_NAMES_TTL:

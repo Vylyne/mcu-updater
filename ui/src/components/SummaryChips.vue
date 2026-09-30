@@ -2,9 +2,9 @@
 // The fleet-wide counts across the top of the panel - the panel's
 // v-chip row, said over `targets[]` rather than `types`. That distinction is
 // load-bearing: counting `types` alone can let "all up to date" go green with
-// a screen three commits behind, because
-// displays were left out and a type's verdict was read from an artifact it
-// would never build. Six independent counts, each answering a different
+// a PlatformIO device three commits behind, because PlatformIO types were
+// left out and a type's verdict was read from an artifact it would never
+// build. Six independent counts, each answering a different
 // question - stale/unprovable is about artifacts needing a rebuild,
 // needsFlash/allFlashed is about devices needing a flash, and they must not
 // be conflated.

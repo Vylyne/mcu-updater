@@ -31,7 +31,7 @@ import {
 import {
   isRoadrunnerDevice,
   roadrunnerDiagnosticUid,
-  roadrunnerDisplaySerial,
+  roadrunnerSerialLabel,
   roadrunnerIdentityState,
   type BusDevice,
   type Target,
@@ -347,7 +347,7 @@ async function confirmClear(): Promise<void> {
         <span class="device-identity">
           <span class="device-name-row">
             <span class="text--secondary">{{
-              roadrunnerDisplaySerial(device.serial)
+              roadrunnerSerialLabel(device.serial)
             }}</span>
             <button
               v-if="
@@ -547,7 +547,7 @@ async function confirmClear(): Promise<void> {
           />
           <span class="device-identity">
             <span class="text--secondary">{{
-              roadrunnerDisplaySerial(device.serial)
+              roadrunnerSerialLabel(device.serial)
             }}</span>
             <span class="text--disabled text-caption">{{ device.path }}</span>
           </span>

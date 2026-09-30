@@ -160,6 +160,7 @@ describe("TargetRow", () => {
     const wrapper = mount(TargetRow, { props: { target } });
     expect(wrapper.text()).toContain("Module 0.5.0");
     expect(wrapper.text()).toContain("Board rev 3");
+    expect(wrapper.findAll("[data-extra]")).toHaveLength(2);
   });
 
   it("renders a row with no extras without an empty caption", () => {

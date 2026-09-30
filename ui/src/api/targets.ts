@@ -201,7 +201,7 @@ export function roadrunnerDiagnosticUid(serial: string): string | null {
  * provision confirmation dialog. A provisioned Roadrunner's serial has no
  * such suffix and is returned unchanged, as is every non-Roadrunner
  * device's serial. */
-export function roadrunnerDisplaySerial(serial: string): string {
+export function roadrunnerSerialLabel(serial: string): string {
   return serial.startsWith(ROADRUNNER_UNPROVISIONED_PREFIX)
     ? ROADRUNNER_UNPROVISIONED_PREFIX.slice(0, -1)
     : serial;

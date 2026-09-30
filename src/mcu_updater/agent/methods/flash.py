@@ -79,7 +79,7 @@ class FlashMixin(_Base):
             return self._flash_can(args, str(uuid), name, runner, settings)
 
         # `id` is the uniform slot - `FlashTarget.id` is a serial for a board and
-        # a port for a screen - and `serial` is what this method has always been
+        # a port for a PlatformIO device - and `serial` is what this method has always been
         # called with. Both, so a caller reading `targets[].devices[].id` off the
         # wire can hand it straight back.
         serial = args.get("serial") or args.get("id")

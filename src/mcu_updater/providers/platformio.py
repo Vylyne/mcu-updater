@@ -63,8 +63,8 @@ class PlatformIO:
 
     def targets(self, install: Install) -> list[BuildTarget]:
         return [
-            BuildTarget(self.name, name, display.firmware)
-            for name, display in install.platformio.items()
+            BuildTarget(self.name, name, entry.firmware)
+            for name, entry in install.platformio.items()
         ]
 
     def blocked(self, install: Install, target: BuildTarget) -> str | None:
@@ -72,19 +72,19 @@ class PlatformIO:
 
         The counterpart of "has this been through menuconfig": the one thing
         somebody has to do outside this tool before a build is possible at all.
-        A display with no source tree is skipped rather than failed for the same
-        reason an unconfigured MCU type is - there is nothing the batch could do
-        about it, and it should not take the fleet down with it.
+        A PlatformIO type with no source tree is skipped rather than failed for the
+        same reason an unconfigured MCU type is - there is nothing the batch could
+        do about it, and it should not take the fleet down with it.
         """
-        display = install.platformio.get(target.name)
-        if display is None:
+        entry = install.platformio.get(target.name)
+        if entry is None:
             return f"no platformio type '{target.name}' is configured."
-        return source_problem(display)
+        return source_problem(entry)
 
     def artifact_status(self, install: Install, target: BuildTarget) -> ArtifactStatus:
-        display = install.platformio[target.name]
+        entry = install.platformio[target.name]
         return pio_mod.artifact_status(
-            install.paths, display, pio_mod.source_state(display.source)
+            install.paths, entry, pio_mod.source_state(entry.source)
         )
 
     def build(

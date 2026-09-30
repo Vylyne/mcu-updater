@@ -10,8 +10,9 @@ only one quietly served only one.
 
 The cost was a bug, not an aesthetic complaint. ``build_all`` walked the
 ``[mcu ...]`` registry because that was the only list it had, so "Build All"
-meant "build all the MCUs" and left every screen on whatever it happened to be
-running. Nothing said so. There was no seam for it to walk instead.
+meant "build all the MCUs" and left every PlatformIO device on whatever it
+happened to be running. Nothing said so. There was no seam for it to walk
+instead.
 
 This is that seam, and it is deliberately small: enumerate, judge, build. It
 carries no opinion about *what* a target is - an MCU type with a firmware

@@ -107,7 +107,8 @@ def device_for(
     the board cannot be confirmed present - never raises, same as `port_for`.
 
     A `UNIQUE_BUS_ID` by-id sighting is the confirmed-at-write-time counterpart
-    to a display's `ANSWERED` listen-pass sighting: die-derived, not remembered.
+    to a PlatformIO device's `ANSWERED` listen-pass sighting: die-derived, not
+    remembered.
 
     `sources` narrows which sources are asked. The default is every one of
     them, for the single up-front lookup; a caller polling in a loop passes a
@@ -188,7 +189,7 @@ def flash_katapult(
         )
 
     # Confirmed at write time, not just remembered - the same ledger a
-    # display gets. `device_for` reduces chipset+serial to at most one
+    # PlatformIO device gets. `device_for` reduces chipset+serial to at most one
     # sighting; state (bootloader or running) replaces the old two-call
     # katapult-then-unconstrained lookup, via the bootloader-predicate rule
     # (`discovery.spec.state_for_firmware`) rather than a fixed firmware name -

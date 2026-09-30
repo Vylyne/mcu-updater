@@ -7,7 +7,7 @@
 // the transient busy gate a payload never carries.
 //
 // Layout for a firmware target row: a
-// header line (name, descriptor, module version, device count, spacer,
+// header line (name, descriptor, device count, extras, spacer,
 // artifact chip, profile chip, actions, overflow menu), then one sub-row per
 // device (state icon, identity, spacer, version, verdict, device actions,
 // detail expander), then a trailing divider.
@@ -135,8 +135,8 @@ const reseedDefault = computed(
       ?.reseed_on_build !== false,
 );
 
-/** The profile chip, or nothing - nothing for a display (no answers to
- * seed) and nothing for an unmanaged type (every type predating profiles).
+/** The profile chip, or nothing - nothing for a PlatformIO type (no answers
+ * to seed) and nothing for an unmanaged type (every type predating profiles).
  * A moved seed names the profile rather than saying "profile updated",
  * mirroring the target row's profile chip getter. */
 const profileChip = computed(() => {
@@ -161,8 +161,8 @@ const profileHint = computed(() => {
 });
 
 // MCU-type management (fw.type.add/.update/.remove) applies to a
-// kconfig_make target only - a display has no registry entry of this kind
-// to edit. Kept here rather than a provider branch on the row's rendering:
+// kconfig_make target only - a PlatformIO type has no registry entry of this
+// kind to edit. Kept here rather than a provider branch on the row's rendering:
 // this is the one place docs/standalone-ui.md records as "still unscheduled"
 // before this phase, and it stays additive - two extra menu rows, not a
 // change to how the row itself renders.

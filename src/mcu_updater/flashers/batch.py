@@ -4,7 +4,7 @@ The loop itself, lifted out of the agent so the CLI runs the same one. It was
 ``AgentMethods._do_flash_all``, which meant ``mcu-updater flash`` and
 ``mcu-updater update-all`` had their own - and theirs called ``flash_katapult``
 directly, so "every tracked MCU" was the whole truth about what they did and
-nothing said screens were not in it. That is the bug ``build_all`` had before
+nothing said PlatformIO devices were not in it. That is the bug ``build_all`` had before
 the Provider seam, one layer down: the caller that knew only one implementation
 quietly served only one.
 
@@ -70,8 +70,8 @@ def write_all(
     Once per batch rather than once per device: ten stop/start cycles would take
     far longer and give ten chances for the restart to be the thing that fails.
 
-    **Grouped by requirement, not by kind.** A board and a screen both need
-    Klipper down - for different reasons, neither of which this loop knows - so
+    **Grouped by requirement, not by kind.** A board and a PlatformIO device both
+    need Klipper down - for different reasons, neither of which this loop knows - so
     one stop covers both and neither path had to learn about the other. A write
     that needs no stop runs outside it rather than inheriting an outage it does
     not need.
@@ -109,7 +109,7 @@ def write_all(
         nonlocal done
         for flasher, mine in by_flasher(group):
             # Once per flasher, inside whatever stop it asked for. This is where
-            # a port watcher gets paused and the screens are asked which they
+            # a port watcher gets paused and the devices are asked which they
             # are - the only moment identity can be resolved rather than
             # remembered.
             with flasher.prepared(bench, mine, ctx) as session:

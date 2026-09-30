@@ -168,21 +168,21 @@ class BuildMixin(_Base):
                     "data": {"name": name, "known": sorted(types)},
                 },
             )
-        display = types[name]
+        entry = types[name]
 
         def run(ctx) -> dict[str, Any]:
             from ...providers import pio as pio_mod
 
-            ctx.step(f"Building {display.env}", 0, 1)
+            ctx.step(f"Building {entry.env}", 0, 1)
             path = pio_mod.build(
-                self.paths, self.settings(), display, reporter=ctx.reporter, cancel=ctx.cancel
+                self.paths, self.settings(), entry, reporter=ctx.reporter, cancel=ctx.cancel
             )
-            ctx.step(f"Built {display.env}", 1, 1)
-            return {"name": name, "env": display.env, "firmware": path}
+            ctx.step(f"Built {entry.env}", 1, 1)
+            return {"name": name, "env": entry.env, "firmware": path}
 
         # Kind `build`, as the cmake route: a compile like any other, and so
         # immediately cancellable (`pio_mod.build` takes `cancel=ctx.cancel`).
-        job = runner.submit("build", {"name": name, "fw": display.firmware}, run)
+        job = runner.submit("build", {"name": name, "fw": entry.firmware}, run)
         return {"job_id": job.id, "job": job.to_dict()}
 
     def clean(self, args: dict) -> dict[str, Any]:
@@ -372,7 +372,7 @@ class BuildMixin(_Base):
         return payload
 
     def kconfig_menu(self, args: dict) -> dict[str, Any]:
-        """Re-read the current screen, for a client that lost its copy."""
+        """Re-read the current menu, for a client that lost its copy."""
         session = self._session(args)
         with session.lock:
             return session.menu()

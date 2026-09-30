@@ -143,7 +143,7 @@ describe("bulkBuildTargets", () => {
     expect(bulkBuildTargets([t], "all")).toHaveLength(0);
   });
 
-  it("drops a target with no build action at all (a display with no build)", () => {
+  it("drops a target with no build action at all (a type with no build)", () => {
     const t = target({ provider: "platformio", actions: [] });
     expect(bulkBuildTargets([t], "all")).toHaveLength(0);
   });

@@ -63,14 +63,14 @@
     {
       "name": "the ports are free by here, so an empty map asks the devices",
       "file": "src/mcu_updater/cli.py",
-      "find": "            c.paths, c.settings, display, ask=True, reporter=stdout_reporter",
-      "replace": "            c.paths, c.settings, display, ask=False, reporter=stdout_reporter"
+      "find": "            c.paths, c.settings, entry, ask=True, reporter=stdout_reporter",
+      "replace": "            c.paths, c.settings, entry, ask=False, reporter=stdout_reporter"
     },
     {
       "name": "the remembered answer is preferred to six seconds of held ports",
       "file": "src/mcu_updater/cli.py",
-      "find": "        c.paths, c.settings, display, ask=False, reporter=stdout_reporter",
-      "replace": "        c.paths, c.settings, display, ask=True, reporter=stdout_reporter"
+      "find": "        c.paths, c.settings, entry, ask=False, reporter=stdout_reporter",
+      "replace": "        c.paths, c.settings, entry, ask=True, reporter=stdout_reporter"
     },
     {
       "name": "the CLI matches a firmware-reported identity case-insensitively",
@@ -87,7 +87,7 @@
     {
       "name": "the refusal names the file the handler read",
       "file": "src/mcu_updater/cli.py",
-      "find": "        where = identify.remembered_at(c.paths, display) or \"(nothing remembered)\"",
+      "find": "        where = identify.remembered_at(c.paths, entry) or \"(nothing remembered)\"",
       "replace": "        where = \"(nothing remembered)\""
     }
   ]

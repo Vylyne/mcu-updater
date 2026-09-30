@@ -666,6 +666,8 @@ def test_serial_add_refuses_an_unprovisioned_serial_with_the_generic_code(api, m
 
     assert api.runner is None  # the precondition this test pins
 
+    assert helpers.provisioner(helper) is not None
+
     with pytest.raises(RpcError) as exc:
         api.dispatch(
             "fw.serial.add",

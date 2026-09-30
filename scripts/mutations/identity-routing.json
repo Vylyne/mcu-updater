@@ -24,6 +24,11 @@
       "name": "a tracked board is refused before its identity is written",
       "find": "        self._identity_untracked(serial)",
       "replace": "        pass"
+    },
+    {
+      "name": "clearing is refused for a tracked serial",
+      "find": "        prov = self._identity_claimant(serial, \"provisioned\")\n        self._identity_untracked(serial)",
+      "replace": "        prov = self._identity_claimant(serial, \"provisioned\")"
     }
   ]
 }

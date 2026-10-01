@@ -472,6 +472,19 @@ the weaker witness overrule the stronger one would report "newer build
 available" for a board provably holding the newest build - and send someone to
 reflash it mid-print.
 
+That only holds while both sides digest the same span. A board digests its
+linked image; a UF2 pads its last block past the end of it and does not say
+where the image stops. So the sidecar takes the image's length from the raw
+`.bin` the same build staged, once that `.bin` is shown to be the container's
+own leading bytes (`uf2._linked_length`), and digests the container over that
+length. Recorded over the padded extent instead, a Roadrunner running exactly
+the staged build read as `unexpected_image` (2026-10-01: a 30004-byte image
+against a 30208-byte record). Without a `.bin` the padded extent is still what
+gets recorded - right for an image that ends on a block boundary, and a false
+`unexpected_image` for one that does not. Do not "fix" that by rounding the
+board's length up, or by stripping trailing zeros off the container: an image
+can end in zeros.
+
 The same reasoning puts the digest ahead of `device_dirty`, which is
 `needs_flash: null`, "cannot be shown current". The digest shows it current.
 The unrecoverable-tree worry behind `device_dirty` is real, but it is a fact

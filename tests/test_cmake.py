@@ -1229,6 +1229,26 @@ def test_the_record_carries_the_digest_a_board_should_report(paths, repo):
     assert record["image_length"] == 768
 
 
+def test_the_record_stops_the_image_where_the_staged_bin_does(paths, repo):
+    """A board digests its linked image, not the block-padded range a UF2
+    covers. Recorded over the padding, a board running exactly this build read
+    as "Unexpected firmware" - a 30004-byte image against a 30208-byte record."""
+    from .test_uf2 import IMAGE, VECTOR_CRC, VECTOR_LENGTH, VECTOR_START, _vector_uf2
+
+    source = repo / "rp2040"
+    target = _cmake_type(source)
+    _staged(paths, _vector_uf2())
+    with open(paths.bin_file("roadrunner", "roadrunner"), "wb") as fh:
+        fh.write(IMAGE)
+    cmake.record_build(paths, target, cmake.source_state(str(source)))
+
+    record = cmake.read_sidecar(paths, target)
+    assert record is not None
+    assert record["digest"] == VECTOR_CRC
+    assert record["image_start"] == VECTOR_START
+    assert record["image_length"] == VECTOR_LENGTH
+
+
 def test_an_artifact_that_is_not_a_uf2_still_records_a_build(paths, repo):
     """Absence is never mismatch, and never a failed build either.
 

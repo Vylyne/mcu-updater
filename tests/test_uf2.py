@@ -171,8 +171,8 @@ def test_an_unsupported_algorithm_is_refused() -> None:
 
 
 def test_the_extent_is_what_the_container_actually_covers() -> None:
-    # `record_build` has no board to ask, so the artifact describes its own
-    # range. 768, not 600: the padding is real flash the writer will place.
+    # 768, not 600: the padding is real flash the writer will place, and the
+    # container alone cannot say where the image inside it stops.
     assert uf2.image_extent(_vector_uf2()) == (VECTOR_START, 768)
 
 
@@ -196,6 +196,59 @@ def test_digest_fields_describe_the_staged_artifact(tmp_path: pathlib.Path) -> N
         "image_start": VECTOR_START,
         "image_length": 768,
     }
+
+
+def _staged_pair(tmp_path: pathlib.Path, linked: bytes) -> tuple[str, str]:
+    container = tmp_path / "roadrunner.uf2"
+    container.write_bytes(_vector_uf2())
+    raw = tmp_path / "roadrunner.bin"
+    raw.write_bytes(linked)
+    return str(container), str(raw)
+
+
+def test_a_staged_bin_says_where_the_image_stops(tmp_path: pathlib.Path) -> None:
+    # The container pads its last block and says nothing about where the image
+    # ends. The raw `.bin` is that image with no container, so its size is the
+    # length a board measures - and the digest is then the one it reports.
+    container, raw = _staged_pair(tmp_path, IMAGE)
+    assert uf2.digest_fields(container, raw) == {
+        "digest_algorithm": uf2.DIGEST_CRC32_ISO_HDLC,
+        "digest": VECTOR_CRC,
+        "image_start": VECTOR_START,
+        "image_length": VECTOR_LENGTH,
+    }
+
+
+def test_a_bin_that_is_not_this_containers_image_does_not_set_the_length(
+    tmp_path: pathlib.Path,
+) -> None:
+    # Same size, other bytes: a `.bin` from some other build is no witness for
+    # where *this* container's image stops.
+    container, raw = _staged_pair(tmp_path, bytes(VECTOR_LENGTH))
+    assert uf2.digest_fields(container, raw)["image_length"] == 768
+
+
+def test_a_bin_longer_than_the_container_does_not_set_the_length(
+    tmp_path: pathlib.Path,
+) -> None:
+    container, raw = _staged_pair(tmp_path, IMAGE + b"\x00" * 400)
+    assert uf2.digest_fields(container, raw) == {
+        "digest_algorithm": uf2.DIGEST_CRC32_ISO_HDLC,
+        "digest": ROUNDED_UP_CRC,
+        "image_start": VECTOR_START,
+        "image_length": 768,
+    }
+
+
+def test_an_empty_bin_does_not_set_the_length(tmp_path: pathlib.Path) -> None:
+    container, raw = _staged_pair(tmp_path, b"")
+    assert uf2.digest_fields(container, raw)["image_length"] == 768
+
+
+def test_a_missing_bin_leaves_the_containers_own_extent(tmp_path: pathlib.Path) -> None:
+    container, raw = _staged_pair(tmp_path, IMAGE)
+    pathlib.Path(raw).unlink()
+    assert uf2.digest_fields(container, raw)["image_length"] == 768
 
 
 def test_digest_fields_are_absent_when_the_file_is_not_a_uf2(

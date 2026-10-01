@@ -495,8 +495,9 @@ def record_build(paths: Paths, target: CmakeType, state: SourceState) -> None:
         # What a board running this image should report back over INFO.
         # Absent for anything that would not parse as a UF2, and absent is
         # never mismatch - the comparison falls through to the version string,
-        # the same as it does for a board too old to report a digest.
-        **uf2.digest_fields(path),
+        # the same as it does for a board too old to report a digest. The
+        # `.bin` says where the image stops; the UF2 pads past it.
+        **uf2.digest_fields(path, bin_path),
     }
     sidecar = paths.sidecar_file(target.name, target.firmware)
     os.makedirs(os.path.dirname(sidecar), exist_ok=True)

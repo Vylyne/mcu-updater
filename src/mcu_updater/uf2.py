@@ -152,12 +152,11 @@ def extract_image(uf2: bytes, start: int, length: int) -> bytes:
 def image_extent(uf2: bytes) -> tuple[int, int]:
     """The `(start, length)` this container's own flash blocks describe.
 
-    `record_build` has no board to ask - the artifact is being staged, not
-    run - so it records the range the artifact covers, padding included. That
-    is not a host substituting its own range for the board's: it is the
-    artifact describing itself, so a later comparison can notice that the two
-    ranges *disagree* rather than silently digesting different spans and
-    reporting a mismatch it cannot explain.
+    Padding included: the last block is filled out to the tooling's payload
+    size, and nothing in the container says where the linked image stops. So
+    this is the range the writer will place, which is what the erase needs,
+    and only an upper bound on the range a board digests - see
+    `_linked_length` for what narrows it.
     """
     spans = [
         (target, target + payload_size)
@@ -179,12 +178,43 @@ def image_digest(
     return crc32_iso_hdlc(extract_image(uf2, start, length))
 
 
-def digest_fields(path: str) -> dict[str, int]:
+def _linked_length(uf2: bytes, start: int, length: int, bin_path: str | None) -> int:
+    """Where the image stops, when a raw `.bin` staged beside the UF2 can say.
+
+    A board digests its linked image; the container's extent runs on to the end
+    of the last block. Recorded over that padding, the digest is one no board
+    reports, and every board running exactly this build reads as holding
+    something else. The `.bin` is the same image with no container around it,
+    so its size is the length the board measures.
+
+    It is believed only when its bytes are the bytes this container places at
+    `start`. A `.bin` left by another build, or one the container does not
+    cover, says nothing about where *this* image stops, and the extent stands.
+    """
+    if bin_path is None:
+        return length
+    try:
+        with open(bin_path, "rb") as fh:
+            linked = fh.read()
+    except OSError:
+        return length
+    if not linked or len(linked) > length:
+        return length
+    if extract_image(uf2, start, len(linked)) != linked:
+        return length
+    return len(linked)
+
+
+def digest_fields(path: str, bin_path: str | None = None) -> dict[str, int]:
     """Describe a staged `.uf2`, or say nothing at all about it.
 
     The keys match the INFO payload's names on purpose, so the stored record
     and the board's report are compared field to field with no translation in
     between.
+
+    `bin_path` is the raw image the same build staged, where there is one. It
+    supplies the image's true length; the bytes digested are still the
+    container's own, because the container is what gets written.
 
     Returns `{}` for anything it cannot read or parse. Absence is never
     mismatch: a build whose artifact cannot be described still built, and the
@@ -196,6 +226,7 @@ def digest_fields(path: str) -> dict[str, int]:
         with open(path, "rb") as fh:
             data = fh.read()
         start, length = image_extent(data)
+        length = _linked_length(data, start, length, bin_path)
         digest = image_digest(data, start, length)
     except (OSError, Uf2Error, struct.error):
         return {}

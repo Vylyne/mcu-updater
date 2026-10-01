@@ -133,7 +133,9 @@ describe("TargetRow", () => {
 
   it("says what the agent says when a type lists no devices", () => {
     const wrapper = mount(TargetRow, { props: { target: platformioTarget } });
-    expect(wrapper.text()).toContain("Nothing is declared under [fake_dev ...].");
+    expect(wrapper.text()).toContain(
+      "Nothing is declared under [fake_dev ...].",
+    );
   });
 
   it("does not invent its own empty-row wording", () => {
@@ -154,7 +156,13 @@ describe("TargetRow", () => {
       ...mcuTarget,
       extras: [
         ...platformioTarget.extras,
-        { seam: "builder", name: "cmake", key: "anything", label: "Board rev", value: 3 },
+        {
+          seam: "builder",
+          name: "cmake",
+          key: "anything",
+          label: "Board rev",
+          value: 3,
+        },
       ],
     };
     const wrapper = mount(TargetRow, { props: { target } });
@@ -167,8 +175,20 @@ describe("TargetRow", () => {
     const target: Target = {
       ...mcuTarget,
       extras: [
-        { seam: "helper", name: "any", key: "module_version", label: "Module", value: null },
-        { seam: "builder", name: "cmake", key: "anything", label: "Board rev", value: 3 },
+        {
+          seam: "helper",
+          name: "any",
+          key: "module_version",
+          label: "Module",
+          value: null,
+        },
+        {
+          seam: "builder",
+          name: "cmake",
+          key: "anything",
+          label: "Board rev",
+          value: 3,
+        },
       ],
     };
     const wrapper = mount(TargetRow, { props: { target } });

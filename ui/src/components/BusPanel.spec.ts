@@ -78,10 +78,7 @@ const provisionedRoadrunner: BusDevice = {
   path: "/dev/serial/by-id/usb-Vylyne_Roadrunner_RR-0123456789ABCDEFGHJKMNPQRS-if00",
 };
 
-const roadrunnerCapabilities = [
-  "fw.identity.provision",
-  "fw.identity.clear",
-];
+const roadrunnerCapabilities = ["fw.identity.provision", "fw.identity.clear"];
 
 const fullCapabilities = [
   "fw.serial.add",
@@ -744,9 +741,7 @@ describe("BusPanel", () => {
     it("Provision Roadrunner opens a confirmation naming the serial and diagnostic UID, without calling the API until confirmed", async () => {
       state.bus = [unprovisionedRoadrunner];
       state.ping = { capabilities: roadrunnerCapabilities };
-      const spy = vi
-        .spyOn(store, "provisionIdentity")
-        .mockResolvedValue(true);
+      const spy = vi.spyOn(store, "provisionIdentity").mockResolvedValue(true);
       const wrapper = mount(BusPanel);
 
       expect(wrapper.find(".dialog-backdrop").exists()).toBe(false);
@@ -768,9 +763,7 @@ describe("BusPanel", () => {
     it("confirming Provision invokes fw.identity.provision once and refreshes afterward", async () => {
       state.bus = [unprovisionedRoadrunner];
       state.ping = { capabilities: roadrunnerCapabilities };
-      const spy = vi
-        .spyOn(store, "provisionIdentity")
-        .mockResolvedValue(true);
+      const spy = vi.spyOn(store, "provisionIdentity").mockResolvedValue(true);
       const wrapper = mount(BusPanel);
 
       await wrapper.get("button.roadrunner-provision").trigger("click");
@@ -820,9 +813,7 @@ describe("BusPanel", () => {
     it("cancelling the confirmation dialog never calls the API", async () => {
       state.bus = [unprovisionedRoadrunner];
       state.ping = { capabilities: roadrunnerCapabilities };
-      const spy = vi
-        .spyOn(store, "provisionIdentity")
-        .mockResolvedValue(true);
+      const spy = vi.spyOn(store, "provisionIdentity").mockResolvedValue(true);
       const wrapper = mount(BusPanel);
 
       await wrapper.get("button.roadrunner-provision").trigger("click");
@@ -837,9 +828,7 @@ describe("BusPanel", () => {
     it("does not double-fire Provision on two rapid confirm clicks", async () => {
       state.bus = [unprovisionedRoadrunner];
       state.ping = { capabilities: roadrunnerCapabilities };
-      const spy = vi
-        .spyOn(store, "provisionIdentity")
-        .mockResolvedValue(true);
+      const spy = vi.spyOn(store, "provisionIdentity").mockResolvedValue(true);
       const wrapper = mount(BusPanel);
 
       await wrapper.get("button.roadrunner-provision").trigger("click");

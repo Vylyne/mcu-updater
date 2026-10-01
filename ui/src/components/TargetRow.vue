@@ -58,7 +58,9 @@ const detailText = computed(() =>
 // The wire lets an extra's value be null - "the seam knows this fact exists
 // and cannot say it right now". A label with nothing after it says less than
 // no caption at all.
-const shownExtras = computed(() => props.target.extras.filter((e) => e.value !== null));
+const shownExtras = computed(() =>
+  props.target.extras.filter((e) => e.value !== null),
+);
 
 const deviceSummary = computed(() => {
   const present = props.target.devices.filter((d) => d.present).length;

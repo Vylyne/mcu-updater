@@ -289,6 +289,47 @@ def test_the_upload_command_always_pins_the_port(paths, settings, display, monke
     assert cmd[cmd.index("-e") + 1] == "knomi_toolchanger"
 
 
+def test_a_successful_upload_records_the_image_it_wrote(paths, settings, display, monkeypatch):
+    """`pio run -t upload` rebuilds whatever is stale before it writes, so the
+    image on disk afterwards is the one the device holds, and PlatformIO is the
+    only authority on it. Recorded only at our own build, the flash log named
+    the previous image whenever the upload had rebuilt."""
+    from mcu_updater.build import sha256_file
+
+    image = pio.firmware_bin(display)
+    with open(image, "wb") as fh:
+        fh.write(b"built by us")
+    pio.record_build(paths, display, pio.source_state(display.source))
+
+    def rebuild_then_write(cmd, **kw):
+        with open(image, "wb") as fh:
+            fh.write(b"rebuilt by the upload")
+        return 0
+
+    monkeypatch.setattr(pio, "run_streamed", rebuild_then_write)
+    monkeypatch.setattr(pio, "find_pio", lambda s: "/usr/bin/pio")
+    monkeypatch.setattr(pio.os.path, "realpath", lambda p: p)
+
+    pio.upload(paths, settings, display, "/dev/knomi_t0")
+
+    assert pio.read_sidecar(paths, display)["bin_sha256"] == sha256_file(image)
+
+
+def test_a_dry_run_upload_records_nothing(paths, settings, display, monkeypatch):
+    """A rehearsal wrote nothing, so there is no image to describe."""
+    import dataclasses
+
+    monkeypatch.setattr(pio, "run_streamed", lambda cmd, **kw: 0)
+    monkeypatch.setattr(pio, "find_pio", lambda s: "/usr/bin/pio")
+    monkeypatch.setattr(pio.os.path, "realpath", lambda p: p)
+    with open(pio.firmware_bin(display), "wb") as fh:
+        fh.write(b"an image nobody recorded")
+
+    pio.upload(paths, dataclasses.replace(settings, dry_run=True), display, "/dev/knomi_t0")
+
+    assert pio.read_sidecar(paths, display) is None
+
+
 # --------------------------------------------------------------------------
 # reading esptool's banner
 # --------------------------------------------------------------------------

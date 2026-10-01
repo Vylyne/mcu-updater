@@ -268,9 +268,9 @@ def is_dirty(running: str | None) -> bool:
 # is the BUILT IMAGE current
 #
 # Separate from the device verdict assembled for `verdict.decide`. This asks
-# about the .bin, and it earns its place because flashing a device uploads
-# whatever is in .pio/build without building first - so a source tree that has
-# moved since the last build writes old firmware to every device, silently.
+# about the .bin. PlatformIO is the authority on it: `pio run -t upload`
+# rebuilds whatever is stale before it writes, so the record is taken after a
+# build *and* after an upload - whichever last left an image on disk.
 # --------------------------------------------------------------------------
 
 def record_build(paths: Paths, entry: PioType, state: SourceState) -> None:
@@ -597,6 +597,11 @@ def upload(
             port=port,
             returncode=rc,
         )
+    # The upload rebuilt anything stale before it wrote, so the image on disk
+    # now is the one this device holds - which the record from our own build
+    # may not describe. Re-taken here, before the flash log reads it.
+    if not settings.dry_run:
+        record_build(paths, entry, source_state(source))
     return {
         "port": port,
         "chip": chip.group(1) if chip else None,

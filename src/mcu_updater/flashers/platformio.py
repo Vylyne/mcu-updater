@@ -170,8 +170,9 @@ class PlatformIO:
         ident = target.detail["device_id"]
         if not ident:
             return None
-        # The build already hashed the image and noted its commit; re-deriving
-        # them here would be a second answer to a question with a recorded one.
+        # The upload just hashed the image it wrote and noted its commit;
+        # re-deriving them here would be a second answer to a question with a
+        # recorded one.
         side = pio_mod.read_sidecar(bench.paths, env) or {}
         return FlashRecord(
             key=hardware_id_key(ident),

@@ -55,6 +55,11 @@ const detailText = computed(() =>
   detail.value ? JSON.stringify(detail.value, null, 2) : "",
 );
 
+// The wire lets an extra's value be null - "the seam knows this fact exists
+// and cannot say it right now". A label with nothing after it says less than
+// no caption at all.
+const shownExtras = computed(() => props.target.extras.filter((e) => e.value !== null));
+
 const deviceSummary = computed(() => {
   const present = props.target.devices.filter((d) => d.present).length;
   return `${present}/${props.target.devices.length} present`;
@@ -251,7 +256,7 @@ async function toggle(): Promise<void> {
       </span>
       <span class="text-caption text--disabled">{{ deviceSummary }}</span>
       <span
-        v-for="extra in target.extras"
+        v-for="extra in shownExtras"
         :key="`${extra.seam}:${extra.name}:${extra.key}`"
         data-extra
         class="text-caption text--disabled"

@@ -163,6 +163,19 @@ describe("TargetRow", () => {
     expect(wrapper.findAll("[data-extra]")).toHaveLength(2);
   });
 
+  it("leaves out an extra with no value rather than showing a bare label", () => {
+    const target: Target = {
+      ...mcuTarget,
+      extras: [
+        { seam: "helper", name: "any", key: "module_version", label: "Module", value: null },
+        { seam: "builder", name: "cmake", key: "anything", label: "Board rev", value: 3 },
+      ],
+    };
+    const wrapper = mount(TargetRow, { props: { target } });
+    expect(wrapper.findAll("[data-extra]")).toHaveLength(1);
+    expect(wrapper.text()).not.toContain("Module");
+  });
+
   it("renders a row with no extras without an empty caption", () => {
     const wrapper = mount(TargetRow, { props: { target: mcuTarget } });
     expect(wrapper.findAll("[data-extra]")).toHaveLength(0);

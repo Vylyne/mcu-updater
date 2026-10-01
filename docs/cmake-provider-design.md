@@ -74,18 +74,25 @@ follows from the same rule. This argument was general enough to outlive the
 feature, so it now lives in [decisions.md](decisions.md) as "Config keys borrow
 the upstream tool's own vocabulary".
 
-### One `make` builds all six; the target selects which is staged
+### One tree declares all six; the target selects which is built and staged
 
-This was the shape decision. `cmake .. && make` produces every image, so
+This was the shape decision. One configure describes every image, so
 `cmake_target:` is *which output gets copied to `paths.uf2_file()`*, not a
 configure-time narrowing. That is why build-time and flash-time selection come
 out of the same key with no extra machinery: the flasher reads the same staged
 path it always has, and the target has already been resolved before it looks.
 
-`make <target>` could narrow the compile later if build time bites on a
-printer. Deliberately not designed for now — the whole tree is small, and a
-narrowed build would make `artifact_status` answer for one image while five
-stale ones sit beside it.
+The compile is narrowed to that target: `make <cmake_target>`, since
+2026-10-01. It first shipped as a bare `make` that built all six, on the
+worry that a narrowed build would leave `artifact_status` answering for one
+image while five stale ones sat beside it. That worry did not survive the
+design it was raised against: a type stages and records only its own target,
+so a stale sibling in the build directory is never read, and a second type on
+the same tree builds its own target when it is built. Narrowing also turns a
+target the tree no longer declares into a failed `make`, where `make all`
+succeeded and left the old `.uf2` on disk. Confirmed on the bench that the
+Pico SDK's `.uf2` and `.bin` are post-build steps of the target itself, so
+`make <target>` produces both.
 
 ### `cmake_target:` is per-`[type]`, not per-board
 
@@ -178,8 +185,8 @@ CMake family resolves its reviewed helper explicitly and constructs the
 `helper_bootsel` target directly. This prevents the existing RP2040 flashtool
 route from shadowing Roadrunner without altering it for boards that use it.
 
-**Narrowing the compile to one `make` target.** See "One `make` builds all six"
-above.
+**Narrowing the compile to one `make` target.** Done since; see "One tree
+declares all six" above.
 
 **Retrofitting subtree scoping onto `pio.source_state()`.** It has the same
 latent issue — a PlatformIO `source:` pointing at a subdirectory of a larger

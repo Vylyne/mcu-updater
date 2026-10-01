@@ -1179,6 +1179,31 @@ def test_cleaning_leaves_the_staged_image_and_its_provenance(paths, settings, re
     assert cmake.read_sidecar(paths, target) == before
 
 
+def test_only_the_named_target_is_compiled(paths, settings, repo, monkeypatch):
+    """A tree declares several executables and a type stages one of them.
+    Compiling the others is work whose output this type never reads - and a
+    bare `make` succeeds when the named target is gone, which `make <target>`
+    does not."""
+    source = repo / "rp2040"
+    seen: list[list[str]] = []
+
+    def fake_run(cmd, *, cwd, reporter, cancel=None, dry_run=False, **kw):
+        seen.append(list(cmd))
+        (source / "build").mkdir(exist_ok=True)
+        (source / "build" / "CMakeCache.txt").write_text(
+            f"CMAKE_HOME_DIRECTORY:INTERNAL={source}\n", encoding="utf-8"
+        )
+        (source / "build" / "roadrunner_v1_i2c_rgb.uf2").write_bytes(b"IMAGE")
+        return 0
+
+    monkeypatch.setattr(cmake.build_mod, "run_streamed", fake_run)
+    target = _cmake_type(source)
+    cmake.build(paths, settings, target)
+
+    (make,) = [c for c in seen if c[0] == "make"]
+    assert make[-1] == target.cmake_target == "roadrunner_v1_i2c_rgb"
+
+
 def test_a_cleaned_tree_reconfigures_on_the_next_build(paths, settings, repo, monkeypatch):
     """The point of the whole operation: `needs_configure` sees a cache naming
     the right source tree and skips configure, which is exactly what keeps a

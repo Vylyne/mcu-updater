@@ -1,13 +1,13 @@
-"""CMake trees: configure once, build all targets, stage the one named.
+"""CMake trees: configure once, build the target named, and stage it.
 
 The third build system, and the first whose `source:` is a *subdirectory* of
 its repository. Both facts shape this module.
 
-**One build produces every target.** Roadrunner's `CMakeLists.txt` declares six
-executables - three transports times two LED orderings - and one `make`
-produces all six `.uf2` files. So `cmake_target:` selects *which output is
-staged*, not what gets compiled, and build-time and flash-time selection fall
-out of one key. See docs/cmake-provider-design.md.
+**One tree declares several targets.** Roadrunner's `CMakeLists.txt` declares
+six executables - three transports times two LED orderings - in one build
+directory. `cmake_target:` names the one a type compiles (`make <target>`) and
+stages, so build-time and flash-time selection fall out of one key. See
+docs/cmake-provider-design.md.
 
 **Git is scoped to the source subtree.** `pio.source_state()` asks the whole
 repository, which was always right there because knomi serial's `source:` is
@@ -543,11 +543,11 @@ def build(
     reporter: Reporter = null_reporter,
     cancel: threading.Event | None = None,
 ) -> str:
-    """Configure if needed, build every target, stage the one named.
+    """Configure if needed, build the named target, stage it.
 
-    Returns the staged path. One `make` produces every image the tree
-    declares; `cmake_target` selects which of them is staged, so build-time
-    and flash-time selection come out of one config key.
+    Returns the staged path. The tree may declare several images;
+    `cmake_target` is the one that is compiled and the one that is staged, so
+    build-time and flash-time selection come out of one config key.
     """
     source = os.path.expanduser(target.source or "")
     build_path = build_dir(source)
@@ -607,7 +607,9 @@ def build(
 
     reporter("info", f"Building {target.cmake_target}...")
     rc = build_mod.run_streamed(
-        ["make", "-C", build_path, *settings.make_flags()],
+        # The one target, not `all`: this type stages nothing else, and a
+        # target the tree no longer declares fails here instead of succeeding.
+        ["make", "-C", build_path, *settings.make_flags(), target.cmake_target],
         cwd=source,
         reporter=reporter,
         cancel=cancel,
@@ -634,14 +636,17 @@ def build(
     # itself when CMakeLists.txt has moved (cmake_check_build_system), so by
     # here the declared target list describes this tree as it is now.
     #
-    # This is the only check that the bytes about to be staged are bytes this
-    # run could have produced. `make` builds `all` and succeeds when an
-    # upstream rename drops the configured target; the previous build's `.uf2`
-    # survives on disk - cmake does not remove outputs of removed targets - and
-    # staging it would stamp an older commit's image with today's sha, which
-    # `artifact_status()` would then call current. `blocked()` asks the same
-    # question earlier for a readable refusal, but it asks a possibly-stale
-    # build system and cannot be the thing that guarantees this.
+    # The check that the bytes about to be staged are bytes this run could
+    # have produced. An upstream rename drops the configured target and leaves
+    # the previous build's `.uf2` on disk - cmake does not remove outputs of
+    # removed targets - and staging it would stamp an older commit's image
+    # with today's sha, which `artifact_status()` would then call current.
+    # `make <target>` already fails on a target the Makefiles do not know, so
+    # this is the second witness and the one with a readable message; it is
+    # kept because the two ask different things - make its generated
+    # Makefiles, this the build system cmake describes. `blocked()` asks the
+    # same question earlier, but it asks a possibly-stale build system and
+    # cannot be the thing that guarantees this.
     #
     # None means "could not be asked" - an unconfigured directory, no cmake on
     # PATH - not "declares nothing"; there the `os.path.exists` check below is

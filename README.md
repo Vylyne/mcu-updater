@@ -674,9 +674,9 @@ A few things to know:
 ### RP2040 cmake trees
 
 One `CMakeLists.txt` commonly declares several executables at once -
-Roadrunner's declares six, three transports times two neopixel orderings - and
-one `make` builds all of them. `cmake_target:` is what selects which one gets
-staged for a given board:
+Roadrunner's declares six, three transports times two neopixel orderings.
+`cmake_target:` is what selects which one gets built and staged for a given
+board:
 
 ```ini
 # mcu-updater.cfg

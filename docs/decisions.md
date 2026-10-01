@@ -370,6 +370,11 @@ is required of every section, so a config missing it cannot flash anything,
 while `helper:` is optional and a typo in it should cost one family rather
 than every row in the panel.
 
+A `[type]` whose `firmware:` names no declared family is refused at load too,
+for every builder (`typelist.validate`), and `fw.status` answers
+`config_corrupt` naming the fix. Confirmed as intended on 2026-10-01: it is not
+to be softened into one degraded row.
+
 ### A family's list picks the flasher
 
 `flashers.select` walks the family's `flashers:` list and takes the first
@@ -663,6 +668,30 @@ one claimant over another ahead of an irreversible write is not a call this
 tool gets to make on a caller's behalf. Reversing it - routing by a `family`
 param instead - would need the caller to already know which firmware a board
 that has, by definition, no durable identity yet is running.
+
+### The identity lock is process-local, and stays that way
+
+`fw.identity.provision`, `fw.identity.clear` and `fw.serial.add` refuse each
+other with `busy` while one is running (`_identity_change` in
+`agent/methods/status.py`), so a serial cannot become tracked between an
+identity write's untracked check and the write itself. The lock is a
+`threading.Lock`: it covers the agent's RPC pool and nothing else.
+
+The known gap is the CLI. A `provision` or `add` run from a shell while the
+agent handles the other call is a second process, and can still land in that
+window - leaving the registry naming a serial the board no longer has.
+Accepted, not pending: both commands have to start within the same moment, on
+the same board, from two different front ends, and the result is a stale
+registry entry an untrack fixes, not a bad write.
+
+Do not close it by taking the operation lock in `fw.serial.add`. That lock is
+held by every build and flash, so tracking would be refused for the length of
+any job, and `tracking.add_serial`'s own provisioning branch takes it again
+underneath and would refuse itself. A second untracked check inside the write's
+lock only narrows the window, and makes the first check's mutation guards
+redundant. And do not make the lock wait instead of refuse: a queued add tracks
+the old serial the moment a clear finishes, which is the outcome the lock
+exists to prevent.
 
 ### One loop per operation, and handlers for everything else
 

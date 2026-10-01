@@ -315,6 +315,34 @@ def test_a_successful_upload_records_the_image_it_wrote(paths, settings, display
     assert pio.read_sidecar(paths, display)["bin_sha256"] == sha256_file(image)
 
 
+def test_a_record_that_cannot_be_written_does_not_fail_a_finished_upload(
+    paths, settings, display, monkeypatch
+):
+    """The device holds the new image by the time the record is taken. Reporting
+    that flash as failed over our own bookkeeping would be the wrong answer to
+    the only question the caller asked."""
+
+    def unwritable(*args):
+        raise PermissionError(13, "Permission denied")
+
+    said = []
+    monkeypatch.setattr(pio, "run_streamed", lambda cmd, **kw: 0)
+    monkeypatch.setattr(pio, "find_pio", lambda s: "/usr/bin/pio")
+    monkeypatch.setattr(pio.os.path, "realpath", lambda p: p)
+    monkeypatch.setattr(pio, "record_build", unwritable)
+
+    result = pio.upload(
+        paths,
+        settings,
+        display,
+        "/dev/knomi_t0",
+        reporter=lambda stream, line: said.append((stream, line)),
+    )
+
+    assert result["port"] == "/dev/knomi_t0"
+    assert [line for stream, line in said if "Permission denied" in line]
+
+
 def test_a_dry_run_upload_records_nothing(paths, settings, display, monkeypatch):
     """A rehearsal wrote nothing, so there is no image to describe."""
     import dataclasses

@@ -601,7 +601,12 @@ def upload(
     # now is the one this device holds - which the record from our own build
     # may not describe. Re-taken here, before the flash log reads it.
     if not settings.dry_run:
-        record_build(paths, entry, source_state(source))
+        try:
+            record_build(paths, entry, source_state(source))
+        except OSError as exc:
+            # The write is done and cannot be taken back; failing the flash
+            # here would report the opposite of what happened to the board.
+            reporter("info", f"Could not record the image just written: {exc}")
     return {
         "port": port,
         "chip": chip.group(1) if chip else None,

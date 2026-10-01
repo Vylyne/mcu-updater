@@ -24,7 +24,8 @@ truth** — and `tests/test_agent_methods.py` is what stops them drifting.
   `source`, `extras` and `devices_note` replace it on every row, and a
   PlatformIO row names its `firmware`. `fw.device.list` is gone. `fw.flash_all`
   and the PlatformIO `fw.flash` answer `{job_id, job}` only; PlatformIO jobs are
-  kinds `flash` and `build`. `fw.target.get` names a PlatformIO type's
+  kinds `flash` and `build`, so a PlatformIO build is immediately cancellable
+  and no longer holds up an agent shutdown. `fw.target.get` names a PlatformIO type's
   `devices`, and no longer echoes `klipper_section`, `device_map` or the
   retired `service`. `fw.roadrunner.provision`/`.clear` are
   `fw.identity.provision`/`.clear`, routed to whichever helper claims the
@@ -1700,7 +1701,10 @@ one, else by `configured_path` - never a live-discovered path, which changes
 when the device moves socket. Rolled into `fw.status`'s `targets[]` row
 directly now (there is no separate listing call); the build record each row's
 `has_firmware`/`artifact_reason` are judged against lives at
-`data_dir/platformio/<env>.build.json`, one sidecar per env.
+`data_dir/platformio/<env>.build.json`, one sidecar per env. It is written
+after a build and again after every successful upload: `pio run -t upload`
+rebuilds a stale image before it writes, so the image on disk after an upload
+is the one the device holds, and the flash log records that one.
 
 **`configured_id` and `reported_id` are different questions.**
 `configured_id` is what printer.cfg names (`device_id:`), so it is `null`

@@ -19,7 +19,7 @@ from __future__ import annotations
 # AGENTS.md). pyproject.toml's own version is derived from this, not the other
 # way round - see [tool.setuptools.dynamic] there. ui-release.yml refuses to
 # publish a tag that disagrees with this value.
-__version__ = "0.4.0"
+__version__ = "0.5.0"
 
 # Bumped only on a breaking change to the agent's JSON-RPC surface. The Mainsail
 # panel refuses to render if it sees an API version it doesn't know.

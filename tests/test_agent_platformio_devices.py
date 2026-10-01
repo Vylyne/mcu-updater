@@ -176,6 +176,27 @@ def test_two_types_sharing_a_prefix_both_list_it_and_it_is_queried_once(paths, f
     assert len(call.queries) == 1
 
 
+def test_a_status_poll_reads_the_type_list_and_resolves_each_lister_once(paths, fake_root, fake):
+    """`platformio_status` hands `platformio_devices`' half the listers it
+    already resolved. Each used to load the type list and resolve every lister
+    for itself, so one poll did both twice."""
+    (fake_root / "fakefw").mkdir()
+    write_main_config(paths, _config(fake_root / "fakefw", "fake_a", "fake_b"))
+    api = Api(paths)
+    api._call = serve_klipper({"fake_dev t0": {}})
+    loads, resolved = [], []
+    types_of, lister_for = api.platformio_types, api._device_lister_for
+    api.platformio_types = lambda: loads.append(1) or types_of()
+    api._device_lister_for = lambda entry, families: (
+        resolved.append(entry.name) or lister_for(entry, families)
+    )
+
+    api.platformio_status()
+
+    assert len(loads) == 1
+    assert sorted(resolved) == ["fake_a", "fake_b"]
+
+
 def test_a_family_with_no_lister_lists_nothing_and_names_itself(paths, fake_root):
     (fake_root / "plainfw").mkdir()
     write_main_config(paths, _config(fake_root / "plainfw", "plain", family="plainfw", helper=None))

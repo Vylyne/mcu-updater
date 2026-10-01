@@ -543,15 +543,18 @@ class StatusMixin(_Base):
         if not types:
             return []
 
-        listed, reachable = self.platformio_devices()
+        # Resolved here and handed on, so one poll loads the type list and
+        # resolves each lister once rather than once per half.
+        families = firmware.load(self.paths)
+        listers = {name: self._device_lister_for(entry, families) for name, entry in types.items()}
+        listed, reachable = self._listed_devices(listers)
         # Read once for every device of every type, not once per device.
         flashlog = FlashLog(self.paths)
-        families = firmware.load(self.paths)
 
         out = []
         for name, entry in sorted(types.items()):
             reader = device_info.reader_for(families.get(entry.firmware))
-            lister = self._device_lister_for(entry, families)
+            lister = listers[name]
             # Once per type, not once per device: they share a source tree, and
             # it costs three git calls.
             tree = pio_mod.source_state(entry.source)
@@ -2122,7 +2125,14 @@ class StatusMixin(_Base):
         """
         types = self.platformio_types()
         families = firmware.load(self.paths)
-        listers = {name: self._device_lister_for(entry, families) for name, entry in types.items()}
+        return self._listed_devices(
+            {name: self._device_lister_for(entry, families) for name, entry in types.items()}
+        )
+
+    def _listed_devices(
+        self, listers: dict[str, DeviceLister | None]
+    ) -> tuple[dict[str, list[ListedDevice]], bool]:
+        """`platformio_devices` for listers already resolved, one per type."""
         prefixes = sorted({lister.klipper_prefix for lister in listers.values() if lister})
         if not prefixes:
             return {}, True

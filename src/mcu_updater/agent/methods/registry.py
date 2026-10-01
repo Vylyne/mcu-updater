@@ -244,10 +244,11 @@ class RegistryMixin(_Base):
         reason and the existing `UnprovisionedSerialError` /
         `serial_unprovisioned` - not a new code.
 
-        Serialised against `fw.identity.*`, which must not have a serial
-        tracked between its untracked check and its write.
+        Refused with `busy` while `fw.identity.*` or another add is running:
+        an identity write must not have a serial tracked between its untracked
+        check and its write.
         """
-        with self._identity_lock:
+        with self._identity_change():
             return self._serial_add(args)
 
     def _serial_add(self, args: dict) -> dict[str, Any]:

@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import contextlib
 import dataclasses
 import os
 import platform
 import threading
 import time
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Iterable, Iterator
 from typing import TYPE_CHECKING, Any
 
 from ... import (
@@ -182,8 +183,9 @@ class StatusMixin(_Base):
         # RPCs run on a pool. Held by `fw.identity.*` from the untracked check
         # through the write, and by `fw.serial.add` across its own, so a serial
         # cannot be tracked in the gap and leave the registry naming an
-        # identity the board no longer has. Process-local, and taken outside
-        # the operation lock: tracking must stay possible during a build.
+        # identity the board no longer has. Never waited for - see
+        # `_identity_change`. Process-local, and taken outside the operation
+        # lock: tracking must stay possible during a build.
         self._identity_lock = threading.Lock()
 
     # -- helpers -----------------------------------------------------------
@@ -1698,9 +1700,27 @@ class StatusMixin(_Base):
                 },
             )
 
+    @contextlib.contextmanager
+    def _identity_change(self) -> Iterator[None]:
+        """One identity write or serial add at a time; a second is refused.
+
+        Refused, not queued: both can write a board's identity irreversibly,
+        and a call that waited would do that at a moment nobody chose - or
+        track the serial the write it waited for had just retired.
+        """
+        if not self._identity_lock.acquire(blocking=False):
+            raise BusyError(
+                "a board's identity is being written, or a serial is being tracked. "
+                "Try again once that finishes."
+            )
+        try:
+            yield
+        finally:
+            self._identity_lock.release()
+
     def identity_provision(self, args: dict) -> dict[str, Any]:
         """Give one confirmed, untracked board its durable identity."""
-        with self._identity_lock:
+        with self._identity_change():
             return self._identity_provision(args)
 
     def _identity_provision(self, args: dict) -> dict[str, Any]:
@@ -1719,7 +1739,7 @@ class StatusMixin(_Base):
 
     def identity_clear(self, args: dict) -> dict[str, Any]:
         """Return one confirmed, untracked board to its unprovisioned identity."""
-        with self._identity_lock:
+        with self._identity_change():
             return self._identity_clear(args)
 
     def _identity_clear(self, args: dict) -> dict[str, Any]:

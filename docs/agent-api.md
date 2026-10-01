@@ -249,7 +249,10 @@ durable serial is tracked; the request's serial comes back as `prior_serial`.
 
 Provisioning holds the operation lock. A lock held elsewhere refuses with
 `busy` and does not retry — this is the one call under `fw.serial.add` that
-writes to hardware. A helper refusal that cannot be remedied here still returns
+writes to hardware. `fw.serial.add`, `fw.identity.provision` and
+`fw.identity.clear` also refuse each other with `busy` while one of them is
+running, so a serial cannot be tracked between an identity write's untracked
+check and the write itself. A helper refusal that cannot be remedied here still returns
 the helper's reason with `serial_unprovisioned`.
 
 Because that write is irreversible in exactly the same way

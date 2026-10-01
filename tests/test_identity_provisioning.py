@@ -152,7 +152,8 @@ def test_a_serial_cannot_be_tracked_while_its_identity_is_being_written(
 ):
     """RPCs run on a pool. The untracked check and the write are one step as far
     as `fw.serial.add` is concerned: tracked in between, the registry would be
-    left naming a serial the board no longer has."""
+    left naming a serial the board no longer has. Refused rather than queued -
+    an add that waited would track that same serial the moment the write ended."""
     import threading
 
     with open(paths.registry_file, "a", encoding="utf-8", newline="\n") as fh:
@@ -160,16 +161,20 @@ def test_a_serial_cannot_be_tracked_while_its_identity_is_being_written(
             "\n[firmware fakefw]\nsource: ~/fakefw\nbuilder: cmake\nflashers: bootsel\n"
             "\n[type faketype]\nchipset: rp2040\nfirmware: fakefw\n"
         )
-    adding = threading.Thread(
-        target=lambda: api.dispatch("fw.serial.add", {"name": "faketype", "serial": serial})
-    )
-    tracked_during_the_write = []
+    answers: list = []
+
+    def add():
+        try:
+            answers.append(api.dispatch("fw.serial.add", {"name": "faketype", "serial": serial}))
+        except RpcError as exc:
+            answers.append(exc)
+
+    adding = threading.Thread(target=add)
     plain = getattr(fake, write)
 
     def write_while_someone_tracks_it(paths_, serial_):
         adding.start()
-        adding.join(timeout=0.3)
-        tracked_during_the_write.extend(api.registry().find_declared_types_for_serial(serial_))
+        adding.join(timeout=5)
         return plain(paths_, serial_)
 
     monkeypatch.setattr(fake, write, write_while_someone_tracks_it)
@@ -178,7 +183,10 @@ def test_a_serial_cannot_be_tracked_while_its_identity_is_being_written(
     adding.join(timeout=10)
 
     assert not adding.is_alive()
-    assert tracked_during_the_write == []
+    (refused,) = answers
+    assert isinstance(refused, RpcError)
+    assert refused.data["code"] == "busy"
+    assert api.registry().find_declared_types_for_serial(serial) == []
 
 
 def test_the_old_method_names_are_gone(api):

@@ -20,6 +20,7 @@ maintain by hand for no benefit anything here uses.
 
 from __future__ import annotations
 
+import contextlib
 import threading
 from typing import TYPE_CHECKING, Any, Protocol
 
@@ -47,6 +48,8 @@ class _Api(Protocol):
     _object_names: list[str] | None
     _object_names_at: float
     _identity_lock: threading.Lock
+
+    def _identity_change(self) -> contextlib.AbstractContextManager[None]: ...
 
     # -- pairing TTL, status.py ------------------------------------------
     PAIRING_TTL: float

@@ -2,10 +2,10 @@
 
 Three functions used to answer "does this device want firmware, and why?" and
 they disagreed: `agent.methods.status._device_status` for kconfig boards,
-`providers.pio.device_status` for screens, and a fixed `unknown_version` stub
-for CMake boards - which is why a Roadrunner's panel row never said anything at
-all. They are one function now, pure over its two inputs so that every row
-shape is testable without hardware.
+`providers.pio.device_status` for PlatformIO devices, and a fixed
+`unknown_version` stub for CMake boards - which is why a Roadrunner's panel row
+never said anything at all. They are one function now, pure over its two
+inputs so that every row shape is testable without hardware.
 
 The rules are the provenance spec's
 (`docs/superpowers/specs/2026-09-11-cmake-provenance-design.md`), unchanged:
@@ -58,7 +58,7 @@ from .states import (
 #: and the Roadrunner's repo-wide `git describe` both land here.
 STAMP_BUILT = "built"
 #: The stamp is the source tree's own version, so a match only means anything
-#: while the tree is still sitting on that tag, clean. The screens' rule.
+#: while the tree is still sitting on that tag, clean. The PlatformIO devices' rule.
 STAMP_TAG = "tag"
 
 #: The four INFO fields that make a digest comparable. Named once: the board's
@@ -106,7 +106,7 @@ class Expected:
     #: STAMP_TAG only: the tree is still on the tag it stamped, and clean.
     tag_clean: bool = False
     #: No tree at all is "cannot tell" for this caller, whatever else it has.
-    #: The screens' rule, and theirs alone.
+    #: The PlatformIO devices' rule, and theirs alone.
     require_head: bool = False
     #: Every hash `artifacts.recorded_hashes` returned for the sidecar on disk
     #: now - one build's worth, whichever kind(s) it staged.

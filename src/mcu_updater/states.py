@@ -1,10 +1,11 @@
 """One vocabulary for the two questions this tool actually answers.
 
 Four vocabularies grew up saying overlapping things about firmware currency:
-``build.staleness()`` returned ``stale_reason``, ``displays.artifact_state()``
-returned ``ART_*``, ``displays.firmware_state()`` returned ``FW_*``, and
-``Api.flash_state()`` returned its own ``reason``. Two of them disagreed about
-what "unknown" meant, and a fifth was about to arrive with cartographer.
+``build.staleness()`` returned ``stale_reason``, the PlatformIO side's
+``artifact_state()`` returned ``ART_*``, its ``firmware_state()`` returned
+``FW_*``, and ``Api.flash_state()`` returned its own ``reason``. Two of them
+disagreed about what "unknown" meant, and a fifth was about to arrive with
+cartographer.
 
 They are not four questions. They are two, asked about different subjects:
 
@@ -17,9 +18,9 @@ They are not four questions. They are two, asked about different subjects:
     A version string reported over USB, a bus state, a flash record. Answered by
     :class:`DeviceStatus`. This is a question about *hardware*.
 
-The MCU side had both and named them differently; the display side had both and
-named them differently again. Nothing here is a new concept - it is the two that
-were already there, spelled once.
+The MCU side had both and named them differently; the PlatformIO side had both
+and named them differently again. Nothing here is a new concept - it is the two
+that were already there, spelled once.
 
 **The reason is the fact; everything else is a view of it.** ``state`` and
 ``needs_flash`` are derived from ``reason`` rather than stored alongside it, so

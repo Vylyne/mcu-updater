@@ -235,15 +235,23 @@ class RegistryMixin(_Base):
         and the resulting serial is what gets tracked. That does touch the
         board. `prior_serial` says so.
 
-        That write is gated the same way `fw.roadrunner.provision` is
+        That write is gated the same way `fw.identity.provision` is
         (`_hardware_writes_allowed`) even though this method itself sits in
         the ungated `METHODS` table: a read-only or flashing-disabled
         deployment must not perform an irreversible hardware write just
         because it arrived through ordinary tracking instead of the
         dedicated maintenance call. Withheld, it refuses with the helper's
         reason and the existing `UnprovisionedSerialError` /
-        `roadrunner_unprovisioned` - not a new code.
+        `serial_unprovisioned` - not a new code.
+
+        Refused with `busy` while `fw.identity.*` or another add is running:
+        an identity write must not have a serial tracked between its untracked
+        check and its write.
         """
+        with self._identity_change():
+            return self._serial_add(args)
+
+    def _serial_add(self, args: dict) -> dict[str, Any]:
         name = self._require_str(args, "name")
         serial = self._require_str(args, "serial")
 
@@ -273,7 +281,7 @@ class RegistryMixin(_Base):
         except UnprovisionedSerialError as exc:
             # Same code and message shape this raised before the refusal moved
             # into `tracking.add_serial` so the CLI could share it - the wire
-            # contract in docs/agent-api.md names only `roadrunner_unprovisioned`
+            # contract in docs/agent-api.md names only `serial_unprovisioned`
             # and `serial`, but keeping the shape identical costs nothing.
             raise RpcError(
                 exc.message,

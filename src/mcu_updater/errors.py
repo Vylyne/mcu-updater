@@ -82,12 +82,9 @@ class SerialTrackedElsewhereError(ConfigError):
 
 
 class UnprovisionedSerialError(ConfigError):
-    """A helper refused a serial because it is not a durable identity.
+    """A helper refused a serial because it is not a durable identity."""
 
-    The firmware-named code is retained as a wire-compatibility constraint.
-    """
-
-    code = "roadrunner_unprovisioned"
+    code = "serial_unprovisioned"
 
 
 class UuidTrackedElsewhereError(ConfigError):

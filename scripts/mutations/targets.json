@@ -47,12 +47,12 @@
     },
     {
       "name": "a protocol mismatch outranks the version comparison",
-      "find": "        if screen.get(\"protocol_match\") is False:\n            return DeviceStatus(PROTOCOL_MISMATCH)",
+      "find": "        if device.get(\"compatible\") is False:\n            return DeviceStatus(PROTOCOL_MISMATCH)",
       "replace": "        if False:\n            return DeviceStatus(PROTOCOL_MISMATCH)"
     },
     {
       "name": "an unreachable screen is never reported current",
-      "find": "        if not screen[\"present\"]:\n            return DeviceStatus(OFFLINE)",
+      "find": "        if not device[\"present\"]:\n            return DeviceStatus(OFFLINE)",
       "replace": "        if False:\n            return DeviceStatus(OFFLINE)"
     },
     {
@@ -67,8 +67,8 @@
     },
     {
       "name": "a screen's flash is pinned to the identity its row reports",
-      "find": "                            {\"name\": name, \"port\": screen_id},",
-      "replace": "                            {\"name\": name, \"port\": screen[\"configured_path\"]},"
+      "find": "                            {\"name\": name, \"port\": device[\"id\"]},",
+      "replace": "                            {\"name\": name, \"port\": device[\"resolved_path\"]},"
     },
     {
       "name": "a board's flash names the board",
@@ -105,6 +105,11 @@
       "name": "first_install is answered from the projection's one config read",
       "find": "        by_name = {e.name: e for e in entries}",
       "replace": "        by_name = {e.name: e for e in typelist.read_config(self.paths)[0]}"
+    },
+    {
+      "name": "a row with devices carries no devices_note",
+      "find": "            \"devices_note\": None if devices else NO_TRACKED_DEVICES,",
+      "replace": "            \"devices_note\": NO_TRACKED_DEVICES,"
     }
   ]
 }

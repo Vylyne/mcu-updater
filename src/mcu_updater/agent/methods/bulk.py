@@ -47,20 +47,6 @@ def _board_request(board: dict) -> tuple[flashers.Device, tuple[str, ...]]:
     )
 
 
-def _platformio_json(target: flashers.FlashTarget) -> dict[str, Any]:
-    """A selected screen, for a caller naming what is about to happen.
-
-    The uniform slots plus the two facts a confirmation actually reads out: the
-    klipper section a human recognises, and why this one was picked.
-    """
-    return {
-        **target.to_json(),
-        "name": target.detail["name"],
-        "section": target.detail["section"],
-        "reason": target.detail.get("reason"),
-    }
-
-
 class BulkMixin(_Base):
     # -- bulk operations ----------------------------------------------------
 
@@ -102,10 +88,10 @@ class BulkMixin(_Base):
         decision rather than a second copy of the vocabulary.
 
         Walking providers rather than the `[mcu ...]` registry is what puts
-        screens in a fleet build. The registry was the only list this had, so
-        "build everything" meant "build every MCU" and every display was left on
-        whatever it was running - silently, because nothing enumerated them to
-        notice they were missing.
+        PlatformIO devices in a fleet build. The registry was the only list this
+        had, so "build everything" meant "build every MCU" and every PlatformIO
+        type was left on whatever it was running - silently, because nothing
+        enumerated them to notice they were missing.
 
         `only` narrows to one target, which is what makes "update this one board
         type" the same operation with a filter rather than another loop. `fw`
@@ -343,29 +329,30 @@ class BulkMixin(_Base):
                 )
         return out
 
-    def _screens_to_flash(
+    def _platformio_to_flash(
         self, scope: str, only: str | None = None
     ) -> tuple[list[flashers.FlashTarget], list[dict[str, Any]]]:
-        """Which screens a flash_all should write, with the reason for each.
+        """Which PlatformIO devices a flash_all should write, with the reason
+        for each.
 
         **Selected here, at submission time, because only a running Klipper can
-        answer.** The screen list comes from the klippy module's own printer
+        answer.** The device list comes from the klippy module's own printer
         objects, so it has to be read before anything stops - which is exactly
         why selection is the agent's job and not the flasher's.
 
-        The same two exclusions as boards, for the same reasons: a display with
-        nothing built has nothing to write, and a screen that is not there
+        The same two exclusions as boards, for the same reasons: a type with
+        nothing built has nothing to write, and a device that is not there
         cannot be written to. `scope: all` overrides the judgement, never the
         physics.
 
-        Returns `(targets, refused)` from `flashers.select_each`: a screen its
+        Returns `(targets, refused)` from `flashers.select_each`: a device its
         family cannot write is a refusal for the batch to report.
         """
-        known = self.pio_types()
+        known = self.platformio_types()
         settings = self.settings()
         families = firmware.load(self.paths)
         requests: list[tuple[flashers.Device, tuple[str, ...]]] = []
-        for payload in self.pio_status():
+        for payload in self.platformio_status(known):
             if only is not None and payload["name"] != only:
                 continue
             if not payload["has_firmware"]:
@@ -373,25 +360,25 @@ class BulkMixin(_Base):
             # The live object, not one rebuilt from the payload: `to_json` is a
             # wire projection and reversing it is the thing this codebase keeps
             # deciding not to do.
-            display = known[payload["name"]]
-            units = stop_services.for_platformio(self.paths, display, settings, families)
-            for screen in payload["screens"]:
-                if not screen["present"]:
+            entry = known[payload["name"]]
+            units = stop_services.for_platformio(self.paths, entry, settings, families)
+            for device in payload["devices"]:
+                if not device["present"]:
                     continue
-                status = self._platformio_device_status(screen)
+                status = self._platformio_device_status(device)
                 if scope != "all" and status.needs_flash is not True:
                     continue
                 requests.append(
                     (
                         flashers.Device(
-                            type=display.name,
-                            id=screen["configured_path"],
+                            type=entry.name,
+                            id=device["configured_path"],
                             chipset="",
                             state=inventory.STATE_UNKNOWN,
-                            fw=display.firmware,
+                            fw=entry.firmware,
                             kind=flashers.KIND_PORT,
                             detail={
-                                **port_detail(display, screen),
+                                **port_detail(entry, device),
                                 "reason": "forced" if scope == "all" else status.reason,
                             },
                         ),
@@ -414,8 +401,8 @@ class BulkMixin(_Base):
 
         Each target names its own provider and family, so one pass compiles
         cartographer for the probe, klipper for the boards and PlatformIO for the
-        screens - rather than one build system for everything and silence about
-        whatever did not fit.
+        PlatformIO devices - rather than one build system for everything and
+        silence about whatever did not fit.
 
         The same config snapshot selects and builds the targets. A change made
         after submission belongs to the next operation; mixing its fresh maps
@@ -447,7 +434,7 @@ class BulkMixin(_Base):
         """The host, as a flasher needs to see it.
 
         A controller *factory* rather than a controller: the units are not known
-        until the batch is - a display family names its own port watcher, and a
+        until the batch is - a PlatformIO family names its own port watcher, and a
         batch spanning two families needs two. Sharing the factory keeps the
         backend choice in one place, which is what stops a dry run from stopping
         a real service.
@@ -487,15 +474,15 @@ class BulkMixin(_Base):
         """Build everything that needs it. Touches no board and stops nothing.
 
         Everything, across every build system: an MCU's kconfig families and a
-        display's PlatformIO env are both things this host builds, and the only
-        reason screens were left out was that the registry was the only list
-        this had to walk.
+        PlatformIO type's own env are both things this host builds, and the only
+        reason PlatformIO devices were left out was that the registry was the
+        only list this had to walk.
 
         `fw` is an optional *filter* - "rebuild katapult everywhere" - not the
         family to build for everything. It used to be the latter, defaulting to
         klipper, which meant a type running any other application was skipped
         for want of a klipper config and the batch reported success regardless.
-        A named `fw` also excludes displays, which is correct rather than
+        A named `fw` also excludes PlatformIO types, which is correct rather than
         incidental: a PlatformIO env has no family to be one of.
         """
         runner = self._require_runner()
@@ -552,9 +539,10 @@ class BulkMixin(_Base):
     def flash_all(self, args: dict) -> dict[str, Any]:
         """Flash everything that needs it, or everything of one type.
 
-        Boards and screens both. `flash_all` walked the `[mcu ...]` registry
-        because that was the only selection it had, so "Flash All" meant "flash
-        all the boards" and every display was left behind without a word.
+        Boards and PlatformIO devices both. `flash_all` walked the `[mcu ...]`
+        registry because that was the only selection it had, so "Flash All" meant
+        "flash all the boards" and every PlatformIO type was left behind without
+        a word.
 
         `name` narrows it to a single type - that is `flash_type`, which is the same
         operation with a filter rather than a second implementation of it.
@@ -587,8 +575,8 @@ class BulkMixin(_Base):
         # Read now, while Klipper can still answer - the same constraint
         # `_pio_flash` has always had, and the reason this is selection
         # rather than something the batch could work out for itself.
-        screens, screens_refused = self._screens_to_flash(scope, only)
-        if not boards and not screens and not screens_refused:
+        platformio, platformio_refused = self._platformio_to_flash(scope, only)
+        if not boards and not platformio and not platformio_refused:
             raise RpcError(
                 "nothing to flash: every online device already matches its built "
                 "firmware. Use scope 'all' to flash regardless.",
@@ -613,8 +601,8 @@ class BulkMixin(_Base):
         board_targets, refused = flashers.select_each(
             self.paths, firmware.load(self.paths), [_board_request(b) for b in boards]
         )
-        targets = board_targets + screens
-        refused += screens_refused
+        targets = board_targets + platformio
+        refused += platformio_refused
 
         def run(ctx) -> dict[str, Any]:
             return self._do_flash_all(ctx, targets, refused=refused)
@@ -624,17 +612,7 @@ class BulkMixin(_Base):
             {"scope": scope, "name": only, "count": len(targets) + len(refused)},
             run,
         )
-        return {
-            "job_id": job.id,
-            "job": job.to_dict(),
-            "boards": boards,
-            # Beside `boards` rather than merged into it: the two selections
-            # answer with different facts - a board has a chipset and a serial,
-            # a screen has a port and a section - and flattening them would
-            # invent nulls for half of each.
-            # A screen its family cannot write is not here; it is in the job's failures[].
-            "displays": [_platformio_json(t) for t in screens],
-        }
+        return {"job_id": job.id, "job": job.to_dict()}
 
     def update_all(self, args: dict) -> dict[str, Any]:
         """Build what is stale, then flash what is behind - one Klipper stop.
@@ -650,9 +628,9 @@ class BulkMixin(_Base):
 
         Both halves cover every provider, because each is literally `build_all`
         and `flash_all` - which is the composition paying off rather than a
-        special case. A screen gained the build half when the provider seam
-        landed and the flash half when the flasher seam did, both times without
-        this method being edited.
+        special case. A PlatformIO device gained the build half when the
+        provider seam landed and the flash half when the flasher seam did, both
+        times without this method being edited.
         """
         runner = self._require_runner()
         settings = self.settings()
@@ -695,8 +673,9 @@ class BulkMixin(_Base):
             )
             # Selected *after* building, because a build is what makes a device
             # stale: choosing up front would use provenance the build has just
-            # invalidated. Screens included - a fleet update that rebuilt a
-            # screen's firmware and then declined to write it is half a job.
+            # invalidated. PlatformIO devices included - a fleet update that
+            # rebuilt a device's firmware and then declined to write it is half
+            # a job.
             reg_now = self.registry()
             boards = (
                 self._boards_to_flash(reg_now, scope, only)
@@ -708,9 +687,9 @@ class BulkMixin(_Base):
                 firmware.load(self.paths),
                 [_board_request(b) for b in boards],
             )
-            screens, screens_refused = self._screens_to_flash(scope, only)
-            devices = board_targets + screens
-            refused += screens_refused
+            platformio, platformio_refused = self._platformio_to_flash(scope, only)
+            devices = board_targets + platformio
+            refused += platformio_refused
             if not devices and not refused:
                 ctx.reporter("info", "No device was selected for flashing.")
                 return {"build": build_result, "flash": {"flashed": [], "failures": []}}

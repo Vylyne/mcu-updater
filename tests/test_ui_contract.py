@@ -57,3 +57,83 @@ def test_ui_supported_api_version_matches_the_agent():
         "against one it cannot actually understand - see docs/agent-api.md's "
         "fw.ping section."
     )
+
+
+SRC = REPO_ROOT / "src"
+
+_SUBMIT_RE = re.compile(r"""runner\.submit\(\s*["']([a-z_]+)["']""")
+_JOB_KIND_RE = re.compile(r"export type JobKind\s*=([^;]+);")
+_DEFERRED_RE = re.compile(r"DEFERRED_CANCEL_KINDS[^=]*=\s*new Set\(\[([^\]]*)\]")
+_QUOTED_RE = re.compile(r"""["']([a-z_]+)["']""")
+
+
+def _agent_job_kinds() -> set[str]:
+    kinds: set[str] = set()
+    for path in SRC.rglob("*.py"):
+        kinds |= set(_SUBMIT_RE.findall(path.read_text(encoding="utf-8")))
+    return kinds
+
+
+def _jobs_ts() -> str:
+    return (UI_SRC / "api" / "jobs.ts").read_text(encoding="utf-8")
+
+
+def _ui_job_kinds() -> set[str]:
+    match = _JOB_KIND_RE.search(_jobs_ts())
+    assert match is not None, "ui/src/api/jobs.ts must define JobKind"
+    return set(_QUOTED_RE.findall(match.group(1)))
+
+
+def _ui_deferred_kinds() -> set[str]:
+    match = _DEFERRED_RE.search(_jobs_ts())
+    assert match is not None, "ui/src/api/jobs.ts must define DEFERRED_CANCEL_KINDS"
+    return set(_QUOTED_RE.findall(match.group(1)))
+
+
+def test_every_job_kind_the_agent_submits_is_one_the_ui_names():
+    """A kind the UI has never heard of falls through `cancelIsImmediate` as
+    immediately cancellable. `display_flash` did exactly that, telling the user
+    a flash would stop mid-write when the agent was correctly deferring it."""
+    agent = _agent_job_kinds()
+    assert agent, "the runner.submit scan found nothing; the pattern has rotted"
+    assert agent <= _ui_job_kinds(), sorted(agent - _ui_job_kinds())
+
+
+def test_the_ui_defers_exactly_the_kinds_the_agent_defers():
+    from mcu_updater.jobs import IMMEDIATELY_CANCELLABLE
+
+    assert _ui_deferred_kinds() == _ui_job_kinds() - set(IMMEDIATELY_CANCELLABLE)
+
+
+# --------------------------------------------------------------------------
+# the targets[] row shape - ui/src/api/targets.ts's `Target` against a real row
+# --------------------------------------------------------------------------
+
+_TARGET_INTERFACE_RE = re.compile(r"export interface Target \{([^}]*)\}", re.DOTALL)
+_INTERFACE_FIELD_RE = re.compile(r"^\s*(\w+)\??:", re.MULTILINE)
+
+
+def _ui_target_fields() -> set[str]:
+    text = (UI_SRC / "api" / "targets.ts").read_text(encoding="utf-8")
+    match = _TARGET_INTERFACE_RE.search(text)
+    assert match is not None, "ui/src/api/targets.ts must define interface Target"
+    return set(_INTERFACE_FIELD_RE.findall(match.group(1)))
+
+
+def test_the_ui_target_declares_the_uniform_row_fields(paths, live_registry_text):
+    """`source`, `extras` and `devices_note` replaced the old per-row `extra`
+    bag (API_VERSION 5). Nothing fails if the UI's `Target` or the agent's row
+    renamed or dropped one of the three - the panel would just show nothing
+    for that field. Pin the UI's declared fields against a row the agent
+    actually built, the way `tests/test_agent_targets.py`'s
+    `test_a_tracked_type_has_no_devices_note` does."""
+    from mcu_updater.agent.methods import Api
+
+    fields = _ui_target_fields()
+    assert {"source", "extras", "devices_note"} <= fields
+    assert "extra" not in fields
+
+    with open(paths.registry_file, "w", encoding="utf-8") as fh:
+        fh.write(live_registry_text)
+    row = Api(paths).dispatch("fw.status")["targets"][0]
+    assert {"source", "extras", "devices_note"} <= set(row)

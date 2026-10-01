@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// One targets[] row, rendered the same way for an MCU or a display - see
+// One targets[] row, rendered the same way whatever builds it - see
 // docs/decisions.md and docs/agent-api.md's "targets" section for why the
 // two are one shape. Actions ride on the same row's own actions[] /
 // devices[].actions[] - ActionButton.vue is the {id, label, method, params,
@@ -7,7 +7,7 @@
 // the transient busy gate a payload never carries.
 //
 // Layout for a firmware target row: a
-// header line (name, descriptor, module version, device count, spacer,
+// header line (name, descriptor, device count, extras, spacer,
 // artifact chip, profile chip, actions, overflow menu), then one sub-row per
 // device (state icon, identity, spacer, version, verdict, device actions,
 // detail expander), then a trailing divider.
@@ -55,29 +55,12 @@ const detailText = computed(() =>
   detail.value ? JSON.stringify(detail.value, null, 2) : "",
 );
 
-// A display always carries `extra.klipper_section`; an MCU row carries no
-// `extra`, while CMake carries source metadata without that display-specific
-// field. Reading the field's presence, not `target.provider`, keeps this row
-// generic - provider describes how to build, not what a target is.
-//
-// `extra.reachable` gets its own branch first: docs/agent-api.md's
-// fw.device.list section is explicit that "no displays configured" and "we
-// could not ask Klipper" must not look the same, because the module that
-// would otherwise report a screen missing is exactly the thing an
-// unreachable Klipper takes down too.
-const noDevicesHint = computed(() => {
-  const extra = props.target.extra;
-  if (!extra || !("klipper_section" in extra)) {
-    return "No serial devices are tracked for this type yet.";
-  }
-  if (!extra.reachable) return "Could not reach Klipper to check for screens.";
-  return `No screens found under [${extra.klipper_section} ...].`;
-});
-
-const moduleVersion = computed(() => {
-  const extra = props.target.extra;
-  return extra && "module_version" in extra ? extra.module_version : null;
-});
+// The wire lets an extra's value be null - "the seam knows this fact exists
+// and cannot say it right now". A label with nothing after it says less than
+// no caption at all.
+const shownExtras = computed(() =>
+  props.target.extras.filter((e) => e.value !== null),
+);
 
 const deviceSummary = computed(() => {
   const present = props.target.devices.filter((d) => d.present).length;
@@ -159,8 +142,8 @@ const reseedDefault = computed(
       ?.reseed_on_build !== false,
 );
 
-/** The profile chip, or nothing - nothing for a display (no answers to
- * seed) and nothing for an unmanaged type (every type predating profiles).
+/** The profile chip, or nothing - nothing for a PlatformIO type (no answers
+ * to seed) and nothing for an unmanaged type (every type predating profiles).
  * A moved seed names the profile rather than saying "profile updated",
  * mirroring the target row's profile chip getter. */
 const profileChip = computed(() => {
@@ -185,8 +168,8 @@ const profileHint = computed(() => {
 });
 
 // MCU-type management (fw.type.add/.update/.remove) applies to a
-// kconfig_make target only - a display has no registry entry of this kind
-// to edit. Kept here rather than a provider branch on the row's rendering:
+// kconfig_make target only - a PlatformIO type has no registry entry of this
+// kind to edit. Kept here rather than a provider branch on the row's rendering:
 // this is the one place docs/standalone-ui.md records as "still unscheduled"
 // before this phase, and it stays additive - two extra menu rows, not a
 // change to how the row itself renders.
@@ -273,10 +256,15 @@ async function toggle(): Promise<void> {
       >
         {{ target.descriptor }}
       </span>
-      <span v-if="moduleVersion" class="text-caption text--disabled">
-        {{ moduleVersion }}
-      </span>
       <span class="text-caption text--disabled">{{ deviceSummary }}</span>
+      <span
+        v-for="extra in shownExtras"
+        :key="`${extra.seam}:${extra.name}:${extra.key}`"
+        data-extra
+        class="text-caption text--disabled"
+      >
+        {{ extra.label }} {{ extra.value }}
+      </span>
 
       <span class="spacer" />
 
@@ -391,7 +379,7 @@ async function toggle(): Promise<void> {
       </li>
     </ul>
     <p v-else class="muted">
-      {{ noDevicesHint }}
+      {{ target.devices_note }}
     </p>
 
     <button type="button" class="detail-toggle text-caption" @click="toggle">

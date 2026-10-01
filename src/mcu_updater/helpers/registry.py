@@ -21,6 +21,15 @@ HELPERS: tuple[Helper, ...] = (CartographerHelper(), KlipperHelper(), KnomiSeria
 _BY_NAME: dict[str, Helper] = {helper.name: helper for helper in HELPERS}
 
 
+def all_helpers() -> tuple[Helper, ...]:
+    """Every registered helper.
+
+    Read from `_BY_NAME` rather than `HELPERS` so that a stand-in a test
+    registers is asked too - the same table `for_name` resolves from.
+    """
+    return tuple(_BY_NAME.values())
+
+
 def for_name(name: str, *, family: str) -> Helper | None:
     """Resolve one configured helper, refusing misspellings before a write."""
     if not name:

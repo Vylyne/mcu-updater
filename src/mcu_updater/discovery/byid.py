@@ -57,7 +57,7 @@ KNOWN_SERIAL_BRIDGE_NAMES = (
     "usb_serial",                  # generic "USB Serial"/"USB2.0-Serial" iProduct text
 )
 
-#: Display-only. Never use these to build a path you then test for existence.
+#: For showing only. Never use these to build a path you then test for existence.
 KLIPPER_FW_NAME = "Klipper"
 KATAPULT_FW_NAME = "katapult"
 
@@ -117,7 +117,7 @@ class BusDevice:
         which `parse_entry` parses to fw=``1a86``, chipset=``USB`` - a
         perfectly well-formed `BusDevice` that is not a board at all. That
         mattered once the panel grew a one-tap "track this" next to the
-        untracked list: a Knomi display sitting in that list is one tap from
+        untracked list: a Knomi device sitting in that list is one tap from
         being added to the registry and having Klipper firmware built and
         flashed at it.
 
@@ -144,7 +144,7 @@ class Byid:
     A by-id serial is die-derived - the kernel names it, not an application
     that has to be running and cooperative to answer - so a match here is
     `UNIQUE_BUS_ID`, the same strength `discovery.confirm` gives a knomi
-    display that just answered a listen pass. Deferred import of
+    device that just answered a listen pass. Deferred import of
     `discovery.spec`: that module imports `.. devices`, which re-exports this
     module, so importing it at module scope here would be a cycle - the same
     shape `dfu_selector` already hit and resolved the same way.
@@ -303,7 +303,7 @@ def find_untracked(
 
     Filtered by `is_mcu`, so a CH340 behind a Knomi never appears here. Every
     caller is asking "what could I adopt?" - the CLI status listing, both TUI
-    pickers, and the add-mcu wait - and a display offered as an adoptable board
+    pickers, and the add-mcu wait - and a Knomi offered as an adoptable board
     is one keystroke from being tracked and having Klipper built and flashed at
     it.
 

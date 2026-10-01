@@ -39,7 +39,17 @@ __version__ = "0.4.0"
 #    `-if00` interface suffix.  The full `/dev/serial/by-id` path remains the
 #    transport address, but clients must key and submit devices by the canonical
 #    serial returned by the agent.
-API_VERSION = 4
+# 5: `targets[].extra` is gone - `source`, `extras` and `devices_note` replace
+#    it on every row, and a platformio row names its `firmware`. `fw.device.list`
+#    is gone. `fw.flash_all` and the PlatformIO `fw.flash` answer `{job_id, job}`
+#    only; PlatformIO jobs are kinds `flash` and `build`. `fw.target.get` names
+#    a PlatformIO type's `devices`, and no longer echoes `klipper_section`,
+#    `device_map` or the retired `service`.
+#    `fw.roadrunner.provision`/`.clear` are `fw.identity.provision`/`.clear`,
+#    routed to whichever helper claims the serial, and no error code names a
+#    firmware any more (`roadrunner_unprovisioned` is `serial_unprovisioned`;
+#    docs/agent-api.md has the full table).
+API_VERSION = 5
 
 AGENT_NAME = "mcu_updater"
 

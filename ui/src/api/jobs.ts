@@ -2,7 +2,13 @@
 // "The log, and its sequence numbers" sections.
 
 export type JobKind =
-  "build" | "build_all" | "flash" | "flash_all" | "update_all" | "add_mcu";
+  | "build"
+  | "build_all"
+  | "flash"
+  | "flash_all"
+  | "update_all"
+  | "add_mcu"
+  | "profile_apply";
 
 export type JobState =
   "queued" | "running" | "succeeded" | "failed" | "cancelled";
@@ -59,12 +65,15 @@ export interface LogLine {
  * that single write (flash.py's `add_mcu_start` `run()` has none), so it
  * belongs here for the same reason `flash` does - CLAUDE.md's "never
  * interrupt a firmware write" applies just as hard to a bootloader as to an
- * application image. */
+ * application image. `profile_apply` is here because the agent does not
+ * list it as immediately cancellable, and `tests/test_ui_contract.py` holds
+ * this set to exactly that. */
 const DEFERRED_CANCEL_KINDS: ReadonlySet<JobKind> = new Set([
   "flash",
   "flash_all",
   "update_all",
   "add_mcu",
+  "profile_apply",
 ]);
 
 /** What to tell the user a cancel request will actually do, from the job's

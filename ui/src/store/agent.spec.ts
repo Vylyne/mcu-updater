@@ -4,7 +4,7 @@ import type { Action } from "../api/targets";
 import {
   adoptSerial,
   cancelJob,
-  clearRoadrunner,
+  clearIdentity,
   closeKconfig,
   connect,
   disconnect,
@@ -13,7 +13,7 @@ import {
   ignoreCanbus,
   kconfigEnter,
   openKconfig,
-  provisionRoadrunner,
+  provisionIdentity,
   refresh,
   scanBareBoard,
   startAddMcu,
@@ -878,7 +878,7 @@ describe("roadrunner", () => {
     disconnect();
   });
 
-  it("provisionRoadrunner calls fw.roadrunner.provision with just the serial", async () => {
+  it("provisionIdentity calls fw.identity.provision with just the serial", async () => {
     let socket!: FakeWebSocket;
     connect("ws://test/websocket", () => {
       socket = new FakeWebSocket();
@@ -888,10 +888,10 @@ describe("roadrunner", () => {
     await drainHandshake(socket);
 
     const before = socket.sent.length;
-    const call = provisionRoadrunner("RR-UNPROVISIONED-0123456789ABCDEF");
+    const call = provisionIdentity("RR-UNPROVISIONED-0123456789ABCDEF");
     await new Promise((resolve) => setTimeout(resolve, 0));
     const request = JSON.parse(socket.sent[before]);
-    expect(request.params.method).toBe("fw.roadrunner.provision");
+    expect(request.params.method).toBe("fw.identity.provision");
     expect(request.params.arguments).toEqual({
       serial: "RR-UNPROVISIONED-0123456789ABCDEF",
     });
@@ -907,7 +907,7 @@ describe("roadrunner", () => {
     expect(await call).toBe(true);
   });
 
-  it("provisionRoadrunner refreshes fw.status after a confirmed result", async () => {
+  it("provisionIdentity refreshes fw.status after a confirmed result", async () => {
     let socket!: FakeWebSocket;
     connect("ws://test/websocket", () => {
       socket = new FakeWebSocket();
@@ -917,7 +917,7 @@ describe("roadrunner", () => {
     await drainHandshake(socket);
 
     const before = socket.sent.length;
-    const call = provisionRoadrunner("RR-UNPROVISIONED-0123456789ABCDEF");
+    const call = provisionIdentity("RR-UNPROVISIONED-0123456789ABCDEF");
     await new Promise((resolve) => setTimeout(resolve, 0));
     const request = JSON.parse(socket.sent[before]);
     socket.message({
@@ -939,7 +939,7 @@ describe("roadrunner", () => {
     expect(refreshed).toBe(true);
   });
 
-  it("provisionRoadrunner routes a roadrunner_* refusal into state.error and returns false", async () => {
+  it("provisionIdentity routes a refusal into state.error and returns false", async () => {
     let socket!: FakeWebSocket;
     connect("ws://test/websocket", () => {
       socket = new FakeWebSocket();
@@ -948,7 +948,7 @@ describe("roadrunner", () => {
     socket.open();
     await drainHandshake(socket);
 
-    const call = provisionRoadrunner("RR-UNPROVISIONED-0123456789ABCDEF");
+    const call = provisionIdentity("RR-UNPROVISIONED-0123456789ABCDEF");
     await new Promise((resolve) => setTimeout(resolve, 0));
     const request = JSON.parse(socket.sent[socket.sent.length - 1]);
     socket.message({
@@ -958,20 +958,20 @@ describe("roadrunner", () => {
         code: -32000,
         message: "no matching candidate",
         data: {
-          code: "roadrunner_no_candidate",
+          code: "device_not_found",
           message: "No matching untracked Roadrunner was found.",
         },
       },
     });
 
     expect(await call).toBe(false);
-    expect(state.error?.code).toBe("roadrunner_no_candidate");
+    expect(state.error?.code).toBe("device_not_found");
     expect(state.error?.message).toBe(
       "No matching untracked Roadrunner was found.",
     );
   });
 
-  it("clearRoadrunner calls fw.roadrunner.clear with just the serial", async () => {
+  it("clearIdentity calls fw.identity.clear with just the serial", async () => {
     let socket!: FakeWebSocket;
     connect("ws://test/websocket", () => {
       socket = new FakeWebSocket();
@@ -981,10 +981,10 @@ describe("roadrunner", () => {
     await drainHandshake(socket);
 
     const before = socket.sent.length;
-    const call = clearRoadrunner("RR-0123456789ABCDEFGHJKMNPQRS");
+    const call = clearIdentity("RR-0123456789ABCDEFGHJKMNPQRS");
     await new Promise((resolve) => setTimeout(resolve, 0));
     const request = JSON.parse(socket.sent[before]);
-    expect(request.params.method).toBe("fw.roadrunner.clear");
+    expect(request.params.method).toBe("fw.identity.clear");
     expect(request.params.arguments).toEqual({
       serial: "RR-0123456789ABCDEFGHJKMNPQRS",
     });
@@ -1000,7 +1000,7 @@ describe("roadrunner", () => {
     expect(await call).toBe(true);
   });
 
-  it("clearRoadrunner routes a roadrunner_* refusal into state.error and returns false", async () => {
+  it("clearIdentity routes a refusal into state.error and returns false", async () => {
     let socket!: FakeWebSocket;
     connect("ws://test/websocket", () => {
       socket = new FakeWebSocket();
@@ -1009,7 +1009,7 @@ describe("roadrunner", () => {
     socket.open();
     await drainHandshake(socket);
 
-    const call = clearRoadrunner("RR-0123456789ABCDEFGHJKMNPQRS");
+    const call = clearIdentity("RR-0123456789ABCDEFGHJKMNPQRS");
     await new Promise((resolve) => setTimeout(resolve, 0));
     const request = JSON.parse(socket.sent[socket.sent.length - 1]);
     socket.message({
@@ -1019,14 +1019,14 @@ describe("roadrunner", () => {
         code: -32000,
         message: "already tracked",
         data: {
-          code: "roadrunner_tracked",
+          code: "device_tracked",
           message: "This board is tracked by a type; untrack it first.",
         },
       },
     });
 
     expect(await call).toBe(false);
-    expect(state.error?.code).toBe("roadrunner_tracked");
+    expect(state.error?.code).toBe("device_tracked");
   });
 });
 

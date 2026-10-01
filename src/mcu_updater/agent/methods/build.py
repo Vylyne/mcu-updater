@@ -64,7 +64,7 @@ class BuildMixin(_Base):
     def _cmake_types(self) -> dict:
         """Configured types whose declared family is cmake-built.
 
-        Mirrors `pio_types()`, and read the same way: from the config each
+        Mirrors `platformio_types()`, and read the same way: from the config each
         time, because a type added over `fw.type.add` has to be answerable
         without restarting the agent.
         """
@@ -158,7 +158,7 @@ class BuildMixin(_Base):
         """Compile one PlatformIO env. Touches no hardware."""
         runner = self._require_runner()
         name = self._require_str(args, "name")
-        types = self.pio_types()
+        types = self.platformio_types()
         if name not in types:
             raise RpcError(
                 f"no PlatformIO type '{name}' is configured.",
@@ -168,19 +168,21 @@ class BuildMixin(_Base):
                     "data": {"name": name, "known": sorted(types)},
                 },
             )
-        display = types[name]
+        entry = types[name]
 
         def run(ctx) -> dict[str, Any]:
             from ...providers import pio as pio_mod
 
-            ctx.step(f"Building {display.env}", 0, 1)
+            ctx.step(f"Building {entry.env}", 0, 1)
             path = pio_mod.build(
-                self.paths, self.settings(), display, reporter=ctx.reporter, cancel=ctx.cancel
+                self.paths, self.settings(), entry, reporter=ctx.reporter, cancel=ctx.cancel
             )
-            ctx.step(f"Built {display.env}", 1, 1)
-            return {"name": name, "env": display.env, "firmware": path}
+            ctx.step(f"Built {entry.env}", 1, 1)
+            return {"name": name, "env": entry.env, "firmware": path}
 
-        job = runner.submit("display_build", {"name": name}, run)
+        # Kind `build`, as the cmake route: a compile like any other, and so
+        # immediately cancellable (`pio_mod.build` takes `cancel=ctx.cancel`).
+        job = runner.submit("build", {"name": name, "fw": entry.firmware}, run)
         return {"job_id": job.id, "job": job.to_dict()}
 
     def clean(self, args: dict) -> dict[str, Any]:
@@ -190,7 +192,7 @@ class BuildMixin(_Base):
         machinery would outweigh the work and a progress bar for it would be a
         lie. It does take the exclusive lock, for the one way this could do
         damage - removing a build directory out from under a compile using it -
-        which is why `fw.roadrunner.*` takes it for its own synchronous work.
+        which is why `fw.identity.*` takes it for its own synchronous work.
 
         Answers `removed: null` rather than failing for a build system that
         keeps no such directory, so a panel can offer the action on any type
@@ -370,7 +372,7 @@ class BuildMixin(_Base):
         return payload
 
     def kconfig_menu(self, args: dict) -> dict[str, Any]:
-        """Re-read the current screen, for a client that lost its copy."""
+        """Re-read the current menu, for a client that lost its copy."""
         session = self._session(args)
         with session.lock:
             return session.menu()

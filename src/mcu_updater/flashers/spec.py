@@ -10,26 +10,27 @@ CH340.
 exists to speak a protocol.
 
 Nothing named the thing all three are. So `_do_flash_all` grew a loop that knew
-about katapult, `display_flash` grew a second loop that knew about screens, and
-"Flash All" meant "flash all the boards" with no way to say otherwise.
+about katapult, the PlatformIO-only flash handler grew a second loop that knew
+about KNOMIs, and "Flash All" meant "flash all the boards" with no way to say
+otherwise.
 
 Three members carry the whole difference between them, and each replaces
 something that is currently hand-written inside one of those loops:
 
 **`needs_services_stopped`** - so a batch groups by *requirement* rather than by
-kind, and one stop covers boards and screens without either knowing the other
-exists.
+kind, and one stop covers boards and PlatformIO devices without either knowing
+the other exists.
 
 **`prepared()`** - the once-per-batch work that can only happen after Klipper is
-down: pausing a port watcher, and asking the screens which they are now that the
+down: pausing a port watcher, and asking the devices which they are now that the
 ports are free. Hoisting that into the batch loop is exactly the branching this
 removes.
 
 **`settled()`** - the wait after a write, which has to stay *per device*. A
 board re-enumerates over USB and starting Klipper before its node exists brings
 it up in an error state; the last board of a batch would otherwise race the
-service restart. A screen has nothing to wait for, so it is a no-op there rather
-than an ``if kind ==``.
+service restart. A PlatformIO device has nothing to wait for, so it is a no-op
+there rather than an ``if kind ==``.
 
 **Selection is a question each flasher answers.** `supports(device, helper)`
 says whether this flasher can write a device given its family's helper, and
@@ -63,8 +64,8 @@ class Bench:
     """The host a write happens on, as a flasher needs to see it.
 
     `controller` rather than a `ServiceController`, because the units are not
-    known until the batch is: a display family names its own port watcher, and a
-    batch spanning two families needs two. The factory keeps the *backend*
+    known until the batch is: a PlatformIO family names its own port watcher, and
+    a batch spanning two families needs two. The factory keeps the *backend*
     choice in one place - a dry run must stay a dry run for every unit, or a
     rehearsal stops a real service.
     """
@@ -139,7 +140,7 @@ class FlashTarget:
     #: The `[type ...]` section name.
     type: str
     #: What identifies the device: a serial for a board, a configured port for a
-    #: screen.
+    #: PlatformIO device.
     id: str
     #: Units to stop before this write, resolved by whoever selected the
     #: device - same shape as `flasher`, a uniform-slice fact rather than
@@ -177,7 +178,7 @@ class FlashRecord:
     failing a good flash over - are the batch's, and there is one of each now.
 
     `key` is what the entry is filed under and is *not* always `target.id`: a
-    screen's id is a port, which is not durable, so it files under
+    PlatformIO device's id is a port, which is not durable, so it files under
     `build.hardware_id_key` of its hardware id instead.
     """
 
@@ -294,7 +295,7 @@ class Flasher(Protocol):
         Called only after a successful `write`, and never on a dry run - the
         batch owns both of those conditions. `None` means there is nothing
         durable to file this under: a bare board with no tracked serial, a
-        screen that would not say which one it is.
+        PlatformIO device that would not say which one it is.
 
         Reads what the family's builder has staged *now*, through
         `staged_record`, rather than anything captured at selection: the

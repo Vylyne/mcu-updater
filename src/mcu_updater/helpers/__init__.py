@@ -6,9 +6,11 @@ from .spec import (
     BootselHandoff,
     BootselRequester,
     DeviceInfoReader,
+    DeviceLister,
     Helper,
     Identifier,
     ImageReporter,
+    ListedDevice,
     Provisioner,
     Trackable,
     TrackVerdict,
@@ -22,6 +24,13 @@ def for_name(name: str, *, family: str) -> Helper | None:
     return resolve(name, family=family)
 
 
+def all_helpers() -> tuple[Helper, ...]:
+    """Every registered helper, for a caller that names no family."""
+    from .registry import all_helpers as every
+
+    return every()
+
+
 def bootsel_requester(helper: Helper | None) -> BootselRequester | None:
     """`helper`'s BOOTSEL request capability, or None when it has none."""
     return helper if isinstance(helper, BootselRequester) else None
@@ -30,6 +39,11 @@ def bootsel_requester(helper: Helper | None) -> BootselRequester | None:
 def device_info_reader(helper: Helper | None) -> DeviceInfoReader | None:
     """The helper's device-info reader, or None when it has none."""
     return helper if isinstance(helper, DeviceInfoReader) else None
+
+
+def device_lister(helper: Helper | None) -> DeviceLister | None:
+    """The helper's device-listing capability, or None when it has none."""
+    return helper if isinstance(helper, DeviceLister) else None
 
 
 def image_reporter(helper: Helper | None) -> ImageReporter | None:
@@ -60,14 +74,18 @@ __all__ = [
     "BootselHandoff",
     "BootselRequester",
     "DeviceInfoReader",
+    "DeviceLister",
     "Helper",
     "Identifier",
     "ImageReporter",
+    "ListedDevice",
     "Provisioner",
     "Trackable",
     "TrackVerdict",
+    "all_helpers",
     "bootsel_requester",
     "device_info_reader",
+    "device_lister",
     "for_name",
     "identifier",
     "image_reporter",

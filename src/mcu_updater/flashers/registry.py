@@ -66,9 +66,10 @@ def group_by_stop(
     """Split a batch into (needs Klipper down, does not), preserving order.
 
     The whole point of the flag. Grouping by *requirement* rather than by kind
-    is what lets one `services_stopped` cover boards and screens without either
-    loop knowing the other exists - and what would let a write that needs no
-    stop stay outside it rather than inheriting one it does not need.
+    is what lets one `services_stopped` cover boards and PlatformIO devices
+    without either loop knowing the other exists - and what would let a write
+    that needs no stop stay outside it rather than inheriting one it does not
+    need.
     """
     stopped: list[FlashTarget] = []
     free: list[FlashTarget] = []
@@ -98,8 +99,9 @@ def by_flasher(targets: list[FlashTarget]) -> list[tuple[Flasher, list[FlashTarg
     """Group targets by the flasher that owns them, in first-seen order.
 
     Order preserved rather than sorted, because a batch's order came from its
-    selection - the registry's order for boards, the config file's for screens -
-    and reordering it inside a refactor is a behaviour change nobody asked for.
+    selection - the registry's order for boards, the config file's for
+    PlatformIO devices - and reordering it inside a refactor is a behaviour
+    change nobody asked for.
     """
     order: list[str] = []
     groups: dict[str, list[FlashTarget]] = {}

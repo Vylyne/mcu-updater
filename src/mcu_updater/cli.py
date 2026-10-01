@@ -432,9 +432,9 @@ def build_fw_cmd(args: argparse.Namespace) -> None:
     # and the flags, so `-f` is not merely optional there, it is meaningless,
     # and there is no menuconfig to fall back to.
     if args.type in install.platformio:
-        display = install.platformio[args.type]
+        pio_type = install.platformio[args.type]
         target = providers.BuildTarget(
-            providers.PlatformIO.name, args.type, display.firmware
+            providers.PlatformIO.name, args.type, pio_type.firmware
         )
         provider = providers.by_name(providers.PlatformIO.name)
         blocked = provider.blocked(install, target)
@@ -446,7 +446,7 @@ def build_fw_cmd(args: argparse.Namespace) -> None:
         return
 
     # A cmake type is in neither the `[mcu ...]` registry - `config.py` keeps
-    # foreign builders out of it - nor the display map, so without this it
+    # foreign builders out of it - nor the platformio map, so without this it
     # reached `_build_interactive` and was told it does not exist. Its family
     # names the tree and `cmake_target:` names the image, so `-f` says nothing
     # here either, and there is no menuconfig behind it to offer.
@@ -486,9 +486,9 @@ def _target_for(
     order, so a caller that only needs "which provider is this" does not have
     to repeat them. None means no provider claims the name.
     """
-    display = install.platformio.get(name)
-    if display is not None:
-        return providers.BuildTarget(providers.PlatformIO.name, name, display.firmware)
+    pio_type = install.platformio.get(name)
+    if pio_type is not None:
+        return providers.BuildTarget(providers.PlatformIO.name, name, pio_type.firmware)
     entry = install.cmake.get(name)
     if entry is not None:
         return providers.BuildTarget(providers.Cmake.name, name, entry.firmware)
@@ -719,9 +719,9 @@ def _pio_targets(
     """
     from .providers import pio
 
-    display = pio.load(c.paths)[name]
+    entry = pio.load(c.paths)[name]
     families = firmware.load(c.paths)
-    family = firmware.resolve(c.paths, display.firmware, families)
+    family = firmware.resolve(c.paths, entry.firmware, families)
     identify = helpers.identifier(helpers.for_name(family.helper, family=family.name))
     if identify is None:
         raise UpdaterError(
@@ -736,15 +736,15 @@ def _pio_targets(
     # ports twice for one flash. Only an empty map is worth the six seconds,
     # because without an answer there is nothing to select.
     found = identify.identify(
-        c.paths, c.settings, display, ask=False, reporter=stdout_reporter
+        c.paths, c.settings, entry, ask=False, reporter=stdout_reporter
     )
     if not found:
         found = identify.identify(
-            c.paths, c.settings, display, ask=True, reporter=stdout_reporter
+            c.paths, c.settings, entry, ask=True, reporter=stdout_reporter
         )
-    units = stop_services.for_platformio(c.paths, display, c.settings)
+    units = stop_services.for_platformio(c.paths, entry, c.settings)
     if not found:
-        where = identify.remembered_at(c.paths, display) or "(nothing remembered)"
+        where = identify.remembered_at(c.paths, entry) or "(nothing remembered)"
         own_watcher = [u for u in units if u != "klipper"]
         watcher = f"the '{own_watcher[0]}' watcher" if own_watcher else "a watcher"
         raise UpdaterError(
@@ -759,18 +759,18 @@ def _pio_targets(
         [
             (
                 flashers.Device(
-                    type=display.name,
+                    type=entry.name,
                     id=device.port,
                     chipset="",
                     state=inventory.STATE_UNKNOWN,
-                    fw=display.firmware,
+                    fw=entry.firmware,
                     kind=flashers.KIND_PORT,
                     detail={
-                        "env": display,
+                        "env": entry,
                         "port": device.port,
                         "device_id": device.device_id.lower(),
                         "name": device.device_id,
-                        "section": f"{display.klipper_section} {device.device_id}",
+                        "section": f"{entry.klipper_section} {device.device_id}",
                     },
                 ),
                 units,
@@ -798,16 +798,16 @@ def _ports_free(c: Context, names: Sequence[str], label: str):
     not two.
 
     The union covers klipper without saying so explicitly: every named
-    display's resolved `stop_services` already includes it (by convention, or
+    entry's resolved `stop_services` already includes it (by convention, or
     by the built-in default), so there is nothing left to stop unconditionally
     here the way there used to be.
     """
     from .providers import pio
 
-    displays = pio.load(c.paths)
+    pio_types = pio.load(c.paths)
     units: list[str] = []
     for name in names:
-        for unit in stop_services.for_platformio(c.paths, displays[name], c.settings):
+        for unit in stop_services.for_platformio(c.paths, pio_types[name], c.settings):
             if unit not in units:
                 units.append(unit)
 
@@ -954,7 +954,7 @@ def _run_type_flash(
     Deliberately not a whole `Install`: this addresses one type and makes one
     lookup, so there is no pair of questions for a mid-flight config edit to
     answer differently - and `Install.load` runs the *validating* loads, which
-    would let a malformed screen section break `flash -t <kconfig type>`.
+    would let a malformed platformio section break `flash -t <kconfig type>`.
     That is the blast radius `providers.selection` refuses for the same reason.
     The fleet sweep is where one snapshot is load-bearing, and it has one.
     """

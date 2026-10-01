@@ -79,22 +79,23 @@ export interface TargetDevice {
   actions: Action[];
 }
 
-/** One `targets[]` row - MCU, display, and CMake target status in one shape.
- * `extra` carries only display- or CMake-specific fields; an MCU row carries
- * none of its fields at all (docs/agent-api.md's "targets" section). */
-export interface DisplayExtra {
-  module_version: string | null;
-  source_version: string | null;
-  source_dirty: boolean | null;
-  klipper_section: string;
-  reachable: boolean;
+/** One fact a builder, flasher or helper contributes to a row. The UI renders
+ * `label value` and never branches on `key`, `seam` or `name` - that is what
+ * lets a new seam add one without a UI release (docs/agent-api.md's "Target"). */
+export interface Extra {
+  seam: "builder" | "flasher" | "helper";
+  name: string;
+  key: string;
+  label: string;
+  value: string | number | boolean | null;
 }
 
-export interface CmakeExtra {
-  source: string;
-  source_version: string | null;
-  source_dirty: boolean | null;
-  flashable: boolean;
+/** The tree a row's builder would build from right now. `version` is the
+ * string its staleness check compares; `dirty` is null where it never asks. */
+export interface TargetSource {
+  path: string;
+  version: string;
+  dirty: boolean | null;
 }
 
 /** `targets[].first_install` - whether a bare board of this type can be set
@@ -105,6 +106,7 @@ export interface FirstInstall {
   reason: string | null;
 }
 
+/** One targets[] row - every builder's types in one shape. */
 export interface Target {
   provider: Provider;
   name: string;
@@ -115,7 +117,10 @@ export interface Target {
   needs_flash: boolean | null;
   devices: TargetDevice[];
   actions: Action[];
-  extra?: DisplayExtra | CmakeExtra;
+  source: TargetSource | null;
+  extras: Extra[];
+  /** Why `devices` is empty, in the agent's words; null when it is not. */
+  devices_note: string | null;
   first_install?: FirstInstall;
 }
 
@@ -169,7 +174,7 @@ export type RoadrunnerIdentityState = "unprovisioned" | "provisioned" | null;
  * `fw.toLowerCase()` for a source with no state vocabulary of its own, i.e.
  * literally `"vylyne"`, and carries no Roadrunner-specific meaning. `null`
  * means the serial matches neither shape, the same refusal
- * `fw.roadrunner.provision`/`.clear` would give it server-side. */
+ * `fw.identity.provision`/`.clear` would give it server-side. */
 export function roadrunnerIdentityState(
   serial: string,
 ): RoadrunnerIdentityState {
@@ -196,7 +201,7 @@ export function roadrunnerDiagnosticUid(serial: string): string | null {
  * provision confirmation dialog. A provisioned Roadrunner's serial has no
  * such suffix and is returned unchanged, as is every non-Roadrunner
  * device's serial. */
-export function roadrunnerDisplaySerial(serial: string): string {
+export function roadrunnerSerialLabel(serial: string): string {
   return serial.startsWith(ROADRUNNER_UNPROVISIONED_PREFIX)
     ? ROADRUNNER_UNPROVISIONED_PREFIX.slice(0, -1)
     : serial;

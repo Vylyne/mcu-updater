@@ -224,8 +224,8 @@ def test_a_stale_map_entry_is_not_a_fallback_answer(paths, settings, monkeypatch
 
 
 def test_how_a_device_was_found_stays_off_the_wire():
-    """`fw.device.list` puts `to_json` on the wire. `answered` is a fact about
-    one write-time listen, not a field of the device list."""
+    """`answered` is a fact about one write-time listen, not a field of the
+    device map, so `to_json` never carries it."""
     device = WatcherDevice(
         device_id="aaa111", port="/dev/ttyUSB0", present=True, answered=True
     )
@@ -283,3 +283,90 @@ def test_where_the_answers_are_remembered_is_the_handlers_to_say(paths):
     keeps `providers.pio` out of that sentence."""
     entry = _pio_entry()
     assert KnomiSerialHelper().remembered_at(paths, entry).endswith("devices.json")
+
+
+# --------------------------------------------------------------------------
+# DeviceLister: a firmware lists its own devices from Klipper's objects
+# --------------------------------------------------------------------------
+
+
+def _listed(**overrides):
+    from mcu_updater.helpers import ListedDevice
+
+    fields = {
+        "id": "/dev/ttyUSB0",
+        "section": "fake_dev t0",
+        "label": "t0",
+        "configured_id": None,
+        "reported_id": "19aa44",
+        "configured_path": "/dev/ttyUSB0",
+        "resolved_path": "/dev/ttyUSB0",
+        "version": "1.0.0",
+        "compatible": True,
+        "answering": True,
+        "raw": {"secret_firmware_field": 7},
+    }
+    fields.update(overrides)
+    return ListedDevice(**fields)
+
+
+def test_a_listed_device_is_present_exactly_when_its_path_resolved():
+    assert _listed().present is True
+    assert _listed(resolved_path=None).present is False
+
+
+def test_a_listed_device_keeps_its_raw_values_off_the_wire():
+    """`raw` is for the helper's own `extras()`; a firmware's field reaching the
+    wire through it would be the leak `DeviceLister` exists to stop."""
+    wire = _listed().to_json()
+
+    assert "raw" not in wire
+    assert "secret_firmware_field" not in wire
+    assert wire == {
+        "id": "/dev/ttyUSB0",
+        "section": "fake_dev t0",
+        "label": "t0",
+        "configured_id": None,
+        "reported_id": "19aa44",
+        "configured_path": "/dev/ttyUSB0",
+        "resolved_path": "/dev/ttyUSB0",
+        "present": True,
+        "version": "1.0.0",
+        "compatible": True,
+        "answering": True,
+    }
+
+
+def test_raw_does_not_make_two_listings_of_one_device_unequal():
+    assert _listed(raw={"a": 1}) == _listed(raw={"b": 2})
+
+
+class _FullLister:
+    name = "fake"
+    klipper_prefix = "fake_dev"
+
+    def device_from_klipper(self, section, values):
+        return _listed(section=section)
+
+    def extras(self, devices):
+        return []
+
+    def devices_note(self, *, reachable):
+        return "none"
+
+
+def test_a_helper_with_every_member_is_a_device_lister():
+    from mcu_updater.helpers import device_lister
+
+    fake = _FullLister()
+    assert device_lister(fake) is fake
+
+
+def test_an_image_reporter_is_not_mistaken_for_a_device_lister():
+    """Roadrunner has a `klipper_prefix` and an `ImageReporter.from_klipper`.
+    That is why the lister's method is `device_from_klipper`: one name for two
+    signatures would make a helper unable to implement both."""
+    from mcu_updater.helpers import device_lister, for_name
+
+    assert device_lister(for_name("roadrunner", family="roadrunner")) is None
+    assert device_lister(None) is None

@@ -52,6 +52,9 @@ function target(overrides: Partial<Target> = {}): Target {
     needs_flash: false,
     devices: [],
     actions: [],
+    source: null,
+    extras: [],
+    devices_note: "No serial devices are tracked for this type yet.",
     ...overrides,
   };
 }
@@ -140,7 +143,7 @@ describe("bulkBuildTargets", () => {
     expect(bulkBuildTargets([t], "all")).toHaveLength(0);
   });
 
-  it("drops a target with no build action at all (a display with no build)", () => {
+  it("drops a target with no build action at all (a type with no build)", () => {
     const t = target({ provider: "platformio", actions: [] });
     expect(bulkBuildTargets([t], "all")).toHaveLength(0);
   });

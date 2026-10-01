@@ -39,7 +39,7 @@ def confirm(
     Returns every identity any source reported, keyed by `Sighting.id`. A
     caller matching a device it cares about does so by `id`.
 
-    When two sources see the same identity - a screen the listen pass heard
+    When two sources see the same identity - a device the listen pass heard
     and the watcher also remembers - the more confident sighting wins, so a
     stale remembered port never shadows a live answer.
     """

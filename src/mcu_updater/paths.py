@@ -154,14 +154,17 @@ class Paths:
         return os.path.join(self.data_dir, ".dfu-pairings.json")
 
     def platformio_sidecar(self, env: str) -> str:
-        """Build provenance for one display env: which commit the image is from.
+        """Build provenance for one PlatformIO env: which commit the image is from.
 
         In our data tree even though the image itself lives in the source repo's
         `.pio/build/<env>/`. That directory is PlatformIO's, and writing our
         bookkeeping into it would put it in the path of `pio run -t clean` and
         into the user's git status.
+
+        Not migrated from the folder it used to live in: one rebuild restores
+        provenance, and until then the type reports `no_provenance`.
         """
-        return os.path.join(self.data_dir, "displays", f"{env}.build.json")
+        return os.path.join(self.data_dir, "platformio", f"{env}.build.json")
 
     @property
     def journal_file(self) -> str:

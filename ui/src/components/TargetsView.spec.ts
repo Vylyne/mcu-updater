@@ -27,6 +27,9 @@ function makeTarget(provider: Target["provider"], name: string): Target {
     needs_flash: false,
     actions: [],
     devices: [],
+    source: null,
+    extras: [],
+    devices_note: "No serial devices are tracked for this type yet.",
   };
 }
 
@@ -41,7 +44,7 @@ describe("TargetsView", () => {
     expect(wrapper.text()).toContain("No targets configured yet.");
   });
 
-  it("renders one row per target, MCU and display alike, through one component", () => {
+  it("renders one row per target, whatever builds them, through one component", () => {
     const targets = [
       makeTarget("kconfig_make", "bttebb36"),
       makeTarget("platformio", "knomi"),

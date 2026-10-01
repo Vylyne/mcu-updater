@@ -44,7 +44,7 @@ def _declared_builders(paths: Paths) -> dict[str, str]:
     `cmake_target:`, `pio.load()` raises if a PlatformIO type names no
     `platformio_env:`.
     Resolving one name must not depend on every other section being
-    well-formed. Asking them would mean a malformed screen section breaking
+    well-formed. Asking them would mean a malformed platformio section breaking
     `flash -t <kconfig type>`, which is a wider blast radius than the question
     deserves - selection answers "whose is this name", not "is this config
     good". The build path still runs the validating load and still raises.
@@ -64,15 +64,16 @@ def _declared_builders(paths: Paths) -> dict[str, str]:
 def provider_of(paths: Paths, name: str) -> str:
     """Which build system owns this type, by name.
 
-    The whole reason `fw.display.build` existed as a separate method: the
-    caller had to know which kind of thing it was addressing, so the panel
-    carried a `kind` and picked a method from it. It does not have to. A type
-    name resolves to exactly one provider, and this is where that happens -
-    once, rather than at every call site that would otherwise branch.
+    The whole reason a separate build method used to exist for PlatformIO
+    types: the caller had to know which kind of thing it was addressing, so
+    the panel carried a `kind` and picked a method from it. It does not have
+    to. A type name resolves to exactly one provider, and this is where that
+    happens - once, rather than at every call site that would otherwise
+    branch.
 
     Raises rather than guessing. A name belonging to none of them is a typo or
     a section somebody deleted, and defaulting it to kconfig would produce
-    "no saved klipper config" for a screen.
+    "no saved klipper config" for a PlatformIO device.
     """
     builder = _declared_builders(paths).get(name)
     if builder == PIO_BUILDER:

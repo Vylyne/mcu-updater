@@ -654,15 +654,16 @@ export async function unignoreSerial(serial: string): Promise<boolean> {
   }
 }
 
-/** Explicit direct-USB provisioning of one confirmed, untracked Roadrunner -
- * docs/agent-api.md's `fw.roadrunner.provision`. Deliberately separate from
+/** Explicit direct-USB provisioning of one confirmed, untracked board -
+ * docs/agent-api.md's `fw.identity.provision`, routed server-side to
+ * whichever helper claims the serial. Deliberately separate from
  * adoptSerial/fw.serial.add: this only writes the board's identity, it never
  * tracks the board under a type. Refuses server-side unless `serial` is
- * currently untracked and carries the `RR-UNPROVISIONED-...` shape. */
-export async function provisionRoadrunner(serial: string): Promise<boolean> {
+ * currently untracked and exactly one helper claims it unprovisioned. */
+export async function provisionIdentity(serial: string): Promise<boolean> {
   if (client === null) return false;
   try {
-    await callAgent(client, "fw.roadrunner.provision", { serial });
+    await callAgent(client, "fw.identity.provision", { serial });
     state.error = null;
     void refreshStatus();
     return true;
@@ -672,13 +673,13 @@ export async function provisionRoadrunner(serial: string): Promise<boolean> {
   }
 }
 
-/** Reverse of provisionRoadrunner - `fw.roadrunner.clear` returns one
- * confirmed, untracked `RR-...` board to its unprovisioned state, still
+/** Reverse of provisionIdentity - `fw.identity.clear` returns one
+ * confirmed, untracked board to its unprovisioned state, still
  * untracked. */
-export async function clearRoadrunner(serial: string): Promise<boolean> {
+export async function clearIdentity(serial: string): Promise<boolean> {
   if (client === null) return false;
   try {
-    await callAgent(client, "fw.roadrunner.clear", { serial });
+    await callAgent(client, "fw.identity.clear", { serial });
     state.error = null;
     void refreshStatus();
     return true;

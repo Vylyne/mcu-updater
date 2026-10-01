@@ -165,13 +165,13 @@ def test_the_screens_are_read_before_klipper_is_stopped(api, no_pio, monkeypatch
 
     monkeypatch.setattr(svc, "stop", watched_stop)
 
-    original = api.device_list
+    original = api.platformio_devices
 
-    def watched_list(args):
+    def watched_list(*args):
         order.append("listed")
-        return original(args)
+        return original(*args)
 
-    monkeypatch.setattr(api, "device_list", watched_list)
+    monkeypatch.setattr(api, "platformio_devices", watched_list)
 
     res = api.dispatch("fw.flash", {"name": ENV})
     assert api.runner.wait(timeout=30)
@@ -216,11 +216,36 @@ def test_every_upload_names_its_port(api, no_pio):
         ].endswith("knomi_t1_knomi")
 
 
+def _count_type_list_loads(api):
+    loads = []
+    types_of = api.platformio_types
+    api.platformio_types = lambda: loads.append(1) or types_of()
+    return loads
+
+
+def test_a_flash_reads_the_type_list_once(api, no_pio):
+    """The handler hands the types it loaded to the device listing, rather
+    than the listing loading them again."""
+    loads = _count_type_list_loads(api)
+
+    api._pio_flash({"name": ENV})
+    assert api.runner.wait(timeout=30)
+
+    assert len(loads) == 1
+
+
+def test_selecting_for_a_flash_all_reads_the_type_list_once(api, no_pio):
+    loads = _count_type_list_loads(api)
+
+    api._platformio_to_flash("all")
+
+    assert len(loads) == 1
+
+
 def test_one_screen_can_be_singled_out(api, no_pio, screens):
     port = screens["knomi_serial t0_knomi"]["serial"]
     res = api.dispatch("fw.flash", {"name": ENV, "port": port})
 
-    assert len(res["displays"]) == 1
     assert api.runner.wait(timeout=30)
     assert len(api.runner.get(res["job_id"]).result["flashed"]) == 1
 
@@ -490,7 +515,7 @@ def _with_ids(screens, **ids):
     return {f"knomi_serial {name}": {"reported_id": i} for name, i in ids.items()}
 
 
-def test_a_screen_can_be_flashed_by_its_device_id(api, paths, fake_root):
+def test_a_screen_can_be_flashed_by_its_device_id(api, paths, fake_root, no_pio):
     """Ruling 18: either spelling of the one identity. A caller reading
     `targets[].devices[].id` off the wire hands it back without knowing
     whether the section it came from named a path or an id.
@@ -511,7 +536,9 @@ def test_a_screen_can_be_flashed_by_its_device_id(api, paths, fake_root):
 
     res = api.flash({"name": ENV, "id": "aaa111"})  # the spelling a caller may pick
 
-    assert [d["configured_path"] for d in res["displays"]] == [str(port)]
+    assert api.runner.wait(timeout=30)
+    job = api.runner.get(res["job_id"])
+    assert [f["id"] for f in job.result["flashed"]] == [str(port)]
 
 
 def test_a_serial_screen_can_be_flashed_by_its_reported_id(
@@ -524,15 +551,16 @@ def test_a_serial_screen_can_be_flashed_by_its_reported_id(
     for slot in ("id", "port"):
         res = api.flash({"name": ENV, slot: "19aa44"})
 
-        assert [d["configured_path"] for d in res["displays"]] == [
+        assert api.runner.wait(timeout=30)
+        job = api.runner.get(res["job_id"])
+        assert job.state == "succeeded"
+        assert [f["id"] for f in job.result["flashed"]] == [
             screens_port(screens, "t0")
         ]
-        assert api.runner.wait(timeout=30)
-        assert api.runner.get(res["job_id"]).state == "succeeded"
 
 
 def test_a_configured_device_id_is_matched_case_insensitively(
-    api, fake_root
+    api, fake_root, no_pio
 ):
     port = fake_root / "knomi_discovered"
     port.write_text("", encoding="utf-8")
@@ -545,7 +573,9 @@ def test_a_configured_device_id_is_matched_case_insensitively(
 
     res = api.flash({"name": ENV, "id": "19aa44"})
 
-    assert [d["configured_path"] for d in res["displays"]] == [str(port)]
+    assert api.runner.wait(timeout=30)
+    job = api.runner.get(res["job_id"])
+    assert [f["id"] for f in job.result["flashed"]] == [str(port)]
     assert "job_id" in res
 
 
@@ -984,7 +1014,7 @@ def _built(api, paths, fake_root) -> None:
     """An image on disk for the display env, so there is something to write."""
     from mcu_updater.providers import pio as dm
 
-    display = api.pio_types()[ENV]
+    display = api.platformio_types()[ENV]
     path = pathlib.Path(dm.firmware_bin(display))
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(b"\0" * 512)
@@ -1003,12 +1033,13 @@ def test_flash_all_selects_screens_beside_boards(api, paths, fake_root, screens)
     api.runner.cancel(res["job_id"])
     api.runner.wait(timeout=30)
 
-    assert [d["flasher"] for d in res["displays"]] == ["platformio", "platformio"]
-    assert {d["id"] for d in res["displays"]} == {
+    selected, _refused = api._platformio_to_flash("all")
+    assert [t.to_json()["flasher"] for t in selected] == ["platformio", "platformio"]
+    assert {t.to_json()["id"] for t in selected} == {
         screens_port(screens, "t0"),
         screens_port(screens, "t1"),
     }
-    assert all(d["reason"] == "forced" for d in res["displays"])
+    assert all(t.detail["reason"] == "forced" for t in selected)
 
 
 def test_a_display_with_nothing_built_is_not_selected(api, paths, screens):
@@ -1095,3 +1126,42 @@ def test_a_name_belonging_to_no_type_is_refused_rather_than_guessed(api, no_pio)
     with pytest.raises(RpcError) as exc:
         api.dispatch("fw.build", {"name": "not_a_type"})
     assert exc.value.data["code"] == "unknown_type"
+
+
+def test_a_platformio_flash_answers_with_the_job_alone(api, no_pio, screens):
+    port = screens["knomi_serial t0_knomi"]["serial"]
+
+    res = api.dispatch("fw.flash", {"name": ENV, "port": port})
+
+    assert set(res) == {"job_id", "job"}
+    assert res["job"]["kind"] == "flash"
+    assert res["job"]["params"] == {"name": ENV, "port": port}
+    assert api.runner.wait(timeout=30)
+
+
+def test_a_whole_type_flash_names_no_port(api, no_pio, screens):
+    res = api.dispatch("fw.flash", {"name": ENV})
+
+    assert res["job"]["params"] == {"name": ENV}
+    assert api.runner.wait(timeout=30)
+
+
+def test_a_platformio_flash_cancels_only_between_devices(api, no_pio, screens):
+    """The bug this kind rename fixes: the panel told the user this job
+    would stop at once, mid-write."""
+    from mcu_updater.jobs import IMMEDIATELY_CANCELLABLE
+
+    res = api.dispatch("fw.flash", {"name": ENV})
+
+    assert res["job"]["kind"] not in IMMEDIATELY_CANCELLABLE
+    api.runner.wait(timeout=30)
+
+
+def test_a_platformio_build_is_a_build_job(api, paths, fake_root, no_pio):
+    _built(api, paths, fake_root)
+
+    res = api.dispatch("fw.build", {"name": ENV})
+
+    assert res["job"]["kind"] == "build"
+    assert res["job"]["params"] == {"name": ENV, "fw": "knomi_serial"}
+    api.runner.wait(timeout=30)

@@ -16,6 +16,7 @@ Files are split by *what they are*, following the `printer_data` conventions.
     flylllplusbuffer/klipper.uf2
     roadrunner/roadrunner.uf2              #   staged cmake_target, for a [type roadrunner]
     roadrunner/roadrunner.build.json       #   build provenance - the source subtree's sha
+    platformio/knomi_toolchanger.build.json #  PlatformIO build provenance, one per env
     .updater.lock                          #   runtime state
     .updater.state
 ```
@@ -128,7 +129,7 @@ UI-managed `ignored_serials` and `ignored_canbus_uuids` device lists. All
 optional. A PlatformIO firmware family's own source tree is named on its
 `[firmware ...]` section, not in `[updater]`.
 
-Roadrunner's `fw.roadrunner.provision`/`.clear` (docs/agent-api.md) write no
+Roadrunner's `fw.identity.provision`/`.clear` (docs/agent-api.md) write no
 key here at all - not even a "last known identity" - by design: discovery
 stays read-only, provisioning is a direct-USB write to the board itself, and
 a provisioned board remains as untracked as before until it is separately

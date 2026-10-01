@@ -3,13 +3,14 @@
 from __future__ import annotations
 
 import dataclasses
-from collections.abc import Callable, Mapping
-from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+from collections.abc import Callable, Mapping, Sequence
+from typing import TYPE_CHECKING, Any, Literal, Protocol, runtime_checkable
 
 if TYPE_CHECKING:
     from ..build import Reporter
     from ..device_info import DeviceInfo
     from ..discovery.knomi_serial import WatcherDevice
+    from ..extras import Extra
     from ..flashers.spec import Bench
     from ..paths import Paths
     from ..providers.pio import PioType
@@ -110,12 +111,26 @@ class Provisioner(Protocol):
     must not interleave with a flash or with a second provision, and the lock
     covering all three is the caller's to take (`lock.exclusive`), because the
     caller is the one that knows what to call the operation.
+
+    Giving an identity and taking it back are one firmware feature, so they are
+    one capability. `identity_state` is how a caller that names no family finds
+    the helper to ask: a string test, like `is_trackable`, that never opens a
+    port.
     """
 
     name: str
 
+    def identity_state(self, serial: str) -> Literal["unprovisioned", "provisioned"] | None:
+        """Whether `serial` is this firmware's identity, and in which state."""
+        ...
+
     def provision(self, paths: Paths, serial: str) -> str:
         """Provision the board answering to `serial`; return its new serial."""
+        ...
+
+    def clear(self, paths: Paths, serial: str) -> str:
+        """Return the board answering to `serial` to its unprovisioned
+        identity; return the serial it came back under."""
         ...
 
 
@@ -145,7 +160,7 @@ class Identifier(Protocol):
     Every other device in this tool is found by something the host can see
     without asking: a serial in `/dev/serial/by-id`, a DFU descriptor, an
     `RPI-RP2` volume. `discovery`'s sources exist to decide which of those
-    sightings to trust. A KNOMI screen has none of them - the CH340K in
+    sightings to trust. A KNOMI has none of them - the CH340K in
     front of it reports no USB serial at all - so the only stable name it
     has is one its *firmware* knows and will state if asked. That is
     firmware-specific by construction, which is what makes it a helper
@@ -158,10 +173,10 @@ class Identifier(Protocol):
     cannot ask is the helper's policy; a device it heard is returned with
     `answered` set. No default, so that cost is never acquired by omission.
 
-    Keyed by device id. The value is knomi's own `WatcherDevice` because
-    `fw.device.list` already puts it on the wire and a five-field copy here
-    would be a second description of one thing; knomi_serial is the only
-    identifier, and a second one is when to generalise it.
+    Keyed by device id. The value is knomi's own `WatcherDevice` because a
+    five-field copy here would be a second description of one thing;
+    knomi_serial is the only identifier, and a second one is when to
+    generalise it.
     """
 
     name: str
@@ -178,4 +193,86 @@ class Identifier(Protocol):
 
     def remembered_at(self, paths: Paths, entry: PioType) -> str:
         """The file the remembered answers live in, or "" when there is none."""
+        ...
+
+
+@dataclasses.dataclass(frozen=True)
+class ListedDevice:
+    """One configured device, as the core uses it and nothing else.
+
+    A firmware's own fields stay in `raw`, which only its helper reads (for its
+    `extras()`), and which `to_json` never emits. The core may grow a field
+    here when it already uses the fact. A firmware's field may not be added.
+    """
+
+    #: What the device is addressed by: its configured id, else its configured path.
+    id: str | None
+    #: Its printer object, in the capitalisation printer.cfg used.
+    section: str
+    #: Its short name: the section without the prefix.
+    label: str
+    #: The id printer.cfg names, or None.
+    configured_id: str | None
+    #: The hardware id the device reports: the flash log's `hwid:` key and the
+    #: source of `confidence`.
+    reported_id: str | None
+    #: The port printer.cfg or discovery gave, or None.
+    configured_path: str | None
+    #: `configured_path` resolved, or None when it does not exist.
+    resolved_path: str | None
+    #: The firmware version the device reports, or None.
+    version: str | None
+    #: False when the device declares it cannot work with the host; drives the
+    #: `protocol_mismatch` state. None is unknown.
+    compatible: bool | None
+    #: Whether the far end answers, as opposed to the port merely existing.
+    #: None is unknown.
+    answering: bool | None
+    raw: Mapping[str, Any] = dataclasses.field(default_factory=dict, compare=False, repr=False)
+
+    @property
+    def present(self) -> bool:
+        return self.resolved_path is not None
+
+    def to_json(self) -> dict[str, Any]:
+        return {
+            "id": self.id,
+            "section": self.section,
+            "label": self.label,
+            "configured_id": self.configured_id,
+            "reported_id": self.reported_id,
+            "configured_path": self.configured_path,
+            "resolved_path": self.resolved_path,
+            "present": self.present,
+            "version": self.version,
+            "compatible": self.compatible,
+            "answering": self.answering,
+        }
+
+
+@runtime_checkable
+class DeviceLister(Protocol):
+    """Lists a family's configured devices from Klipper's printer objects.
+
+    Modelled on `ImageReporter`: the helper declares a prefix and interprets
+    the object values, and the core owns the Moonraker query. The method is
+    `device_from_klipper`, not `from_klipper`, because `ImageReporter` already
+    owns that name with another signature, and one helper may be both.
+    """
+
+    name: str
+    #: The Klipper section prefix whose objects are this firmware's devices.
+    klipper_prefix: str
+
+    def device_from_klipper(self, section: str, values: Mapping[str, Any]) -> ListedDevice:
+        """One device from its printer object. `section` is the object's own
+        capitalisation, which is what printer.cfg says."""
+        ...
+
+    def extras(self, devices: Sequence[ListedDevice]) -> list[Extra]:
+        """Facts about one type's devices worth showing on its row."""
+        ...
+
+    def devices_note(self, *, reachable: bool) -> str:
+        """Why a type of this family lists no devices. Called only when it lists none."""
         ...

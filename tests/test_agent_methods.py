@@ -289,12 +289,26 @@ def test_target_get_for_an_unknown_mcu_carries_the_stable_code(api):
     assert exc.value.data["code"] == "unknown_target"
 
 
-def test_target_get_returns_the_same_detail_as_device_list_for_a_display(api):
+def test_target_get_returns_the_same_detail_as_status_for_a_platformio_type(api):
     from_status = next(t for t in api.dispatch("fw.status")["targets"] if t["provider"] == "platformio")
     res = api.dispatch("fw.target.get", {"name": from_status["name"], "provider": "platformio"})
     assert res["provider"] == "platformio"
     assert res["target"]["name"] == from_status["name"]
     assert res["target"]["env"] == from_status["descriptor"]
+    assert "devices" in res["target"] and "screens" not in res["target"]
+
+
+def test_target_get_echoes_no_firmware_specific_config_for_a_platformio_type(api):
+    """`klipper_section` and `device_map` are the helper's own business since
+    `DeviceLister` (a knomi prefix, a knomi watcher's map), and `service` is a
+    compatibility echo of the retired key that `stop_services` replaced.
+    Nothing reads any of them; version 5 removes them rather than leaving a
+    second bump for later."""
+    from_status = next(t for t in api.dispatch("fw.status")["targets"] if t["provider"] == "platformio")
+    res = api.dispatch("fw.target.get", {"name": from_status["name"], "provider": "platformio"})
+
+    assert not {"klipper_section", "device_map", "service"} & set(res["target"])
+    assert {"name", "env", "firmware", "stop_services", "source", "devices"} <= set(res["target"])
 
 
 def test_target_get_for_an_unknown_display_carries_the_stable_code(api):
@@ -599,9 +613,9 @@ def test_serial_add_omits_prior_serial_when_nothing_moved(api, monkeypatch):
     assert "prior_serial" not in result
 
 
-def test_serial_add_withholds_provisioning_from_a_runner_less_agent(api, monkeypatch):
+def test_serial_add_refuses_an_unprovisioned_serial_with_the_generic_code(api, monkeypatch):
     """Fix 2 / the coordinator's ruling: `fw.serial.add` performs the same
-    irreversible hardware write `fw.roadrunner.provision` does, so a
+    irreversible hardware write `fw.identity.provision` does, so a
     deployment `available_methods` already withholds that method from must
     not still reach the write through ordinary tracking. This `api` fixture
     has no job runner - the same state
@@ -625,9 +639,15 @@ def test_serial_add_withholds_provisioning_from_a_runner_less_agent(api, monkeyp
                 )
             return helpers.TrackVerdict(ok=True)
 
+        def identity_state(self, serial):
+            return "unprovisioned" if serial.startswith("RR-UNPROVISIONED-") else None
+
         def provision(self, paths, serial: str) -> str:
             self.calls.append(serial)
             return "RR-SHOULD-NEVER-HAPPEN"
+
+        def clear(self, paths, serial):
+            raise AssertionError("nothing in this test clears an identity")
 
     helper = _FakeRoadrunner()
     monkeypatch.setitem(helpers_registry._BY_NAME, "roadrunner", helper)
@@ -646,16 +666,21 @@ def test_serial_add_withholds_provisioning_from_a_runner_less_agent(api, monkeyp
 
     assert api.runner is None  # the precondition this test pins
 
+    assert helpers.provisioner(helper) is not None
+
     with pytest.raises(RpcError) as exc:
         api.dispatch(
             "fw.serial.add",
             {"name": "roadrunner", "serial": "RR-UNPROVISIONED-50543165187A4D1C"},
         )
 
-    assert exc.value.data["code"] == "roadrunner_unprovisioned"
+    assert exc.value.data["code"] == "serial_unprovisioned"
     assert exc.value.message == "fake helper says provision this identity first"
     assert exc.value.data["message"] == exc.value.message
     assert helper.calls == [], "withheld, not attempted and then queued"
+
+    with open(api.paths.main_config, encoding="utf-8") as fh:
+        assert "RR-UNPROVISIONED-50543165187A4D1C" not in fh.read(), "nothing tracked"
 
 
 def test_serial_add_refuses_a_serial_tracked_under_another_type(api, fake_root):

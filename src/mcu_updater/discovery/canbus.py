@@ -86,7 +86,7 @@ class CanSighting:
     application: str
     #: One of `discovery.spec.STATE_*`, via `state_for_firmware(application)`.
     state: str
-    #: Which interface answered, for *this scan's own display only* - Linux
+    #: Which interface answered, for *this scan's own report only* - Linux
     #: CAN interface names are enumeration order, not stable identity, so this
     #: is never persisted and never trusted on a later scan. See
     #: `discovery.spec`'s identity-vs-state split for the general rule this

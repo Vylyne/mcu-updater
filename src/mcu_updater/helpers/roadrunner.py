@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable, Mapping
-from typing import Any
+from typing import Any, Literal
 
 from .. import device_info, uf2
 from ..device_info import SOURCE_INFO, SOURCE_KLIPPER, DeviceInfo
@@ -117,11 +117,27 @@ class RoadrunnerHelper:
             reason=(
                 f"'{serial}' is an unprovisioned Roadrunner's diagnostic identity, "
                 f"not a stable serial - provision it first (the web UI's Provision "
-                f"Roadrunner action, or fw.roadrunner.provision), then track the "
+                f"Roadrunner action, or fw.identity.provision), then track the "
                 f"resulting RR-... serial."
             ),
             remedy="provision",
         )
+
+    def identity_state(self, serial: str) -> Literal["unprovisioned", "provisioned"] | None:
+        from ..discovery.roadrunner import PROVISIONED_RE, UNPROVISIONED_RE
+
+        if UNPROVISIONED_RE.fullmatch(serial):
+            return "unprovisioned"
+        if PROVISIONED_RE.fullmatch(serial):
+            return "provisioned"
+        return None
+
+    def clear(self, paths: Paths, serial: str) -> str:
+        """Return this board to its diagnostic identity. The caller holds the op lock."""
+        from ..discovery import roadrunner
+
+        device = roadrunner.find_provisioned(paths, serial)
+        return roadrunner.clear_roadrunner(paths, device).serial
 
     def provision(self, paths: Paths, serial: str) -> str:
         """Give this board a durable serial. The caller holds the op lock.

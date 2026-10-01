@@ -37,6 +37,9 @@ function target(overrides: Partial<Target> = {}): Target {
     needs_flash: false,
     devices: [],
     actions: [],
+    source: null,
+    extras: [],
+    devices_note: "No serial devices are tracked for this type yet.",
     ...overrides,
   };
 }
@@ -47,7 +50,7 @@ describe("SummaryChips", () => {
     expect(wrapper.text()).toContain("All up to date");
   });
 
-  it("counts stale over targets, not types - a display counts too", () => {
+  it("counts stale over targets, not types - a PlatformIO row counts too", () => {
     const stale = target({
       provider: "platformio",
       artifact: { state: "stale", tone: "attention", label: "x", reason: null },

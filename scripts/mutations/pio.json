@@ -8,8 +8,8 @@
     "tests/test_pio.py",
     "tests/test_knomi_listen.py",
     "tests/test_knomi_watcher.py",
-    "tests/test_agent_display_jobs.py",
-    "tests/test_agent_displays.py",
+    "tests/test_agent_platformio_flash.py",
+    "tests/test_agent_platformio_devices.py",
     "-q"
   ],
   "mutations": [

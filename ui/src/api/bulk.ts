@@ -54,7 +54,8 @@ export interface BulkFlashEntry {
 }
 
 /** What a fleet flash would touch, flattened across every target - boards and
- * screens alike, since fw.flash_all selects both under one Klipper stop. */
+ * PlatformIO devices alike, since fw.flash_all selects both under one Klipper
+ * stop. */
 export function bulkFlashTargets(
   targets: Target[],
   scope: BulkScope,

@@ -526,7 +526,7 @@ def artifact_status(
     if side is None:
         # A binary with no sidecar. Not the same thing as never having built -
         # something is there, we just cannot say what produced it - which is
-        # exactly the distinction the display side already drew.
+        # exactly the distinction the PlatformIO side already drew.
         return ArtifactStatus(NO_PROVENANCE)
 
     # Before every comparison below, because they all ask what produced these
@@ -958,7 +958,7 @@ class FlashLog:
 
     Devices known by a hardware id live here too, under :func:`hardware_id_key`
     rather than a serial, for the same reason and with the same discard rule -
-    what a screen reports running is compared against the tree commit we
+    what a device reports running is compared against the tree commit we
     recorded writing to it.
     """
 

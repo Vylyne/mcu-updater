@@ -140,6 +140,47 @@ def test_a_tracked_serial_is_refused_before_anything_is_written(api, fake, paths
     assert fake.calls == []
 
 
+@pytest.mark.parametrize(
+    ("method", "write", "serial"),
+    [
+        ("fw.identity.provision", "provision", UNPROVISIONED),
+        ("fw.identity.clear", "clear", PROVISIONED),
+    ],
+)
+def test_a_serial_cannot_be_tracked_while_its_identity_is_being_written(
+    api, fake, paths, monkeypatch, method, write, serial
+):
+    """RPCs run on a pool. The untracked check and the write are one step as far
+    as `fw.serial.add` is concerned: tracked in between, the registry would be
+    left naming a serial the board no longer has."""
+    import threading
+
+    with open(paths.registry_file, "a", encoding="utf-8", newline="\n") as fh:
+        fh.write(
+            "\n[firmware fakefw]\nsource: ~/fakefw\nbuilder: cmake\nflashers: bootsel\n"
+            "\n[type faketype]\nchipset: rp2040\nfirmware: fakefw\n"
+        )
+    adding = threading.Thread(
+        target=lambda: api.dispatch("fw.serial.add", {"name": "faketype", "serial": serial})
+    )
+    tracked_during_the_write = []
+    plain = getattr(fake, write)
+
+    def write_while_someone_tracks_it(paths_, serial_):
+        adding.start()
+        adding.join(timeout=0.3)
+        tracked_during_the_write.extend(api.registry().find_declared_types_for_serial(serial_))
+        return plain(paths_, serial_)
+
+    monkeypatch.setattr(fake, write, write_while_someone_tracks_it)
+
+    api.dispatch(method, {"serial": serial})
+    adding.join(timeout=10)
+
+    assert not adding.is_alive()
+    assert tracked_during_the_write == []
+
+
 def test_the_old_method_names_are_gone(api):
     capabilities = api.dispatch("fw.ping")["capabilities"]
 

@@ -243,7 +243,14 @@ class RegistryMixin(_Base):
         dedicated maintenance call. Withheld, it refuses with the helper's
         reason and the existing `UnprovisionedSerialError` /
         `serial_unprovisioned` - not a new code.
+
+        Serialised against `fw.identity.*`, which must not have a serial
+        tracked between its untracked check and its write.
         """
+        with self._identity_lock:
+            return self._serial_add(args)
+
+    def _serial_add(self, args: dict) -> dict[str, Any]:
         name = self._require_str(args, "name")
         serial = self._require_str(args, "serial")
 

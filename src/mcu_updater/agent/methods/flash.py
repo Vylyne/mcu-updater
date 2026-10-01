@@ -79,9 +79,9 @@ class FlashMixin(_Base):
             return self._flash_can(args, str(uuid), name, runner, settings)
 
         # `id` is the uniform slot - `FlashTarget.id` is a serial for a board and
-        # a port for a PlatformIO device - and `serial` is what this method has always been
-        # called with. Both, so a caller reading `targets[].devices[].id` off the
-        # wire can hand it straight back.
+        # a port for a PlatformIO device - and `serial` is what this method has
+        # always been called with. Both, so a caller reading
+        # `targets[].devices[].id` off the wire can hand it straight back.
         serial = args.get("serial") or args.get("id")
         if not serial:
             raise RpcError("'serial' is required", ERR_INVALID_PARAMS)
@@ -454,7 +454,7 @@ class FlashMixin(_Base):
         entry = types[name]
 
         # Read the devices NOW, while Klipper can still answer.
-        listed, reachable = self.platformio_devices()
+        listed, reachable = self.platformio_devices(types)
         # Either spelling of the one identity. `port` is what this call has
         # always taken; `id` is the uniform slot, and either can name the
         # configured path, the configured id, or the identity the firmware

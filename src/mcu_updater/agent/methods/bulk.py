@@ -352,7 +352,7 @@ class BulkMixin(_Base):
         settings = self.settings()
         families = firmware.load(self.paths)
         requests: list[tuple[flashers.Device, tuple[str, ...]]] = []
-        for payload in self.platformio_status():
+        for payload in self.platformio_status(known):
             if only is not None and payload["name"] != only:
                 continue
             if not payload["has_firmware"]:

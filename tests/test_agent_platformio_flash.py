@@ -167,9 +167,9 @@ def test_the_screens_are_read_before_klipper_is_stopped(api, no_pio, monkeypatch
 
     original = api.platformio_devices
 
-    def watched_list():
+    def watched_list(*args):
         order.append("listed")
-        return original()
+        return original(*args)
 
     monkeypatch.setattr(api, "platformio_devices", watched_list)
 
@@ -214,6 +214,32 @@ def test_every_upload_names_its_port(api, no_pio):
         assert cmd[cmd.index("--upload-port") + 1].endswith("knomi_t0_knomi") or cmd[
             cmd.index("--upload-port") + 1
         ].endswith("knomi_t1_knomi")
+
+
+def _count_type_list_loads(api):
+    loads = []
+    types_of = api.platformio_types
+    api.platformio_types = lambda: loads.append(1) or types_of()
+    return loads
+
+
+def test_a_flash_reads_the_type_list_once(api, no_pio):
+    """The handler hands the types it loaded to the device listing, rather
+    than the listing loading them again."""
+    loads = _count_type_list_loads(api)
+
+    api._pio_flash({"name": ENV})
+    assert api.runner.wait(timeout=30)
+
+    assert len(loads) == 1
+
+
+def test_selecting_for_a_flash_all_reads_the_type_list_once(api, no_pio):
+    loads = _count_type_list_loads(api)
+
+    api._platformio_to_flash("all")
+
+    assert len(loads) == 1
 
 
 def test_one_screen_can_be_singled_out(api, no_pio, screens):

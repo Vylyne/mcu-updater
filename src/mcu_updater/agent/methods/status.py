@@ -179,6 +179,12 @@ class StatusMixin(_Base):
         # identical configfile/mcu-object query just to project CAN UUIDs.
         self._latest_canbus_info: dict[str, dict[str, Any]] = {}
         self._canbus_scan_lock = threading.Lock()
+        # RPCs run on a pool. Held by `fw.identity.*` from the untracked check
+        # through the write, and by `fw.serial.add` across its own, so a serial
+        # cannot be tracked in the gap and leave the registry naming an
+        # identity the board no longer has. Process-local, and taken outside
+        # the operation lock: tracking must stay possible during a build.
+        self._identity_lock = threading.Lock()
 
     # -- helpers -----------------------------------------------------------
 
@@ -530,16 +536,19 @@ class StatusMixin(_Base):
             "targets": self.targets(reg, types, platformio, rows),
         }
 
-    def platformio_status(self) -> list[dict[str, Any]]:
+    def platformio_status(self, types: dict[str, PioType] | None = None) -> list[dict[str, Any]]:
         """Configured PlatformIO types, each with the devices its helper lists.
 
         Rolled into fw.status so the panel paints in one call. Cheap when
         unconfigured: no PlatformIO `[type]` means no query at all.
+
+        `types` is for a caller that has already loaded them.
         """
         from ...build import FlashLog
         from ...providers import pio as pio_mod
 
-        types = self.platformio_types()
+        if types is None:
+            types = self.platformio_types()
         if not types:
             return []
 
@@ -1691,6 +1700,10 @@ class StatusMixin(_Base):
 
     def identity_provision(self, args: dict) -> dict[str, Any]:
         """Give one confirmed, untracked board its durable identity."""
+        with self._identity_lock:
+            return self._identity_provision(args)
+
+    def _identity_provision(self, args: dict) -> dict[str, Any]:
         serial = self._require_str(args, "serial")
         prov = self._identity_claimant(serial, "unprovisioned")
         self._identity_untracked(serial)
@@ -1706,6 +1719,10 @@ class StatusMixin(_Base):
 
     def identity_clear(self, args: dict) -> dict[str, Any]:
         """Return one confirmed, untracked board to its unprovisioned identity."""
+        with self._identity_lock:
+            return self._identity_clear(args)
+
+    def _identity_clear(self, args: dict) -> dict[str, Any]:
         serial = self._require_str(args, "serial")
         prov = self._identity_claimant(serial, "provisioned")
         self._identity_untracked(serial)
@@ -2110,7 +2127,9 @@ class StatusMixin(_Base):
 
     # -- PlatformIO devices -------------------------------------------------
 
-    def platformio_devices(self) -> tuple[dict[str, list[ListedDevice]], bool]:
+    def platformio_devices(
+        self, types: dict[str, PioType] | None = None
+    ) -> tuple[dict[str, list[ListedDevice]], bool]:
         """Each PlatformIO type's configured devices, and whether Klipper answered.
 
         **The list comes from Klipper, not from our registry.** A family's
@@ -2122,8 +2141,11 @@ class StatusMixin(_Base):
 
         A type whose family has no lister lists nothing. Its row says why, from
         `platformio_status`.
+
+        `types` is for a caller that has already loaded them.
         """
-        types = self.platformio_types()
+        if types is None:
+            types = self.platformio_types()
         families = firmware.load(self.paths)
         return self._listed_devices(
             {name: self._device_lister_for(entry, families) for name, entry in types.items()}
@@ -2170,9 +2192,10 @@ class StatusMixin(_Base):
     ) -> DeviceLister | None:
         """The type's family's lister, or None - never an exception.
 
-        The type list is read leniently and never validated, so an undeclared
-        family or a misspelt `helper:` is still live here. A status poll has to
-        report "cannot list" on that one row rather than raise for all of them.
+        A misspelt `helper:` is live here: nothing validates it before a
+        capability is asked for, and a status poll has to report "cannot list"
+        on that one row rather than raise for all of them. An undeclared family
+        never gets this far - the registry load refuses the whole config first.
         """
         try:
             family = firmware.resolve(self.paths, entry.firmware, families)

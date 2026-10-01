@@ -2,7 +2,6 @@ __pycache__/
 *.pyc
 .vscode/
 NOTES.md
-.superpowers/
 .worktrees/
 
 # packaging / tooling

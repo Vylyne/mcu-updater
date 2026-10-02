@@ -21,9 +21,13 @@
   --color-btn-disabled: rgba(255, 255, 255, 0.3);
   --color-btn-hover: rgba(255, 255, 255, 0.08);
 
+  /* One colour per wire tone (states.py's TONE_*): green is fine, amber is
+     a deviation from the preferred state, red is something the printer
+     cannot use as it stands. --tone-warn is also the app's warning colour
+     (.alert--warning, warn log lines), which is the same claim. */
   --tone-ok: #4caf50;
-  --tone-unknown: #9e9e9e;
-  --tone-attention: #fb8c00;
+  --tone-warn: #fb8c00;
+  --tone-problem: #ff5252;
   --color-primary: #2196f3;
   --color-error: #ff5252;
   --color-info: #2196f3;
@@ -37,8 +41,8 @@
      technically passes. These are picked to clear ~6:1 against the chip's own
      tinted background specifically. */
   --chip-tone-ok: #81c784;
-  --chip-tone-unknown: #bdbdbd;
-  --chip-tone-attention: #ffa726;
+  --chip-tone-warn: #ffa726;
+  --chip-tone-problem: #ff9e99;
 
   --panel-toolbar-height: 48px;
 }
@@ -64,17 +68,20 @@
     /* Darker than the dark-theme tones: the chip and [data-tone] text rules
        below use these directly as text colour, and the dark-mode values
        (picked for legibility on #1e1e1e) read as low as ~2.8:1 against a
-       white surface - well under WCAG AA's 4.5:1 for normal text. */
+       white surface - well under WCAG AA's 4.5:1 for normal text.
+       --tone-warn is a brown amber rather than a deep orange: at the
+       darkness a white surface needs, a deep orange (#bf360c) and
+       --tone-problem's red read as one colour. */
     --tone-ok: #2e7d32;
-    --tone-unknown: #616161;
-    --tone-attention: #bf360c;
+    --tone-warn: #8d5500;
+    --tone-problem: #c62828;
     --color-error: #c62828;
 
     /* Same reasoning as the dark set above, darker instead of lighter since
        the chip background here blends toward white, not black. */
     --chip-tone-ok: #1b5e20;
-    --chip-tone-unknown: #424242;
-    --chip-tone-attention: #8f2703;
+    --chip-tone-warn: #6d4200;
+    --chip-tone-problem: #8e0000;
   }
 }
 
@@ -190,11 +197,11 @@ main h1 {
 [data-tone="ok"] {
   color: var(--tone-ok);
 }
-[data-tone="unknown"] {
-  color: var(--tone-unknown);
+[data-tone="warn"] {
+  color: var(--tone-warn);
 }
-[data-tone="attention"] {
-  color: var(--tone-attention);
+[data-tone="problem"] {
+  color: var(--tone-problem);
 }
 /* A solid tone fill with white text read as barely 2.8:1 contrast - well
    under WCAG AA's 4.5:1 for normal text. Same tinted-background-plus-
@@ -206,19 +213,19 @@ main h1 {
    a lower alpha moves the background further from the text's own hue (toward
    the plain surface colour) rather than closer to it, which is what actually
    buys contrast headroom here without re-tuning --chip-tone-* again. Computed
-   at 7.2-9.3:1 across every tone/theme combination - comfortably past WCAG
-   AAA (7:1), not just AA. */
+   at 7.1-8.7:1 across every tone/theme combination - past WCAG AAA (7:1),
+   not just AA. */
 .chip[data-tone="ok"] {
   background: rgba(76, 175, 80, 0.1);
   color: var(--chip-tone-ok);
 }
-.chip[data-tone="unknown"] {
-  background: rgba(158, 158, 158, 0.1);
-  color: var(--chip-tone-unknown);
-}
-.chip[data-tone="attention"] {
+.chip[data-tone="warn"] {
   background: rgba(251, 140, 0, 0.1);
-  color: var(--chip-tone-attention);
+  color: var(--chip-tone-warn);
+}
+.chip[data-tone="problem"] {
+  background: rgba(255, 82, 82, 0.1);
+  color: var(--chip-tone-problem);
 }
 .chip--outlined[data-tone] {
   background: transparent;
@@ -356,7 +363,7 @@ input:not(.switch):not([type="checkbox"]):not([type="radio"]):not(
 }
 
 .btn-icon--warning:not(:disabled) {
-  color: var(--tone-attention);
+  color: var(--tone-warn);
 }
 
 /* -- text -------------------------------------------------------------- */
@@ -399,7 +406,7 @@ input:not(.switch):not([type="checkbox"]):not([type="radio"]):not(
 }
 .alert--warning {
   background: rgba(251, 140, 0, 0.12);
-  color: var(--tone-attention);
+  color: var(--tone-warn);
 }
 .alert--error {
   background: rgba(255, 82, 82, 0.12);

@@ -319,7 +319,7 @@ async function onCancel(): Promise<void> {
 
 [data-stream="warn"],
 [data-stream="stdout_warn"] {
-  color: var(--tone-attention);
+  color: var(--tone-warn);
 }
 
 [data-stream="info"] {

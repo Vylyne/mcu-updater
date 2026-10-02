@@ -45,16 +45,24 @@ import dataclasses
 #: Three buckets, and the traffic light a panel would paint them:
 #:
 #:   TONE_OK        green   - provably fine, nothing to do
-#:   TONE_UNKNOWN   amber   - we cannot vouch for this either way
-#:   TONE_ATTENTION red     - something needs doing
+#:   TONE_WARN      amber   - a deviation from the preferred state: behind,
+#:                            unverified, or not something we can vouch for
+#:   TONE_PROBLEM   red     - the printer cannot use this as it stands
+#:
+#: The tone is how bad it is for the printer, **not** whether a flash is
+#: wanted. It used to be `needs_flash` coloured, which painted an unplugged
+#: toolhead the same as a board one commit behind, and a board waiting in its
+#: bootloader the same as a pending update. `needs_flash` still answers the
+#: other question, and nothing derives one from the other. A bench with its
+#: boards unplugged reads as a wall of red, and that is the intent.
 #:
 #: Named semantically rather than "green"/"amber"/"red" for one reason: colour
 #: is not the only way this gets rendered, and it must not be the only way it is
 #: understood. A chip, an icon and a screen reader all need the `label`; the
 #: colour is one presentation of the tone, not the tone itself.
 TONE_OK = "ok"
-TONE_UNKNOWN = "unknown"
-TONE_ATTENTION = "attention"
+TONE_WARN = "warn"
+TONE_PROBLEM = "problem"
 
 # --------------------------------------------------------------------------
 # Q1: the built image, against the inputs that produced it
@@ -106,9 +114,11 @@ _ARTIFACT_TONE: dict[str, str] = {
     ARTIFACT_CURRENT: TONE_OK,
     # Absent and stale are one bucket on purpose. They differ in cause and not
     # at all in what the user does about it: press build.
-    ARTIFACT_ABSENT: TONE_ATTENTION,
-    ARTIFACT_STALE: TONE_ATTENTION,
-    ARTIFACT_UNPROVABLE: TONE_UNKNOWN,
+    ARTIFACT_ABSENT: TONE_WARN,
+    ARTIFACT_STALE: TONE_WARN,
+    # The same bucket again, and never a problem: nothing about a file on disk
+    # stops the printer working. The label is what tells these apart.
+    ARTIFACT_UNPROVABLE: TONE_WARN,
 }
 
 #: Plain words, because the reason codes are for the panel to switch on and are
@@ -191,7 +201,7 @@ UNKNOWN_VERSION = "unknown_version"
 #: fork, and anything else that stamps a hand-maintained literal instead of a
 #: git describe) is identical in anyone's build of that release, and it does
 #: not move when the tree does - so the release is recognised and the binary
-#: is not. Amber, and it resolves to `None` (up to date) on the first flash
+#: is not. A warn, and it resolves to `None` (up to date) on the first flash
 #: through this tool, once our own record backs the match.
 VERSION_ONLY = "version_only"
 #: The board measured the image it is running and got a number that is not the
@@ -215,12 +225,23 @@ _NEEDS_FLASH: dict[str | None, bool | None] = {
 
 DEVICE_REASONS = tuple(r for r in _NEEDS_FLASH if r is not None)
 
-#: The tri-state answer, coloured. Nothing else to decide: "wants flashing" is
-#: the action, "cannot tell" is the caveat, "up to date" is the all-clear.
-_DEVICE_TONE: dict[bool | None, str] = {
-    False: TONE_OK,
-    True: TONE_ATTENTION,
-    None: TONE_UNKNOWN,
+#: Chosen per reason, beside `_NEEDS_FLASH` and independent of it - see the
+#: tones above. A problem is a board the printer cannot use as it stands;
+#: everything else that is not up to date is a deviation.
+_DEVICE_TONE: dict[str | None, str] = {
+    None: TONE_OK,
+    IN_BOOTLOADER: TONE_PROBLEM,
+    SOURCE_CHANGED: TONE_WARN,
+    ARTIFACT_CHANGED: TONE_WARN,
+    # Amber, not red: a digest says the bytes differ and not how far. An older
+    # build of the right firmware and a different firmware altogether measure
+    # the same way, and nothing here can tell them apart.
+    UNEXPECTED_IMAGE: TONE_WARN,
+    PROTOCOL_MISMATCH: TONE_PROBLEM,
+    DEVICE_DIRTY: TONE_WARN,
+    OFFLINE: TONE_PROBLEM,
+    UNKNOWN_VERSION: TONE_WARN,
+    VERSION_ONLY: TONE_WARN,
 }
 
 _DEVICE_LABEL: dict[str | None, str] = {
@@ -252,7 +273,7 @@ class DeviceStatus:
 
     @property
     def tone(self) -> str:
-        return _DEVICE_TONE[self.needs_flash]
+        return _DEVICE_TONE[self.reason]
 
     @property
     def label(self) -> str:

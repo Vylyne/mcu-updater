@@ -22,7 +22,11 @@ truth** — and `tests/test_agent_methods.py` is what stops them drifting.
   terminal `-if00` suffix from the hardware serial; the full `/dev/serial/by-id`
   path remains the transport address. Version 5 removes `targets[].extra` -
   `source`, `extras` and `devices_note` replace it on every row, and a
-  PlatformIO row names its `firmware`. `fw.device.list` is gone. `fw.flash_all`
+  PlatformIO row names its `firmware`. `tone` is `ok` | `warn` | `problem`
+  (was `ok` | `unknown` | `attention`) and says how bad a state is for the
+  printer, no longer whether a flash is wanted - an offline board is a
+  `problem` now, and a board behind its source a `warn`; see "`tone` and
+  `label` ride along" below. `fw.device.list` is gone. `fw.flash_all`
   and the PlatformIO `fw.flash` answer `{job_id, job}` only; PlatformIO jobs are
   kinds `flash` and `build`, so a PlatformIO build is immediately cancellable
   and no longer holds up an agent shutdown. `fw.target.get` names a PlatformIO type's
@@ -403,12 +407,12 @@ version - not only offline. Some trees stamp a hand-maintained literal instead
 of a git describe (Cartographer's `CONFIG_VERSION`, e.g. `"CARTOGRAPHER
 6.2.0"`), which carries no commit at all, so there is nothing for the `g<hex>`
 pattern to find. `reason` then falls to a comparison against what the build
-stamped rather than the source tree: `"version_only"` (amber, `needs_flash:
+stamped rather than the source tree: `"version_only"` (`warn`, `needs_flash:
 null`) when the stamp matches but no believable flash record backs it,
 `"source_changed"` when it does not match, or the ordinary green/`null` verdict
 once a record does back it.
 
-`reason` can also be `"unexpected_image"` (attention, `needs_flash: true`). A
+`reason` can also be `"unexpected_image"` (`warn`, `needs_flash: true`). A
 board that can measure the image it is running - today the Roadrunner, through
 its klippy extra's `firmware_image` - reports a digest and the byte range it
 covers, and this host compares them field for field against the build's own
@@ -504,8 +508,8 @@ to know about it. `reason` ∈ `null` | `"unmanaged"` | `"customised"` |
 type predating profiles, and painting those amber would be noise about a thing
 that is not wrong. See `fw.profile.*`.
 
-`customised` carries an **ok** tone too, which is a **change**: it was
-`"unknown"` while there was nowhere to put a user's own answers. Now that a save
+`customised` carries an **ok** tone too, which is a **change**: it was a
+warning while there was nowhere to put a user's own answers. Now that a save
 captures them as a profile of their own, being on your own answers is a
 destination rather than drift, and its label reads *"Your own answers"* rather
 than *"Customised"*. `custom` is true when the profile being tracked is this
@@ -540,17 +544,17 @@ without being taught to.
 ```json
 {"provider": "kconfig_make", "name": "carto_v4", "descriptor": "stm32g431xx",
  "firmware": "cartographer",
- "artifact": {"state": "stale", "tone": "attention",
+ "artifact": {"state": "stale", "tone": "warn",
               "label": "Source updated - rebuild", "reason": "source_changed"},
  "profile": {"managed": true, "profile": "config.CartoV4USB", "custom": false,
-             "parent": null, "reason": "seed_moved", "tone": "attention",
+             "parent": null, "reason": "seed_moved", "tone": "warn",
              "label": "Profile updated - reseed available"},
  "needs_flash": true,
  "devices": [
    {"id": "290055001850304158373620", "name": "mcu scanner",
     "present": true, "state": "klipper", "path": "/dev/serial/by-id/usb-...",
     "version": "v0.12.0-381-g...", "confidence": "unique_bus_id",
-    "needs_flash": true, "tone": "attention",
+    "needs_flash": true, "tone": "warn",
     "label": "Update available", "reason": "source_changed",
     "actions": [{"id": "flash", "label": "Flash", "method": "fw.flash",
                  "params": {"name": "carto_v4", "serial": "2900..."},
@@ -594,9 +598,24 @@ the projection.
 
 Four things are deliberate:
 
-- **`tone` and `label` ride along.** `tone` is `ok` | `unknown` | `attention` —
+- **`tone` and `label` ride along.** `tone` is `ok` | `warn` | `problem` —
   a traffic light, named semantically because colour is one presentation of it
-  and must not be the only way it is understood. `reason` is still there and is
+  and must not be the only way it is understood. It says how bad the state is
+  for the printer, which is **not** the flash verdict: `needs_flash` is, and
+  the two are independent. `warn` is a deviation from the preferred state -
+  behind its source, unverifiable, unknown. `problem` is a state the printer
+  cannot use as it stands.
+
+  | `tone` | device `reason` | artifact `state` | profile `reason` |
+  | --- | --- | --- | --- |
+  | `ok` | `null` | `current` | `null`, `unmanaged`, `customised` |
+  | `warn` | `source_changed`, `artifact_changed`, `unexpected_image`, `device_dirty`, `unknown_version`, `version_only` | `stale`, `absent`, `unprovable` | `seed_moved` |
+  | `problem` | `offline`, `in_bootloader`, `protocol_mismatch` | - | - |
+
+  An artifact or a profile is never a `problem`: nothing about a file on disk
+  stops a printer. `unexpected_image` is a `warn` because a digest says the
+  bytes differ and nothing about how far - a rebuilt image and another
+  firmware altogether look the same to it. `reason` is still there and is
   still what you switch on; `label` exists so the CLI, the panel and whatever
   renders a probe next word the same verdict identically instead of growing
   three sets of copy that drift.

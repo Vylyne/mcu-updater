@@ -28,7 +28,7 @@ from mcu_updater.states import (
     OFFLINE,
     PROTOCOL_MISMATCH,
     SOURCE_CHANGED,
-    TONE_ATTENTION,
+    TONE_WARN,
     UNEXPECTED_IMAGE,
     UNKNOWN_VERSION,
     VERSION_ONLY,
@@ -543,12 +543,14 @@ def test_the_built_stamp_is_the_default_kind():
 # -- the new reason --------------------------------------------------------
 
 
-def test_an_unexpected_image_asks_for_attention():
+def test_an_unexpected_image_wants_a_flash_and_is_not_a_problem():
     """It has to be all three: `DEVICE_REASONS` derives from `_NEEDS_FLASH`, so
     a reason registered there alone constructs fine and raises on `.label`."""
     status = DeviceStatus(UNEXPECTED_IMAGE)
     assert status.needs_flash is True
-    assert status.tone == TONE_ATTENTION
+    # A digest says the bytes differ, not how far: an older build of the right
+    # firmware and a different firmware altogether measure the same way.
+    assert status.tone == TONE_WARN
     assert status.label == "Unexpected firmware"
 
 

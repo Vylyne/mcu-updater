@@ -47,7 +47,7 @@ function onText(event: Event): void {
 <template>
   <div
     class="kconfig-node"
-    :data-tone="node.editable === false ? 'unknown' : undefined"
+    :class="{ 'kconfig-node--locked': node.editable === false }"
   >
     <template v-if="node.kind === 'menu' || node.enterable">
       <button
@@ -175,6 +175,12 @@ function onText(event: Event): void {
    control to its own content, the way a plain per-row flex row would. */
 .kconfig-node {
   display: contents;
+}
+
+/* Muted, and not a tone: a locked option is not a verdict about anything.
+   `display: contents` draws no box but still hands its colour down. */
+.kconfig-node--locked {
+  color: var(--color-text-secondary);
 }
 
 /* No divider here - row rhythm comes from padding alone (below). A

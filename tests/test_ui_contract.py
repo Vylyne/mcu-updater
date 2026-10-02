@@ -13,7 +13,7 @@ from __future__ import annotations
 import pathlib
 import re
 
-from mcu_updater import API_VERSION
+from mcu_updater import API_VERSION, states
 from mcu_updater.agent.methods import Api
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
@@ -57,6 +57,44 @@ def test_ui_supported_api_version_matches_the_agent():
         "against one it cannot actually understand - see docs/agent-api.md's "
         "fw.ping section."
     )
+
+
+# The tones are the one wire value the panel turns straight into a colour: a
+# tone it has no rule for renders in the plain text colour and says nothing.
+_TONE_TYPE_RE = re.compile(r"export type Tone\s*=([^;]+);")
+_TONE_RULE_RE = re.compile(r"\[data-tone=\"([a-z_]+)\"\]")
+_CHIP_TONE_RULE_RE = re.compile(r"\.chip\[data-tone=\"([a-z_]+)\"\]")
+
+AGENT_TONES = {states.TONE_OK, states.TONE_WARN, states.TONE_PROBLEM}
+
+
+def test_the_ui_names_exactly_the_tones_the_agent_sends():
+    text = (UI_SRC / "api" / "targets.ts").read_text(encoding="utf-8")
+    match = _TONE_TYPE_RE.search(text)
+    assert match, "ui/src/api/targets.ts no longer declares `Tone`"
+    assert set(re.findall(r"\"([a-z_]+)\"", match.group(1))) == AGENT_TONES
+
+
+def test_every_tone_has_a_colour_and_no_colour_is_for_a_tone_nobody_sends():
+    """A rule left behind for a retired tone is how the panel and the agent's
+    documented traffic light drifted apart without anything failing."""
+    css = (UI_SRC / "style.css").read_text(encoding="utf-8")
+    assert set(_TONE_RULE_RE.findall(css)) == AGENT_TONES
+    assert set(_CHIP_TONE_RULE_RE.findall(css)) == AGENT_TONES
+
+
+def test_no_component_paints_a_tone_the_stylesheet_has_no_rule_for():
+    """A tone written into a template rather than read off the wire."""
+    seen = set()
+    for path in sorted((UI_SRC / "components").glob("*.vue")):
+        text = path.read_text(encoding="utf-8")
+        for bound, value in re.findall(r"(:?)data-tone=\"([^\"]*)\"", text):
+            # A bound expression carries the wire value (`device.tone`), which
+            # the two tests above pin; only the literals inside it are ours.
+            names = set(re.findall(r"'([a-z_]+)'", value)) if bound else {value}
+            assert names <= AGENT_TONES, f"{path.name}: data-tone {value!r}"
+            seen |= names
+    assert seen, "no component names a tone any more - this test is reading nothing"
 
 
 SRC = REPO_ROOT / "src"

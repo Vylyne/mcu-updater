@@ -211,6 +211,25 @@ Three tones and a tri-state `safe_to_write`, built the way `states.py` is. A
 `DeviceStatus.needs_flash` already enforces: absence of evidence is not
 evidence.
 
+### Do not derive `tone` from `needs_flash`
+
+`tone` is `ok` | `warn` | `problem`: how bad the state is for the printer. It
+was `needs_flash` coloured in (`ok` | `unknown` | `attention`) until
+2026-10-02, which made "wants a flash" the loudest thing on the panel and an
+offline toolhead a quiet grey. The two are separate questions now, with a
+table each in `states.py` - `_NEEDS_FLASH` drives every button and the bulk
+flash filter and did not change; `_DEVICE_TONE` only picks a colour.
+
+Two things here look wrong and are not:
+
+- **A bench with nothing plugged in is a wall of red.** `offline` is a
+  `problem` on purpose. A board the printer cannot reach is the worst thing
+  this panel can report, and on a test host that is the validation.
+- **`unexpected_image` is amber, though it wants a flash.** A digest mismatch
+  says the bytes differ, not how far: a rebuild nobody flashed and a different
+  firmware altogether are the same measurement. The red case - a board running
+  the wrong *family* - needs evidence nothing collects yet; it is a README TODO.
+
 ### Config keys borrow the upstream tool's own vocabulary
 
 When a key names a concept some external tool already owns, spell it that

@@ -137,7 +137,7 @@ function forceClose(): void {
   >
     <template #header>
       <h2>{{ state.kconfig.type }} / {{ state.kconfig.fw }}</h2>
-      <span v-if="dirty" class="chip" data-tone="attention">Unsaved</span>
+      <span v-if="dirty" class="chip" data-tone="warn">Unsaved</span>
     </template>
 
     <p v-if="seededNote" class="alert alert--info kconfig-seeded-note">

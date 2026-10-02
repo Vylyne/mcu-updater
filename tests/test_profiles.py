@@ -646,7 +646,7 @@ def test_a_vendor_bump_reads_as_a_moved_seed(paths, registry):
 
     state = profiles.status(paths, "carto_v4", "klipper")
     assert state.reason == profiles.SEED_MOVED
-    assert state.tone == "attention"
+    assert state.tone == "warn"
 
 
 def test_a_local_edit_outranks_a_vendor_bump(paths, registry):

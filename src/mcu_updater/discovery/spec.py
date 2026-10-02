@@ -47,6 +47,7 @@ from typing import Protocol
 
 from .. import devices
 from ..flashers.spec import Bench
+from ..states import TONE_OK, TONE_WARN
 
 # --------------------------------------------------------------------------
 # identity vs. state - see the module docstring for the rule
@@ -132,15 +133,14 @@ UNCONFIRMED = "unconfirmed"
 
 _REASONS = (ANSWERED, UNIQUE_BUS_ID, REMEMBERED, POSITIONAL, UNCONFIRMED)
 
-#: Three tones, exactly as `states.TONE_*` - not a fourth "probably" bucket.
-#: One more degree of certainty is one more thing for two call sites to
-#: disagree about.
+#: The tones are `states.TONE_*` - not a fourth "probably" bucket. One more
+#: degree of certainty is one more thing for two call sites to disagree about.
 _TONE: dict[str, str] = {
-    ANSWERED: "ok",
-    UNIQUE_BUS_ID: "ok",
-    REMEMBERED: "unknown",
-    POSITIONAL: "unknown",
-    UNCONFIRMED: "unknown",
+    ANSWERED: TONE_OK,
+    UNIQUE_BUS_ID: TONE_OK,
+    REMEMBERED: TONE_WARN,
+    POSITIONAL: TONE_WARN,
+    UNCONFIRMED: TONE_WARN,
 }
 
 _LABEL: dict[str, str] = {

@@ -12,7 +12,7 @@ import dataclasses
 
 import pytest
 
-from mcu_updater import devices
+from mcu_updater import devices, states
 from mcu_updater.discovery import spec
 from mcu_updater.discovery.byid import Byid
 from mcu_updater.discovery.registry import SOURCES, by_name
@@ -104,7 +104,7 @@ CONFIDENCE_REASONS = (
 
 @pytest.mark.parametrize("reason", CONFIDENCE_REASONS)
 def test_every_reason_has_a_tone(reason):
-    assert Confidence(reason).tone in ("ok", "unknown", "attention")
+    assert Confidence(reason).tone in (states.TONE_OK, states.TONE_WARN, states.TONE_PROBLEM)
 
 
 @pytest.mark.parametrize("reason", CONFIDENCE_REASONS)

@@ -30,8 +30,8 @@ from mcu_updater.build import FlashLog
 from mcu_updater.config import Registry
 from mcu_updater.providers import cmake
 from mcu_updater.states import (
-    TONE_ATTENTION,
-    TONE_UNKNOWN,
+    TONE_PROBLEM,
+    TONE_WARN,
     ArtifactStatus,
     DeviceStatus,
 )
@@ -233,7 +233,7 @@ def test_the_verdict_carries_its_own_wording(api):
 
     assert art["reason"] == "never_built"
     assert art["state"] == "absent"
-    assert art["tone"] == TONE_ATTENTION
+    assert art["tone"] == TONE_WARN
     assert art["label"] == ArtifactStatus("never_built").label
 
 
@@ -270,7 +270,7 @@ def test_an_unbuilt_binary_with_no_sidecar_is_not_never_built(api, paths):
 
     assert target["artifact"]["reason"] == "no_provenance"
     assert target["artifact"]["state"] == "unprovable"
-    assert target["artifact"]["tone"] == TONE_UNKNOWN
+    assert target["artifact"]["tone"] == TONE_WARN
 
 
 def test_an_offline_board_is_never_reported_as_up_to_date(api):
@@ -278,7 +278,7 @@ def test_an_offline_board_is_never_reported_as_up_to_date(api):
 
     assert board["present"] is False
     assert board["needs_flash"] is None
-    assert board["tone"] == TONE_UNKNOWN
+    assert board["tone"] == TONE_PROBLEM
     assert board["reason"] == "offline"
 
 
@@ -294,7 +294,7 @@ def test_a_type_needs_flashing_when_any_one_board_does(api, fake_root):
 
     assert hexa["needs_flash"] is True
     waiting = [d for d in hexa["devices"] if d["reason"] == "in_bootloader"]
-    assert waiting and waiting[0]["tone"] == TONE_ATTENTION
+    assert waiting and waiting[0]["tone"] == TONE_PROBLEM
 
 
 def test_a_tracked_can_uuid_is_projected_onto_its_type(api):

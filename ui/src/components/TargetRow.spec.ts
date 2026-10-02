@@ -43,7 +43,7 @@ const platformioTarget: Target = {
   firmware: "knomi_serial",
   artifact: {
     state: "stale",
-    tone: "attention",
+    tone: "warn",
     label: "Needs a build",
     reason: "source_changed",
   },

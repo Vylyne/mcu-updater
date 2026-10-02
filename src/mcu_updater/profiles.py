@@ -84,7 +84,7 @@ from .errors import (
 )
 from .paths import Paths
 from .providers import kconfig
-from .states import TONE_ATTENTION, TONE_OK
+from .states import TONE_OK, TONE_WARN
 
 #: Vendor seed files live in the tree root and are named ``config.<Variant>``.
 #: Cartographer's fork ships eight of them. Upstream Klipper ships none, which
@@ -1021,7 +1021,7 @@ CUSTOMISED = "customised"
 #: bumped their config. Reseeding is what resolves it.
 SEED_MOVED = "seed_moved"
 
-#: `customised` is an OK tone, not an unknown one. It reported "this tool cannot
+#: `customised` is an OK tone, not a warn. It reported "this tool cannot
 #: vouch for these answers" while there was nowhere to put them; now that
 #: :func:`capture_custom` gives them a home, being on your own profile is a
 #: destination rather than drift, and painting it amber would nag at the one
@@ -1030,7 +1030,7 @@ _PROFILE_TONE: dict[str | None, str] = {
     None: TONE_OK,
     UNMANAGED: TONE_OK,
     CUSTOMISED: TONE_OK,
-    SEED_MOVED: TONE_ATTENTION,
+    SEED_MOVED: TONE_WARN,
 }
 
 PROFILE_REASONS = tuple(r for r in _PROFILE_TONE if r is not None)

@@ -4,7 +4,9 @@
 
 export type Provider = "kconfig_make" | "platformio" | "cmake";
 
-export type Tone = "ok" | "unknown" | "attention";
+// How bad it is for the printer, not whether a flash is wanted - that is
+// `needs_flash`. See states.py's TONE_* for which reason lands where.
+export type Tone = "ok" | "warn" | "problem";
 
 export interface ArtifactSummary {
   state: string;

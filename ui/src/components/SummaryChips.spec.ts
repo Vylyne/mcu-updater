@@ -53,12 +53,38 @@ describe("SummaryChips", () => {
   it("counts stale over targets, not types - a PlatformIO row counts too", () => {
     const stale = target({
       provider: "platformio",
-      artifact: { state: "stale", tone: "attention", label: "x", reason: null },
+      artifact: { state: "stale", tone: "warn", label: "x", reason: null },
     });
     const wrapper = mount(SummaryChips, {
       props: { targets: [target(), stale] },
     });
     expect(wrapper.text()).toContain("1/2 need a rebuild");
+  });
+
+  it("paints what wants a rebuild as a warning and an offline board as a problem", () => {
+    const stale = target({
+      artifact: { state: "stale", tone: "warn", label: "x", reason: null },
+      devices: [
+        device({ present: false }),
+        device({ id: "d2", needs_flash: true }),
+      ],
+    });
+    const unprovable = target({
+      name: "u",
+      artifact: { state: "unprovable", tone: "warn", label: "x", reason: null },
+    });
+    const wrapper = mount(SummaryChips, {
+      props: { targets: [stale, unprovable] },
+    });
+    const tones = Object.fromEntries(
+      wrapper
+        .findAll(".chip")
+        .map((c) => [c.text(), c.attributes("data-tone")]),
+    );
+    expect(tones["1/2 need a rebuild"]).toBe("warn");
+    expect(tones["1 unprovable"]).toBe("warn");
+    expect(tones["1 need flashing"]).toBe("warn");
+    expect(tones["1 offline"]).toBe("problem");
   });
 
   it("claims all flashed only when every device answered", () => {

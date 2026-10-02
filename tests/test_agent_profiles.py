@@ -304,7 +304,7 @@ def test_a_vendor_bump_shows_up_as_something_to_do(api):
 
     verdict = api.artifact("carto_v4", "klipper")["profile"]
     assert verdict["reason"] == profiles.SEED_MOVED
-    assert verdict["tone"] == "attention"
+    assert verdict["tone"] == "warn"
 
 
 # --------------------------------------------------------------------------

@@ -211,6 +211,38 @@ Three tones and a tri-state `safe_to_write`, built the way `states.py` is. A
 `DeviceStatus.needs_flash` already enforces: absence of evidence is not
 evidence.
 
+### Do not derive `tone` from `needs_flash`
+
+`tone` is `ok` | `warn` | `problem`: how bad the state is for the printer. It
+was `needs_flash` coloured in (`ok` | `unknown` | `attention`) until
+2026-10-02, which made "wants a flash" the loudest thing on the panel and an
+offline toolhead a quiet grey. The two are separate questions now, with a
+table each in `states.py` - `_NEEDS_FLASH` drives every button and the bulk
+flash filter and did not change; `_DEVICE_TONE` only picks a colour.
+
+Two things here look wrong and are not:
+
+- **A bench with nothing plugged in is a wall of red.** `offline` is a
+  `problem` on purpose. A board the printer cannot reach is the worst thing
+  this panel can report, and on a test host that is the validation.
+- **`unexpected_image` is amber, though it wants a flash.** A digest mismatch
+  says the bytes differ, not how far: a rebuild nobody flashed and a different
+  firmware altogether are the same measurement, and telling them apart is not
+  this tool's job - see the next entry.
+
+### Do not detect a board running the wrong firmware family
+
+A type declared `klipper` whose board answers as Cartographer is not this
+tool's to catch. Whether the firmware on a board is one the printer can drive
+is Klipper's question, and the firmware's own klippy extras'; this tool
+compares the versions, commits and digests of the family it was told to expect
+and reports what it finds. Such a board shows as `source_changed` or
+`unexpected_image`, amber, and that stands.
+
+So: no family comparison in `verdict.decide`, no red reason for it, and no
+per-family "this version string is not mine" hook. It was written up as a
+NEEDS DESIGN item for a day (2026-10-02) and withdrawn.
+
 ### Config keys borrow the upstream tool's own vocabulary
 
 When a key names a concept some external tool already owns, spell it that

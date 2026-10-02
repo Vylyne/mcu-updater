@@ -23,7 +23,6 @@ import {
   mdiCogOutline,
   mdiFlash,
   mdiHammer,
-  mdiTrayArrowUp,
   mdiTuneVariant,
   mdiUndoVariant,
   mdiUpdate,
@@ -147,7 +146,7 @@ const ICONS: Record<string, string> = {
 
 const icon = computed(() => {
   if (props.action.id === "flash")
-    return props.wanted ? mdiTrayArrowUp : mdiFlash;
+    return mdiFlash;
   if (props.action.id.startsWith("configure")) return mdiCogOutline;
   return ICONS[props.action.id] ?? mdiCogOutline;
 });

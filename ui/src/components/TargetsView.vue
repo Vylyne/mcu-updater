@@ -20,7 +20,6 @@ import {
   mdiHammerWrench,
   mdiPlusCircleOutline,
   mdiRefresh,
-  mdiTrayArrowUp,
   mdiUpdate,
 } from "../icons";
 import { targetKey, type Target } from "../api/targets";
@@ -76,7 +75,7 @@ const hasMenu = computed(
 );
 
 const flashAllIcon = computed(() =>
-  needsFlashCount.value ? mdiTrayArrowUp : mdiFlash,
+  mdiFlash,
 );
 
 const menuOpen = ref(false);

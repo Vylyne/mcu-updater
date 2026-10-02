@@ -1072,12 +1072,19 @@ A cmake type carries a `targets[]` row like any other, and `fw.target.get
 deliberately different:
 
 - **`devices[]` contains its configured `serials:` identities.** Exact serial
-  presence is reported, but `version`, `confidence`, and `needs_flash` remain
-  unknown: the status poll does not open a firmware-specific admin port. A
-  configured static firmware helper makes each present device's ordinary
-  `fw.flash {name, serial}` action available; without one, the devices remain
-  visible but carry no flash action. There is no per-device `extra` flag for
-  this any more - the flash action's own presence already says it.
+  presence is reported from the bus. `version`, `confidence` and `needs_flash`
+  come only from what the family's helper reads out of Klipper's own printer
+  objects: the status poll never opens a firmware-specific admin port, so a
+  board Klipper is not reporting on is `unknown_version` however plainly it is
+  plugged in. A configured static firmware helper makes each present device's
+  ordinary `fw.flash {name, serial}` action available, and the row's own
+  `flash` (`fw.flash_all {name, scope: "stale"}`) and `update`
+  (`fw.update_all`) with it - blocked by the same two reasons as any other
+  row's, or by `config_corrupt` when `helper:` names nothing registered.
+  Without a helper the devices remain visible and neither they nor the row
+  carry a flash action: nothing here could ask a board into BOOTSEL. There is
+  no per-device `extra` flag for this any more - the flash actions' own
+  presence already says it.
 - **`descriptor` is the `cmake_target`**, the way a PlatformIO row's is its
   env. A cmake type and a PlatformIO type both name a real family here, unlike
   the `null` `fw` a display's row used to carry.

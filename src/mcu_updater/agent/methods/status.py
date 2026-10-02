@@ -1256,6 +1256,28 @@ class StatusMixin(_Base):
                     ),
                 }
             )
+        if helper_configured or helper_problem is not None:
+            # The same gate as the device's own flash, for the same reason:
+            # with no helper nothing can ask a board into BOOTSEL, so a bulk
+            # flash here would be a button that answers with one refusal per
+            # board. `fw.flash_all` and `fw.update_all` took a cmake name long
+            # before this row said so.
+            actions.extend(
+                self._flash_actions(
+                    name=name,
+                    allowed=allowed,
+                    has_artifact=bool(payload["has_firmware"]),
+                    flashable=[d for d in devices if d["present"]],
+                    what=f"{payload['firmware']} firmware",
+                    refusal=(
+                        None
+                        if helper_problem is None
+                        else self._blocked(
+                            self.BLOCKED_CONFIG_CORRUPT, helper_problem, name=name
+                        )
+                    ),
+                )
+            )
         if "fw.clean" in allowed:
             # Never blocked by `build_blocked`: a wedged build directory is
             # one of the things that makes a tree unbuildable, so gating the
@@ -1288,7 +1310,8 @@ class StatusMixin(_Base):
                 payload["source"], payload["source_version"], payload["source_dirty"]
             ),
             # No cmake seam contributes any yet. `flashable` went with `extra`:
-            # the device's flash action already says it, blocked or not.
+            # the flash actions, the row's and each device's, already say it,
+            # blocked or not.
             "extras": [],
             "devices_note": None if devices else NO_TRACKED_DEVICES,
         }
@@ -1508,11 +1531,17 @@ class StatusMixin(_Base):
         what: str,
         flash_method: str = "fw.flash_all",
         update_method: str | None = "fw.update_all",
+        refusal: dict[str, Any] | None = None,
     ) -> list[dict[str, Any]]:
         """Flash, and build-then-flash, with the same reason for refusing both.
 
         One function because the two share every precondition. They differed
         only in which of two nearly identical tooltips the panel wrote.
+
+        `refusal` is a caller-supplied reason that outranks the generic ones on
+        both actions, as `_device_actions`' `blocked` does: it is about the
+        configuration rather than about what is built or connected, and it is
+        what the operator has to fix first.
         """
         if not has_artifact:
             blocked = self._blocked(
@@ -1542,7 +1571,7 @@ class StatusMixin(_Base):
                     "label": "Flash",
                     "method": flash_method,
                     "params": params,
-                    "blocked": blocked,
+                    "blocked": refusal or blocked,
                 }
             )
         if update_method and update_method in allowed:
@@ -1555,7 +1584,8 @@ class StatusMixin(_Base):
                     # A rebuild is part of the operation, so a missing artifact
                     # is not a reason to refuse it - only having nowhere to
                     # write is.
-                    "blocked": (
+                    "blocked": refusal
+                    or (
                         None
                         if flashable
                         else self._blocked(

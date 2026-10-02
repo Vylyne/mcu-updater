@@ -36,6 +36,21 @@
       "replace": "        elif False:\n            blocked = self._blocked(\n                self.BLOCKED_NO_DEVICE,"
     },
     {
+      "name": "a cmake row without a helper offers no bulk flash",
+      "find": "        if helper_configured or helper_problem is not None:",
+      "replace": "        if True:"
+    },
+    {
+      "name": "a misspelled helper refuses the row's flash",
+      "find": "                    \"blocked\": refusal or blocked,",
+      "replace": "                    \"blocked\": blocked,"
+    },
+    {
+      "name": "a misspelled helper refuses the row's build-and-flash",
+      "find": "                    \"blocked\": refusal\n                    or (",
+      "replace": "                    \"blocked\": ("
+    },
+    {
       "name": "build is refused without saved menuconfig answers",
       "find": "                        if artifact.get(\"has_config\")\n",
       "replace": "                        if True\n"

@@ -1085,6 +1085,68 @@ def test_a_helper_backed_cmake_type_projects_real_serial_devices(
     assert _action(device, "untrack")["method"] == "fw.serial.remove"
 
 
+def test_a_helper_backed_cmake_row_offers_the_bulk_flash_its_type_answers_to(
+    paths, tmp_path, fake_root
+):
+    """`fw.flash_all {name}` and `fw.update_all {name}` both took a cmake type
+    long before the row said so: two Roadrunners on the bus, and the only way
+    to flash them from the panel was one device at a time."""
+    serial = "RR-5K3DNTFCR1B3C9D0RZMYA3Y720"
+    _cmake_config(paths, tmp_path, helper=True, serial=serial)
+    write_settings(paths, enable_flashing="true")
+    os.makedirs(paths.artifact_dir("roadrunner"), exist_ok=True)
+    with open(paths.uf2_file("roadrunner", "roadrunner"), "wb") as fh:
+        fh.write(b"UF2")
+    make_device(fake_root / "bus", "Vylyne", "Roadrunner", serial)
+
+    row = _targets(Api(paths, runner=_runner()), "cmake")["roadrunner"]
+
+    assert _action(row, "flash") == {
+        "id": "flash",
+        "label": "Flash",
+        "method": "fw.flash_all",
+        "params": {"name": "roadrunner", "scope": "stale"},
+        "blocked": None,
+    }
+    assert _action(row, "update") == {
+        "id": "update",
+        "label": "Build and flash",
+        "method": "fw.update_all",
+        "params": {"name": "roadrunner", "scope": "stale"},
+        "blocked": None,
+    }
+
+
+def test_a_cmake_row_with_nothing_built_blocks_flash_but_not_build_and_flash(
+    paths, tmp_path, fake_root
+):
+    serial = "RR-5K3DNTFCR1B3C9D0RZMYA3Y720"
+    _cmake_config(paths, tmp_path, helper=True, serial=serial)
+    write_settings(paths, enable_flashing="true")
+    make_device(fake_root / "bus", "Vylyne", "Roadrunner", serial)
+
+    row = _targets(Api(paths, runner=_runner()), "cmake")["roadrunner"]
+
+    assert _action(row, "flash")["blocked"]["code"] == Api.BLOCKED_NO_ARTIFACT
+    assert _action(row, "update")["blocked"] is None
+
+
+def test_a_cmake_row_with_no_board_connected_blocks_both_bulk_actions(
+    paths, tmp_path
+):
+    serial = "RR-5K3DNTFCR1B3C9D0RZMYA3Y720"
+    _cmake_config(paths, tmp_path, helper=True, serial=serial)
+    write_settings(paths, enable_flashing="true")
+    os.makedirs(paths.artifact_dir("roadrunner"), exist_ok=True)
+    with open(paths.uf2_file("roadrunner", "roadrunner"), "wb") as fh:
+        fh.write(b"UF2")
+
+    row = _targets(Api(paths, runner=_runner()), "cmake")["roadrunner"]
+
+    assert _action(row, "flash")["blocked"]["code"] == Api.BLOCKED_NO_DEVICE
+    assert _action(row, "update")["blocked"]["code"] == Api.BLOCKED_NO_DEVICE
+
+
 def test_a_cmake_device_projects_its_reported_image_verdict_and_record(
     paths, tmp_path, fake_root, monkeypatch
 ):
@@ -1288,6 +1350,9 @@ def test_a_cmake_type_without_a_helper_does_not_advertise_device_actions(
     row = _targets(Api(paths, runner=_runner()), "cmake")["roadrunner"]
 
     assert row["devices"][0]["actions"] == []
+    # Nor a row-level flash: with no helper there is nothing to ask a board
+    # into BOOTSEL, so the bulk call could only answer with a refusal per board.
+    assert _ids(row).isdisjoint({"flash", "update"})
 
 
 def test_a_misspelled_helper_blocks_its_own_row_not_the_whole_panel(
@@ -1314,6 +1379,12 @@ def test_a_misspelled_helper_blocks_its_own_row_not_the_whole_panel(
     blocked = _action(device, "flash")["blocked"]
     assert blocked["code"] == Api.BLOCKED_CONFIG_CORRUPT
     assert "roadruner" in blocked["message"]
+    # The row's own flash actions say the same thing, rather than offering a
+    # bulk write every board in it would refuse.
+    for action_id in ("flash", "update"):
+        blocked = _action(row, action_id)["blocked"]
+        assert blocked["code"] == Api.BLOCKED_CONFIG_CORRUPT
+        assert "roadruner" in blocked["message"]
     # And the row is still a row, with its build actions intact.
     assert {a["id"] for a in row["actions"]} >= {"build", "clean"}
 

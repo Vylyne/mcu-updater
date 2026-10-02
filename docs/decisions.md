@@ -227,8 +227,21 @@ Two things here look wrong and are not:
   this panel can report, and on a test host that is the validation.
 - **`unexpected_image` is amber, though it wants a flash.** A digest mismatch
   says the bytes differ, not how far: a rebuild nobody flashed and a different
-  firmware altogether are the same measurement. The red case - a board running
-  the wrong *family* - needs evidence nothing collects yet; it is a README TODO.
+  firmware altogether are the same measurement, and telling them apart is not
+  this tool's job - see the next entry.
+
+### Do not detect a board running the wrong firmware family
+
+A type declared `klipper` whose board answers as Cartographer is not this
+tool's to catch. Whether the firmware on a board is one the printer can drive
+is Klipper's question, and the firmware's own klippy extras'; this tool
+compares the versions, commits and digests of the family it was told to expect
+and reports what it finds. Such a board shows as `source_changed` or
+`unexpected_image`, amber, and that stands.
+
+So: no family comparison in `verdict.decide`, no red reason for it, and no
+per-family "this version string is not mine" hook. It was written up as a
+NEEDS DESIGN item for a day (2026-10-02) and withdrawn.
 
 ### Config keys borrow the upstream tool's own vocabulary
 

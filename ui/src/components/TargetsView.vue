@@ -74,9 +74,7 @@ const hasMenu = computed(
   () => canUpdateAll.value || canManageTypes.value || canAddMcu.value,
 );
 
-const flashAllIcon = computed(() =>
-  mdiFlash,
-);
+const flashAllIcon = computed(() => mdiFlash);
 
 const menuOpen = ref(false);
 const menuRef = ref<HTMLElement | null>(null);

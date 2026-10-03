@@ -15,6 +15,7 @@ import {
 import { printerBusy, runBulk, state } from "../store/agent";
 import type { Target } from "../api/targets";
 import UiDialog from "./UiDialog.vue";
+import BulkPreview, { type PreviewRow } from "./BulkPreview.vue";
 
 const props = defineProps<{
   operation: BulkOperation;
@@ -55,11 +56,23 @@ const body = computed(() => {
   return "Build what needs it, then flash what needs it. This stops Klipper once, after the builds finish.";
 });
 
-const buildTargets = computed(() =>
-  bulkBuildTargets(props.targets, scope.value),
+const buildRows = computed<PreviewRow[] | null>(() =>
+  showsBuilds.value
+    ? bulkBuildTargets(props.targets, scope.value).map((target) => ({
+        key: target.name,
+        name: target.name,
+        detail: target.artifact.label,
+      }))
+    : null,
 );
-const flashTargets = computed(() =>
-  bulkFlashTargets(props.targets, scope.value),
+const flashRows = computed<PreviewRow[] | null>(() =>
+  showsFlashes.value
+    ? bulkFlashTargets(props.targets, scope.value).map((entry) => ({
+        key: entry.id,
+        name: entry.name ?? entry.type,
+        detail: `${entry.type} · ${entry.id}`,
+      }))
+    : null,
 );
 const hasWork = computed(() =>
   bulkHasWork(props.targets, props.operation, scope.value),
@@ -84,71 +97,17 @@ async function confirm(): Promise<void> {
 
 <template>
   <UiDialog :title="title" @close="emit('close')">
-    <p>{{ body }}</p>
-
-    <label class="scope-toggle">
-      <input
-        v-model="scope"
-        type="checkbox"
-        true-value="all"
-        false-value="stale"
-        class="switch"
-      />
-      Everything, not just what looks stale
-    </label>
-    <p class="text-caption text--secondary">
-      {{
-        scope === "all"
-          ? "Ignores the recorded provenance - use this when you edited a source the provenance can't see."
-          : "Only what the recorded provenance says needs doing."
-      }}
-    </p>
-
-    <template v-if="hasWork">
-      <template v-if="showsBuilds">
-        <p class="text-caption text--secondary">Will build:</p>
-        <div v-if="buildTargets.length" class="detail-block">
-          <div v-for="target in buildTargets" :key="target.name">
-            <strong>{{ target.name }}</strong>
-            <span class="text-caption text--secondary">{{
-              target.artifact.label
-            }}</span>
-          </div>
-        </div>
-        <p v-else class="text--disabled text-caption">Nothing to build.</p>
-      </template>
-
-      <template v-if="showsFlashes">
-        <p class="text-caption text--secondary">Will flash:</p>
-        <div v-if="flashTargets.length" class="detail-block">
-          <div v-for="entry in flashTargets" :key="entry.id">
-            <strong>{{ entry.name ?? entry.type }}</strong>
-            <span class="text-caption text--secondary"
-              >{{ entry.type }} · {{ entry.id }}</span
-            >
-          </div>
-        </div>
-        <p v-else class="text--disabled text-caption">Nothing to flash.</p>
-      </template>
-    </template>
-    <p v-else class="alert alert--info">Nothing for this to do right now.</p>
-
-    <p class="text-caption text--disabled">
-      This is a preview only - the agent re-decides what to touch when the call
-      actually arrives.
-      <template v-if="operation === 'update_all'">
-        The flash list above is a floor, not a forecast: a build can only add
-        boards to it.
-      </template>
-    </p>
-
-    <p v-if="writesToBoards" class="alert alert--warning">
-      This stops Klipper and writes to hardware. Do not interrupt it once
-      started.
-    </p>
-    <p v-if="busy" class="alert alert--error">
-      {{ busyMessage }}
-    </p>
+    <BulkPreview
+      v-model:scope="scope"
+      :body="body"
+      offers-scope
+      :builds="buildRows"
+      :flashes="flashRows"
+      :has-work="hasWork"
+      :floor-note="operation === 'update_all'"
+      :writes-to-boards="writesToBoards"
+      :busy-message="busy ? busyMessage : null"
+    />
 
     <template #actions>
       <button type="button" @click="emit('close')">Cancel</button>
@@ -162,29 +121,3 @@ async function confirm(): Promise<void> {
     </template>
   </UiDialog>
 </template>
-
-<style scoped>
-.scope-toggle {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin: 8px 0 2px;
-}
-
-.detail-block {
-  margin: 2px 0 10px;
-  padding: 6px 8px;
-  border-radius: 4px;
-  background-color: var(--color-inset);
-  max-height: 200px;
-  overflow-y: auto;
-}
-
-.detail-block > div + div {
-  margin-top: 4px;
-}
-
-.detail-block strong {
-  margin-right: 6px;
-}
-</style>

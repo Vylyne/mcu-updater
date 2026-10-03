@@ -214,14 +214,14 @@ describe("TargetRow", () => {
 
     let confirmButton = wrapper
       .findAll("button")
-      .find((b) => b.text() === "Confirm");
+      .find((b) => b.text() === "Flash bttebb36");
     expect(confirmButton?.attributes("disabled")).toBeDefined();
 
     await wrapper.get('input[type="checkbox"]').setValue(true);
     expect(wrapper.text()).toContain("mcu EBBT0");
     confirmButton = wrapper
       .findAll("button")
-      .find((b) => b.text() === "Confirm");
+      .find((b) => b.text() === "Flash bttebb36");
     expect(confirmButton?.attributes("disabled")).toBeUndefined();
   });
 

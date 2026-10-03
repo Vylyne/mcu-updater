@@ -17,6 +17,7 @@ import {
 import type { Action } from "../api/targets";
 import UiIcon from "./UiIcon.vue";
 import UiDialog from "./UiDialog.vue";
+import BulkPreview, { type PreviewRow } from "./BulkPreview.vue";
 import {
   mdiBroom,
   mdiCloseCircleOutline,
@@ -119,6 +120,39 @@ const effectivePreview = computed(() =>
     ? props.allPreviewDevices
     : props.previewDevices,
 );
+// A type's flash is a selection the agent makes over its devices, the same as
+// the fleet-wide one in BulkDialog.vue and laid out the same way; a device's
+// flash writes the one device it names.
+const isSelection = computed(() => props.action.method === "fw.flash_all");
+const confirmTitle = computed(() => {
+  if (isSelection.value) {
+    return `${props.action.label} ${String(props.action.params.name)}`;
+  }
+  const device = props.previewDevices?.[0];
+  return device
+    ? `${props.action.label} ${device.name ?? device.id}`
+    : props.action.label;
+});
+const confirmBody = computed(() =>
+  isSelection.value
+    ? `Flash every device of ${String(props.action.params.name)} that needs it. This stops Klipper once for the whole batch.`
+    : `Write the firmware built for ${String(props.action.params.name)} to this device.`,
+);
+// The id said once: a device with no name (a cmake board's) would otherwise
+// read "RR-5K3D RR-5K3D".
+const previewRows = computed<PreviewRow[]>(() =>
+  (effectivePreview.value ?? []).map((device) => ({
+    key: device.id,
+    name: device.name ?? device.id,
+    detail: device.name ? device.id : null,
+  })),
+);
+const confirmScope = computed({
+  get: () => (overrideAll.value ? "all" : "stale"),
+  set: (value: "all" | "stale") => {
+    overrideAll.value = value === "all";
+  },
+});
 const pickingChoice = ref(false);
 const choiceOptions = ref<{ name: string; hint: string }[] | null>(null);
 const choiceLoading = ref(false);
@@ -313,36 +347,31 @@ function onClick(): void {
 
     <UiDialog
       v-if="confirming"
-      :title="action.label"
+      :title="confirmTitle"
       @close="confirming = false"
     >
-      <p v-if="!effectivePreview || !effectivePreview.length">
+      <p v-if="!effectivePreview">
         {{ action.label }} will write to an unknown set of devices - refusing to
         guess.
       </p>
-      <template v-else>
-        <p>{{ action.label }} will write to:</p>
-        <ul class="devices">
-          <li v-for="device in effectivePreview" :key="device.id">
-            <strong>{{ device.name ?? device.id }}</strong>
-          </li>
-        </ul>
-      </template>
-      <label v-if="offersOverride" class="override-toggle">
-        <input v-model="overrideAll" type="checkbox" class="switch" />
-        Everything, not just what looks stale
-      </label>
-      <p v-if="printerBusy()" class="alert alert--error">{{ busyMessage }}</p>
+      <BulkPreview
+        v-else
+        v-model:scope="confirmScope"
+        :body="confirmBody"
+        :offers-scope="offersOverride"
+        :flashes="previewRows"
+        :has-work="previewRows.length > 0"
+        :caveat="isSelection"
+        :busy-message="printerBusy() ? busyMessage : null"
+      />
       <template #actions>
         <button type="button" @click="confirming = false">Cancel</button>
         <button
           type="button"
-          :disabled="
-            !effectivePreview || effectivePreview.length === 0 || printerBusy()
-          "
+          :disabled="previewRows.length === 0 || printerBusy() || running"
           @click="run(overrideAll ? { scope: 'all' } : {})"
         >
-          Confirm
+          {{ running ? "Working…" : confirmTitle }}
         </button>
       </template>
     </UiDialog>
@@ -405,12 +434,5 @@ function onClick(): void {
   align-items: center;
   gap: 6px;
   margin: 4px 0;
-}
-
-.override-toggle {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  margin: 8px 0 2px;
 }
 </style>

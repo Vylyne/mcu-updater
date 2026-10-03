@@ -1,8 +1,9 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { mount } from "@vue/test-utils";
 import TargetRow from "./TargetRow.vue";
 import UiIcon from "./UiIcon.vue";
 import type { Action, Target } from "../api/targets";
+import * as store from "../store/agent";
 import { state } from "../store/agent";
 import type { Job } from "../api/jobs";
 
@@ -214,15 +215,58 @@ describe("TargetRow", () => {
 
     let confirmButton = wrapper
       .findAll("button")
-      .find((b) => b.text() === "Confirm");
+      .find((b) => b.text() === "Flash bttebb36");
     expect(confirmButton?.attributes("disabled")).toBeDefined();
 
     await wrapper.get('input[type="checkbox"]').setValue(true);
     expect(wrapper.text()).toContain("mcu EBBT0");
     confirmButton = wrapper
       .findAll("button")
-      .find((b) => b.text() === "Confirm");
+      .find((b) => b.text() === "Flash bttebb36");
     expect(confirmButton?.attributes("disabled")).toBeUndefined();
+  });
+
+  it("confirms the overflow menu's build-and-flash before running it", async () => {
+    const spy = vi.spyOn(store, "invokeAction").mockResolvedValue(true);
+    const updateAction: Action = {
+      id: "update",
+      label: "Build and flash",
+      method: "fw.update_all",
+      params: { name: "bttebb36", scope: "stale" },
+      blocked: null,
+    };
+    const target: Target = {
+      ...mcuTarget,
+      actions: [flashAction, updateAction],
+    };
+    // Attached, so the menu's document-level click-outside handler is live:
+    // the confirm renders inside the menu, and a handler that treated a click
+    // in it as outside would unmount it before Confirm could land.
+    const wrapper = mount(TargetRow, {
+      props: { target },
+      attachTo: document.body,
+    });
+    await wrapper.get('[aria-label="More actions"]').trigger("click");
+    await wrapper
+      .findAll("button")
+      .find((b) => b.text() === "Build and flash")!
+      .trigger("click");
+
+    expect(spy).not.toHaveBeenCalled();
+    expect(wrapper.text()).toContain("Build and flash bttebb36");
+    // The menu's instance gets the switch too, not only the header's.
+    const toggle = wrapper.get('input[type="checkbox"]');
+    await toggle.trigger("mousedown");
+    await toggle.setValue(true);
+    const primary = wrapper
+      .findAll("button")
+      .find((b) => b.text() === "Build and flash bttebb36")!;
+    await primary.trigger("mousedown");
+    await primary.trigger("click");
+
+    expect(spy).toHaveBeenCalledWith(updateAction, { scope: "all" });
+    wrapper.unmount();
+    spy.mockRestore();
   });
 
   it("toggles the detail panel without a connected client", async () => {

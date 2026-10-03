@@ -97,7 +97,9 @@ describe("ActionButton", () => {
     await wrapper.get("button").trigger("click");
     // Regression: these two used to render inline with no separator at all -
     // "mcu T0_buffermcu T1_buffer".
-    const items = wrapper.findAll(".devices li").map((li) => li.text());
+    const items = wrapper
+      .findAll(".detail-block > div")
+      .map((row) => row.get("strong").text());
     expect(items).toEqual(["mcu T0_buffer", "mcu T1_buffer"]);
   });
 
@@ -113,7 +115,7 @@ describe("ActionButton", () => {
     expect(wrapper.text()).toContain("refusing to guess");
     const confirmButton = wrapper
       .findAll("button")
-      .find((b) => b.text() === "Confirm");
+      .find((b) => b.text() === "Flash carto_v4");
     expect(confirmButton?.attributes("disabled")).toBeDefined();
   });
 
@@ -185,26 +187,132 @@ describe("ActionButton", () => {
       props: {
         action,
         offersOverride: true,
+        previewDevices: [],
         allPreviewDevices: [{ id: "230048-if00", name: "mcu EBBT0" }],
       },
     });
     await wrapper.get("button").trigger("click");
-    // Stale preview is empty (none passed), so Confirm starts disabled and
-    // the override switch is the only way out.
+    // Nothing looks stale, so the confirm starts disabled - saying so the way
+    // the fleet dialog does - and the override switch is the only way out.
+    expect(wrapper.text()).toContain("Nothing for this to do right now.");
     let confirmButton = wrapper
       .findAll("button")
-      .find((b) => b.text() === "Confirm");
+      .find((b) => b.text() === "Flash bttebb36");
     expect(confirmButton?.attributes("disabled")).toBeDefined();
 
     await wrapper.get('input[type="checkbox"]').setValue(true);
     expect(wrapper.text()).toContain("mcu EBBT0");
     confirmButton = wrapper
       .findAll("button")
-      .find((b) => b.text() === "Confirm");
+      .find((b) => b.text() === "Flash bttebb36");
     expect(confirmButton?.attributes("disabled")).toBeUndefined();
 
     await confirmButton?.trigger("click");
     expect(spy).toHaveBeenCalledWith(action, { scope: "all" });
+  });
+
+  it("lays a type's flash out the way the fleet-wide flash is laid out", async () => {
+    const action: Action = {
+      ...buildAction,
+      id: "flash",
+      label: "Flash",
+      method: "fw.flash_all",
+      params: { name: "roadrunner", scope: "stale" },
+    };
+    const wrapper = mount(ActionButton, {
+      props: {
+        action,
+        offersOverride: true,
+        previewDevices: [{ id: "RR-5K3D", name: null }],
+        allPreviewDevices: [{ id: "RR-5K3D", name: null }],
+      },
+    });
+    await wrapper.get("button").trigger("click");
+
+    expect(wrapper.get(".dialog h2").text()).toBe("Flash roadrunner");
+    expect(wrapper.text()).toContain(
+      "Flash every device of roadrunner that needs it. This stops Klipper once for the whole batch.",
+    );
+    expect(wrapper.text()).toContain(
+      "Only what the recorded provenance says needs doing.",
+    );
+    expect(wrapper.text()).toContain("Will flash:");
+    expect(wrapper.text()).toContain("This is a preview only");
+    expect(wrapper.get(".alert--warning").text()).toBe(
+      "This stops Klipper and writes to hardware. Do not interrupt it once started.",
+    );
+    // A cmake device has no name: its id is said once, not twice.
+    expect(wrapper.get(".detail-block > div").text()).toBe("RR-5K3D");
+    const primary = wrapper
+      .findAll("button")
+      .find((b) => b.text() === "Flash roadrunner");
+    expect(primary?.attributes("disabled")).toBeUndefined();
+  });
+
+  it("titles a single device's flash with the device, with no scope switch", async () => {
+    const action: Action = {
+      ...buildAction,
+      id: "flash",
+      label: "Flash",
+      method: "fw.flash",
+      params: { name: "bttebb36", serial: "230048" },
+    };
+    const wrapper = mount(ActionButton, {
+      props: {
+        action,
+        previewDevices: [{ id: "230048-if00", name: "mcu EBBT0" }],
+      },
+    });
+    await wrapper.get("button").trigger("click");
+
+    expect(wrapper.get(".dialog h2").text()).toBe("Flash mcu EBBT0");
+    expect(wrapper.find('input[type="checkbox"]').exists()).toBe(false);
+    expect(wrapper.text()).not.toContain("every device");
+    expect(wrapper.get(".detail-block > div").text()).toContain("230048-if00");
+    expect(wrapper.find(".alert--warning").exists()).toBe(true);
+    expect(
+      wrapper.findAll("button").some((b) => b.text() === "Flash mcu EBBT0"),
+    ).toBe(true);
+  });
+
+  it("confirms a type's build-and-flash, listing the build when nothing is flashable yet", async () => {
+    const spy = vi.spyOn(store, "invokeAction").mockResolvedValue(true);
+    const action: Action = {
+      ...buildAction,
+      id: "update",
+      label: "Build and flash",
+      method: "fw.update_all",
+      params: { name: "roadrunner", scope: "stale" },
+    };
+    const wrapper = mount(ActionButton, {
+      props: {
+        action,
+        variant: "text",
+        offersOverride: true,
+        previewDevices: [],
+        allPreviewDevices: [{ id: "RR-5K3D", name: null }],
+        previewBuilds: [{ name: "roadrunner", label: "Never built" }],
+        allPreviewBuilds: [{ name: "roadrunner", label: "Never built" }],
+      },
+    });
+    await wrapper.get("button").trigger("click");
+    // It stops Klipper and writes hardware: never on one click.
+    expect(spy).not.toHaveBeenCalled();
+
+    expect(wrapper.get(".dialog h2").text()).toBe("Build and flash roadrunner");
+    expect(wrapper.text()).toContain("Will build:");
+    expect(wrapper.text()).toContain("Never built");
+    expect(wrapper.text()).toContain("Nothing to flash.");
+    expect(wrapper.text()).toContain("a floor, not a forecast");
+    // A build can add boards to the flash list, so an empty one is no reason
+    // to refuse.
+    const primary = wrapper
+      .findAll("button")
+      .find((b) => b.text() === "Build and flash roadrunner");
+    expect(primary?.attributes("disabled")).toBeUndefined();
+
+    await primary?.trigger("click");
+    expect(spy).toHaveBeenCalledWith(action, {});
   });
 
   it("never shows the override switch when offersOverride is not set", async () => {

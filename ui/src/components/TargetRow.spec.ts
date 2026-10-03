@@ -239,7 +239,13 @@ describe("TargetRow", () => {
       ...mcuTarget,
       actions: [flashAction, updateAction],
     };
-    const wrapper = mount(TargetRow, { props: { target } });
+    // Attached, so the menu's document-level click-outside handler is live:
+    // the confirm renders inside the menu, and a handler that treated a click
+    // in it as outside would unmount it before Confirm could land.
+    const wrapper = mount(TargetRow, {
+      props: { target },
+      attachTo: document.body,
+    });
     await wrapper.get('[aria-label="More actions"]').trigger("click");
     await wrapper
       .findAll("button")
@@ -249,7 +255,17 @@ describe("TargetRow", () => {
     expect(spy).not.toHaveBeenCalled();
     expect(wrapper.text()).toContain("Build and flash bttebb36");
     // The menu's instance gets the switch too, not only the header's.
-    expect(wrapper.find('input[type="checkbox"]').exists()).toBe(true);
+    const toggle = wrapper.get('input[type="checkbox"]');
+    await toggle.trigger("mousedown");
+    await toggle.setValue(true);
+    const primary = wrapper
+      .findAll("button")
+      .find((b) => b.text() === "Build and flash bttebb36")!;
+    await primary.trigger("mousedown");
+    await primary.trigger("click");
+
+    expect(spy).toHaveBeenCalledWith(updateAction, { scope: "all" });
+    wrapper.unmount();
     spy.mockRestore();
   });
 

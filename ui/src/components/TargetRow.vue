@@ -21,7 +21,7 @@ import {
   state,
 } from "../store/agent";
 import type { Target, TargetDevice } from "../api/targets";
-import { devicesToFlash } from "../api/bulk";
+import { bulkBuildTargets, devicesToFlash } from "../api/bulk";
 import ActionButton from "./ActionButton.vue";
 import UiIcon from "./UiIcon.vue";
 import UiDialog from "./UiDialog.vue";
@@ -94,6 +94,19 @@ function previewFor(action: Target["actions"][number]): TargetDevice[] {
  * reflash, mirroring BulkDialog's "Everything, not just what looks stale". */
 function allPreviewFor(): TargetDevice[] {
   return devicesToFlash(props.target, "all");
+}
+
+/** What a build-and-flash on this row would build first, for its confirm -
+ * the same selection BulkDialog's "Will build:" list makes, over one row. */
+function buildPreviewFor(
+  action: Target["actions"][number],
+  scope: "stale" | "all",
+): { name: string; label: string }[] | undefined {
+  if (action.method !== "fw.update_all") return undefined;
+  return bulkBuildTargets([props.target], scope).map((t) => ({
+    name: t.name,
+    label: t.artifact.label,
+  }));
 }
 
 /** Only the type-level fw.flash_all action carries a `scope` param -
@@ -323,6 +336,12 @@ async function toggle(): Promise<void> {
             :disabled="busyReason !== null"
             :disabled-reason="busyReason"
             :preview-devices="previewFor(action)"
+            :offers-override="offersOverride(action)"
+            :all-preview-devices="
+              offersOverride(action) ? allPreviewFor() : undefined
+            "
+            :preview-builds="buildPreviewFor(action, 'stale')"
+            :all-preview-builds="buildPreviewFor(action, 'all')"
           />
           <template v-if="canManageType">
             <hr v-if="menuActions.length" class="divider" />

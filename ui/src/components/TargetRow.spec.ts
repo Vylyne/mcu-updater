@@ -1,8 +1,9 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { mount } from "@vue/test-utils";
 import TargetRow from "./TargetRow.vue";
 import UiIcon from "./UiIcon.vue";
 import type { Action, Target } from "../api/targets";
+import * as store from "../store/agent";
 import { state } from "../store/agent";
 import type { Job } from "../api/jobs";
 
@@ -223,6 +224,33 @@ describe("TargetRow", () => {
       .findAll("button")
       .find((b) => b.text() === "Flash bttebb36");
     expect(confirmButton?.attributes("disabled")).toBeUndefined();
+  });
+
+  it("confirms the overflow menu's build-and-flash before running it", async () => {
+    const spy = vi.spyOn(store, "invokeAction").mockResolvedValue(true);
+    const updateAction: Action = {
+      id: "update",
+      label: "Build and flash",
+      method: "fw.update_all",
+      params: { name: "bttebb36", scope: "stale" },
+      blocked: null,
+    };
+    const target: Target = {
+      ...mcuTarget,
+      actions: [flashAction, updateAction],
+    };
+    const wrapper = mount(TargetRow, { props: { target } });
+    await wrapper.get('[aria-label="More actions"]').trigger("click");
+    await wrapper
+      .findAll("button")
+      .find((b) => b.text() === "Build and flash")!
+      .trigger("click");
+
+    expect(spy).not.toHaveBeenCalled();
+    expect(wrapper.text()).toContain("Build and flash bttebb36");
+    // The menu's instance gets the switch too, not only the header's.
+    expect(wrapper.find('input[type="checkbox"]').exists()).toBe(true);
+    spy.mockRestore();
   });
 
   it("toggles the detail panel without a connected client", async () => {

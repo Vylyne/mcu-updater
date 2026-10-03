@@ -65,6 +65,11 @@ const props = withDefaults(
     /** previewDevices recomputed at scope "all" - what the override switch
      * swaps the confirm dialog to when checked. */
     allPreviewDevices?: { id: string; name: string | null }[];
+    /** What a build-and-flash would build first, at each scope - the row's
+     * own artifact, from api/bulk.ts's bulkBuildTargets so it agrees with
+     * the fleet-wide dialog. Absent for every other action. */
+    previewBuilds?: { name: string; label: string }[];
+    allPreviewBuilds?: { name: string; label: string }[];
   }>(),
   {
     disabled: false,
@@ -76,13 +81,21 @@ const props = withDefaults(
     reseedDefault: true,
     offersOverride: false,
     allPreviewDevices: undefined,
+    previewBuilds: undefined,
+    allPreviewBuilds: undefined,
   },
 );
 
 // Exactly one place naming which methods write to hardware, so a "Flash"
-// label can never reach fw.flash/fw.flash_all without this prompt - and so
-// tests/test_ui_contract.py's fw.* scan sees both literals.
-const DESTRUCTIVE_METHODS = new Set(["fw.flash", "fw.flash_all"]);
+// label can never reach fw.flash/fw.flash_all/fw.update_all without this
+// prompt - and so tests/test_ui_contract.py's fw.* scan sees the literals.
+// fw.update_all was missing: a row's "Build and flash" stopped Klipper and
+// wrote boards on one click, while the fleet's "Update everything" asked.
+const DESTRUCTIVE_METHODS = new Set([
+  "fw.flash",
+  "fw.flash_all",
+  "fw.update_all",
+]);
 
 // "Configure {family}" opens a session in KconfigDialog.vue rather than
 // firing a normal request-and-done call - a Kconfig parse leaves a
@@ -120,10 +133,13 @@ const effectivePreview = computed(() =>
     ? props.allPreviewDevices
     : props.previewDevices,
 );
-// A type's flash is a selection the agent makes over its devices, the same as
-// the fleet-wide one in BulkDialog.vue and laid out the same way; a device's
-// flash writes the one device it names.
-const isSelection = computed(() => props.action.method === "fw.flash_all");
+// A type's flash or build-and-flash is a selection the agent makes over its
+// devices, the same as the fleet-wide one in BulkDialog.vue and laid out the
+// same way; a device's flash writes the one device it names.
+const isUpdate = computed(() => props.action.method === "fw.update_all");
+const isSelection = computed(
+  () => props.action.method === "fw.flash_all" || isUpdate.value,
+);
 const confirmTitle = computed(() => {
   if (isSelection.value) {
     return `${props.action.label} ${String(props.action.params.name)}`;
@@ -133,11 +149,15 @@ const confirmTitle = computed(() => {
     ? `${props.action.label} ${device.name ?? device.id}`
     : props.action.label;
 });
-const confirmBody = computed(() =>
-  isSelection.value
-    ? `Flash every device of ${String(props.action.params.name)} that needs it. This stops Klipper once for the whole batch.`
-    : `Write the firmware built for ${String(props.action.params.name)} to this device.`,
-);
+const confirmBody = computed(() => {
+  const name = String(props.action.params.name);
+  if (isUpdate.value) {
+    return `Build ${name} if it needs it, then flash every device of it that needs it. This stops Klipper once, after the build finishes.`;
+  }
+  return isSelection.value
+    ? `Flash every device of ${name} that needs it. This stops Klipper once for the whole batch.`
+    : `Write the firmware built for ${name} to this device.`;
+});
 // The id said once: a device with no name (a cmake board's) would otherwise
 // read "RR-5K3D RR-5K3D".
 const previewRows = computed<PreviewRow[]>(() =>
@@ -146,6 +166,23 @@ const previewRows = computed<PreviewRow[]>(() =>
     name: device.name ?? device.id,
     detail: device.name ? device.id : null,
   })),
+);
+const buildRows = computed<PreviewRow[] | null>(() => {
+  if (!isUpdate.value) return null;
+  const builds =
+    overrideAll.value && props.allPreviewBuilds
+      ? props.allPreviewBuilds
+      : props.previewBuilds;
+  return (builds ?? []).map((build) => ({
+    key: build.name,
+    name: build.name,
+    detail: build.label,
+  }));
+});
+// A build can add boards to the flash list, so for an update an empty flash
+// list is no reason to refuse - only having nothing to build as well is.
+const confirmHasWork = computed(
+  () => previewRows.value.length > 0 || (buildRows.value?.length ?? 0) > 0,
 );
 const confirmScope = computed({
   get: () => (overrideAll.value ? "all" : "stale"),
@@ -359,16 +396,18 @@ function onClick(): void {
         v-model:scope="confirmScope"
         :body="confirmBody"
         :offers-scope="offersOverride"
+        :builds="buildRows"
         :flashes="previewRows"
-        :has-work="previewRows.length > 0"
+        :has-work="confirmHasWork"
         :caveat="isSelection"
+        :floor-note="isUpdate"
         :busy-message="printerBusy() ? busyMessage : null"
       />
       <template #actions>
         <button type="button" @click="confirming = false">Cancel</button>
         <button
           type="button"
-          :disabled="previewRows.length === 0 || printerBusy() || running"
+          :disabled="!confirmHasWork || printerBusy() || running"
           @click="run(overrideAll ? { scope: 'all' } : {})"
         >
           {{ running ? "Working…" : confirmTitle }}

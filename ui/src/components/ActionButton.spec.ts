@@ -275,6 +275,46 @@ describe("ActionButton", () => {
     ).toBe(true);
   });
 
+  it("confirms a type's build-and-flash, listing the build when nothing is flashable yet", async () => {
+    const spy = vi.spyOn(store, "invokeAction").mockResolvedValue(true);
+    const action: Action = {
+      ...buildAction,
+      id: "update",
+      label: "Build and flash",
+      method: "fw.update_all",
+      params: { name: "roadrunner", scope: "stale" },
+    };
+    const wrapper = mount(ActionButton, {
+      props: {
+        action,
+        variant: "text",
+        offersOverride: true,
+        previewDevices: [],
+        allPreviewDevices: [{ id: "RR-5K3D", name: null }],
+        previewBuilds: [{ name: "roadrunner", label: "Never built" }],
+        allPreviewBuilds: [{ name: "roadrunner", label: "Never built" }],
+      },
+    });
+    await wrapper.get("button").trigger("click");
+    // It stops Klipper and writes hardware: never on one click.
+    expect(spy).not.toHaveBeenCalled();
+
+    expect(wrapper.get(".dialog h2").text()).toBe("Build and flash roadrunner");
+    expect(wrapper.text()).toContain("Will build:");
+    expect(wrapper.text()).toContain("Never built");
+    expect(wrapper.text()).toContain("Nothing to flash.");
+    expect(wrapper.text()).toContain("a floor, not a forecast");
+    // A build can add boards to the flash list, so an empty one is no reason
+    // to refuse.
+    const primary = wrapper
+      .findAll("button")
+      .find((b) => b.text() === "Build and flash roadrunner");
+    expect(primary?.attributes("disabled")).toBeUndefined();
+
+    await primary?.trigger("click");
+    expect(spy).toHaveBeenCalledWith(action, {});
+  });
+
   it("never shows the override switch when offersOverride is not set", async () => {
     const action: Action = {
       ...buildAction,

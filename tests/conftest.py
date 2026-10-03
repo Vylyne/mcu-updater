@@ -9,6 +9,7 @@ tmp_path stands in for a whole printer host - no mocks, no monkeypatching of
 from __future__ import annotations
 
 import dataclasses
+import functools
 import json
 import os
 import pathlib
@@ -292,6 +293,23 @@ def mountinfo(root: pathlib.Path, mounts: dict[pathlib.Path, str]) -> None:
         for i, (point, source) in enumerate(mounts.items())
     ]
     (root / "mountinfo").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def skip_the_reenumeration_pause(monkeypatch: pytest.MonkeyPatch, api) -> None:
+    """Run add-MCU's post-write wait without its real-time pauses.
+
+    The fake bus is static - a board is there on the first look or it never
+    arrives - so the 0.5s poll and 1s settle the wait ships with are a second of
+    dead time per test, whichever way it ends. The wait itself still runs.
+    """
+    import mcu_updater.devices as devices_mod
+
+    monkeypatch.setattr(
+        devices_mod,
+        "wait_for_new_device",
+        functools.partial(devices_mod.wait_for_new_device, poll=0.01, settle=0.0),
+    )
+    api.ADD_MCU_REENUMERATE_TIMEOUT = 0.05
 
 
 def on_port(paths: Paths, root: pathlib.Path, port: str) -> Paths:

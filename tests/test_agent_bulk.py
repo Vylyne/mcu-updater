@@ -1017,6 +1017,7 @@ def test_a_write_that_needs_no_stop_stays_outside_the_outage(bulk, paths, monkey
     nothing to stop. The order the two writes happen in relative to the
     stop/start pair is what actually proves it.
     """
+    import mcu_updater.devices as devices_mod
     import mcu_updater.flashers.flash as flash_mod
 
     order: list[str] = []
@@ -1036,6 +1037,9 @@ def test_a_write_that_needs_no_stop_stays_outside_the_outage(bulk, paths, monkey
         return svc
 
     monkeypatch.setattr("mcu_updater.service.make_controller", factory)
+    # The fake board never re-enumerates; unstubbed, its post-write wait sits
+    # out the whole REENUMERATE_TIMEOUT.
+    monkeypatch.setattr(devices_mod, "wait_for_device", lambda *a, **k: None)
     monkeypatch.setattr(flash_mod, "flash_dfu_stm32", lambda *a, **k: order.append("dfu write"))
     monkeypatch.setattr(flash_mod, "flash_katapult", lambda *a, **k: order.append("board write"))
     write_settings(paths, dry_run="false", service_backend="null", enable_flashing="true")

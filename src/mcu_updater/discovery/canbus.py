@@ -65,6 +65,10 @@ _QUERY_LINE_RE = re.compile(
 #: it has genuinely finished listening, not just when it happens to exit.
 QUERY_COMPLETE_RE = re.compile(r"CANBus UUID Query Complete")
 
+#: Katapult listens for unassigned-node replies for two seconds. Ten leaves
+#: ample startup/teardown headroom on a Pi while still bounding a wedged child.
+QUERY_TIMEOUT = 10.0
+
 
 @dataclasses.dataclass(frozen=True)
 class CanSighting:
@@ -82,7 +86,7 @@ class CanSighting:
     application: str
     #: One of `discovery.spec.STATE_*`, via `state_for_firmware(application)`.
     state: str
-    #: Which interface answered, for *this scan's own display only* - Linux
+    #: Which interface answered, for *this scan's own report only* - Linux
     #: CAN interface names are enumeration order, not stable identity, so this
     #: is never persisted and never trusted on a later scan. See
     #: `discovery.spec`'s identity-vs-state split for the general rule this
@@ -218,6 +222,7 @@ def query(
         # Querying unassigned UUIDs is read-only discovery, so dry-run must not
         # turn it into a skipped subprocess with no completion sentinel.
         dry_run=False,
+        timeout=QUERY_TIMEOUT,
         fake_delay=0.0,
     )
     if returncode != 0:

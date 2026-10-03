@@ -6,25 +6,55 @@ up running again"**. Every branch here exists because of a way that could fail.
 
 from __future__ import annotations
 
+import json
 import os
 
 import pytest
 
 from mcu_updater.agent.methods import Api
 from mcu_updater.agent.rpc import ERR_INVALID_PARAMS, ERR_METHOD_NOT_FOUND, RpcError
+from mcu_updater.build import FlashLog
 from mcu_updater.errors import ServiceControlError
 from mcu_updater.jobs import JobRunner
 from mcu_updater.service import Journal, NullService, services_stopped
 
-from .conftest import make_device, write_settings
+from .conftest import make_device, stage_uf2_only, with_base_firmwares, write_settings
 
 TRACKED_SERIAL = "123456789012345678901"
 TRACKED_TYPE = "bttebb36"
 TRACKED_CHIPSET = "stm32g0b1xx"
+ROADRUNNER_SERIAL = "RR-5K3DNTFCR1B3C9D0RZMYA3Y720"
 
 
 def _write_settings(paths, **extra) -> None:
     write_settings(paths, dry_run="true", service_backend="null", **extra)
+
+
+def _fake_uf2(payload: bytes = b"UF2-road-runner", *, address: int = 0x10000000) -> bytes:
+    """`payload` wrapped as a minimal, valid UF2 - `Bootsel.write` now reads
+    every image once before copying it (M-3), so a staged fixture has to be a
+    container `image_extent` can parse, even when the test has nothing to do
+    with the image's own content."""
+    import struct
+
+    chunk = 256
+    chunks = [payload[i : i + chunk] for i in range(0, len(payload), chunk)] or [b""]
+    out = bytearray()
+    for index, data in enumerate(chunks):
+        out += struct.pack(
+            "<IIIIIIII",
+            0x0A324655,
+            0x9E5D5157,
+            0x2000,
+            address + index * chunk,
+            chunk,
+            index,
+            len(chunks),
+            0xE48BFF56,
+        )
+        out += data.ljust(476, b"\x00")
+        out += struct.pack("<I", 0x0AB16F30)
+    return bytes(out)
 
 
 def _stage_artifact(paths, mcu_type=TRACKED_TYPE) -> str:
@@ -55,6 +85,72 @@ def _moonraker(print_state="standby", idle_state="Ready", klippy="ready"):
         return {}
 
     return call
+
+
+@pytest.fixture
+def cmake_flash_factory(paths, fake_root, tmp_path):
+    """Create a configured CMake device without touching real Roadrunner USB."""
+    runners = []
+
+    def make(
+        *,
+        helper="roadrunner",
+        staged=True,
+        attached=True,
+        dry_run="true",
+        serial=ROADRUNNER_SERIAL,
+        extra_types="",
+    ):
+        source = tmp_path / f"rp2040-{len(runners)}"
+        source.mkdir()
+        (source / "CMakeLists.txt").write_text("project(rr)\n", encoding="utf-8")
+        helper_line = f"helper: {helper}\n" if helper is not None else ""
+        with open(paths.main_config, "w", encoding="utf-8", newline="\n") as fh:
+            fh.write(
+                with_base_firmwares(
+                    "[firmware roadrunner]\n"
+                    f"source: {source}\n"
+                    "builder: cmake\n"
+                    f"{helper_line}"
+                    "flashers: bootsel\n\n"
+                    "[type roadrunner]\n"
+                    "chipset: rp2040\n"
+                    "firmware: roadrunner\n"
+                    "cmake_target: roadrunner_v1_i2c_rgb\n"
+                    "serials:\n"
+                    f"    {serial}\n"
+                    f"{extra_types}"
+                )
+            )
+        write_settings(
+            paths,
+            dry_run=dry_run,
+            service_backend="null",
+            enable_flashing="true",
+        )
+        if staged:
+            os.makedirs(paths.artifact_dir("roadrunner"), exist_ok=True)
+            with open(paths.uf2_file("roadrunner", "roadrunner"), "wb") as fh:
+                fh.write(_fake_uf2())
+        if attached:
+            make_device(fake_root / "bus", "Vylyne", "Roadrunner", serial)
+        runner = JobRunner(
+            paths,
+            lambda: __import__(
+                "mcu_updater.settings", fromlist=["load_settings"]
+            ).load_settings(paths.settings_file),
+        )
+        runners.append(runner)
+        api = Api(paths, runner=runner, call=_moonraker())
+        api.KLIPPY_READY_TIMEOUT = 2.0
+        api.KLIPPY_RESTART_TIMEOUT = 2.0
+        api.KLIPPY_POLL_INTERVAL = 0.05
+        return api
+
+    yield make
+    for runner in runners:
+        runner._cancel.set()
+        runner.wait(timeout=20)
 
 
 @pytest.fixture
@@ -206,11 +302,216 @@ def test_a_serial_belonging_to_another_type_is_refused_outright(flashable):
     assert exc.value.data["code"] == "serial_tracked_elsewhere"
 
 
+def test_a_helper_backed_cmake_uf2_routes_through_a_normal_flash_job(
+    cmake_flash_factory,
+):
+    api = cmake_flash_factory()
+
+    response = api.dispatch(
+        "fw.flash", {"name": "roadrunner", "id": ROADRUNNER_SERIAL}
+    )
+
+    assert response["job"]["kind"] == "flash"
+    assert api.runner.wait(timeout=30)
+    job = api.runner.get(response["job_id"])
+    assert job.state == "succeeded", job.error
+    assert job.result["type"] == "roadrunner"
+    assert job.result["serial"] == ROADRUNNER_SERIAL
+    assert job.result["fw_bin"].endswith("roadrunner.uf2")
+    assert FlashLog(api.paths).all() == {}, "dry runs must not claim a write"
+
+
+def test_a_cmake_type_without_a_helper_names_its_flashers(
+    cmake_flash_factory,
+):
+    """A family whose helper cannot request BOOTSEL leaves `bootsel` nothing to
+    write a running board with, and the refusal names the list to fix."""
+    api = cmake_flash_factory(helper=None)
+
+    with pytest.raises(RpcError) as exc:
+        api.dispatch(
+            "fw.flash", {"name": "roadrunner", "serial": ROADRUNNER_SERIAL}
+        )
+
+    assert exc.value.data["code"] == "no_flasher"
+    assert "flashers: bootsel" in str(exc.value)
+    assert api.runner.current() is None
+
+
+def test_an_unknown_cmake_helper_is_a_config_error(cmake_flash_factory):
+    api = cmake_flash_factory(helper="not-registered")
+
+    with pytest.raises(RpcError) as exc:
+        api.dispatch(
+            "fw.flash", {"name": "roadrunner", "serial": ROADRUNNER_SERIAL}
+        )
+
+    assert exc.value.data["code"] == "config_corrupt"
+    assert api.runner.current() is None
+
+
+def test_a_cmake_flash_requires_its_staged_uf2(cmake_flash_factory):
+    api = cmake_flash_factory(staged=False)
+
+    with pytest.raises(RpcError) as exc:
+        api.dispatch(
+            "fw.flash", {"name": "roadrunner", "serial": ROADRUNNER_SERIAL}
+        )
+
+    assert exc.value.data["code"] == "no_artifact"
+    assert api.runner.current() is None
+
+
+def test_a_detached_cmake_serial_is_refused_before_a_job(cmake_flash_factory):
+    api = cmake_flash_factory(attached=False)
+
+    with pytest.raises(RpcError) as exc:
+        api.dispatch(
+            "fw.flash", {"name": "roadrunner", "serial": ROADRUNNER_SERIAL}
+        )
+
+    assert exc.value.data["code"] == "device_not_found"
+    assert api.runner.current() is None
+
+
+def test_a_cmake_flash_refuses_a_serial_tracked_under_another_type(
+    cmake_flash_factory,
+):
+    api = cmake_flash_factory(
+        extra_types=(
+            "\n[type other]\n"
+            "chipset: stm32g0b1xx\n"
+            "firmware: klipper\n"
+            "serials:\n"
+            f"    {TRACKED_SERIAL}\n"
+        )
+    )
+
+    with pytest.raises(RpcError) as exc:
+        api.dispatch(
+            "fw.flash", {"name": "roadrunner", "serial": TRACKED_SERIAL}
+        )
+
+    assert exc.value.data["code"] == "serial_tracked_elsewhere"
+    assert api.runner.current() is None
+
+
+def test_a_busy_printer_blocks_a_cmake_flash(cmake_flash_factory):
+    api = cmake_flash_factory()
+    api._call = _moonraker(idle_state="Printing")
+
+    with pytest.raises(RpcError) as exc:
+        api.dispatch(
+            "fw.flash", {"name": "roadrunner", "serial": ROADRUNNER_SERIAL}
+        )
+
+    assert exc.value.data["code"] == "print_in_progress"
+    assert api.runner.current() is None
+
+
+def test_a_single_cmake_batch_failure_fails_the_flash_job(
+    cmake_flash_factory, monkeypatch
+):
+    api = cmake_flash_factory()
+
+    monkeypatch.setattr(
+        "mcu_updater.flashers.write_all",
+        lambda bench, targets, ctx, on_ready=None: {
+            "flashed": [],
+            "failures": [
+                {
+                    **targets[0].to_json(),
+                    "error": "matched BOOTSEL mount vanished",
+                }
+            ],
+        },
+    )
+
+    response = api.dispatch(
+        "fw.flash", {"name": "roadrunner", "serial": ROADRUNNER_SERIAL}
+    )
+    assert api.runner.wait(timeout=30)
+    job = api.runner.get(response["job_id"])
+    assert job.state == "failed"
+    assert job.error["code"] == "flash_failed"
+    assert "vanished" in job.error["message"]
+
+
+def test_a_successful_cmake_write_records_build_sidecar_provenance(
+    cmake_flash_factory, monkeypatch
+):
+    """The ledger is `write_all`'s now (Ruling 12), so a faked batch writes
+    none - see `test_flashlog_loop.py`."""
+    api = cmake_flash_factory(dry_run="false")
+    sidecar = {
+        "provider": "cmake",
+        "sha": "built-subtree-sha",
+        "version": "v1.2.3-4-gabcdef0",
+        "dirty": False,
+        "cmake_target": "roadrunner_v1_i2c_rgb",
+        "bin_sha256": "built-uf2-sha256",
+        "bin_size": 15,
+        "bin_mtime": 123.0,
+    }
+    os.makedirs(api.paths.artifact_dir("roadrunner"), exist_ok=True)
+    with open(
+        api.paths.sidecar_file("roadrunner", "roadrunner"),
+        "w",
+        encoding="utf-8",
+    ) as fh:
+        json.dump(sidecar, fh)
+
+    captured = {}
+
+    def succeed(bench, targets, ctx, *, on_ready=None):
+        captured["target"] = targets[0]
+        if on_ready is not None:
+            on_ready(ctx.reporter)
+        return {"flashed": [targets[0].to_json()], "failures": []}
+
+    monkeypatch.setattr("mcu_updater.flashers.write_all", succeed)
+
+    response = api.dispatch(
+        "fw.flash", {"name": "roadrunner", "serial": ROADRUNNER_SERIAL}
+    )
+    assert api.runner.wait(timeout=30)
+    job = api.runner.get(response["job_id"])
+    assert job.state == "succeeded", job.error
+    assert captured["target"].flasher == "bootsel"
+
+
+def test_a_cmake_family_that_cannot_write_the_board_refuses_before_a_job(
+    cmake_flash_factory, monkeypatch
+):
+    api = cmake_flash_factory(dry_run="false")
+    monkeypatch.setattr(
+        "mcu_updater.flashers.registry.resolve", lambda family, device, helper, staged: None
+    )
+
+    with pytest.raises(RpcError) as exc:
+        api.dispatch("fw.flash", {"name": "roadrunner", "serial": ROADRUNNER_SERIAL})
+
+    assert exc.value.data["code"] == "no_flasher"
+    assert api.runner.current() is None
+
+
 def test_flashing_without_a_built_artifact_is_refused(flashable, paths):
     os.unlink(paths.bin_file(TRACKED_TYPE, "klipper"))
     with pytest.raises(RpcError) as exc:
         flashable.dispatch("fw.flash", {"serial": TRACKED_SERIAL})
     assert exc.value.data["code"] == "no_artifact"
+    assert flashable.runner.current() is None, "no job should have been created"
+
+
+def test_a_build_that_staged_only_a_uf2_is_left_to_selection(flashable, paths):
+    """Built means "staged anything". A `.uf2` with no `.bin` is not
+    `no_artifact`: selection refuses it by kind, naming the fix."""
+    os.unlink(paths.bin_file(TRACKED_TYPE, "klipper"))
+    stage_uf2_only(paths, TRACKED_TYPE)
+    with pytest.raises(RpcError) as exc:
+        flashable.dispatch("fw.flash", {"serial": TRACKED_SERIAL})
+    assert exc.value.data["code"] == "no_flasher"
+    assert "staged a .uf2 and no .bin" in str(exc.value)
     assert flashable.runner.current() is None, "no job should have been created"
 
 
@@ -285,6 +586,42 @@ def test_a_flash_stops_klipper_flashes_then_starts_it_again(flashable, paths):
     flash_at = joined.index("Flashing")
     start_at = joined.index("would start klipper")
     assert stop_at < flash_at < start_at, "klipper must be down only for the write"
+
+
+def test_a_board_its_family_cannot_write_refuses_before_a_job(flashable, paths):
+    block = "[firmware klipper]\nsource: ~/klipper\nflashers: flashtool\n"
+    with open(paths.registry_file, encoding="utf-8") as fh:
+        text = fh.read()
+    assert block in text
+    with open(paths.registry_file, "w", encoding="utf-8") as fh:
+        fh.write(text.replace(block, block.replace("flashtool", "platformio")))
+
+    with pytest.raises(RpcError) as exc:
+        flashable.dispatch("fw.flash", {"serial": TRACKED_SERIAL})
+
+    assert exc.value.data["code"] == "no_flasher"
+    assert flashable.runner.current() is None
+
+
+def test_a_failed_serial_write_keeps_its_own_error_code(flashable, monkeypatch):
+    """The serial path writes through the batch loop, and a batch reports
+    failures as strings. The job re-raises the write's own error, so a panel
+    switching on `device_not_found` or `offset_mismatch` still can."""
+    import mcu_updater.flashers.flash as flash_mod
+    from mcu_updater.errors import DeviceNotFoundError
+
+    def gone(*args, **kwargs):
+        raise DeviceNotFoundError("the board vanished mid-write", serial=TRACKED_SERIAL)
+
+    monkeypatch.setattr(flash_mod, "flash_katapult", gone)
+
+    res = flashable.dispatch("fw.flash", {"serial": TRACKED_SERIAL})
+    assert flashable.runner.wait(timeout=30)
+
+    job = flashable.runner.get(res["job_id"])
+    assert job.state == "failed"
+    assert job.error["code"] == "device_not_found"
+    assert job.error["data"] == {"serial": TRACKED_SERIAL}
 
 
 def test_a_type_whose_firmware_is_not_klipper_can_still_be_flashed(flashable_non_klipper):

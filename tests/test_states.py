@@ -9,8 +9,7 @@ built artifact) is ``ArtifactStatus``, Q2 (the device) is ``DeviceStatus``.
 different things spelled "unknown"; two of them are now distinguishable, and the
 MCU and display sides finally agree about what a missing sidecar means. The old
 wire words (``stale``/``stale_reason``, ``firmware_state``, ``artifact_state``)
-were retired once this vocabulary existed to say the same things - see
-docs/rebuild-plan.md's Step 14 log for that call.
+were retired once this vocabulary existed to say the same things.
 """
 
 from __future__ import annotations
@@ -24,6 +23,8 @@ from mcu_updater import build, states
 from mcu_updater.providers import pio
 from mcu_updater.providers.pio import PioType, SourceState
 from mcu_updater.states import ArtifactStatus, DeviceStatus
+
+from .conftest import seed_base_firmwares
 
 TREE = SourceState(head="d34db33", version="0.4.0", dirty=False, on_tag=False)
 
@@ -59,11 +60,38 @@ DEVICE_VERDICTS = {
     states.IN_BOOTLOADER: True,
     states.SOURCE_CHANGED: True,
     states.ARTIFACT_CHANGED: True,
+    states.UNEXPECTED_IMAGE: True,
     states.PROTOCOL_MISMATCH: True,
     states.DEVICE_DIRTY: None,
     states.OFFLINE: None,
     states.UNKNOWN_VERSION: None,
     states.VERSION_ONLY: None,
+}
+
+
+#: How bad each one is for the printer, spelled out for the same reason the
+#: verdicts are: a tone derived from something else is a tone nobody chose.
+ARTIFACT_TONES = {
+    None: states.TONE_OK,
+    states.NEVER_BUILT: states.TONE_WARN,
+    states.CONFIG_CHANGED: states.TONE_WARN,
+    states.SOURCE_CHANGED: states.TONE_WARN,
+    states.BUILT_DIRTY: states.TONE_WARN,
+    states.FOREIGN_BUILD: states.TONE_WARN,
+    states.NO_PROVENANCE: states.TONE_WARN,
+}
+
+DEVICE_TONES = {
+    None: states.TONE_OK,
+    states.IN_BOOTLOADER: states.TONE_PROBLEM,
+    states.SOURCE_CHANGED: states.TONE_WARN,
+    states.ARTIFACT_CHANGED: states.TONE_WARN,
+    states.UNEXPECTED_IMAGE: states.TONE_WARN,
+    states.PROTOCOL_MISMATCH: states.TONE_PROBLEM,
+    states.DEVICE_DIRTY: states.TONE_WARN,
+    states.OFFLINE: states.TONE_PROBLEM,
+    states.UNKNOWN_VERSION: states.TONE_WARN,
+    states.VERSION_ONLY: states.TONE_WARN,
 }
 
 
@@ -169,18 +197,32 @@ def test_up_to_date_is_the_only_green():
         assert DeviceStatus(reason).tone != states.TONE_OK
 
 
+@pytest.mark.parametrize(("reason", "tone"), sorted(ARTIFACT_TONES.items(), key=str))
+def test_each_artifact_reason_has_exactly_this_tone(reason, tone):
+    assert ArtifactStatus(reason).tone == tone
+
+
+def test_no_artifact_reason_is_left_untoned():
+    assert set(ARTIFACT_TONES) == set(states.ARTIFACT_REASONS) | {None}
+
+
+@pytest.mark.parametrize(("reason", "tone"), sorted(DEVICE_TONES.items(), key=str))
+def test_each_device_reason_has_exactly_this_tone(reason, tone):
+    assert DeviceStatus(reason).tone == tone
+
+
+def test_no_device_reason_is_left_untoned():
+    assert set(DEVICE_TONES) == set(states.DEVICE_REASONS) | {None}
+
+
 def test_nothing_we_cannot_vouch_for_is_painted_green():
-    """The whole point of the amber bucket. An unverifiable image reading as
-    up to date is how somebody ships a print on firmware from before the fix."""
+    """An unverifiable image reading as up to date is how somebody ships a
+    print on firmware from before the fix."""
     for reason in (states.BUILT_DIRTY, states.FOREIGN_BUILD, states.NO_PROVENANCE):
-        assert ArtifactStatus(reason).tone == states.TONE_UNKNOWN
-    for reason in (
-        states.DEVICE_DIRTY,
-        states.OFFLINE,
-        states.UNKNOWN_VERSION,
-        states.VERSION_ONLY,
-    ):
-        assert DeviceStatus(reason).tone == states.TONE_UNKNOWN
+        assert ArtifactStatus(reason).tone != states.TONE_OK
+    for reason in states.DEVICE_REASONS:
+        if DeviceStatus(reason).needs_flash is None:
+            assert DeviceStatus(reason).tone != states.TONE_OK
 
 
 def test_a_missing_image_and_a_stale_one_read_the_same_because_the_fix_is_the_same():
@@ -188,39 +230,26 @@ def test_a_missing_image_and_a_stale_one_read_the_same_because_the_fix_is_the_sa
     assert (
         ArtifactStatus(states.NEVER_BUILT).tone
         == ArtifactStatus(states.SOURCE_CHANGED).tone
-        == states.TONE_ATTENTION
+        == states.TONE_WARN
     )
 
 
-def test_a_device_tone_is_just_its_verdict_coloured():
-    for reason in (None,) + states.DEVICE_REASONS:
-        status = DeviceStatus(reason)
-        expected = {False: states.TONE_OK, True: states.TONE_ATTENTION, None: states.TONE_UNKNOWN}
-        assert status.tone == expected[status.needs_flash]
+def test_a_tone_is_how_bad_it_is_not_whether_to_flash():
+    """The tone used to be the flash verdict coloured, which painted an
+    unplugged toolhead the same as a board one commit behind. A board the
+    printer cannot use is a problem whether or not a flash is what fixes it,
+    and a pending update is not one."""
+    offline = DeviceStatus(states.OFFLINE)
+    behind = DeviceStatus(states.SOURCE_CHANGED)
+    assert (offline.needs_flash, offline.tone) == (None, states.TONE_PROBLEM)
+    assert (behind.needs_flash, behind.tone) == (True, states.TONE_WARN)
 
 
-# --------------------------------------------------------------------------
-# the display side, in the shared vocabulary
-# --------------------------------------------------------------------------
-
-
-@pytest.mark.parametrize(
-    ("running", "reason"),
-    [
-        ("0.4.0+3.gd34db33", None),
-        ("0.4.0+1.gbadc0de", states.SOURCE_CHANGED),
-        ("0.4.0+3.gd34db33.dirty", states.DEVICE_DIRTY),
-        ("", states.UNKNOWN_VERSION),
-    ],
-)
-def test_the_same_answers_in_the_shared_vocabulary(running, reason):
-    assert pio.device_status(running, TREE).reason == reason
-
-
-def test_a_dirty_screen_is_not_reported_as_wanting_a_flash():
-    """It cannot be shown current, but it is not evidence of being behind
-    either - which is what the old FW_DIRTY meant and must keep meaning."""
-    assert pio.device_status("0.4.0+3.gd34db33.dirty", TREE).needs_flash is None
+def test_a_built_image_is_never_a_problem():
+    """Nothing about a file on disk stops the printer working. The worst a
+    build row says is "press build"."""
+    for reason in (None,) + states.ARTIFACT_REASONS:
+        assert ArtifactStatus(reason).tone != states.TONE_PROBLEM
 
 
 # --------------------------------------------------------------------------
@@ -288,7 +317,7 @@ def test_a_record_from_before_hashing_still_judges_by_size_and_mtime(paths, disp
     _bin(display)
     pio.record_build(paths, display, TREE)
 
-    sidecar = paths.display_sidecar(display.env)
+    sidecar = paths.platformio_sidecar(display.env)
     with open(sidecar, encoding="utf-8") as fh:
         record = json.load(fh)
     del record["bin_sha256"]
@@ -326,7 +355,7 @@ def test_no_record_at_all_is_the_other_kind_of_unknown(paths, display):
 
 def test_a_corrupt_record_is_absence_of_evidence_not_evidence_of_a_rebuild(paths, display):
     _bin(display)
-    sidecar = paths.display_sidecar(display.env)
+    sidecar = paths.platformio_sidecar(display.env)
     os.makedirs(os.path.dirname(sidecar), exist_ok=True)
     with open(sidecar, "w", encoding="utf-8") as fh:
         fh.write("{not json")
@@ -377,6 +406,7 @@ def test_an_unprovable_mcu_artifact_reports_stale_rather_than_current(paths):
 
 
 def test_a_matching_mcu_artifact_is_current(paths, monkeypatch):
+    seed_base_firmwares(paths)
     monkeypatch.setattr(build, "git_head", lambda _: "abc1234")
     monkeypatch.setattr(build, "sha256_file", lambda _: "cfghash")
     _mcu_artifact(paths, sidecar={"fw_sha": "abc1234", "config_sha256": "cfghash"})
@@ -392,6 +422,7 @@ def test_a_matching_mcu_artifact_is_current(paths, monkeypatch):
     ],
 )
 def test_the_mcu_reasons_survive_verbatim(paths, monkeypatch, sidecar, expected):
+    seed_base_firmwares(paths)
     monkeypatch.setattr(build, "git_head", lambda _: "abc1234")
     monkeypatch.setattr(build, "sha256_file", lambda _: "cfghash")
     _mcu_artifact(paths, sidecar=sidecar)

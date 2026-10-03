@@ -4,14 +4,14 @@ The one source that answers while Klipper is down - which is exactly when
 flashing needs it, because esptool wants the port to itself, so Klipper has
 to be stopped, and stopping Klipper removes the only other source.
 
-Split out of `test_agent_displays.py` in Step 25, alongside
+Split out of `test_agent_displays.py` alongside
 `read_device_map()`/`device_map_path()`/`WatcherDevice`'s own move to
-`discovery/watcher.py`; moved again in Step 25b into `discovery/knomi_serial/`,
-the subpackage named for the firmware this module integrates with. The two
-tests that exercise `api.device_list` stayed behind - they are agent-level,
-not `providers.pio`-level - and are re-tested via `providers.pio`'s re-export
-shim rather than `discovery.knomi_serial` directly, matching how `devices.py`'s
-shim is tested for the three bus sources.
+`discovery/watcher.py`; moved again into `discovery/knomi_serial/`,
+the subpackage named for the firmware this module integrates with.
+Agent-level listing is tested in `test_agent_platformio_devices.py`, against a
+fake lister. The re-export shim that used to carry these names through
+`providers.pio` is gone: the only module that reaches for them now is
+`helpers.knomi_serial`, the firmware's own identity handler.
 """
 
 from __future__ import annotations

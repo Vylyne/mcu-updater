@@ -6,19 +6,19 @@ import dataclasses
 import re
 from typing import Any
 
-from ... import firmware
+from ... import firmware, tracking
 from ... import settings as settings_mod
 from ...config import MakefilePatch, Registry
 from ...devices import (
     scan,
 )
 from ...errors import (
-    SerialTrackedElsewhereError,
+    UnprovisionedSerialError,
     UuidTrackedElsewhereError,
 )
-from ...settings import save_settings
 from ..rpc import ERR_INVALID_PARAMS, RpcError
 from ._api import _Base
+from .status import _has_staged
 
 _HEX_COLOR = re.compile(r"^#[0-9a-fA-F]{6}$")
 
@@ -108,9 +108,11 @@ class RegistryMixin(_Base):
     def settings_set(self, args: dict) -> dict[str, Any]:
         """Change tool settings. Only the keys supplied are touched.
 
-        Writes through `save_settings`, which load-modify-writes the ``[updater]``
-        section via CfgDocument - so the ``[mcu ...]`` sections and every comment
-        in the shared file survive.
+        Every value is coerced before the lock is taken, so a refused value
+        never contends for it. The change is then applied inside
+        `settings.mutate`, to settings loaded under the lock - so a concurrent
+        ``fw.bus.ignore`` is kept - and written through CfgDocument, so the
+        ``[type ...]`` sections and every comment in the shared file survive.
         """
         patch = args.get("settings")
         if not isinstance(patch, dict) or not patch:
@@ -133,15 +135,13 @@ class RegistryMixin(_Base):
                 },
             )
 
-        current = self.settings()
+        values = {key: self._coerce_setting(key, raw) for key, raw in patch.items()}
         changed: dict[str, Any] = {}
-        for key, raw in patch.items():
-            value = self._coerce_setting(key, raw)
-            if value != getattr(current, key):
-                changed[key] = value
-            setattr(current, key, value)
-
-        save_settings(self.paths.settings_file, current)
+        with settings_mod.mutate(self.paths, "set settings") as current:
+            for key, value in values.items():
+                if value != getattr(current, key):
+                    changed[key] = value
+                setattr(current, key, value)
 
         for key in self.LOUD_SETTINGS:
             if key in changed and self._log is not None:
@@ -229,14 +229,38 @@ class RegistryMixin(_Base):
         """Track a physical board under an existing type.
 
         Touches nothing but the registry: no build, no flash, no board.
+
+        One exception, and it is the point of Ruling 13: a serial the type's
+        firmware helper rejects with remedy `provision` is provisioned first,
+        and the resulting serial is what gets tracked. That does touch the
+        board. `prior_serial` says so.
+
+        That write is gated the same way `fw.identity.provision` is
+        (`_hardware_writes_allowed`) even though this method itself sits in
+        the ungated `METHODS` table: a read-only or flashing-disabled
+        deployment must not perform an irreversible hardware write just
+        because it arrived through ordinary tracking instead of the
+        dedicated maintenance call. Withheld, it refuses with the helper's
+        reason and the existing `UnprovisionedSerialError` /
+        `serial_unprovisioned` - not a new code.
+
+        Refused with `busy` while `fw.identity.*` or another add is running:
+        an identity write must not have a serial tracked between its untracked
+        check and its write.
         """
+        with self._identity_change():
+            return self._serial_add(args)
+
+    def _serial_add(self, args: dict) -> dict[str, Any]:
         name = self._require_str(args, "name")
         serial = self._require_str(args, "serial")
 
         # The panel only offers `adoptable` devices, but the panel is not the only
         # possible caller - enforce the same rule here so a direct RPC cannot add
         # a Knomi's CH340 as a board. Only refused when we can actually see it:
-        # a serial for a board that is currently unplugged is legitimate.
+        # a serial for a board that is currently unplugged is legitimate. This
+        # needs a live scan, unlike a helper's pure string verdict, so it stays
+        # agent-only rather than moving into `tracking.add_serial`.
         present = next((d for d in scan(self.paths) if d.serial == serial), None)
         if present is not None and not present.is_mcu:
             raise RpcError(
@@ -250,33 +274,46 @@ class RegistryMixin(_Base):
                 },
             )
 
-        with Registry.mutate(self.paths, f"add serial {serial}") as reg:
-            mcu = reg.get(name)  # UnknownTypeError if the type doesn't exist
-            # One board tracked under two types would get flashed twice with
-            # different firmware, so this is refused rather than merged.
-            elsewhere = [t for t in reg.find_types_for_serial(serial) if t != name]
-            if elsewhere:
-                raise SerialTrackedElsewhereError(
-                    f"serial '{serial}' is already tracked under '{elsewhere[0]}'. "
-                    f"Remove it from there first if it really belongs to '{name}'.",
-                    serial=serial,
-                    requested=name,
-                    tracked_under=elsewhere,
-                )
-            added = reg.add_serial(name, serial)
-            chipset = mcu.chipset
+        try:
+            tracked = tracking.add_serial(
+                self.paths, name, serial, may_provision=self._hardware_writes_allowed()
+            )
+        except UnprovisionedSerialError as exc:
+            # Same code and message shape this raised before the refusal moved
+            # into `tracking.add_serial` so the CLI could share it - the wire
+            # contract in docs/agent-api.md names only `serial_unprovisioned`
+            # and `serial`, but keeping the shape identical costs nothing.
+            raise RpcError(
+                exc.message,
+                data={
+                    "code": exc.code,
+                    "message": exc.message,
+                    "data": exc.data,
+                },
+            ) from exc
 
         self._changed()
-        return {"name": name, "serial": serial, "added": added, "chipset": chipset}
+        result = {
+            "name": name,
+            "serial": tracked.serial,
+            "added": tracked.added,
+            "chipset": tracked.chipset,
+        }
+        if tracked.provisioned_from is not None:
+            # The caller's handle on this board just changed. Reported rather
+            # than assumed: a panel holding the old serial has no other way to
+            # learn that the row it was looking at has a new name.
+            result["prior_serial"] = tracked.provisioned_from
+        return result
 
     def _require_family(self, args: dict, key: str = "firmware") -> str:
         """The firmware family named in `args`, checked against what exists.
 
-        Refused rather than accepted-and-broken: an undeclared family resolves
-        to the conventional `~/<name>`, so a typo would silently produce a type
-        that builds nothing and reports "never built" for good. `Registry.load`
-        already refuses the same thing when the file is read by hand; this is
-        the same rule applied to the same value arriving from a browser.
+        Without this a typo is still refused - by `Registry.add_type` for
+        fw.type.add, and by `Registry._save`'s revalidation for fw.type.update -
+        but as `config_corrupt` carrying `missing_section_message`, with no list
+        of what is known. The difference is the error: `unknown_firmware`, with
+        `data.known`, so the panel can offer the declared families.
         """
         value = str(args.get(key) or "").strip()
         if not value:
@@ -372,7 +409,7 @@ class RegistryMixin(_Base):
                     # .config, neither of which changes when the chipset does - so
                     # a binary built for the old chip would keep reporting itself
                     # as fresh. Say so rather than let it be flashed.
-                    if self.artifact(name, mcu.application(families)).get("has_bin"):
+                    if _has_staged(self.artifact(name, mcu.application(families))):
                         warnings.append(
                             f"the built firmware for '{name}' was compiled for "
                             f"{mcu.chipset}. Rebuild before flashing - staleness "
@@ -387,7 +424,7 @@ class RegistryMixin(_Base):
                     # Same reasoning as a chipset change, and stronger: the
                     # artifact was built from a different source tree entirely,
                     # and nothing in the provenance record would notice.
-                    if self.artifact(name, current).get("has_bin"):
+                    if _has_staged(self.artifact(name, current)):
                         warnings.append(
                             f"the built firmware for '{name}' came from "
                             f"{current}. Rebuild before flashing - "
@@ -444,8 +481,8 @@ class RegistryMixin(_Base):
         force = bool(args.get("force"))
 
         with Registry.mutate(self.paths, f"remove type {name}") as reg:
-            mcu = reg.get(name)
-            count = len(mcu.serials)
+            serials = reg.declared_serials(name)  # UnknownTypeError if absent
+            count = len(serials)
             if count and not force:
                 raise RpcError(
                     f"'{name}' still tracks {count} board(s). Remove them first, or "
@@ -453,10 +490,10 @@ class RegistryMixin(_Base):
                     data={
                         "code": "type_has_serials",
                         "message": "type still tracks boards",
-                        "data": {"type": name, "serials": list(mcu.serials)},
+                        "data": {"type": name, "serials": serials},
                     },
                 )
-            reg.remove_type(name)
+            reg.remove_declared_type(name)
 
         self._changed()
         return {
@@ -477,9 +514,7 @@ class RegistryMixin(_Base):
         name = self._require_str(args, "name")
         serial = self._require_str(args, "serial")
 
-        with Registry.mutate(self.paths, f"remove serial {serial}") as reg:
-            reg.get(name)  # UnknownTypeError if the type doesn't exist
-            removed = reg.remove_serial(name, serial)
+        removed = tracking.remove_serial(self.paths, name, serial)
 
         self._changed()
         return {"name": name, "serial": serial, "removed": removed}
@@ -499,11 +534,11 @@ class RegistryMixin(_Base):
         uuid = self._require_str(args, "uuid")
 
         with Registry.mutate(self.paths, f"add canbus uuid {uuid}") as reg:
-            mcu = reg.get(name)  # UnknownTypeError if the type doesn't exist
+            chipset = reg.get_declared_chipset(name)  # UnknownTypeError if absent
             # One board tracked under two types would get flashed twice with
             # different firmware, so this is refused rather than merged - same
             # rule `serial_add` enforces for by-id serials.
-            elsewhere = [t for t in reg.find_types_for_uuid(uuid) if t != name]
+            elsewhere = [t for t in reg.find_declared_types_for_uuid(uuid) if t != name]
             if elsewhere:
                 raise UuidTrackedElsewhereError(
                     f"CAN uuid '{uuid}' is already tracked under '{elsewhere[0]}'. "
@@ -512,8 +547,7 @@ class RegistryMixin(_Base):
                     requested=name,
                     tracked_under=elsewhere,
                 )
-            added = reg.add_canbus_uuid(name, uuid)
-            chipset = mcu.chipset
+            added = reg.add_declared_canbus_uuid(name, uuid)
 
         self._changed()
         return {"name": name, "uuid": uuid, "added": added, "chipset": chipset}
@@ -529,8 +563,8 @@ class RegistryMixin(_Base):
         uuid = self._require_str(args, "uuid")
 
         with Registry.mutate(self.paths, f"remove canbus uuid {uuid}") as reg:
-            reg.get(name)  # UnknownTypeError if the type doesn't exist
-            removed = reg.remove_canbus_uuid(name, uuid)
+            reg.get_declared_chipset(name)  # UnknownTypeError if the type doesn't exist
+            removed = reg.remove_declared_canbus_uuid(name, uuid)
 
         self._changed()
         return {"name": name, "uuid": uuid, "removed": removed}
@@ -544,40 +578,44 @@ class RegistryMixin(_Base):
         than only by hand-editing the cfg on the printer.
         """
         serial = self._require_str(args, "serial")
-        current = self.settings()
-        if serial not in current.ignored_serials:
-            current.ignored_serials.append(serial)
-            save_settings(self.paths.settings_file, current)
+        with settings_mod.mutate(self.paths, f"ignore serial {serial}") as current:
+            added = serial not in current.ignored_serials
+            if added:
+                current.ignored_serials.append(serial)
+        if added:
             self._changed()
         return {"serial": serial, "ignored": True}
 
     def bus_unignore(self, args: dict) -> dict[str, Any]:
         """Reverse `bus_ignore`. Idempotent."""
         serial = self._require_str(args, "serial")
-        current = self.settings()
-        if serial in current.ignored_serials:
-            current.ignored_serials.remove(serial)
-            save_settings(self.paths.settings_file, current)
+        with settings_mod.mutate(self.paths, f"unignore serial {serial}") as current:
+            removed = serial in current.ignored_serials
+            if removed:
+                current.ignored_serials.remove(serial)
+        if removed:
             self._changed()
         return {"serial": serial, "ignored": False}
 
     def canbus_ignore(self, args: dict) -> dict[str, Any]:
         """Hide every sighting of a CAN UUID from the new-board flow. Idempotent."""
         uuid = self._require_str(args, "uuid")
-        current = self.settings()
-        if uuid not in current.ignored_canbus_uuids:
-            current.ignored_canbus_uuids.append(uuid)
-            save_settings(self.paths.settings_file, current)
+        with settings_mod.mutate(self.paths, f"ignore canbus uuid {uuid}") as current:
+            added = uuid not in current.ignored_canbus_uuids
+            if added:
+                current.ignored_canbus_uuids.append(uuid)
+        if added:
             self._changed()
         return {"uuid": uuid, "ignored": True}
 
     def canbus_unignore(self, args: dict) -> dict[str, Any]:
         """Reverse `canbus_ignore`. Idempotent."""
         uuid = self._require_str(args, "uuid")
-        current = self.settings()
-        if uuid in current.ignored_canbus_uuids:
-            current.ignored_canbus_uuids.remove(uuid)
-            save_settings(self.paths.settings_file, current)
+        with settings_mod.mutate(self.paths, f"unignore canbus uuid {uuid}") as current:
+            removed = uuid in current.ignored_canbus_uuids
+            if removed:
+                current.ignored_canbus_uuids.remove(uuid)
+        if removed:
             self._changed()
         return {"uuid": uuid, "ignored": False}
 

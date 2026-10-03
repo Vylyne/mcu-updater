@@ -47,6 +47,11 @@ export interface KconfigMenu {
   dirty: boolean;
   breadcrumb: { id: string; prompt: string }[];
   nodes: KconfigNode[];
+  /** CONFIG_ names the agent pre-set from this type's own recorded chipset -
+   * only ever non-empty on the `open` that produced them, and only when
+   * there was no saved config yet to seed over. Absent (not just empty) on
+   * every other call. */
+  seeded?: string[];
 }
 
 export interface KconfigSearchResult {
@@ -62,8 +67,7 @@ export interface KconfigHelp {
 }
 
 /** `search`/`help` are never part of the agent's own menu payload - they are
- * client-side additions layered onto the last menu received, the same way
- * the fork's FwKconfigState does it. */
+ * client-side additions layered onto the last menu received. */
 export interface KconfigState extends KconfigMenu {
   search: KconfigSearchResult | null;
   help: KconfigHelp | null;

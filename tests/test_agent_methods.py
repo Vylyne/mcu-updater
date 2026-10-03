@@ -13,12 +13,13 @@ import sys
 
 import pytest
 
-from mcu_updater import API_VERSION
+from mcu_updater import API_VERSION, helpers, typelist
 from mcu_updater.agent.methods import Api
 from mcu_updater.agent.rpc import ERR_INVALID_PARAMS, ERR_METHOD_NOT_FOUND, RpcError
+from mcu_updater.cfgdoc import CfgDocument
 from mcu_updater.settings import Settings
 
-from .conftest import make_device, write_settings
+from .conftest import make_device, read_main_config, save_registry, write_main_config, write_settings
 
 
 @pytest.fixture
@@ -109,12 +110,12 @@ def test_status_type_shape(api):
     }
     # bttebb36 declares only klipper/katapult - artifacts is keyed by exactly
     # the families a type declares, not every [firmware ...] section in the
-    # file. See docs/rebuild-plan.md Step 18.
+    # file.
     assert set(ebb["artifacts"]) == {"klipper", "katapult"}
-    # The live sample declares `firmware: klipper, katapult` explicitly (step
-    # 11's migration added it) - under the list-based schema "installed" is
-    # just "is katapult in the declared list", nothing implicit any more.
-    # See docs/rebuild-plan.md Steps 6 and 11.
+    # The live sample declares `firmware: klipper, katapult` explicitly -
+    # under the list-based schema "installed" is just "is katapult in the
+    # declared list", nothing implicit any more. It replaced a single
+    # `firmware:` key plus a katapult_installed flag that defaulted true.
     assert ebb["katapult"]["installed"] is True
 
 
@@ -129,7 +130,7 @@ def test_status_surfaces_extra_repos(api, paths):
 
     reg = Registry.load(paths)
     reg.get("flylllplusbuffer").fw("klipper").extra_repos = ["/home/pi/buffer_manager"]
-    reg.save(paths)
+    save_registry(reg, paths)
 
     types = {t["name"]: t for t in api.dispatch("fw.type.list")["types"]}
     assert types["flylllplusbuffer"]["klipper"]["extra_repos"] == ["/home/pi/buffer_manager"]
@@ -244,7 +245,6 @@ def test_artifacts_returns_both_firmwares(api):
     # bttebb36 declares only klipper/katapult - cartographer and knomi_serial
     # are real [firmware] sections elsewhere in live_registry_text, but this
     # type never declared them, so they must not appear here.
-    # See docs/rebuild-plan.md Step 18.
     assert set(res) == {"klipper", "katapult"}
 
 
@@ -289,12 +289,26 @@ def test_target_get_for_an_unknown_mcu_carries_the_stable_code(api):
     assert exc.value.data["code"] == "unknown_target"
 
 
-def test_target_get_returns_the_same_detail_as_device_list_for_a_display(api):
+def test_target_get_returns_the_same_detail_as_status_for_a_platformio_type(api):
     from_status = next(t for t in api.dispatch("fw.status")["targets"] if t["provider"] == "platformio")
     res = api.dispatch("fw.target.get", {"name": from_status["name"], "provider": "platformio"})
     assert res["provider"] == "platformio"
     assert res["target"]["name"] == from_status["name"]
     assert res["target"]["env"] == from_status["descriptor"]
+    assert "devices" in res["target"] and "screens" not in res["target"]
+
+
+def test_target_get_echoes_no_firmware_specific_config_for_a_platformio_type(api):
+    """`klipper_section` and `device_map` are the helper's own business since
+    `DeviceLister` (a knomi prefix, a knomi watcher's map), and `service` is a
+    compatibility echo of the retired key that `stop_services` replaced.
+    Nothing reads any of them; version 5 removes them rather than leaving a
+    second bump for later."""
+    from_status = next(t for t in api.dispatch("fw.status")["targets"] if t["provider"] == "platformio")
+    res = api.dispatch("fw.target.get", {"name": from_status["name"], "provider": "platformio"})
+
+    assert not {"klipper_section", "device_map", "service"} & set(res["target"])
+    assert {"name", "env", "firmware", "stop_services", "source", "devices"} <= set(res["target"])
 
 
 def test_target_get_for_an_unknown_display_carries_the_stable_code(api):
@@ -425,6 +439,22 @@ def test_adoptable_excludes_already_tracked_boards(api, fake_root, live_registry
     assert tracked["serial"] not in [d["serial"] for d in res["adoptable"]]
 
 
+def test_adoptable_excludes_a_serial_tracked_by_a_cmake_type(paths, fake_root, live_registry_text):
+    with open(paths.registry_file, "w", encoding="utf-8") as fh:
+        fh.write(
+            live_registry_text
+            + "\n[firmware roadrunner]\nsource: ~/roadrunner/rp2040\nbuilder: cmake\nflashers: bootsel\n"
+            + "\n[type roadrunner]\nchipset: rp2040\nfirmware: roadrunner\n"
+            + "serials:\n    RR-TRACKED\n"
+        )
+    make_device(fake_root / "bus", "Roadrunner", "rp2040", "RR-TRACKED")
+
+    result = Api(paths).dispatch("fw.bus.scan")
+    device = next(d for d in result["devices"] if d["serial"] == "RR-TRACKED")
+    assert device["tracked_by"] == "roadrunner"
+    assert "RR-TRACKED" not in [d["serial"] for d in result["adoptable"]]
+
+
 def test_adoptable_respects_the_chipset_filter(api, fake_root):
     make_device(fake_root / "bus", "katapult", "stm32f072xb", "AAAA")
     make_device(fake_root / "bus", "katapult", "rp2040", "BBBB")
@@ -533,6 +563,126 @@ def test_serial_add_allows_a_board_that_is_not_plugged_in(api):
     assert res["added"] is True
 
 
+def test_serial_add_without_a_trackable_helper_accepts_the_serial(api):
+    """Without the capability, generic tracking has no firmware verdict to apply."""
+    result = api.dispatch(
+        "fw.serial.add",
+        {"name": "bttebb36", "serial": "ordinary-serial"},
+    )
+
+    assert result["added"] is True
+    assert "ordinary-serial" in api.registry().get("bttebb36").serials
+
+
+def test_serial_add_reports_the_serial_it_actually_tracked(api, monkeypatch):
+    """The panel offers an unprovisioned board; what gets tracked is the serial
+    provisioning returned. `prior_serial` is how a caller holding the old one
+    knows its handle moved."""
+    import mcu_updater.tracking as tracking_mod
+
+    monkeypatch.setattr(
+        tracking_mod,
+        "add_serial",
+        lambda paths, name, serial, *, may_provision=True: tracking_mod.Tracked(
+            added=True, chipset="rp2040", serial="RR-NEW", provisioned_from=serial
+        ),
+    )
+
+    result = api.dispatch(
+        "fw.serial.add", {"name": "roadrunner", "serial": "RR-UNPROVISIONED-0"}
+    )
+
+    assert result["serial"] == "RR-NEW"
+    assert result["prior_serial"] == "RR-UNPROVISIONED-0"
+    assert result["added"] is True
+
+
+def test_serial_add_omits_prior_serial_when_nothing_moved(api, monkeypatch):
+    import mcu_updater.tracking as tracking_mod
+
+    monkeypatch.setattr(
+        tracking_mod,
+        "add_serial",
+        lambda paths, name, serial, *, may_provision=True: tracking_mod.Tracked(
+            added=True, chipset="stm32g0b1xx", serial=serial
+        ),
+    )
+
+    result = api.dispatch("fw.serial.add", {"name": "board", "serial": "AAAA-if00"})
+
+    assert "prior_serial" not in result
+
+
+def test_serial_add_refuses_an_unprovisioned_serial_with_the_generic_code(api, monkeypatch):
+    """Fix 2 / the coordinator's ruling: `fw.serial.add` performs the same
+    irreversible hardware write `fw.identity.provision` does, so a
+    deployment `available_methods` already withholds that method from must
+    not still reach the write through ordinary tracking. This `api` fixture
+    has no job runner - the same state
+    `test_a_runnerless_agent_does_not_advertise_job_methods` pins - so the
+    write is refused even though a real provisioner exists for the type."""
+    from mcu_updater.helpers import registry as helpers_registry
+
+    class _FakeRoadrunner:
+        name = "roadrunner"
+        label = "Roadrunner"
+
+        def __init__(self) -> None:
+            self.calls: list[str] = []
+
+        def is_trackable(self, serial: str) -> helpers.TrackVerdict:
+            if serial.startswith("RR-UNPROVISIONED-"):
+                return helpers.TrackVerdict(
+                    ok=False,
+                    reason="fake helper says provision this identity first",
+                    remedy="provision",
+                )
+            return helpers.TrackVerdict(ok=True)
+
+        def identity_state(self, serial):
+            return "unprovisioned" if serial.startswith("RR-UNPROVISIONED-") else None
+
+        def provision(self, paths, serial: str) -> str:
+            self.calls.append(serial)
+            return "RR-SHOULD-NEVER-HAPPEN"
+
+        def clear(self, paths, serial):
+            raise AssertionError("nothing in this test clears an identity")
+
+    helper = _FakeRoadrunner()
+    monkeypatch.setitem(helpers_registry._BY_NAME, "roadrunner", helper)
+    with open(api.paths.main_config, "a", encoding="utf-8") as fh:
+        fh.write(
+            "\n[firmware roadrunner]\n"
+            "source: ~/roadrunner\n"
+            "builder: cmake\n"
+            "flashers: bootsel\n"
+            "helper: roadrunner\n"
+            "\n[type roadrunner]\n"
+            "firmware: roadrunner\n"
+            "cmake_target: roadrunner_v1_i2c_rgb\n"
+            "chipset: rp2040\n"
+        )
+
+    assert api.runner is None  # the precondition this test pins
+
+    assert helpers.provisioner(helper) is not None
+
+    with pytest.raises(RpcError) as exc:
+        api.dispatch(
+            "fw.serial.add",
+            {"name": "roadrunner", "serial": "RR-UNPROVISIONED-50543165187A4D1C"},
+        )
+
+    assert exc.value.data["code"] == "serial_unprovisioned"
+    assert exc.value.message == "fake helper says provision this identity first"
+    assert exc.value.data["message"] == exc.value.message
+    assert helper.calls == [], "withheld, not attempted and then queued"
+
+    with open(api.paths.main_config, encoding="utf-8") as fh:
+        assert "RR-UNPROVISIONED-50543165187A4D1C" not in fh.read(), "nothing tracked"
+
+
 def test_serial_add_refuses_a_serial_tracked_under_another_type(api, fake_root):
     """One board under two types gets flashed twice with different firmware."""
     make_device(fake_root / "bus", "Klipper", "stm32g0b1xx", "123456789012345678901")
@@ -549,6 +699,62 @@ def test_serial_add_refuses_an_unknown_type(api):
     with pytest.raises(RpcError) as exc:
         api.dispatch("fw.serial.add", {"name": "nope", "serial": "X"})
     assert exc.value.data["code"] == "unknown_type"
+
+
+def test_serial_adoption_supports_a_declared_cmake_type(paths, live_registry_text):
+    """A builder owns builds, not the stable board identity list."""
+    with open(paths.registry_file, "w", encoding="utf-8") as fh:
+        fh.write(
+            live_registry_text
+            + "\n[firmware roadrunner]\nsource: ~/roadrunner/rp2040\nbuilder: cmake\nflashers: bootsel\n"
+            + "\n[type roadrunner]\nchipset: rp2040\nfirmware: roadrunner\n"
+            + "cmake_target: roadrunner_v1_i2c_rgb\nserials:\n"
+        )
+    result = Api(paths).dispatch(
+        "fw.serial.add", {"name": "roadrunner", "serial": "RR-NEW"}
+    )
+    assert result == {
+        "name": "roadrunner",
+        "serial": "RR-NEW",
+        "added": True,
+        "chipset": "rp2040",
+    }
+    text = open(paths.registry_file, encoding="utf-8").read()
+    assert "cmake_target: roadrunner_v1_i2c_rgb" in text
+    assert "RR-NEW" in text
+
+
+def test_serial_adoption_refuses_foreign_to_owned_duplicate(paths, live_registry_text):
+    with open(paths.registry_file, "w", encoding="utf-8") as fh:
+        fh.write(
+            live_registry_text
+            + "\n[firmware roadrunner]\nsource: ~/roadrunner/rp2040\nbuilder: cmake\nflashers: bootsel\n"
+            + "\n[type roadrunner]\nchipset: rp2040\nfirmware: roadrunner\nserials:\n"
+            + "    RR-SHARED\n"
+        )
+    with pytest.raises(RpcError) as exc:
+        Api(paths).dispatch(
+            "fw.serial.add", {"name": "bttebb36", "serial": "RR-SHARED"}
+        )
+    assert exc.value.data["code"] == "serial_tracked_elsewhere"
+    assert exc.value.data["data"]["tracked_under"] == ["roadrunner"]
+
+
+def test_serial_adoption_refuses_foreign_to_foreign_duplicate(paths, live_registry_text):
+    with open(paths.registry_file, "w", encoding="utf-8") as fh:
+        fh.write(
+            live_registry_text
+            + "\n[firmware roadrunner]\nsource: ~/roadrunner/rp2040\nbuilder: cmake\nflashers: bootsel\n"
+            + "\n[type roadrunner-a]\nchipset: rp2040\nfirmware: roadrunner\nserials:\n"
+            + "    RR-SHARED\n"
+            + "\n[type roadrunner-b]\nchipset: rp2040\nfirmware: roadrunner\nserials:\n"
+        )
+    with pytest.raises(RpcError) as exc:
+        Api(paths).dispatch(
+            "fw.serial.add", {"name": "roadrunner-b", "serial": "RR-SHARED"}
+        )
+    assert exc.value.data["code"] == "serial_tracked_elsewhere"
+    assert exc.value.data["data"]["tracked_under"] == ["roadrunner-a"]
 
 
 @pytest.mark.parametrize("method", ["fw.serial.add", "fw.serial.remove"])
@@ -570,6 +776,25 @@ def test_serial_remove_reports_whether_it_acted(api):
         {"name": "bttebb36", "serial": "123456789012345678901"},
     )
     assert again["removed"] is False
+
+
+def test_canbus_adoption_and_removal_support_a_declared_cmake_type(paths, live_registry_text):
+    with open(paths.registry_file, "w", encoding="utf-8") as fh:
+        fh.write(
+            live_registry_text
+            + "\n[firmware roadrunner]\nsource: ~/roadrunner/rp2040\nbuilder: cmake\nflashers: bootsel\n"
+            + "\n[type roadrunner]\nchipset: rp2040\nfirmware: roadrunner\n"
+            + "cmake_target: roadrunner_v1_i2c_rgb\nserials:\n"
+        )
+    api = Api(paths)
+    added = api.dispatch("fw.canbus.add", {"name": "roadrunner", "uuid": "abcdef012345"})
+    assert added["chipset"] == "rp2040"
+    assert api.dispatch(
+        "fw.canbus.remove", {"name": "roadrunner", "uuid": "abcdef012345"}
+    )["removed"] is True
+    text = open(paths.registry_file, encoding="utf-8").read()
+    assert "cmake_target: roadrunner_v1_i2c_rgb" in text
+    assert CfgDocument(text).get("type roadrunner", "canbus_uuids") is None
 
 
 def test_serial_remove_touches_nothing_but_the_registry(api, paths):
@@ -678,6 +903,27 @@ def test_type_update_can_clear_katapult_installed(api):
     assert api.registry().get("bttebb36").bootloader() is None
     api.dispatch("fw.type.update", {"name": "bttebb36", "katapult_installed": True})
     assert api.registry().get("bttebb36").bootloader() == "katapult"
+
+
+def test_type_update_katapult_installed_refuses_an_undeclared_family(paths):
+    """The katapult_installed branch used to set `mcu.firmwares` without
+    checking the family was declared, so this saved a config the agent then
+    refused to load - every type vanishing from every surface on the next
+    read. Refused before the write now, the same way `Registry.load` would
+    refuse it on the way back in."""
+    write_main_config(
+        paths,
+        "[firmware klipper]\nsource: ~/klipper\nflashers: flashtool\n\n"
+        "[type bttebb36]\nchipset: stm32g0b1xx\nfirmware: klipper\n",
+    )
+    api = Api(paths)
+    before = read_main_config(paths)
+
+    with pytest.raises(RpcError) as exc:
+        api.dispatch("fw.type.update", {"name": "bttebb36", "katapult_installed": True})
+    assert exc.value.data["code"] == "config_corrupt"
+
+    assert read_main_config(paths) == before
 
 
 def test_type_update_warns_when_a_chipset_change_orphans_a_binary(api, paths):
@@ -842,6 +1088,17 @@ def test_type_remove_refuses_an_unknown_type(api):
     assert exc.value.data["code"] == "unknown_type"
 
 
+def test_type_remove_removes_a_cmake_type(api, paths):
+    with open(paths.main_config, "a", encoding="utf-8", newline="\n") as fh:
+        fh.write(
+            "\n[firmware roadrunner]\nsource: ~/rr\nbuilder: cmake\nflashers: bootsel\n\n"
+            "[type rr]\nchipset: rp2040\nfirmware: roadrunner\ncmake_target: t\nserials:\n    RR-X\n"
+        )
+    res = api.dispatch("fw.type.remove", {"name": "rr", "force": True})
+    assert res["removed_serials"] == 1
+    assert "rr" not in {e.name for e in typelist.load(paths)}
+
+
 # --------------------------------------------------------------------------
 # fw.settings.set
 # --------------------------------------------------------------------------
@@ -861,6 +1118,51 @@ def test_settings_set_reports_nothing_changed_when_the_value_matches(api):
     api.dispatch("fw.settings.set", {"settings": {"make_jobs": 4}})
     again = api.dispatch("fw.settings.set", {"settings": {"make_jobs": 4}})
     assert again["changed"] == []
+
+
+def test_an_ignore_that_lands_while_settings_set_waits_for_the_lock_survives(
+    api, paths, monkeypatch
+):
+    """Two panel tabs: one sets make_jobs, the other ignores a serial, and the
+    ignore finishes first. `fw.settings.set` writes every [updater] field, so it
+    must load them under the lock - settings read before the ignore would
+    write the old ignore list back over it."""
+    from mcu_updater.lock import ExclusiveLock
+
+    stale = api.settings()
+    real = ExclusiveLock.acquire
+    raced: list[str] = []
+
+    def acquire(self, label):
+        if self.path == paths.registry_lock_file and label == "set settings" and not raced:
+            raced.append(label)
+            api.dispatch("fw.bus.ignore", {"serial": "STRANGER"})
+        return real(self, label)
+
+    monkeypatch.setattr(ExclusiveLock, "acquire", acquire)
+
+    api.dispatch("fw.settings.set", {"settings": {"make_jobs": 4}})
+
+    final = api.settings()
+    assert raced == ["set settings"]
+    assert "STRANGER" not in stale.ignored_serials
+    assert final.ignored_serials == ["STRANGER"]
+    assert final.make_jobs == 4
+
+
+def test_a_settings_write_refuses_a_malformed_updater_section(api, paths):
+    """`fw.settings.get` falls back to defaults for display, but a write must not:
+    writing those defaults back would silently reset every other setting in the
+    section - `enable_flashing` included."""
+    with open(paths.main_config, "a", encoding="utf-8", newline="\n") as fh:
+        fh.write("\n[updater]\nenable_flashing: true\ndry_run: maybe\n")
+    before = read_main_config(paths)
+
+    with pytest.raises(RpcError) as exc:
+        api.dispatch("fw.bus.ignore", {"serial": "STRANGER"})
+
+    assert exc.value.data["code"] == "config"
+    assert read_main_config(paths) == before
 
 
 def test_settings_set_does_not_eat_the_registry_it_shares_a_file_with(api, paths):
@@ -1034,6 +1336,45 @@ def test_open_returns_a_session_and_the_top_menu(kapi):
     assert len(res["breadcrumb"]) == 1
     assert any(n["kind"] == "choice" for n in res["nodes"])
     assert res["available"]["klipper"] is True
+
+
+def test_open_seeds_from_the_types_own_chipset(kapi, paths, live_registry_text):
+    """`bttebb36`'s real chipset (stm32g0b1xx) has no match in the fixture
+    Kconfig, so this swaps in one that does - the fixture tree's own
+    `testchip-a`/`testchip-b`, from tests/fixtures/kconfig_tree/Kconfig -
+    rather than exercising this through a chipset the fixture tree cannot
+    answer for."""
+    # Not `count=1`: "stm32g0b1xx" is also mmb_can's chipset, listed before
+    # bttebb36's in the fixture registry, so a single-count replace would
+    # rewrite the wrong section's line.
+    text = live_registry_text.replace("chipset: stm32g0b1xx", "chipset: testchip-a")
+    with open(paths.registry_file, "w", encoding="utf-8") as fh:
+        fh.write(text)
+    kapi2 = Api(paths)
+
+    res = open_session(kapi2)
+    assert res["dirty"] is True
+    assert set(res["seeded"]) == {"LOW_LEVEL_OPTIONS", "MACH_STM32", "MACH_STM32_TESTCHIP_A"}
+    assert next(n for n in res["nodes"] if n.get("name") == "LOW_LEVEL_OPTIONS")["value"] == "y"
+
+
+def test_open_reports_no_seeding_once_a_config_is_saved(kapi, paths, live_registry_text):
+    # Not `count=1`: "stm32g0b1xx" is also mmb_can's chipset, listed before
+    # bttebb36's in the fixture registry, so a single-count replace would
+    # rewrite the wrong section's line.
+    text = live_registry_text.replace("chipset: stm32g0b1xx", "chipset: testchip-a")
+    with open(paths.registry_file, "w", encoding="utf-8") as fh:
+        fh.write(text)
+    kapi2 = Api(paths)
+
+    first = open_session(kapi2)
+    kapi2.dispatch("fw.kconfig.save", {"session": first["session"]})
+
+    second = kapi2.dispatch(
+        "fw.kconfig.open", {"name": "bttebb36", "fw": "klipper", "force": True}
+    )
+    assert second["seeded"] == []
+    assert second["dirty"] is False
 
 
 def test_open_refuses_an_unknown_type(kapi):
@@ -1259,24 +1600,6 @@ def test_klipper_and_katapult_are_configured_independently(kapi):
 # --------------------------------------------------------------------------
 
 
-@pytest.mark.parametrize(
-    ("version", "sha"),
-    [
-        ("v0.13.0-711-gd7cea5bb", "d7cea5bb"),
-        # A makefile-patched build is always -dirty, so that must not defeat the
-        # match or those types would report needing a flash forever.
-        ("v0.13.0-712-g6d43f8b3-dirty", "6d43f8b3"),
-        ("v0.12.0", None),
-        ("unknown", None),
-        ("", None),
-    ],
-)
-def test_the_commit_is_extracted_from_a_git_describe(version, sha):
-    from mcu_updater.agent.methods import _running_sha
-
-    assert _running_sha(version) == sha
-
-
 def test_a_board_behind_the_source_tree_needs_flashing(api):
     head = "d7cea5bb1aca70849f28d0bb98ab1b96b9f6db65"
     versions = {"A": {"version": "v0.13.0-623-gaea1bcf5", "mcu": "mcu hexa"}}
@@ -1456,7 +1779,7 @@ def test_an_older_commit_is_source_changed(api):
 def test_a_matching_commit_with_no_record_is_taken_at_face_value(api):
     """The flash log only ever *adds* confidence. Degrading every board that
     predates the log to "unknown" would be noise, not caution."""
-    state = api.flash_state("A", CURRENT, HEAD, state="klipper", artifact_sha="aa" * 32)
+    state = api.flash_state("A", CURRENT, HEAD, state="klipper", artifact_shas=frozenset({"aa" * 32}))
     assert state["needs_flash"] is False
     assert state["reason"] is None
 
@@ -1470,7 +1793,7 @@ def test_the_same_commit_with_a_different_binary_is_artifact_changed(api, paths)
     log = FlashLog(paths)
     log.record("A", mcu_type="t", fw="klipper", bin_sha256="old" + "0" * 61, fw_sha=HEAD)
 
-    state = api.flash_state("A", CURRENT, HEAD, state="klipper", artifact_sha="new" + "0" * 61, flashlog=log)
+    state = api.flash_state("A", CURRENT, HEAD, state="klipper", artifact_shas=frozenset({"new" + "0" * 61}), flashlog=log)
     assert state["needs_flash"] is True
     assert state["reason"] == "artifact_changed"
 
@@ -1481,7 +1804,7 @@ def test_the_same_binary_is_up_to_date(api, paths):
     log = FlashLog(paths)
     log.record("A", mcu_type="t", fw="klipper", bin_sha256="aa" * 32, fw_sha=HEAD)
 
-    state = api.flash_state("A", CURRENT, HEAD, state="klipper", artifact_sha="aa" * 32, flashlog=log)
+    state = api.flash_state("A", CURRENT, HEAD, state="klipper", artifact_shas=frozenset({"aa" * 32}), flashlog=log)
     assert state["needs_flash"] is False
     assert state["reason"] is None
 
@@ -1494,7 +1817,7 @@ def test_a_record_contradicted_by_the_board_is_ignored(api, paths):
     log = FlashLog(paths)
     log.record("A", mcu_type="t", fw="klipper", bin_sha256="old" + "0" * 61, fw_sha="ffffffff")
 
-    state = api.flash_state("A", CURRENT, HEAD, state="klipper", artifact_sha="new" + "0" * 61, flashlog=log)
+    state = api.flash_state("A", CURRENT, HEAD, state="klipper", artifact_shas=frozenset({"new" + "0" * 61}), flashlog=log)
     assert state["needs_flash"] is False, "a disbelieved record must not invent a mismatch"
 
 
@@ -1508,9 +1831,10 @@ def test_an_unparseable_version_is_unknown(api):
 # --------------------------------------------------------------------------
 # cartographer: a board that stamps a literal instead of a git describe
 #
-# CONFIG_VERSION carries no commit, so `_running_sha` returns None and the
-# ordinary sha comparison cannot run at all - the verdict falls to comparing
-# the stamp itself against what the build produced. See states.VERSION_ONLY.
+# CONFIG_VERSION carries no commit, so CartographerHelper.running_sha() returns
+# None and the ordinary sha comparison cannot run at all - the verdict falls to
+# comparing the stamp itself against what the build produced. See
+# states.VERSION_ONLY.
 # --------------------------------------------------------------------------
 
 CARTO_STAMP = {"A": {"version": "CARTOGRAPHER 6.2.0", "mcu": "mcu"}}
@@ -1559,7 +1883,7 @@ def test_a_matching_stamp_backed_by_a_record_is_up_to_date(api, paths):
         CARTO_STAMP,
         HEAD,
         state="klipper",
-        artifact_sha="aa" * 32,
+        artifact_shas=frozenset({"aa" * 32}),
         flashlog=log,
         built_version="CARTOGRAPHER 6.2.0",
     )
@@ -1587,7 +1911,7 @@ def test_a_matching_stamp_with_a_stale_binary_is_artifact_changed(api, paths):
         CARTO_STAMP,
         HEAD,
         state="klipper",
-        artifact_sha="new" + "0" * 61,
+        artifact_shas=frozenset({"new" + "0" * 61}),
         flashlog=log,
         built_version="CARTOGRAPHER 6.2.0",
     )
@@ -1625,7 +1949,7 @@ def test_a_flash_writes_a_record(paths, live_registry_text):
     # flash_katapult checks for flashtool.py before anything else, even in a dry
     # run - a rehearsal of a flash that could not happen is not a useful rehearsal.
     os.makedirs(os.path.join(paths.home, "katapult", "scripts"), exist_ok=True)
-    with open(paths.flashtool, "w", encoding="utf-8") as fh:
+    with open(os.path.join(paths.home, "katapult", "scripts", "flashtool.py"), "w", encoding="utf-8") as fh:
         fh.write("# stub\n")
 
     real = dataclasses.replace(Settings(), service_backend="null", clean_before_build=False)

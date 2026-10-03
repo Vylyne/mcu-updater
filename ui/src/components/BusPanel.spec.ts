@@ -6,9 +6,12 @@ import { state } from "../store/agent";
 import type { BusDevice, Target } from "../api/targets";
 import { mdiLan } from "../icons";
 
-function makeTarget(name: string): Target {
+function makeTarget(
+  name: string,
+  provider: Target["provider"] = "kconfig_make",
+): Target {
   return {
-    provider: "kconfig_make",
+    provider,
     name,
     descriptor: "stm32g0b1xx",
     firmware: "klipper",
@@ -22,6 +25,9 @@ function makeTarget(name: string): Target {
     needs_flash: false,
     actions: [],
     devices: [],
+    source: null,
+    extras: [],
+    devices_note: "No serial devices are tracked for this type yet.",
   };
 }
 
@@ -50,6 +56,29 @@ const ignoredDevice: BusDevice = {
   path: "/dev/serial/by-id/usb-Klipper_stm32g0b1xx_9999-if00",
   ignored: true,
 };
+
+// Roadrunner is identified from the plain 8 BusDevice fields, per the by-id
+// scanner's generic split of `usb-Vylyne_Roadrunner_<serial>-if00` - see
+// api/targets.ts's isRoadrunnerDevice. `state` deliberately carries no
+// Roadrunner-specific meaning (it falls back to fw.toLowerCase()).
+const unprovisionedRoadrunner: BusDevice = {
+  fw: "Vylyne",
+  chipset: "Roadrunner",
+  serial: "RR-UNPROVISIONED-0123456789ABCDEF",
+  path: "/dev/serial/by-id/usb-Vylyne_Roadrunner_RR-UNPROVISIONED-0123456789ABCDEF-if00",
+  state: "vylyne",
+  tracked_by: null,
+  is_mcu: true,
+  ignored: false,
+};
+
+const provisionedRoadrunner: BusDevice = {
+  ...unprovisionedRoadrunner,
+  serial: "RR-0123456789ABCDEFGHJKMNPQRS",
+  path: "/dev/serial/by-id/usb-Vylyne_Roadrunner_RR-0123456789ABCDEFGHJKMNPQRS-if00",
+};
+
+const roadrunnerCapabilities = ["fw.identity.provision", "fw.identity.clear"];
 
 const fullCapabilities = [
   "fw.serial.add",
@@ -97,6 +126,25 @@ describe("BusPanel", () => {
     await item!.trigger("click");
 
     expect(spy).toHaveBeenCalledWith("bttebb36", mcuDevice.serial);
+  });
+
+  it("offers every configured target once in the serial adoption menu", async () => {
+    state.bus = [mcuDevice];
+    state.status = {
+      targets: [
+        makeTarget("klipper"),
+        makeTarget("roadrunner", "cmake"),
+        makeTarget("knomi", "platformio"),
+        makeTarget("roadrunner", "kconfig_make"),
+      ],
+    };
+    state.ping = { capabilities: ["fw.serial.add"] };
+    const wrapper = mount(BusPanel);
+
+    await wrapper.get('[title="Track this device…"]').trigger("click");
+
+    const items = wrapper.findAll(".menu-item").map((item) => item.text());
+    expect(items).toEqual(["klipper", "roadrunner", "knomi"]);
   });
 
   it("omits the + button entirely when is_mcu is false, but keeps ×", () => {
@@ -412,6 +460,131 @@ describe("BusPanel", () => {
     expect(spy).toHaveBeenCalledWith("bttebb36", "abc123");
   });
 
+  it("offers every configured provider type in the CAN adoption menu", async () => {
+    state.canbus = {
+      interfaces: [],
+      devices: [
+        {
+          uuid: "abc123",
+          interface: "can1",
+          application: "Klipper",
+          state: "klipper",
+          tracked_by: null,
+          ignored: false,
+        },
+      ],
+      failures: [],
+      count: 1,
+      message: null,
+    };
+    state.status = {
+      targets: [
+        makeTarget("klipper"),
+        makeTarget("roadrunner", "cmake"),
+        makeTarget("knomi", "platformio"),
+      ],
+    };
+    state.ping = { capabilities: ["fw.canbus.add"] };
+    const wrapper = mount(BusPanel);
+
+    await wrapper.get('[title="Track this CAN device…"]').trigger("click");
+
+    const items = wrapper.findAll(".menu-item").map((item) => item.text());
+    expect(items).toEqual(["klipper", "roadrunner", "knomi"]);
+  });
+
+  it("offers New type from this… in the CAN + menu when canManageTypes", async () => {
+    state.canbus = {
+      interfaces: [],
+      devices: [
+        {
+          uuid: "abc123",
+          interface: "can1",
+          application: "Klipper",
+          state: "klipper",
+          tracked_by: null,
+          ignored: false,
+        },
+      ],
+      failures: [],
+      count: 1,
+      message: null,
+    };
+    state.status = { targets: [makeTarget("bttebb36")] };
+    state.ping = { capabilities: fullCapabilities.concat("fw.canbus.add") };
+    const wrapper = mount(BusPanel);
+    await wrapper.get('[title="Track this CAN device…"]').trigger("click");
+    const items = wrapper.findAll(".menu-item").map((item) => item.text());
+    expect(items).toContain("New type from this…");
+  });
+
+  it("still shows the CAN + button for New type when no type exists to adopt into", () => {
+    state.canbus = {
+      interfaces: [],
+      devices: [
+        {
+          uuid: "abc123",
+          interface: "can1",
+          application: "Klipper",
+          state: "klipper",
+          tracked_by: null,
+          ignored: false,
+        },
+      ],
+      failures: [],
+      count: 1,
+      message: null,
+    };
+    // No targets at all - showCanAdoptItems is false, but canManageTypes
+    // alone used to hide the whole `+` button, gating "New type from this…"
+    // behind a type that couldn't exist yet.
+    state.status = { targets: [] };
+    state.ping = { capabilities: fullCapabilities.concat("fw.canbus.add") };
+    const wrapper = mount(BusPanel);
+    expect(wrapper.find('[title="Track this CAN device…"]').exists()).toBe(
+      true,
+    );
+  });
+
+  it("adopts a newly created type's CAN uuid via fw.canbus.add", async () => {
+    state.canbus = {
+      interfaces: [],
+      devices: [
+        {
+          uuid: "abc123",
+          interface: "can1",
+          application: "Klipper",
+          state: "klipper",
+          tracked_by: null,
+          ignored: false,
+        },
+      ],
+      failures: [],
+      count: 1,
+      message: null,
+    };
+    state.status = { targets: [] };
+    state.ping = { capabilities: fullCapabilities.concat("fw.canbus.add") };
+    const addSpy = vi.spyOn(store, "addType").mockResolvedValue({
+      ok: true,
+      warnings: [],
+    });
+    const wrapper = mount(BusPanel);
+    await wrapper.get('[title="Track this CAN device…"]').trigger("click");
+    await wrapper.get(".menu-item").trigger("click");
+
+    expect(wrapper.text()).toContain("Create a new type");
+    expect(wrapper.text()).toContain("abc123");
+
+    await wrapper.get("input[maxlength]").setValue("newtype");
+    await wrapper.findAll("label input").at(1)!.setValue("stm32g0b1xx");
+    await wrapper.get(".btn-primary").trigger("click");
+
+    expect(addSpy).toHaveBeenCalledWith(
+      expect.objectContaining({ name: "newtype", canbusUuid: "abc123" }),
+    );
+  });
+
   it("keeps duplicate UUID sightings separate by interface", async () => {
     state.canbus = {
       interfaces: [],
@@ -455,5 +628,216 @@ describe("BusPanel", () => {
     expect(wrapper.find('[title="Track this CAN device…"]').exists()).toBe(
       false,
     );
+  });
+
+  describe("Roadrunner actions", () => {
+    it("shows Provision Roadrunner for an untracked unprovisioned board, and nothing for Clear identity", () => {
+      state.bus = [unprovisionedRoadrunner];
+      state.ping = { capabilities: roadrunnerCapabilities };
+      const wrapper = mount(BusPanel);
+
+      expect(wrapper.text()).toContain("Provision Roadrunner");
+      expect(wrapper.text()).not.toContain("Clear identity");
+    });
+
+    it("trims the flash-UID suffix from an unprovisioned board's displayed name, keeping the full string in the path below and the dialog", () => {
+      // The 16 trailing hex characters are still shown in full via the by-id
+      // path underneath, and named explicitly as the diagnostic UID in the
+      // provision confirmation dialog - trimming the row's own name label
+      // loses nothing, it just stops repeating the same long string twice
+      // right next to the Provision pill.
+      state.bus = [unprovisionedRoadrunner];
+      state.ping = { capabilities: roadrunnerCapabilities };
+      const wrapper = mount(BusPanel);
+
+      const nameLabel = wrapper.get(".device-name-row .text--secondary");
+      expect(nameLabel.text()).toBe("RR-UNPROVISIONED");
+      expect(wrapper.text()).toContain(unprovisionedRoadrunner.path);
+    });
+
+    it("offers Clear identity behind its overflow menu for an untracked provisioned board, not as a standing pill", async () => {
+      state.bus = [provisionedRoadrunner];
+      state.ping = { capabilities: roadrunnerCapabilities };
+      const wrapper = mount(BusPanel);
+
+      expect(wrapper.text()).not.toContain("Provision Roadrunner");
+      // Not visible until the overflow menu is opened - a destructive action
+      // does not get a permanently-visible pill next to the device name.
+      expect(wrapper.text()).not.toContain("Clear identity");
+      expect(wrapper.find('[aria-label="Roadrunner actions"]').exists()).toBe(
+        true,
+      );
+
+      await wrapper.get('[aria-label="Roadrunner actions"]').trigger("click");
+
+      expect(wrapper.text()).toContain("Clear identity");
+    });
+
+    it("hides both actions without the matching capability", () => {
+      state.bus = [unprovisionedRoadrunner, provisionedRoadrunner];
+      state.ping = { capabilities: [] };
+      const wrapper = mount(BusPanel);
+
+      expect(wrapper.text()).not.toContain("Provision Roadrunner");
+      expect(wrapper.text()).not.toContain("Clear identity");
+    });
+
+    it("disables the generic 'track this device' affordance for an unprovisioned Roadrunner, but offers it enabled for a provisioned-untracked one", () => {
+      // An unprovisioned Roadrunner's serial is RR-UNPROVISIONED-<flash-uid>;
+      // adopting it through the generic flow would call fw.serial.add with
+      // that string and persist the RP2040 flash UID into printer.cfg, which
+      // this plan's constraints forbid. A provisioned board carries no such
+      // diagnostic identity, so the generic flow remains open for it - see
+      // docs/roadrunner-provisioning-design.md's "provisioned boards remain
+      // untracked until separately configured". The button itself stays
+      // present-but-disabled rather than omitted, so the row's icon column
+      // still lines up with every other row's.
+      state.bus = [unprovisionedRoadrunner, provisionedRoadrunner];
+      state.status = { targets: [makeTarget("bttebb36")] };
+      state.ping = {
+        capabilities: [...roadrunnerCapabilities, ...fullCapabilities],
+      };
+      const wrapper = mount(BusPanel);
+
+      const rows = wrapper.findAll("li");
+      const unprovisionedRow = rows.find((row) =>
+        row.text().includes(unprovisionedRoadrunner.serial),
+      );
+      const provisionedRow = rows.find((row) =>
+        row.text().includes(provisionedRoadrunner.serial),
+      );
+
+      expect(
+        unprovisionedRow!.find('[title="Track this device…"]').exists(),
+      ).toBe(false);
+      const disabledTrack = unprovisionedRow!.find(
+        '[title="Provision this Roadrunner before it can be tracked"]',
+      );
+      expect(disabledTrack.exists()).toBe(true);
+      expect(disabledTrack.attributes("disabled")).toBeDefined();
+
+      const enabledTrack = provisionedRow!.find('[title="Track this device…"]');
+      expect(enabledTrack.exists()).toBe(true);
+      expect(enabledTrack.attributes("disabled")).toBeUndefined();
+    });
+
+    it("offers neither action for a Vylyne/Roadrunner serial matching neither known shape", () => {
+      state.bus = [{ ...unprovisionedRoadrunner, serial: "RR-GARBAGE" }];
+      state.ping = { capabilities: roadrunnerCapabilities };
+      const wrapper = mount(BusPanel);
+
+      expect(wrapper.text()).not.toContain("Provision Roadrunner");
+      expect(wrapper.text()).not.toContain("Clear identity");
+    });
+
+    it("does not offer Roadrunner actions from the ignored disclosure", () => {
+      state.bus = [{ ...unprovisionedRoadrunner, ignored: true }];
+      state.ping = { capabilities: roadrunnerCapabilities };
+      const wrapper = mount(BusPanel);
+
+      expect(wrapper.text()).not.toContain("Provision Roadrunner");
+    });
+
+    it("Provision Roadrunner opens a confirmation naming the serial and diagnostic UID, without calling the API until confirmed", async () => {
+      state.bus = [unprovisionedRoadrunner];
+      state.ping = { capabilities: roadrunnerCapabilities };
+      const spy = vi.spyOn(store, "provisionIdentity").mockResolvedValue(true);
+      const wrapper = mount(BusPanel);
+
+      expect(wrapper.find(".dialog-backdrop").exists()).toBe(false);
+      await wrapper.get("button.roadrunner-provision").trigger("click");
+
+      expect(spy).not.toHaveBeenCalled();
+      const dialog = wrapper.get(".dialog-backdrop");
+      expect(dialog.text()).toContain(unprovisionedRoadrunner.serial);
+      // The diagnostic UID (the 16 trailing hex chars) has to be named on
+      // its own, not merely present as a substring of the full serial the
+      // row already always shows - so this counts both occurrences: once
+      // inside the serial line, once as its own labelled mention.
+      const uid = "0123456789ABCDEF";
+      const occurrences = dialog.text().split(uid).length - 1;
+      expect(occurrences).toBeGreaterThanOrEqual(2);
+      expect(dialog.text()).toContain("diagnostic UID");
+    });
+
+    it("confirming Provision invokes fw.identity.provision once and refreshes afterward", async () => {
+      state.bus = [unprovisionedRoadrunner];
+      state.ping = { capabilities: roadrunnerCapabilities };
+      const spy = vi.spyOn(store, "provisionIdentity").mockResolvedValue(true);
+      const wrapper = mount(BusPanel);
+
+      await wrapper.get("button.roadrunner-provision").trigger("click");
+      await wrapper.get(".dialog-actions button.btn-primary").trigger("click");
+
+      expect(spy).toHaveBeenCalledTimes(1);
+      expect(spy).toHaveBeenCalledWith(unprovisionedRoadrunner.serial);
+      // provisionIdentity itself is responsible for the refreshStatus()
+      // call (mirroring adoptSerial/ignoreSerial) - store/agent.spec.ts
+      // asserts that refresh happens; this only asserts the panel called it.
+    });
+
+    it("Clear identity, from the overflow menu, opens its own confirmation naming only the serial and closes the menu", async () => {
+      state.bus = [provisionedRoadrunner];
+      state.ping = { capabilities: roadrunnerCapabilities };
+      const spy = vi.spyOn(store, "clearIdentity").mockResolvedValue(true);
+      const wrapper = mount(BusPanel);
+
+      expect(wrapper.find(".dialog-backdrop").exists()).toBe(false);
+      await wrapper.get('[aria-label="Roadrunner actions"]').trigger("click");
+      await wrapper.get(".menu-item").trigger("click");
+
+      expect(spy).not.toHaveBeenCalled();
+      expect(wrapper.find(".menu-list").exists()).toBe(false);
+      const dialog = wrapper.get(".dialog-backdrop");
+      expect(dialog.text()).toContain(provisionedRoadrunner.serial);
+      // A provisioned board has no diagnostic UID (it was single-use, tied
+      // to the unprovisioned identity) - the clear dialog must not invent
+      // one.
+      expect(dialog.text()).not.toContain("diagnostic UID");
+    });
+
+    it("confirming Clear invokes fw.identity.clear once with the serial", async () => {
+      state.bus = [provisionedRoadrunner];
+      state.ping = { capabilities: roadrunnerCapabilities };
+      const spy = vi.spyOn(store, "clearIdentity").mockResolvedValue(true);
+      const wrapper = mount(BusPanel);
+
+      await wrapper.get('[aria-label="Roadrunner actions"]').trigger("click");
+      await wrapper.get(".menu-item").trigger("click");
+      await wrapper.get(".dialog-actions button.btn-danger").trigger("click");
+
+      expect(spy).toHaveBeenCalledTimes(1);
+      expect(spy).toHaveBeenCalledWith(provisionedRoadrunner.serial);
+    });
+
+    it("cancelling the confirmation dialog never calls the API", async () => {
+      state.bus = [unprovisionedRoadrunner];
+      state.ping = { capabilities: roadrunnerCapabilities };
+      const spy = vi.spyOn(store, "provisionIdentity").mockResolvedValue(true);
+      const wrapper = mount(BusPanel);
+
+      await wrapper.get("button.roadrunner-provision").trigger("click");
+      await wrapper
+        .get(".dialog-actions button:not(.btn-primary)")
+        .trigger("click");
+
+      expect(spy).not.toHaveBeenCalled();
+      expect(wrapper.find(".dialog-backdrop").exists()).toBe(false);
+    });
+
+    it("does not double-fire Provision on two rapid confirm clicks", async () => {
+      state.bus = [unprovisionedRoadrunner];
+      state.ping = { capabilities: roadrunnerCapabilities };
+      const spy = vi.spyOn(store, "provisionIdentity").mockResolvedValue(true);
+      const wrapper = mount(BusPanel);
+
+      await wrapper.get("button.roadrunner-provision").trigger("click");
+      const confirmBtn = wrapper.get(".dialog-actions button.btn-primary");
+      const first = confirmBtn.trigger("click");
+      const second = confirmBtn.trigger("click");
+      await Promise.all([first, second]);
+
+      expect(spy).toHaveBeenCalledTimes(1);
+    });
   });
 });

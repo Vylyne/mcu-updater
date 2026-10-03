@@ -164,6 +164,123 @@ def parse_tree(fw_dir: str, config: str | None = None) -> tuple[ModuleType, Any]
     return module, kconf
 
 
+def _resolve_chipset_symbols(module: ModuleType, kconf: Any, chipset: str) -> set[Any] | None:
+    """The ``MACH_*`` symbols that make ``config MCU`` read back as `chipset`.
+
+    Klipper and Katapult both define a promptless ``config MCU`` string whose
+    ``default "stm32g0b1xx" if MACH_STM32G0B1`` entries are the tree's own
+    chipset-to-symbol table - the one already used by :func:`answer_lines`
+    callers elsewhere, never duplicated here. Returns ``None`` when the tree
+    has no ``MCU`` symbol or no default matches `chipset`, so the caller can
+    tell "nothing to seed" apart from "seeded nothing".
+
+    A default's condition can itself be compound (Klipper's arch choice
+    nested inside a per-arch "Processor model" choice, joined by the menu
+    guard rather than by an explicit ``&&``), so this walks each matched
+    symbol's own ``direct_dep`` - which kconfiglib already folds the
+    enclosing ``if`` into - rather than trusting only the immediate
+    condition. A choice option's ``direct_dep`` names the *Choice*, not a
+    symbol - ``STM32_TESTCHIP_A depends on <choice "Processor model">`` - so
+    that has to be unwound one further level, to the choice's *own*
+    ``direct_dep``, before the symbol that actually has to be assigned
+    (``MACH_STM32``) turns up. Walked to a fixed point rather than one fixed
+    depth, since nothing bounds how many choices a real tree nests.
+
+    Setting an unrelated symbol this pulls in is harmless on its own: the
+    caller verifies the resulting ``MCU`` value and discards everything if it
+    does not match, so a wrong guess here costs nothing worse than an
+    abandoned seed.
+    """
+    mcu = kconf.syms.get("MCU")
+    if mcu is None:
+        return None
+
+    for value, cond in mcu.defaults:
+        if not (getattr(value, "is_constant", False) and value.name == chipset):
+            continue
+        # `y`/`n`/`m` show up as ordinary (constant) Symbols in an
+        # unconditional dependency - e.g. a choice option with no `depends
+        # on` of its own resolves to a bare `y`. Those are not something to
+        # assign, and "CONFIG_y=y" would be nonsense in the seed file.
+        target = {
+            item
+            for item in module.expr_items(cond)
+            if isinstance(item, module.Symbol) and not item.is_constant
+        }
+        if not target:
+            continue
+        symbols: set[Any] = set()
+        seen: set[Any] = set()
+        frontier = set(module.expr_items(cond))
+        while frontier:
+            item = frontier.pop()
+            if item in seen:
+                continue
+            seen.add(item)
+            is_constant = getattr(item, "is_constant", False)
+            if isinstance(item, module.Symbol):
+                if is_constant:
+                    continue  # a bare y/n/m - nothing to assign or expand
+                symbols.add(item)
+            frontier |= module.expr_items(item.direct_dep) - seen
+        return symbols
+    return None
+
+
+def seed_defaults(module: ModuleType, kconf: Any, fw_dir: str, chipset: str) -> list[str]:
+    """Best-effort answers for a session that has no saved ``.config`` yet.
+
+    Two things, both only when they are unambiguous:
+
+    - ``LOW_LEVEL_OPTIONS`` turned on, when the tree prompts for it. Klipper
+      does; Katapult defaults it on with no prompt at all, so this is a no-op
+      there - it is not a second copy of that default, just a read of it.
+    - The ``MACH_*`` symbols that make the parsed tree agree with `chipset`,
+      which the type's own config already records - see
+      :func:`_resolve_chipset_symbols`.
+
+    Applied together through one :meth:`Kconfig.load_config`, per this
+    module's own rule: a sequence of ``set_value`` calls drops any answer
+    whose governing symbol has not been applied yet, while a config file lets
+    kconfiglib resolve order for itself. Verified after the fact against
+    ``config MCU`` - a chipset string that does not resolve back to `chipset`
+    means the guess was wrong, and the whole seed (both halves) is thrown
+    away rather than left half-applied. A session that opens unseeded is a
+    minor inconvenience; one silently pre-selecting the wrong processor is
+    not.
+
+    Returns the ``CONFIG_`` names that ended up applied, for a caller that
+    wants to say so.
+    """
+    if not chipset:
+        return []
+
+    lines: list[str] = []
+    low_level = kconf.syms.get("LOW_LEVEL_OPTIONS")
+    if low_level is not None and any(node.prompt for node in low_level.nodes):
+        lines.append("CONFIG_LOW_LEVEL_OPTIONS=y")
+
+    symbols = _resolve_chipset_symbols(module, kconf, chipset)
+    if not symbols:
+        return []
+    lines.extend(f"CONFIG_{sym.name}=y" for sym in symbols)
+
+    with tempfile.TemporaryDirectory(prefix="mcu-updater-seed-") as tmp:
+        seed_path = os.path.join(tmp, "seed.config")
+        with open(seed_path, "w", encoding="utf-8", newline="\n") as fh:
+            fh.write("\n".join(lines) + "\n")
+        kconf.load_config(seed_path)
+
+    mcu = kconf.syms.get("MCU")
+    if mcu is None or mcu.str_value != chipset:
+        kconf.unset_values()
+        return []
+
+    return sorted(sym.name for sym in symbols) + (
+        ["LOW_LEVEL_OPTIONS"] if "CONFIG_LOW_LEVEL_OPTIONS=y" in lines else []
+    )
+
+
 def write_min_config(kconf: Any, fw_dir: str, path: str) -> None:
     """Write the answers that differ from their defaults, and nothing else.
 
@@ -597,11 +714,18 @@ class KconfigSession:
     up sharing one Kconfig object and overwriting each other's edits.
     """
 
-    def __init__(self, session_id: str, paths: Paths, mcu_type: str, fw: str) -> None:
+    def __init__(
+        self, session_id: str, paths: Paths, mcu_type: str, fw: str, chipset: str = ""
+    ) -> None:
         self.id = session_id
         self.paths = paths
         self.mcu_type = mcu_type
         self.fw = fw
+        #: The type's own recorded chipset, used only to seed a session that
+        #: opens with no saved `.config` yet - see `_parse` and `seed_defaults`.
+        #: Never re-read afterward, so a type edited mid-session cannot change
+        #: what an open session seeds itself with.
+        self.chipset = chipset
         self.fw_dir = firmware.resolve(paths, fw).source_dir(paths)
         self.config_path = paths.config_file(mcu_type, fw)
         self.dirty = False
@@ -609,6 +733,10 @@ class KconfigSession:
         self.touched = self.created
         #: Bumped on every change, so a client can tell cached menus are stale.
         self.revision = 0
+        #: CONFIG_ names `seed_defaults` applied on the most recent parse, for
+        #: a caller that wants to tell the user where its defaults came from.
+        #: Empty whenever a saved config was loaded instead.
+        self.seeded: list[str] = []
 
         #: Held around every operation on this session. The agent serves requests
         #: from a worker pool, so two calls on one session could otherwise
@@ -626,9 +754,20 @@ class KconfigSession:
     def _parse(self) -> Any:
         # A missing config file is normal, not an error: it means this type has
         # never been configured and the Kconfig defaults are the right place to
-        # start from.
+        # start from. That is also the only time seeding applies - a saved
+        # config is the user's own answers and is never second-guessed.
+        #
+        # Owns `self.dirty` outright rather than only setting it when seeding -
+        # `reset()` calls this too, and a stale True surviving a reset back to
+        # an unseeded tree would show "Unsaved" over nothing.
         saved = self.config_path if os.path.isfile(self.config_path) else None
         _module, kconf = parse_tree(self.fw_dir, saved)
+        if saved is None:
+            self.seeded = seed_defaults(_module, kconf, self.fw_dir, self.chipset)
+            self.dirty = bool(self.seeded)
+        else:
+            self.seeded = []
+            self.dirty = False
         return kconf
 
     def touch(self) -> None:
@@ -889,10 +1028,16 @@ class KconfigSession:
         }
 
     def reset(self) -> dict[str, Any]:
-        """Throw away unsaved edits by reparsing from disk."""
+        """Throw away unsaved edits by reparsing from disk.
+
+        `dirty` is left to `_parse` rather than forced False here: a type with
+        no saved config yet re-seeds on reset exactly as it would on a fresh
+        open, and that leaves the session dirty again if it seeds anything -
+        forcing False on top would report "saved" over answers nothing has
+        written to disk.
+        """
         self._kconf = self._parse()
         self._path = [self._kconf.top_node]
-        self.dirty = False
         self.revision += 1
         return self.menu()
 
@@ -937,7 +1082,7 @@ class SessionStore:
         for sid in [s for s, sess in self._sessions.items() if sess.age > self.TTL]:
             self._sessions.pop(sid, None)
 
-    def open(self, mcu_type: str, fw: str) -> KconfigSession:
+    def open(self, mcu_type: str, fw: str, chipset: str = "") -> KconfigSession:
         with self._lock:
             self._reap()
             if len(self._sessions) >= self.MAX:
@@ -947,7 +1092,7 @@ class SessionStore:
                 self._sessions.pop(candidates[0].id, None)
             sid = f"kc-{self._next}"
             self._next += 1
-            session = KconfigSession(sid, self.paths, mcu_type, fw)
+            session = KconfigSession(sid, self.paths, mcu_type, fw, chipset)
             self._sessions[sid] = session
             return session
 

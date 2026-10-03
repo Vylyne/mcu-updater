@@ -1,0 +1,69 @@
+{
+  "_comment": "One writer for the ledger. The loop must file what a flasher describes, skip a rehearsal, take the confidence off the write result, and record before anything downstream of the write can fail. Each flasher must read its own builder's sidecar schema.",
+  "file": "src/mcu_updater/flashers/batch.py",
+  "command": [
+    "python",
+    "-m",
+    "pytest",
+    "tests/test_flashlog_loop.py",
+    "tests/test_flash.py",
+    "tests/test_flash_can.py",
+    "tests/test_agent_platformio_flash.py",
+    "tests/test_artifacts.py",
+    "-q"
+  ],
+  "mutations": [
+    {
+      "name": "the loop files what the flasher describes",
+      "find": "                            if record is not None:",
+      "replace": "                            if False:"
+    },
+    {
+      "name": "a rehearsal records nothing",
+      "find": "                        if not bench.settings.dry_run:\n                            record = flasher.record(bench, target)",
+      "replace": "                        if True:\n                            record = flasher.record(bench, target)"
+    },
+    {
+      "name": "confidence comes off the result and onto the ledger",
+      "find": "                    confidence = extra.pop(\"confidence\", None)",
+      "replace": "                    confidence = extra.get(\"confidence\")"
+    },
+    {
+      "name": "a flashtool write reports how it identified the board",
+      "file": "src/mcu_updater/flashers/flash.py",
+      "find": "    return confidence.reason if confidence is not None else None",
+      "replace": "    return None"
+    },
+    {
+      "name": "the kconfig provider reads its sidecar's commit",
+      "file": "src/mcu_updater/build.py",
+      "find": "        fw_sha=side.get(\"fw_sha\") or git_head(family.source_dir(paths)),",
+      "replace": "        fw_sha=side.get(\"sha\") or git_head(family.source_dir(paths)),"
+    },
+    {
+      "name": "the cmake provider reads its sidecar's commit",
+      "file": "src/mcu_updater/providers/cmake.py",
+      "find": "        fw_sha=side.get(\"sha\"),",
+      "replace": "        fw_sha=side.get(\"fw_sha\"),"
+    },
+    {
+      "name": "bootsel files only provenance that describes the staged image",
+      "_comment": "Protect the ownership and clean-tree checks so rejected CMake evidence cannot return through the flash ledger.",
+      "file": "src/mcu_updater/providers/cmake.py",
+      "find": "    ours = bool(record) and not record.get(\"dirty\") and sidecar_describes_image(record, uf2_path, stat)",
+      "replace": "    ours = bool(record)"
+    },
+    {
+      "name": "a bare board has nothing to file",
+      "file": "src/mcu_updater/flashers/bootsel.py",
+      "find": "        if \"helper\" not in target.detail or not fw:\n            return None",
+      "replace": "        if False:\n            return None"
+    },
+    {
+      "name": "a screen with no hardware id has nothing to file",
+      "file": "src/mcu_updater/flashers/platformio.py",
+      "find": "        if not ident:\n            return None",
+      "replace": "        if False:\n            return None"
+    }
+  ]
+}

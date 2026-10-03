@@ -12,7 +12,7 @@ import dataclasses
 
 import pytest
 
-from mcu_updater import devices
+from mcu_updater import devices, states
 from mcu_updater.discovery import spec
 from mcu_updater.discovery.byid import Byid
 from mcu_updater.discovery.registry import SOURCES, by_name
@@ -104,7 +104,7 @@ CONFIDENCE_REASONS = (
 
 @pytest.mark.parametrize("reason", CONFIDENCE_REASONS)
 def test_every_reason_has_a_tone(reason):
-    assert Confidence(reason).tone in ("ok", "unknown", "attention")
+    assert Confidence(reason).tone in (states.TONE_OK, states.TONE_WARN, states.TONE_PROBLEM)
 
 
 @pytest.mark.parametrize("reason", CONFIDENCE_REASONS)
@@ -150,10 +150,10 @@ def test_a_confidence_is_frozen():
 
 
 def test_the_bus_and_knomi_sources_are_registered():
-    """Step 26 wired listen/watcher behind this seam; Step 27 adds byid, the
-    board-side counterpart. dfu/bootsel still are not - nothing needs them yet,
-    see discovery/registry.py's own docstring."""
-    assert [s.name for s in SOURCES] == ["listen", "watcher", "byid"]
+    """listen/watcher came behind this seam first, then byid - the board-side
+    counterpart - then roadrunner. dfu/bootsel still are not registered:
+    nothing needs them yet, see discovery/registry.py's own docstring."""
+    assert [s.name for s in SOURCES] == ["listen", "watcher", "roadrunner", "byid"]
 
 
 def test_by_name_finds_byid():

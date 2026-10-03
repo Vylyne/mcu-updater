@@ -1,0 +1,91 @@
+{
+  "_comment": "A flasher is handed only a file of a kind it accepts, a missing kind is refused by name, and cmake always offers the uf2 it built.",
+  "file": "src/mcu_updater/flashers/registry.py",
+  "command": [
+    "python",
+    "-m",
+    "pytest",
+    "tests/test_flasher_select.py",
+    "tests/test_artifacts.py",
+    "tests/test_flashlog_loop.py",
+    "tests/test_klipper_helper.py",
+    "-q"
+  ],
+  "mutations": [
+    {
+      "name": "a flasher with no staged file is passed over",
+      "find": "        artifact = staged.first_of(flasher.accepts)\n        if artifact is not None:",
+      "replace": "        artifact = staged.first_of(flasher.accepts)\n        if True:"
+    },
+    {
+      "name": "a flasher is only handed a kind it accepts",
+      "find": "        artifact = staged.first_of(flasher.accepts)",
+      "replace": "        artifact = staged.first_of((\"bin\", \"uf2\", \"pio_env\"))"
+    },
+    {
+      "name": "a missing kind is refused by name",
+      "find": "    if waiting:",
+      "replace": "    if False:"
+    },
+    {
+      "name": "cmake always offers the uf2 it built",
+      "file": "src/mcu_updater/providers/cmake.py",
+      "find": "    found = [Artifact(KIND_UF2, uf2_path, recorded_sha256(side, KIND_UF2, primary=KIND_UF2))]",
+      "replace": "    found: list[Artifact] = []"
+    },
+    {
+      "name": "a board that lands in katapult is refused",
+      "file": "src/mcu_updater/helpers/klipper.py",
+      "find": "        if _katapult_on(paths, topology):",
+      "replace": "        if False:"
+    },
+    {
+      "name": "predicted_serial defaults to the chip-id serial, not the literal one",
+      "file": "src/mcu_updater/helpers/klipper.py",
+      "find": "    if answers.get(\"USB_SERIAL_NUMBER_CHIPID\", \"y\") != \"n\":\n        return current",
+      "replace": "    if False:\n        return current"
+    },
+    {
+      "name": "the klipper helper refuses a board already in katapult",
+      "file": "src/mcu_updater/helpers/klipper.py",
+      "find": "        if device.is_katapult:",
+      "replace": "        if False:"
+    },
+    {
+      "name": "an image above the start of flash is warned about, or refused on the helper path",
+      "file": "src/mcu_updater/flashers/bootsel.py",
+      "find": "        if start is not None and start > FLASH_BASE:",
+      "replace": "        if False:"
+    },
+    {
+      "name": "an offset image is refused on the helper path, before the request",
+      "file": "src/mcu_updater/flashers/bootsel.py",
+      "find": "            if requester is not None:",
+      "replace": "            if False:"
+    },
+    {
+      "name": "settled hands the helper the image's family",
+      "file": "src/mcu_updater/flashers/bootsel.py",
+      "find": "                fw=target.detail.get(\"fw\", \"\"),",
+      "replace": "                fw=\"\","
+    },
+    {
+      "name": "the board is found by the port it was asked on",
+      "file": "src/mcu_updater/helpers/klipper.py",
+      "find": "                if bootsel.serial_topology_for(paths, dev.path) == topology:\n                    time.sleep(_TOPOLOGY_SETTLE)",
+      "replace": "                if True:\n                    time.sleep(_TOPOLOGY_SETTLE)"
+    },
+    {
+      "name": "a corrupt uf2 is refused, with nothing written",
+      "file": "src/mcu_updater/flashers/bootsel.py",
+      "find": "        raise FlashError(f\"{uf2} is not a valid UF2 image: {exc}\", path=uf2) from exc",
+      "replace": "        return None"
+    },
+    {
+      "name": "the klipper helper refuses a chip that is not an rp2040",
+      "file": "src/mcu_updater/helpers/klipper.py",
+      "find": "        if not chipset.startswith(\"rp2040\"):",
+      "replace": "        if False:"
+    }
+  ]
+}

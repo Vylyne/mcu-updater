@@ -35,23 +35,27 @@
     {
       "name": "the built artifact is looked for in the family's own tree",
       "find": "        return os.path.join(self.source_dir(paths), \"out\", f\"{self.artifact_name()}.{ext}\")",
-      "replace": "        return os.path.join(paths.fw_dir(self.name), \"out\", f\"{self.artifact_name()}.{ext}\")"
-    },
-    {
-      "name": "an unconfigured family still resolves to the convention",
-      "find": "    return families.get(fw) or FirmwareFamily(name=fw, bootloader=(fw == \"katapult\"))",
-      "replace": "    return families.get(fw)"
-    },
-    {
-      "_comment": "katapult being a bootloader by default is what lets every install predating this key mean what it always meant - on_demand's sweep exclusion and the flash-time offset checks both key off it.",
-      "name": "an unconfigured katapult still resolves as a bootloader",
-      "find": "    return families.get(fw) or FirmwareFamily(name=fw, bootloader=(fw == \"katapult\"))",
-      "replace": "    return families.get(fw) or FirmwareFamily(name=fw, bootloader=False)"
+      "replace": "        return os.path.join(os.path.join(paths.home, self.name), \"out\", f\"{self.artifact_name()}.{ext}\")"
     },
     {
       "name": "overriding one key on katapult does not silently turn off its bootloader status",
       "find": "            bootloader=bool(parse_bool(doc.get(section, \"bootloader\"), name == \"katapult\")),",
       "replace": "            bootloader=bool(parse_bool(doc.get(section, \"bootloader\"), False)),"
+    },
+    {
+      "name": "an undeclared family is refused, never invented",
+      "find": "    if family is None:\n        raise ConfigCorruptError(missing_section_message(fw), path=paths.main_config, value=fw)",
+      "replace": "    if False:\n        raise ConfigCorruptError(missing_section_message(fw), path=paths.main_config, value=fw)"
+    },
+    {
+      "name": "a declared family with no source: builds from ~/<name>",
+      "find": "        return os.path.join(paths.home, self.name)",
+      "replace": "        return paths.home"
+    },
+    {
+      "name": "families are listed sorted, not in file order",
+      "find": "    return tuple(sorted(families))",
+      "replace": "    return tuple(families)"
     }
   ]
 }

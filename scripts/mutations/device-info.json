@@ -1,0 +1,87 @@
+{
+  "_comment": "Device info is read through the family's helper. Each mutation here makes some caller read a board with the wrong reader, and each wrong reader is a verdict that is silently wrong: a Roadrunner describe read as sha-less, a Cartographer literal given an invented sha, a screen matched against another type's objects.",
+  "file": "src/mcu_updater/device_info.py",
+  "command": [
+    "python",
+    "-m",
+    "pytest",
+    "tests/test_device_info.py",
+    "-q"
+  ],
+  "mutations": [
+    {
+      "name": "a digest needs its range to be comparable",
+      "find": "            and self.image_start is not None\n",
+      "replace": ""
+    },
+    {
+      "name": "DIGEST_NONE is no digest",
+      "find": "            bool(self.digest_algorithm)\n            and self.digest is not None",
+      "replace": "            self.digest_algorithm is not None\n            and self.digest is not None"
+    },
+    {
+      "name": "a family's helper supplies its reader",
+      "find": "    return reader if reader is not None else KLIPPER",
+      "replace": "    return KLIPPER"
+    },
+    {
+      "name": "a helper without a reader falls back to Klipper",
+      "find": "    return reader if reader is not None else KLIPPER",
+      "replace": "    return reader  # type: ignore[return-value]"
+    },
+    {
+      "name": "a bare sha is a Roadrunner commit",
+      "file": "src/mcu_updater/helpers/roadrunner.py",
+      "find": "_SHA_RE = re.compile(r\"(?:^|-g)([0-9a-f]{7,40})(?:-dirty)?$\")",
+      "replace": "_SHA_RE = re.compile(r\"-g([0-9a-f]{7,40})(?:-dirty)?$\")"
+    },
+    {
+      "name": "a dirty Roadrunner build still carries its commit",
+      "file": "src/mcu_updater/helpers/roadrunner.py",
+      "find": "_SHA_RE = re.compile(r\"(?:^|-g)([0-9a-f]{7,40})(?:-dirty)?$\")",
+      "replace": "_SHA_RE = re.compile(r\"(?:^|-g)([0-9a-f]{7,40})$\")"
+    },
+    {
+      "name": "a Roadrunner knows a dirty build",
+      "file": "src/mcu_updater/helpers/roadrunner.py",
+      "find": "        return (version or \"\").strip().endswith(\"-dirty\")",
+      "replace": "        return False"
+    },
+    {
+      "name": "Cartographer never gets an invented sha",
+      "file": "src/mcu_updater/helpers/cartographer.py",
+      "find": "    def running_sha(self, version: str | None) -> str | None:\n        return None",
+      "replace": "    def running_sha(self, version: str | None) -> str | None:\n        from ..device_info import KLIPPER\n\n        return KLIPPER.running_sha(version)"
+    },
+    {
+      "name": "a screen type's Klipper prefix comes from its reader",
+      "file": "src/mcu_updater/providers/pio.py",
+      "find": "            klipper_section=device_info.reader_for(family).klipper_prefix,\n",
+      "replace": ""
+    },
+    {
+      "name": "flash_state extracts the sha with the reader it is given",
+      "file": "src/mcu_updater/agent/methods/status.py",
+      "find": "        mcu = entry.get(\"mcu\")\n        running = reader.running_sha(version)\n        # One lookup, two consumers.",
+      "replace": "        mcu = entry.get(\"mcu\")\n        running = device_info.KLIPPER.running_sha(version)\n        # One lookup, two consumers."
+    },
+    {
+      "name": "type_status reads through the family's reader",
+      "file": "src/mcu_updater/agent/methods/status.py",
+      "find": "        reader = device_info.reader_for(family)",
+      "replace": "        reader = device_info.KLIPPER"
+    },
+    {
+      "name": "a bulk flash selects through the family's reader",
+      "file": "src/mcu_updater/agent/methods/bulk.py",
+      "find": "            reader = device_info.reader_for(family)\n            # Once per type, not per serial - every board of this type shares",
+      "replace": "            reader = device_info.KLIPPER\n            # Once per type, not per serial - every board of this type shares"
+    },
+    {
+      "_comment": "Caught by test_a_misspelt_helper_reads_through_klipper_rather_than_raising (tests/test_device_info.py) and test_a_misspelled_helper_on_a_non_cmake_family_does_not_blank_the_panel (tests/test_agent_targets.py): a misspelt helper: must read through Klipper, never propagate out of reader_for and blank the whole fw.status panel.",
+      "name": "a misspelt helper reads through Klipper rather than blanking the panel",
+      "find": "    except ConfigCorruptError:\n        return KLIPPER",
+      "replace": "    except ConfigCorruptError:\n        raise"
+    }
+  ]
+}

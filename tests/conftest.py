@@ -8,7 +8,11 @@ tmp_path stands in for a whole printer host - no mocks, no monkeypatching of
 
 from __future__ import annotations
 
+import dataclasses
+import json
+import os
 import pathlib
+import re
 
 import pytest
 
@@ -32,6 +36,16 @@ def _instant_fake_builds(monkeypatch: pytest.MonkeyPatch) -> None:
     streaming UI is genuinely exercised. In tests that just makes the suite slow.
     """
     monkeypatch.setattr("mcu_updater.build.FAKE_BUILD_DELAY", 0.0)
+
+
+@pytest.fixture(autouse=True)
+def _bootsel_boards_apply_instantly(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A fake BOOTSEL volume never goes away, so a copy onto one would sit out
+    the whole apply wait. Real boards reset as the image lands; here they reset
+    at once. Tests of the wait itself restore the real check."""
+    monkeypatch.setattr(
+        "mcu_updater.flashers.bootsel._volume_still_mounted", lambda mount: False
+    )
 
 
 @pytest.fixture
@@ -64,6 +78,40 @@ def settings() -> Settings:
 
 
 @pytest.fixture
+def cmake_type(paths):
+    """A configured CMake type with a built sidecar, for the record paths."""
+    with open(paths.main_config, "a", encoding="utf-8") as fh:
+        fh.write(
+            "\n[firmware roadrunner]\n"
+            "source: ~/roadrunner\n"
+            "builder: cmake\n"
+            "flashers: bootsel\n"
+            "helper: roadrunner\n"
+            "\n[type roadrunner]\n"
+            "firmware: roadrunner\n"
+            "cmake_target: roadrunner_v1_i2c_rgb\n"
+            "chipset: rp2040\n"
+            "serials: RR-1\n"
+        )
+    os.makedirs(paths.artifact_dir("roadrunner"), exist_ok=True)
+    with open(paths.sidecar_file("roadrunner", "roadrunner"), "w", encoding="utf-8") as fh:
+        json.dump(
+            {
+                "provider": "cmake",
+                "sha": "built-subtree-sha",
+                "version": "v1.2.3-4-gabcdef0",
+                "dirty": False,
+                "cmake_target": "roadrunner_v1_i2c_rgb",
+                "bin_sha256": "built-uf2-sha256",
+                "bin_size": 15,
+                "bin_mtime": 123.0,
+            },
+            fh,
+        )
+    return "roadrunner"
+
+
+@pytest.fixture
 def live_registry_text() -> str:
     return TEST_MCUS_CFG.read_text(encoding="utf-8")
 
@@ -87,6 +135,74 @@ def cmd_tokens(cmd_line: str) -> list[str]:
     path with a space in it cannot produce a false match.
     """
     return cmd_line.split()
+
+
+def save_registry(reg, paths: Paths) -> None:
+    """Write a fixture registry to the fake install, as it stands.
+
+    Production writes only through `Registry.mutate`, which is why `_save` is
+    private. A fixture building its starting state has no lock to contend for
+    and nothing to re-read, so it is the one place outside config.py's own
+    tests that writes directly - and only through here. A registry from
+    `Registry.load` holds the shared, frozen snapshot, so it is saved from a
+    writable copy of the same text.
+    """
+    from mcu_updater.cfgdoc import CfgDocument
+
+    if reg._doc.frozen:
+        reg._doc = CfgDocument(reg._doc.render())
+    reg._save(paths)
+
+
+def save_settings(paths: Paths, settings) -> None:
+    """Write a whole fixture `Settings` object to the fake install.
+
+    Production writes only through `settings.mutate`, which is why
+    `_write_settings` is private. The same exception as `save_registry`: a
+    fixture building its starting state has no lock to contend for.
+    """
+    from mcu_updater import settings as settings_mod
+
+    settings_mod._write_settings(paths.settings_file, settings)
+
+
+def write_main_config(paths: Paths, text: str) -> None:
+    """Write `text` as the whole mcu-updater.cfg of the fake install."""
+    os.makedirs(os.path.dirname(paths.main_config), exist_ok=True)
+    with open(paths.main_config, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(text)
+
+
+def read_main_config(paths: Paths) -> str:
+    with open(paths.main_config, encoding="utf-8") as fh:
+        return fh.read()
+
+
+#: What install.sh seeds on a host whose trees are at the conventional paths.
+BASE_FIRMWARES = (
+    "[firmware klipper]\nsource: ~/klipper\nflashers: flashtool\n\n"
+    "[firmware katapult]\nsource: ~/katapult\nflashers: dfu_util, bootsel\n\n"
+)
+
+
+def with_base_firmwares(text: str) -> str:
+    """`text` with klipper and katapult declared ahead of its first family or type.
+
+    Only for text that declares neither: adding a second copy of a section is a
+    duplicate-section refusal.
+    """
+    match = re.search(r"^\[(firmware|type)\s", text, re.MULTILINE)
+    if match is None:
+        separator = "\n" if text and not text.endswith("\n") else ""
+        return text + separator + BASE_FIRMWARES
+    return text[: match.start()] + BASE_FIRMWARES + text[match.start() :]
+
+
+def seed_base_firmwares(paths: Paths) -> None:
+    """Declare klipper and katapult in the fake install, the way install.sh does."""
+    from mcu_updater import seed
+
+    seed.seed_firmware_sections(paths, {})
 
 
 def write_settings(paths: Paths, **values: object) -> None:
@@ -158,6 +274,50 @@ def bootsel_device_node(root: pathlib.Path, serial: str = "E0C9125B0D9B") -> str
     return str(node)
 
 
+def mountinfo(root: pathlib.Path, mounts: dict[pathlib.Path, str]) -> None:
+    """A fake kernel mount table at `<root>/mountinfo`, the seam
+    `discovery.bootsel.mount_sources` reads when `bootsel_root` is `root`.
+
+    `mounts` maps each mount point to the device node mounted there. Fields are
+    octal-escaped the way the kernel escapes them - a Windows path's
+    backslashes included, so the parser's unescape is exercised on every run.
+    """
+
+    def escape(text: str) -> str:
+        return "".join("\\" + format(ord(ch), "03o") if ch in " \t\n\\" else ch for ch in text)
+
+    lines = [
+        f"{36 + i} 35 8:{i} / {escape(str(point))} rw,relatime shared:1 - vfat "
+        f"{escape(source)} rw"
+        for i, (point, source) in enumerate(mounts.items())
+    ]
+    (root / "mountinfo").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def on_port(paths: Paths, root: pathlib.Path, port: str) -> Paths:
+    """`paths` with every tty and block device hanging off USB port `port`.
+
+    Real sysfs is symlinks. These are plain nested directories whose *names*
+    carry the port, which is all `usb.device_for_sysfs_path` reads: it walks
+    up the path and splits each component on ':'. No interface directory
+    (`<port>:1.0`) is used, because NTFS reads ':' as an alternate-data-stream
+    separator.
+
+    No `serial` file is written under the fake USB device, deliberately:
+    `byid.scan` swaps in `hardware.serial` whenever one exists, which would
+    collapse every fake board on this port onto that one serial.
+    """
+    usb_root = root / "sys-usb"
+    (usb_root / port).mkdir(parents=True, exist_ok=True)
+    tty = root / "sys-dev" / port / "tty"
+    block = root / "sys-dev" / port / "block"
+    tty.mkdir(parents=True, exist_ok=True)
+    block.mkdir(parents=True, exist_ok=True)
+    return dataclasses.replace(
+        paths, usb_sysfs=str(usb_root), tty_sysfs=str(tty), block_sysfs=str(block)
+    )
+
+
 def display_objects(sections: dict, objects: dict = None) -> dict:
     """Fold printer.cfg terms into what the klippy module actually reports.
 
@@ -218,3 +378,25 @@ def serve_klipper(
 
     call.queries = queries  # type: ignore[attr-defined]
     return call
+
+
+def stage_uf2_only(paths: Paths, mcu_type: str, fw: str = "klipper", content: bytes = b"uf2 firmware") -> str:
+    """Leave what an offset-less RP2040 Klipper build leaves: a `.uf2`, no
+    `.bin`, and a sidecar listing only the `.uf2`."""
+    import hashlib
+
+    from mcu_updater.artifacts import KIND_UF2, sidecar_field
+
+    os.makedirs(paths.artifact_dir(mcu_type), exist_ok=True)
+    path = paths.uf2_file(mcu_type, fw)
+    with open(path, "wb") as fh:
+        fh.write(content)
+    with open(paths.sidecar_file(mcu_type, fw), "w", encoding="utf-8") as fh:
+        json.dump(
+            {
+                "bin_sha256": None,
+                "artifacts": sidecar_field({KIND_UF2: hashlib.sha256(content).hexdigest()}),
+            },
+            fh,
+        )
+    return path

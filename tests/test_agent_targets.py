@@ -3,32 +3,48 @@
 `types[]` and `displays[]` said overlapping things in different words; the
 panel needed a component per wire shape. `targets[]` is those two projected
 onto one shape, so one component renders both - and renders whatever comes
-next without being taught to. The two originals retired at API_VERSION 2
-(docs/rebuild-plan.md Step 14); `type_status()`/`pio_status()`, the
-richer per-type computations `targets[]` is built from, did not - they still
+next without being taught to. The two originals retired at API_VERSION 2;
+`type_status()`/`platformio_status()`, the richer per-type computations `targets[]` is
+built from, did not - they still
 back `fw.type.list` and feed the projection directly.
 
 **It is a projection, not a second source of truth.** The load-bearing test in
 this file is `test_every_fact_in_the_old_keys_survives_the_projection`: if a
-fact lives in `type_status()`/`pio_status()` and cannot be found here,
+fact lives in `type_status()`/`platformio_status()` and cannot be found here,
 that is a bug in the projection rather than a reason to add a key.
 """
 
 from __future__ import annotations
 
+import hashlib
+import json
 import os
+import time
 
 import pytest
 
+from mcu_updater import device_info, firmware, inventory, uf2
 from mcu_updater.agent.methods import Api
+from mcu_updater.agent.rpc import RpcError
+from mcu_updater.build import FlashLog
+from mcu_updater.config import Registry
+from mcu_updater.providers import cmake
 from mcu_updater.states import (
-    TONE_ATTENTION,
-    TONE_UNKNOWN,
+    TONE_PROBLEM,
+    TONE_WARN,
     ArtifactStatus,
     DeviceStatus,
 )
 
-from .conftest import display_objects, make_device, serve_klipper, write_settings
+from .conftest import (
+    display_objects,
+    make_device,
+    read_main_config,
+    serve_klipper,
+    stage_uf2_only,
+    write_main_config,
+    write_settings,
+)
 
 ENV = "knomi_toolchanger"
 
@@ -38,6 +54,25 @@ def api(paths, live_registry_text):
     with open(paths.registry_file, "w", encoding="utf-8") as fh:
         fh.write(live_registry_text)
     return Api(paths)
+
+
+def _config_opens(paths, monkeypatch) -> list[str]:
+    """Every open of the main config file from here on, by who opened it."""
+    import builtins
+    import traceback
+
+    real = builtins.open
+    opened: list[str] = []
+
+    def spy(file, *args, **kwargs):
+        if isinstance(file, (str, os.PathLike)) and os.fspath(file) == os.fspath(
+            paths.main_config
+        ):
+            opened.append(" <- ".join(f.name for f in reversed(traceback.extract_stack(limit=5))))
+        return real(file, *args, **kwargs)
+
+    monkeypatch.setattr(builtins, "open", spy)
+    return opened
 
 
 def _targets(api, provider=None):
@@ -55,12 +90,31 @@ def _add_display(paths, fake_root, api):
     port = fake_root / "knomi_t0"
     port.write_text("", encoding="utf-8")
     with open(paths.main_config, "a", encoding="utf-8") as fh:
-        fh.write(f"\n[type {ENV}]\nchipset: esp32\nfirmware: knomi_serial\nenv: {ENV}\n")
+        fh.write(f"\n[type {ENV}]\nchipset: esp32\nfirmware: knomi_serial\nplatformio_env: {ENV}\n")
     api._call = serve_klipper(
         display_objects({"knomi_serial t0_knomi": {"serial": str(port)}}),
         reachable=True,
     )
     return str(port)
+
+
+def _add_display_by_id(paths, fake_root, api, device_id="aaa111"):
+    """The other half of spec §3: a `[knomi_serial ...]` section that names the
+    screen's burned-in id instead of a path. Klipper's own discovery resolves
+    it and reports the path back, so the config has no path in it at all."""
+    (fake_root / "knomi_serial").mkdir(exist_ok=True)
+    port = fake_root / "knomi_discovered"
+    port.write_text("", encoding="utf-8")
+    with open(paths.main_config, "a", encoding="utf-8") as fh:
+        fh.write(f"\n[type {ENV}]\nchipset: esp32\nfirmware: knomi_serial\nplatformio_env: {ENV}\n")
+    api._call = serve_klipper(
+        display_objects(
+            {"knomi_serial t0_knomi": {"device_id": device_id}},
+            {"knomi_serial t0_knomi": {"port": str(port)}},
+        ),
+        reachable=True,
+    )
+    return device_id, str(port)
 
 
 # --------------------------------------------------------------------------
@@ -84,6 +138,10 @@ def test_an_mcu_type_projects_onto_the_shared_shape(api):
         "needs_flash",
         "devices",
         "actions",
+        "first_install",
+        "source",
+        "extras",
+        "devices_note",
     }
     assert set(ebb["artifact"]) == {"state", "tone", "label", "reason"}
     assert set(ebb["devices"][0]) == {
@@ -107,9 +165,8 @@ def test_a_display_projects_onto_the_same_shape(api, paths, fake_root):
     display = _targets(api, "platformio")[ENV]
 
     mcu_keys = set(_targets(api, "kconfig_make")["bttebb36"])
-    # The whole point: a display carries everything an MCU does, plus a bag of
-    # things only a screen has. A reader that never opens `extra` renders both.
-    assert set(display) == mcu_keys | {"extra"}
+    # One shape: every key an MCU row has, and nothing it lacks.
+    assert set(display) == mcu_keys
     assert set(display["devices"][0]) == set(_targets(api, "kconfig_make")["bttebb36"]["devices"][0])
     assert display["provider"] == "platformio"
     assert display["descriptor"] == ENV
@@ -130,8 +187,9 @@ def test_a_display_build_is_blocked_by_a_missing_source_tree(api, paths, fake_ro
     port.write_text("", encoding="utf-8")
     with open(paths.main_config, "a", encoding="utf-8") as fh:
         fh.write(
-            "\n[firmware knomi_missing]\nsource: /nope/not/here\nbuilder: platformio\n\n"
-            f"[type {ENV}]\nchipset: esp32\nfirmware: knomi_missing\nenv: {ENV}\n"
+            "\n[firmware knomi_missing]\nsource: /nope/not/here\nbuilder: platformio\n"
+            "helper: knomi_serial\nflashers: platformio\n\n"
+            f"[type {ENV}]\nchipset: esp32\nfirmware: knomi_missing\nplatformio_env: {ENV}\n"
         )
     api = Api(
         paths,
@@ -155,14 +213,12 @@ def test_a_display_with_its_tree_can_be_built(api, paths, fake_root):
     assert _action(_targets(api, "platformio")[ENV], "build")["blocked"] is None
 
 
-def test_a_display_has_no_firmware_family_and_says_so(api, paths, fake_root):
-    """PlatformIO builds from its own tree, not from a `[firmware ...]` family.
-
-    None rather than a guess: naming klipper here is exactly the reflex that put
-    a cartographer type's artifact under `artifacts.klipper`.
-    """
+def test_a_platformio_row_names_the_family_it_was_declared_under(api, paths, fake_root):
+    """The row's `firmware` is the `[firmware ...]` family its `[type]` names -
+    the same axis every other builder's row reports, and what selects its
+    helper."""
     _add_display(paths, fake_root, api)
-    assert _targets(api, "platformio")[ENV]["firmware"] is None
+    assert _targets(api, "platformio")[ENV]["firmware"] == "knomi_serial"
 
 
 # --------------------------------------------------------------------------
@@ -177,7 +233,7 @@ def test_the_verdict_carries_its_own_wording(api):
 
     assert art["reason"] == "never_built"
     assert art["state"] == "absent"
-    assert art["tone"] == TONE_ATTENTION
+    assert art["tone"] == TONE_WARN
     assert art["label"] == ArtifactStatus("never_built").label
 
 
@@ -214,7 +270,7 @@ def test_an_unbuilt_binary_with_no_sidecar_is_not_never_built(api, paths):
 
     assert target["artifact"]["reason"] == "no_provenance"
     assert target["artifact"]["state"] == "unprovable"
-    assert target["artifact"]["tone"] == TONE_UNKNOWN
+    assert target["artifact"]["tone"] == TONE_WARN
 
 
 def test_an_offline_board_is_never_reported_as_up_to_date(api):
@@ -222,7 +278,7 @@ def test_an_offline_board_is_never_reported_as_up_to_date(api):
 
     assert board["present"] is False
     assert board["needs_flash"] is None
-    assert board["tone"] == TONE_UNKNOWN
+    assert board["tone"] == TONE_PROBLEM
     assert board["reason"] == "offline"
 
 
@@ -238,7 +294,7 @@ def test_a_type_needs_flashing_when_any_one_board_does(api, fake_root):
 
     assert hexa["needs_flash"] is True
     waiting = [d for d in hexa["devices"] if d["reason"] == "in_bootloader"]
-    assert waiting and waiting[0]["tone"] == TONE_ATTENTION
+    assert waiting and waiting[0]["tone"] == TONE_PROBLEM
 
 
 def test_a_tracked_can_uuid_is_projected_onto_its_type(api):
@@ -267,7 +323,7 @@ def test_a_screen_that_cannot_be_reached_is_offline_not_current(api, paths, fake
     """A port that does not resolve says nothing about the firmware on the far
     end, and the klippy module swallows the failure entirely."""
     with open(paths.main_config, "a", encoding="utf-8") as fh:
-        fh.write(f"\n[type {ENV}]\nchipset: esp32\nfirmware: knomi_serial\nenv: {ENV}\n")
+        fh.write(f"\n[type {ENV}]\nchipset: esp32\nfirmware: knomi_serial\nplatformio_env: {ENV}\n")
     api._call = serve_klipper(
         display_objects({"knomi_serial t0_knomi": {"serial": str(fake_root / "gone")}}),
         reachable=True,
@@ -287,7 +343,7 @@ def test_a_protocol_mismatch_outranks_the_version_comparison(api, paths, fake_ro
     port = fake_root / "knomi_t0"
     port.write_text("", encoding="utf-8")
     with open(paths.main_config, "a", encoding="utf-8") as fh:
-        fh.write(f"\n[type {ENV}]\nchipset: esp32\nfirmware: knomi_serial\nenv: {ENV}\n")
+        fh.write(f"\n[type {ENV}]\nchipset: esp32\nfirmware: knomi_serial\nplatformio_env: {ENV}\n")
     api._call = serve_klipper(
         display_objects(
             {"knomi_serial t0_knomi": {"serial": str(port)}},
@@ -347,7 +403,7 @@ def test_a_device_carries_its_own_flash_call(paths, live_registry_text):
     assert flash["blocked"]["code"] == Api.BLOCKED_NO_ARTIFACT
 
 
-def test_a_screen_carries_the_display_flash_call_pinned_to_its_port(api, paths, fake_root):
+def test_a_screen_carries_the_display_flash_call_pinned_to_its_identity(api, paths, fake_root):
     """A port is never inferred: every screen of a type is an identical CH340,
     and PlatformIO's auto-detect was seen picking between two of them."""
     write_settings(paths, enable_flashing="true")
@@ -359,6 +415,43 @@ def test_a_screen_carries_the_display_flash_call_pinned_to_its_port(api, paths, 
 
     assert flash["method"] == "fw.flash"
     assert flash["params"] == {"name": ENV, "port": port}
+
+
+def test_a_screen_addressed_by_id_reports_that_id(api, paths, fake_root):
+    """spec §3. A `device_id:` section names the screen's own burned-in id and
+    no path at all - the path is whatever discovery found this boot, and
+    reporting it as the identity hands a caller back a value that changes when
+    the screen moves socket. It was null until discovery ran, too."""
+    device_id, port = _add_display_by_id(paths, fake_root, api)
+
+    device = _targets(api, "platformio")[ENV]["devices"][0]
+    assert device["id"] == device_id
+    assert device["path"] == os.path.realpath(port)
+
+
+def test_a_screen_addressed_by_port_still_reports_its_port(api, paths, fake_root):
+    """The other branch of the same rule, unchanged: a `serial:` section names
+    a path and carries no id, so the path *is* the identity."""
+    port = _add_display(paths, fake_root, api)
+
+    assert _targets(api, "platformio")[ENV]["devices"][0]["id"] == port
+
+
+def test_a_screens_flash_action_carries_the_identity_its_row_reports(
+    api, paths, fake_root
+):
+    """`devices[].id` exists to be handed straight back. An action carrying a
+    different value than the row reports would defeat that for exactly the
+    sections whose path is the least trustworthy thing about them.
+
+    The param keeps its name. Spec section 3: the row's `id` becomes the
+    declared identity, and "Flash parameter keys are unchanged."""
+    write_settings(paths, enable_flashing="true")
+    device_id, _port = _add_display_by_id(paths, fake_root, api)
+    api = Api(paths, runner=_runner(), call=api._call)
+
+    device = _targets(api, "platformio")[ENV]["devices"][0]
+    assert _action(device, "flash")["params"] == {"name": ENV, "port": device_id}
 
 
 def test_untrack_is_offered_per_board_and_never_for_a_screen(paths, live_registry_text, fake_root):
@@ -380,8 +473,8 @@ def test_untrack_is_offered_per_board_and_never_for_a_screen(paths, live_registr
 
 def test_the_artifact_shown_is_the_one_this_type_would_flash(paths, live_registry_text):
     """A cartographer-only type declares no klipper - `artifacts` is narrowed
-    to exactly the families it declares (docs/rebuild-plan.md Step 18), so
-    there is no phantom `klipper` entry to make the panel say a perfectly good
+    to exactly the families it declares, so there is no phantom `klipper`
+    entry to make the panel say a perfectly good
     probe was never built and disable its flash button for good."""
     with open(paths.registry_file, "w", encoding="utf-8") as fh:
         fh.write(live_registry_text)
@@ -462,6 +555,23 @@ def test_flash_is_blocked_with_something_built_but_nothing_connected(paths, live
     assert target["devices"][0]["id"] in per_device["message"]
 
 
+def test_a_type_that_staged_only_a_uf2_is_built_for_its_flash_actions(
+    paths, live_registry_text
+):
+    """An offset-less RP2040 Klipper build stages a `.uf2` and no `.bin`. The
+    flash action must not say "build it first" - the panel's bulk path drops
+    any type blocked on `no_artifact`."""
+    with open(paths.registry_file, "w", encoding="utf-8") as fh:
+        fh.write(live_registry_text)
+    write_settings(paths, enable_flashing="true")
+    stage_uf2_only(paths, "OctopusMAXEZ")
+    api = Api(paths, runner=_runner())
+
+    target = _targets(api)["OctopusMAXEZ"]
+    assert _action(target, "flash")["blocked"]["code"] == Api.BLOCKED_NO_DEVICE
+    assert _action(target["devices"][0], "flash")["blocked"]["code"] == Api.BLOCKED_NO_DEVICE
+
+
 def test_build_is_blocked_without_saved_menuconfig_answers(paths, live_registry_text):
     """menuconfig needs a TTY, so the agent cannot resolve this itself.
 
@@ -489,7 +599,7 @@ def test_build_is_blocked_without_saved_menuconfig_answers(paths, live_registry_
 def _ships_seeds(paths, *names: str) -> None:
     """Give the klipper tree vendor answer files, as a fork's root has."""
     for name in names or ("config.BoardUSB", "config.BoardCAN"):
-        with open(os.path.join(paths.fw_dir("klipper"), name), "w", encoding="utf-8") as fh:
+        with open(os.path.join(paths.home, "klipper", name), "w", encoding="utf-8") as fh:
             fh.write("CONFIG_MACH_STM32=y\n")
             fh.write(f'CONFIG_BOARD_NAME="{name}"\n')
 
@@ -630,7 +740,7 @@ def test_configure_is_absent_where_the_source_tree_is_not_checked_out(paths, liv
 
 
 def test_every_fact_in_the_old_keys_survives_the_projection(api, paths, fake_root):
-    """`targets[]` must carry everything `type_status()`/`pio_status()`
+    """`targets[]` must carry everything `type_status()`/`platformio_status()`
     produce - the two richer per-type computations it is built from.
 
     Deliberately checks identity of the *facts*, not of the wording: the point
@@ -642,15 +752,16 @@ def test_every_fact_in_the_old_keys_survives_the_projection(api, paths, fake_roo
 
     reg = api.registry()
     legacy_types = [api.type_status(reg, n, api.mcu_info()) for n in reg.names()]
-    legacy_displays = api.pio_status()
-    targets = {t["name"]: t for t in api.targets(reg, legacy_types, legacy_displays)}
+    legacy_platformio = api.platformio_status()
+    targets = {t["name"]: t for t in api.targets(reg, legacy_types, legacy_platformio)}
 
-    assert set(targets) == {t["name"] for t in legacy_types} | {d["name"] for d in legacy_displays}
+    assert set(targets) == {t["name"] for t in legacy_types} | {d["name"] for d in legacy_platformio}
 
     for legacy in legacy_types:
         target = targets[legacy["name"]]
         assert target["descriptor"] == legacy["chipset"]
         assert target["firmware"] == legacy["firmware"]
+        assert target["source"] == legacy["source"]
         assert target["needs_flash"] in (legacy["needs_flash"], True, None)
         assert [d["id"] for d in target["devices"]] == [
             s["serial"] for s in legacy["serials"]
@@ -668,17 +779,20 @@ def test_every_fact_in_the_old_keys_survives_the_projection(api, paths, fake_roo
             assert device["version"] == can["running_version"]
             assert device["name"] == can.get("mcu")
 
-    for legacy in legacy_displays:
+    for legacy in legacy_platformio:
         target = targets[legacy["name"]]
         assert target["descriptor"] == legacy["env"]
-        assert [d["id"] for d in target["devices"]] == [s["configured_path"] for s in legacy["screens"]]
-        assert target["extra"]["module_version"] == legacy["module_version"]
-        assert target["extra"]["source_version"] == legacy["source_version"]
-        assert target["extra"]["reachable"] == legacy["reachable"]
-        for device, screen in zip(target["devices"], legacy["screens"], strict=True):
-            assert device["present"] == screen["present"]
-            assert device["version"] == screen["firmware_version"]
-            assert device["name"] == screen["section"]
+        assert target["firmware"] == legacy["firmware"]
+        assert [d["id"] for d in target["devices"]] == [d["id"] for d in legacy["devices"]]
+        assert target["source"] == legacy["source"]
+        assert target["extras"] == legacy["extras"]
+        assert target["devices_note"] == legacy["devices_note"]
+        for device, listed in zip(target["devices"], legacy["devices"], strict=True):
+            assert device["present"] == listed["present"]
+            assert device["version"] == listed["version"]
+            assert device["name"] == listed["section"]
+            assert device["path"] == listed["resolved_path"]
+            assert device["confidence"] == listed["confidence"]
     assert targets[ENV]["devices"][0]["id"] == port
 
 
@@ -709,8 +823,6 @@ def test_firmware_families_says_what_exists_not_just_what_parses(api, paths):
     assert set(families) == {"klipper", "katapult", "cartographer", "knomi_serial"}
     assert families["cartographer"]["present"] is False
     assert families["cartographer"]["configurable"] is False
-    assert families["cartographer"]["builtin"] is False
-    assert families["klipper"]["builtin"] is True
 
 
 def test_firmware_families_carries_builder_and_bootloader(api):
@@ -721,10 +833,38 @@ def test_firmware_families_carries_builder_and_bootloader(api):
     assert families["katapult"]["bootloader"] is True
 
 
-def test_firmware_families_keeps_the_builtins_first(api):
-    """Same order the CLI has always listed and the artifacts payload carries."""
+def test_firmware_families_carries_cmake_args(paths):
+    """A cache variable is a fact about the family, not the type - it belongs
+    beside `builder` in this payload, same as `FirmwareFamily.to_json()`
+    already carries it (see test_firmware.py)."""
+    from mcu_updater.cfgdoc import CfgDocument
+
+    doc = CfgDocument("")
+    doc.set("firmware roadrunner", "source", "/nowhere")
+    doc.set("firmware roadrunner", "builder", "cmake")
+    doc.set("firmware roadrunner", "flashers", "bootsel")
+    doc.set(
+        "firmware roadrunner",
+        "cmake_args",
+        "-DROADRUNNER_FIRMWARE_VERSION=${git_describe}",
+    )
+    with open(paths.main_config, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(doc.render())
+
+    families = {
+        f["name"]: f for f in Api(paths).dispatch("fw.status")["firmware_families"]
+    }
+    assert families["roadrunner"]["cmake_args"] == (
+        "-DROADRUNNER_FIRMWARE_VERSION=${git_describe}"
+    )
+
+
+def test_firmware_families_are_listed_in_sorted_order(api):
+    """Nothing is built in any more, so there is no fixed "klipper, katapult
+    first" order to keep - the payload lists every declared family sorted by
+    name, same as `firmware.names()`."""
     names = [f["name"] for f in api.dispatch("fw.status")["firmware_families"]]
-    assert names[:2] == ["klipper", "katapult"]
+    assert names == sorted(names)
 
 
 def test_a_type_says_which_family_it_runs(api):
@@ -809,22 +949,27 @@ def test_a_type_can_name_the_firmware_it_runs_when_it_is_created(paths, live_reg
 
 
 def test_an_undeclared_family_is_refused_rather_than_quietly_accepted(paths, live_registry_text):
-    """An unknown family resolves to the conventional ~/<name>, so a typo would
-    produce a type that builds nothing and reports "never built" for good."""
+    """Without the agent's check, `Registry.add_type` would still refuse the
+    typo - as config_corrupt with `missing_section_message` and no known list.
+    The agent's refusal is `unknown_firmware` with `data.known`, naming them."""
     with open(paths.registry_file, "w", encoding="utf-8") as fh:
         fh.write(live_registry_text)
     api = Api(paths)
 
-    with pytest.raises(Exception) as exc:
+    with pytest.raises(RpcError) as exc:
         api.dispatch(
             "fw.type.add",
             {"name": "typo", "chipset": "stm32g431xx", "firmware": "cartographe"},
         )
 
-    assert "cartographe" in str(exc.value)
+    # The code and the list are what this check exists for: `add_type`'s own
+    # refusal would still stop the write, but as `config_corrupt` with neither.
+    assert exc.value.data["code"] == "unknown_firmware"
+    assert exc.value.data["data"]["firmware"] == "cartographe"
     # The known families are named, so the panel can offer them rather than
     # making the user guess what it wanted.
-    assert "klipper" in str(exc.value)
+    assert exc.value.data["data"]["known"] == list(firmware.names_of(firmware.load(paths)))
+    assert "cartographer" in exc.value.data["data"]["known"]
     assert "typo" not in api.registry().types
 
 
@@ -858,3 +1003,697 @@ def test_changing_nothing_warns_about_nothing(paths, live_registry_text):
 
     res = api.dispatch("fw.type.update", {"name": "bttebb36", "firmware": "klipper"})
     assert res["warnings"] == []
+
+
+def _cmake_config(paths, tmp_path, *, helper=False, serial=None):
+    """A configured cmake type with a real-enough tree behind it."""
+    from mcu_updater.cfgdoc import CfgDocument
+
+    source = tmp_path / "rp2040"
+    source.mkdir(parents=True, exist_ok=True)
+    (source / "CMakeLists.txt").write_text("project(rr)\n", encoding="utf-8")
+
+    doc = CfgDocument("")
+    doc.set("firmware roadrunner", "source", str(source))
+    doc.set("firmware roadrunner", "builder", "cmake")
+    doc.set("firmware roadrunner", "flashers", "bootsel")
+    if helper:
+        doc.set(
+            "firmware roadrunner",
+            "helper",
+            "roadrunner" if helper is True else helper,
+        )
+    doc.set("type roadrunner", "chipset", "rp2040")
+    doc.set("type roadrunner", "firmware", "roadrunner")
+    doc.set("type roadrunner", "cmake_target", "roadrunner_v1_i2c_rgb")
+    if serial:
+        doc.set("type roadrunner", "serials", [serial])
+    with open(paths.main_config, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(doc.render())
+    return source
+
+
+def test_a_cmake_type_gets_a_row_in_targets(paths, tmp_path):
+    """`fw.build_all` built Roadrunners the panel had never listed a row for -
+    a build turning up in builds[] for a target targets[] did not contain."""
+    _cmake_config(paths, tmp_path)
+
+    targets = {t["name"]: t for t in Api(paths).dispatch("fw.status")["targets"]}
+
+    assert "roadrunner" in targets
+    row = targets["roadrunner"]
+    assert row["provider"] == "cmake"
+    assert row["descriptor"] == "roadrunner_v1_i2c_rgb"
+    assert row["firmware"] == "roadrunner"
+    # No device half yet: fw.flash refuses a cmake name, so listing devices
+    # would advertise a write that cannot happen.
+    assert row["devices"] == []
+    assert row["needs_flash"] is None
+    assert row["devices_note"] == "No serial devices are tracked for this type yet."
+
+
+def test_a_helper_backed_cmake_type_projects_real_serial_devices(
+    paths, tmp_path, fake_root
+):
+    serial = "RR-5K3DNTFCR1B3C9D0RZMYA3Y720"
+    _cmake_config(paths, tmp_path, helper=True, serial=serial)
+    write_settings(paths, enable_flashing="true")
+    os.makedirs(paths.artifact_dir("roadrunner"), exist_ok=True)
+    with open(paths.uf2_file("roadrunner", "roadrunner"), "wb") as fh:
+        fh.write(b"UF2")
+    # Roadrunner's descriptor chipset is not the configured RP2040 family.
+    # Presence must therefore match the exact serial without a chipset filter.
+    make_device(fake_root / "bus", "Vylyne", "Roadrunner", serial)
+
+    row = _targets(Api(paths, runner=_runner()), "cmake")["roadrunner"]
+
+    assert "flash" in _ids(row["devices"][0])
+    assert row["needs_flash"] is None
+    assert len(row["devices"]) == 1
+    device = row["devices"][0]
+    assert device["id"] == serial
+    assert device["present"] is True
+    assert device["version"] is None
+    assert device["needs_flash"] is None
+    assert _action(device, "flash") == {
+        "id": "flash",
+        "label": "Flash",
+        "method": "fw.flash",
+        "params": {"name": "roadrunner", "serial": serial},
+        "blocked": None,
+    }
+    assert _action(device, "untrack")["method"] == "fw.serial.remove"
+
+
+def test_a_helper_backed_cmake_row_offers_the_bulk_flash_its_type_answers_to(
+    paths, tmp_path, fake_root
+):
+    """`fw.flash_all {name}` and `fw.update_all {name}` both took a cmake type
+    long before the row said so: two Roadrunners on the bus, and the only way
+    to flash them from the panel was one device at a time."""
+    serial = "RR-5K3DNTFCR1B3C9D0RZMYA3Y720"
+    _cmake_config(paths, tmp_path, helper=True, serial=serial)
+    write_settings(paths, enable_flashing="true")
+    os.makedirs(paths.artifact_dir("roadrunner"), exist_ok=True)
+    with open(paths.uf2_file("roadrunner", "roadrunner"), "wb") as fh:
+        fh.write(b"UF2")
+    make_device(fake_root / "bus", "Vylyne", "Roadrunner", serial)
+
+    row = _targets(Api(paths, runner=_runner()), "cmake")["roadrunner"]
+
+    assert _action(row, "flash") == {
+        "id": "flash",
+        "label": "Flash",
+        "method": "fw.flash_all",
+        "params": {"name": "roadrunner", "scope": "stale"},
+        "blocked": None,
+    }
+    assert _action(row, "update") == {
+        "id": "update",
+        "label": "Build and flash",
+        "method": "fw.update_all",
+        "params": {"name": "roadrunner", "scope": "stale"},
+        "blocked": None,
+    }
+
+
+def test_a_cmake_row_with_nothing_built_blocks_flash_but_not_build_and_flash(
+    paths, tmp_path, fake_root
+):
+    serial = "RR-5K3DNTFCR1B3C9D0RZMYA3Y720"
+    _cmake_config(paths, tmp_path, helper=True, serial=serial)
+    write_settings(paths, enable_flashing="true")
+    make_device(fake_root / "bus", "Vylyne", "Roadrunner", serial)
+
+    row = _targets(Api(paths, runner=_runner()), "cmake")["roadrunner"]
+
+    assert _action(row, "flash")["blocked"]["code"] == Api.BLOCKED_NO_ARTIFACT
+    assert _action(row, "update")["blocked"] is None
+
+
+def test_a_cmake_row_with_no_board_connected_blocks_both_bulk_actions(
+    paths, tmp_path
+):
+    serial = "RR-5K3DNTFCR1B3C9D0RZMYA3Y720"
+    _cmake_config(paths, tmp_path, helper=True, serial=serial)
+    write_settings(paths, enable_flashing="true")
+    os.makedirs(paths.artifact_dir("roadrunner"), exist_ok=True)
+    with open(paths.uf2_file("roadrunner", "roadrunner"), "wb") as fh:
+        fh.write(b"UF2")
+
+    row = _targets(Api(paths, runner=_runner()), "cmake")["roadrunner"]
+
+    assert _action(row, "flash")["blocked"]["code"] == Api.BLOCKED_NO_DEVICE
+    assert _action(row, "update")["blocked"]["code"] == Api.BLOCKED_NO_DEVICE
+
+
+def test_a_cmake_device_projects_its_reported_image_verdict_and_record(
+    paths, tmp_path, fake_root, monkeypatch
+):
+    """Dropping the CMake evidence wiring would restore the fixed unknown stub."""
+    serial = "RR-5K3DNTFCR1B3C9D0RZMYA3Y720"
+    _cmake_config(paths, tmp_path, helper=True, serial=serial)
+    os.makedirs(paths.artifact_dir("roadrunner"), exist_ok=True)
+    artifact = paths.uf2_file("roadrunner", "roadrunner")
+    with open(artifact, "wb") as fh:
+        fh.write(b"UF2")
+    stat = os.stat(artifact)
+    monkeypatch.setattr(
+        cmake,
+        "source_state",
+        lambda _source: cmake.SourceState(sha="deadbee"),
+    )
+    with open(paths.sidecar_file("roadrunner", "roadrunner"), "w", encoding="utf-8") as fh:
+        json.dump(
+            {
+                "provider": "cmake",
+                "sha": "deadbee",
+                "version": "v1.2.0-3-gdeadbee",
+                "dirty": False,
+                "bin_sha256": hashlib.sha256(b"UF2").hexdigest(),
+                "bin_size": stat.st_size,
+                "bin_mtime": stat.st_mtime,
+                "digest_algorithm": uf2.DIGEST_CRC32_ISO_HDLC,
+                "digest": 0xBBE38AA9,
+                "image_start": 0x10000000,
+                "image_length": 600,
+            },
+            fh,
+        )
+    make_device(fake_root / "bus", "Vylyne", "Roadrunner", serial)
+    FlashLog(paths).record(
+        serial,
+        mcu_type="roadrunner",
+        fw="roadrunner",
+        bin_sha256=hashlib.sha256(b"UF2").hexdigest(),
+        fw_sha="deadbee",
+        confidence="unique_bus_id",
+        version="v1.2.0-3-gdeadbee",
+    )
+    api = Api(paths, runner=_runner())
+    monkeypatch.setattr(
+        api,
+        "reported_images",
+        lambda _reporter, _serials: {
+            serial: device_info.DeviceInfo(
+                source=device_info.SOURCE_KLIPPER,
+                version="v1.2.0-3-gdeadbee",
+                digest_algorithm=uf2.DIGEST_CRC32_ISO_HDLC,
+                digest=0x12345678,
+                image_start=0x10000000,
+                image_length=600,
+            )
+        },
+    )
+
+    device = _targets(api, "cmake")["roadrunner"]["devices"][0]
+
+    assert device["version"] == "v1.2.0-3-gdeadbee"
+    assert device["confidence"] == "unique_bus_id"
+    assert device["needs_flash"] is True
+    assert device["reason"] == "unexpected_image"
+
+
+def test_a_stale_cmake_sidecar_cannot_prove_its_old_image_current(
+    paths, tmp_path, fake_root, monkeypatch
+):
+    """Our own sidecar naming bytes that are not on disk is positive evidence
+    somebody rebuilt behind us, even when the board still reports the image
+    that sidecar names. Unprovable either way - the label is the difference."""
+    serial = "RR-5K3DNTFCR1B3C9D0RZMYA3Y720"
+    _cmake_config(paths, tmp_path, helper=True, serial=serial)
+    os.makedirs(paths.artifact_dir("roadrunner"), exist_ok=True)
+    with open(paths.uf2_file("roadrunner", "roadrunner"), "wb") as fh:
+        fh.write(b"NEW UF2")
+    with open(paths.sidecar_file("roadrunner", "roadrunner"), "w", encoding="utf-8") as fh:
+        json.dump(
+            {
+                "provider": "cmake",
+                "sha": "deadbee",
+                "version": "v1.2.0-3-gdeadbee",
+                "dirty": False,
+                "bin_sha256": hashlib.sha256(b"OLD UF2").hexdigest(),
+                "bin_size": len(b"OLD UF2"),
+                "bin_mtime": 0,
+                "digest_algorithm": uf2.DIGEST_CRC32_ISO_HDLC,
+                "digest": 0xBBE38AA9,
+                "image_start": 0x10000000,
+                "image_length": 600,
+            },
+            fh,
+        )
+    make_device(fake_root / "bus", "Vylyne", "Roadrunner", serial)
+    api = Api(paths, runner=_runner())
+    monkeypatch.setattr(
+        api,
+        "reported_images",
+        lambda _reporter, _serials: {
+            serial: device_info.DeviceInfo(
+                source=device_info.SOURCE_KLIPPER,
+                version="v1.2.0-3-gdeadbee",
+                digest_algorithm=uf2.DIGEST_CRC32_ISO_HDLC,
+                digest=0xBBE38AA9,
+                image_start=0x10000000,
+                image_length=600,
+            )
+        },
+    )
+
+    payload = api.cmake_status()[0]
+    device = _targets(api, "cmake")["roadrunner"]["devices"][0]
+
+    assert payload["artifact_reason"] == "foreign_build"
+    assert device["reason"] == "unknown_version"
+    assert device["needs_flash"] is None
+
+
+def test_a_provenance_valid_cmake_sidecar_can_prove_a_matching_image_current(
+    paths, tmp_path, fake_root, monkeypatch
+):
+    serial = "RR-5K3DNTFCR1B3C9D0RZMYA3Y720"
+    _cmake_config(paths, tmp_path, helper=True, serial=serial)
+    os.makedirs(paths.artifact_dir("roadrunner"), exist_ok=True)
+    artifact = paths.uf2_file("roadrunner", "roadrunner")
+    with open(artifact, "wb") as fh:
+        fh.write(b"UF2")
+    stat = os.stat(artifact)
+    monkeypatch.setattr(
+        cmake,
+        "source_state",
+        lambda _source: cmake.SourceState(sha="deadbee"),
+    )
+    with open(paths.sidecar_file("roadrunner", "roadrunner"), "w", encoding="utf-8") as fh:
+        json.dump(
+            {
+                "provider": "cmake",
+                "sha": "deadbee",
+                "version": "v1.2.0-3-gdeadbee",
+                "dirty": False,
+                "bin_sha256": hashlib.sha256(b"UF2").hexdigest(),
+                "bin_size": stat.st_size,
+                "bin_mtime": stat.st_mtime,
+                "digest_algorithm": uf2.DIGEST_CRC32_ISO_HDLC,
+                "digest": 0xBBE38AA9,
+                "image_start": 0x10000000,
+                "image_length": 600,
+            },
+            fh,
+        )
+    make_device(fake_root / "bus", "Vylyne", "Roadrunner", serial)
+    api = Api(paths, runner=_runner())
+    monkeypatch.setattr(
+        api,
+        "reported_images",
+        lambda _reporter, _serials: {
+            serial: device_info.DeviceInfo(
+                source=device_info.SOURCE_KLIPPER,
+                version="v1.2.0-3-gdeadbee",
+                digest_algorithm=uf2.DIGEST_CRC32_ISO_HDLC,
+                digest=0xBBE38AA9,
+                image_start=0x10000000,
+                image_length=600,
+            )
+        },
+    )
+
+    device = _targets(api, "cmake")["roadrunner"]["devices"][0]
+
+    assert device["reason"] is None
+    assert device["needs_flash"] is False
+
+
+def test_an_offline_helper_backed_cmake_device_carries_the_normal_block(
+    paths, tmp_path
+):
+    serial = "RR-5K3DNTFCR1B3C9D0RZMYA3Y720"
+    _cmake_config(paths, tmp_path, helper=True, serial=serial)
+    write_settings(paths, enable_flashing="true")
+    os.makedirs(paths.artifact_dir("roadrunner"), exist_ok=True)
+    with open(paths.uf2_file("roadrunner", "roadrunner"), "wb") as fh:
+        fh.write(b"UF2")
+
+    device = _targets(Api(paths, runner=_runner()), "cmake")["roadrunner"][
+        "devices"
+    ][0]
+
+    assert device["present"] is False
+    assert _action(device, "flash")["blocked"]["code"] == Api.BLOCKED_NO_DEVICE
+
+
+def test_a_cmake_type_without_a_helper_does_not_advertise_device_actions(
+    paths, tmp_path
+):
+    serial = "RR-5K3DNTFCR1B3C9D0RZMYA3Y720"
+    _cmake_config(paths, tmp_path, serial=serial)
+    write_settings(paths, enable_flashing="true")
+
+    row = _targets(Api(paths, runner=_runner()), "cmake")["roadrunner"]
+
+    assert row["devices"][0]["actions"] == []
+    # Nor a row-level flash: with no helper there is nothing to ask a board
+    # into BOOTSEL, so the bulk call could only answer with a refusal per board.
+    assert _ids(row).isdisjoint({"flash", "update"})
+
+
+def test_a_misspelled_helper_blocks_its_own_row_not_the_whole_panel(
+    paths, tmp_path, fake_root
+):
+    """One typo used to blank every MCU in the panel.
+
+    `helpers.for_name` raises `ConfigCorruptError` for a name no registered
+    helper answers to, and dispatch turns any `UpdaterError` into an `RpcError`
+    for the entire `fw.status` call - so `helper: roadruner` cost the operator
+    every row, with nothing saying which type was at fault.
+    """
+    serial = "RR-5K3DNTFCR1B3C9D0RZMYA3Y720"
+    _cmake_config(paths, tmp_path, helper="roadruner", serial=serial)
+    write_settings(paths, enable_flashing="true")
+    os.makedirs(paths.artifact_dir("roadrunner"), exist_ok=True)
+    with open(paths.uf2_file("roadrunner", "roadrunner"), "wb") as fh:
+        fh.write(b"UF2")
+    make_device(fake_root / "bus", "Vylyne", "Roadrunner", serial)
+
+    row = _targets(Api(paths, runner=_runner()), "cmake")["roadrunner"]
+
+    device = row["devices"][0]
+    blocked = _action(device, "flash")["blocked"]
+    assert blocked["code"] == Api.BLOCKED_CONFIG_CORRUPT
+    assert "roadruner" in blocked["message"]
+    # The row's own flash actions say the same thing, rather than offering a
+    # bulk write every board in it would refuse.
+    for action_id in ("flash", "update"):
+        blocked = _action(row, action_id)["blocked"]
+        assert blocked["code"] == Api.BLOCKED_CONFIG_CORRUPT
+        assert "roadruner" in blocked["message"]
+    # And the row is still a row, with its build actions intact.
+    assert {a["id"] for a in row["actions"]} >= {"build", "clean"}
+
+
+def test_a_misspelled_helper_on_a_non_cmake_family_does_not_blank_the_panel(api):
+    """`type_status`/`platformio_status` call `device_info.reader_for(family)` with
+    no guard of their own - unlike `_cmake_target`, which resolves its
+    helper itself and reports the problem on its own row. Before
+    `reader_for` swallowed `ConfigCorruptError`, a typo in the cartographer
+    family's `helper:` propagated out of `dispatch`, which turns any
+    `UpdaterError` into one `RpcError` for the whole `fw.status` call - so
+    the typo cost every row of every provider, not only cartographer's own.
+    """
+    text = read_main_config(api.paths).replace("helper: cartographer", "helper: cartografer")
+    write_main_config(api.paths, text)
+
+    targets = api.dispatch("fw.status")["targets"]
+
+    # The whole panel came back, including the type whose family has the typo.
+    assert {t["name"] for t in targets} >= {"bttebb36", "cartographer"}
+
+
+def test_a_cmake_row_offers_build_and_clean(paths, tmp_path):
+    _cmake_config(paths, tmp_path)
+
+    api = Api(paths, runner=_runner())
+    targets = {t["name"]: t for t in api.dispatch("fw.status")["targets"]}
+    actions = {a["id"]: a for a in targets["roadrunner"]["actions"]}
+
+    assert actions["build"]["method"] == "fw.build"
+    assert actions["clean"]["method"] == "fw.clean"
+    assert actions["clean"]["params"] == {"name": "roadrunner"}
+
+
+def test_the_clean_action_is_offered_even_when_the_build_is_blocked(paths, tmp_path):
+    """A wedged build directory is one of the things that makes a tree
+    unbuildable, so gating the repair on the tree being healthy would withhold
+    it exactly when it is wanted."""
+    source = _cmake_config(paths, tmp_path)
+    (source / "CMakeLists.txt").unlink()
+
+    api = Api(paths, runner=_runner())
+    targets = {t["name"]: t for t in api.dispatch("fw.status")["targets"]}
+    actions = {a["id"]: a for a in targets["roadrunner"]["actions"]}
+
+    assert actions["build"]["blocked"] is not None
+    assert actions["clean"]["blocked"] is None
+
+
+def test_target_get_answers_for_a_cmake_type(paths, tmp_path):
+    """It used to raise "unknown provider: cmake" for a row fw.status listed."""
+    _cmake_config(paths, tmp_path)
+
+    got = Api(paths).dispatch(
+        "fw.target.get", {"name": "roadrunner", "provider": "cmake"}
+    )
+
+    assert got["provider"] == "cmake"
+    assert got["target"]["cmake_target"] == "roadrunner_v1_i2c_rgb"
+
+
+def test_cleaning_over_the_agent_removes_the_build_dir(paths, tmp_path):
+    source = _cmake_config(paths, tmp_path)
+    build = source / "build"
+    build.mkdir()
+    (build / "CMakeCache.txt").write_text("stale\n", encoding="utf-8")
+
+    got = Api(paths, runner=_runner()).dispatch("fw.clean", {"name": "roadrunner"})
+
+    assert got["removed"] == str(build)
+    assert not build.exists()
+
+
+def test_cleaning_a_kconfig_type_over_the_agent_is_a_no_op(paths, live_registry_text):
+    """`removed: null` rather than an error, so a panel can offer the action on
+    any row and get a true answer instead of having to know which build
+    systems keep a directory of their own."""
+    with open(paths.registry_file, "w", encoding="utf-8") as fh:
+        fh.write(live_registry_text)
+    got = Api(paths, runner=_runner()).dispatch("fw.clean", {"name": "mmb_can"})
+
+    assert got["removed"] is None
+    assert got["provider"] == "kconfig_make"
+
+
+def test_the_status_poll_never_shells_out_for_a_cmake_type(paths, tmp_path, monkeypatch):
+    """`declared_targets()` runs `cmake` with a 30s timeout. That is fine once
+    before a build; on the poll path a panel refreshing every few seconds would
+    hang for half a minute per cmake type on a host where cmake is missing or
+    the build directory is wedged."""
+    from mcu_updater.providers import cmake as cmake_mod
+
+    source = _cmake_config(paths, tmp_path)
+    # A configured tree, or `declared_targets()` returns before it ever runs
+    # anything and this test proves nothing.
+    (source / "build").mkdir()
+    (source / "build" / "CMakeCache.txt").write_text(
+        f"CMAKE_HOME_DIRECTORY:INTERNAL={source}\n", encoding="utf-8"
+    )
+
+    calls: list[list[str]] = []
+
+    def refuse(argv, cwd):
+        calls.append(list(argv))
+        raise AssertionError(f"fw.status shelled out: {argv}")
+
+    monkeypatch.setattr(cmake_mod, "_run", refuse)
+
+    Api(paths, runner=_runner()).dispatch("fw.status")
+
+    assert calls == []
+
+
+def test_a_cmake_row_takes_presence_from_the_inventory_it_is_given(paths, tmp_path):
+    _cmake_config(paths, tmp_path, serial="RR-INJECTED")
+    api = Api(paths, runner=_runner())
+    payload = next(p for p in api.cmake_status() if p["serials"] == ["RR-INJECTED"])
+    row = inventory.Row(
+        type=payload["name"],
+        builder="cmake",
+        kind=inventory.SERIAL,
+        id="RR-INJECTED",
+        present=True,
+        state="klipper",
+        path="/dev/injected",
+    )
+    target = api._cmake_target(
+        payload, set(api.available_methods()), firmware.load(paths), inventory.index([row])
+    )
+    device = target["devices"][0]
+    assert device["present"] is True
+    assert device["path"] == "/dev/injected"
+
+
+def test_type_status_takes_board_state_from_the_inventory(paths, fake_root, live_registry_text):
+    """The by-id chipset segment no longer hides a board (plan ruling 8)."""
+    with open(paths.registry_file, "w", encoding="utf-8") as fh:
+        fh.write(live_registry_text)
+    reg = Registry.load(paths)
+    name = next(n for n in reg.names() if reg.get(n).serials)
+    serial = reg.get(name).serials[0]
+    make_device(fake_root / "bus", "Klipper", "notthechipset", serial)
+
+    out = Api(paths).type_status(reg, name, versions={}, canbus={})
+    assert out["serials"][0]["state"] == "klipper"
+
+
+# --------------------------------------------------------------------------
+# targets[].first_install
+# --------------------------------------------------------------------------
+
+
+def test_every_row_says_how_a_bare_board_of_it_is_set_up(api):
+    targets = _targets(api)
+
+    assert targets["bttebb36"]["first_install"] == {
+        "fw": "katapult",
+        "flasher": "dfu_util",
+        "reason": None,
+    }
+    knomi = targets["knomi"]["first_install"]
+    assert knomi["flasher"] is None
+    assert "can scan for a new board" in knomi["reason"]
+    assert all("first_install" in t for t in targets.values())
+
+
+def test_a_cmake_rp2040_row_is_set_up_over_bootsel(paths, tmp_path):
+    _cmake_config(paths, tmp_path)
+    row = {t["name"]: t for t in Api(paths).dispatch("fw.status")["targets"]}["roadrunner"]
+    assert row["first_install"] == {"fw": "roadrunner", "flasher": "bootsel", "reason": None}
+
+
+def test_a_row_first_install_cannot_answer_still_renders(paths, tmp_path):
+    """No chipset: first_install has no answer, and fw.status must still
+    answer with the row and the reason - it is asked on every poll."""
+    _cmake_config(paths, tmp_path)
+    text = read_main_config(paths).replace("chipset: rp2040", "chipset:")
+    assert text != read_main_config(paths)
+    write_main_config(paths, text)
+
+    row = {t["name"]: t for t in Api(paths).dispatch("fw.status")["targets"]}["roadrunner"]
+    assert row["first_install"]["flasher"] is None
+    assert "chipset:" in row["first_install"]["reason"]
+
+
+def test_first_install_does_not_read_the_config_file_again(api, paths, monkeypatch):
+    """`targets()` answers every row's `first_install` from the one read that
+    also gives it the families - not from a second read of the same file on
+    every `fw.status` poll. With `rows` supplied, what is left is that one read
+    and `cmake_status`'s own; a third means the second read is back."""
+    reg = api.registry()
+    types = [api.type_status(reg, n, api.mcu_info()) for n in reg.names()]
+    platformio = api.platformio_status()
+    rows = inventory.index(api.inventory())
+    opened = _config_opens(paths, monkeypatch)
+
+    out = api.targets(reg, types, platformio, rows)
+
+    assert all("first_install" in row for row in out)
+    assert len(opened) <= 2, opened
+
+
+def test_an_unchanged_config_is_parsed_once_across_polls(api, paths, monkeypatch):
+    """The config snapshot's reason to exist: one `fw.status` poll opened the
+    config 46 times. Aged past the racy window, the first poll parses it once
+    and every later poll not at all."""
+    from mcu_updater import cfgsnapshot
+
+    then = time.time_ns() - 10 * cfgsnapshot.RACY_WINDOW_NS
+    os.utime(paths.main_config, ns=(then, then))
+    parsed: list[str] = []
+    real = cfgsnapshot._parse
+
+    def spy(fh):
+        if os.path.abspath(fh.name) == os.path.abspath(paths.main_config):
+            parsed.append(fh.name)
+        return real(fh)
+
+    monkeypatch.setattr(cfgsnapshot, "_parse", spy)
+
+    api.dispatch("fw.status")
+    assert len(parsed) == 1, parsed
+    api.dispatch("fw.status")
+    assert len(parsed) == 1, parsed
+
+
+# --------------------------------------------------------------------------
+# the uniform keys
+# --------------------------------------------------------------------------
+
+_SCALAR = (str, int, float, bool, type(None))
+
+
+def _assert_uniform(row):
+    from mcu_updater.extras import SEAMS
+
+    assert {"source", "extras", "devices_note"} <= set(row), row["name"]
+    assert "extra" not in row, row["name"]
+    # Set exactly when there is nothing to list, so a reader never has to
+    # decide which of the two to believe.
+    assert (row["devices_note"] is None) == bool(row["devices"]), row["name"]
+    for entry in row["extras"]:
+        assert set(entry) == {"seam", "name", "key", "label", "value"}
+        assert entry["seam"] in SEAMS
+        assert isinstance(entry["value"], _SCALAR)
+    if row["source"] is not None:
+        assert set(row["source"]) == {"path", "version", "dirty"}
+        assert row["source"]["version"]
+
+
+def test_every_kconfig_and_platformio_row_has_the_uniform_keys(api, paths, fake_root):
+    _add_display(paths, fake_root, api)
+
+    rows = _targets(api)
+
+    assert {r["provider"] for r in rows.values()} == {"kconfig_make", "platformio"}
+    for row in rows.values():
+        _assert_uniform(row)
+
+
+@pytest.mark.parametrize("serial", [None, "RR-5K3DNTFCR1B3C9D0RZMYA3Y720"])
+def test_every_cmake_row_has_the_uniform_keys(paths, tmp_path, serial):
+    _cmake_config(paths, tmp_path, helper=True, serial=serial)
+
+    _assert_uniform(_targets(Api(paths), "cmake")["roadrunner"])
+
+
+def test_an_mcu_rows_source_is_its_application_tree_not_its_bootloaders(
+    api, paths, monkeypatch
+):
+    """The tree whose commit a board is judged against. A katapult checkout
+    beside it would be a second, wrong answer."""
+    monkeypatch.setattr("mcu_updater.build.git_head", lambda d, **_: f"head:{d}")
+    families = firmware.load(paths)
+    klipper = firmware.resolve(paths, "klipper", families).source_dir(paths)
+
+    row = _targets(api)["bttebb36"]
+
+    assert row["source"] == {
+        "path": os.path.expanduser(klipper),
+        "version": f"head:{klipper}",
+        "dirty": None,
+    }
+
+
+def test_an_mcu_row_with_no_checkout_has_no_source(api, monkeypatch):
+    monkeypatch.setattr("mcu_updater.build.git_head", lambda d, **_: None)
+
+    assert _targets(api)["bttebb36"]["source"] is None
+
+
+def test_a_cmake_rows_source_is_what_its_staleness_check_compares(
+    paths, tmp_path, monkeypatch
+):
+    source = _cmake_config(paths, tmp_path)
+    monkeypatch.setattr(
+        cmake,
+        "source_state",
+        lambda _src: cmake.SourceState(sha="deadbee", dirty=True, version="v1.0-2-gdeadbee-dirty"),
+    )
+
+    row = _targets(Api(paths), "cmake")["roadrunner"]
+
+    assert row["source"] == {
+        "path": str(source),
+        "version": "v1.0-2-gdeadbee-dirty",
+        "dirty": True,
+    }
+
+
+def test_a_tracked_type_has_no_devices_note(api):
+    assert _targets(api)["bttebb36"]["devices_note"] is None

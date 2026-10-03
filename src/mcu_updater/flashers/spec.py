@@ -3,52 +3,60 @@
 The build half of this project had two parallel implementations; the flash half
 has three, and they were written at three different times. `flash_katapult`
 reboots a board into its bootloader and hands the binary to katapult's
-`flashtool.py`. `displays.upload` drives PlatformIO's esptool at a port it has
-to *rediscover* first, because every screen here is an indistinguishable CH340.
+`flashtool.py`. `providers.pio.upload` drives PlatformIO at a port whose device
+may have to be *rediscovered* first, because a KNOMI is an indistinguishable
+CH340.
 `flash_dfu_stm32` writes to a bare board holding BOOT0, before any bootloader
 exists to speak a protocol.
 
 Nothing named the thing all three are. So `_do_flash_all` grew a loop that knew
-about katapult, `display_flash` grew a second loop that knew about screens, and
-"Flash All" meant "flash all the boards" with no way to say otherwise.
+about katapult, the PlatformIO-only flash handler grew a second loop that knew
+about KNOMIs, and "Flash All" meant "flash all the boards" with no way to say
+otherwise.
 
 Three members carry the whole difference between them, and each replaces
 something that is currently hand-written inside one of those loops:
 
 **`needs_services_stopped`** - so a batch groups by *requirement* rather than by
-kind, and one stop covers boards and screens without either knowing the other
-exists.
+kind, and one stop covers boards and PlatformIO devices without either knowing
+the other exists.
 
 **`prepared()`** - the once-per-batch work that can only happen after Klipper is
-down: pausing a port watcher, and asking the screens which they are now that the
+down: pausing a port watcher, and asking the devices which they are now that the
 ports are free. Hoisting that into the batch loop is exactly the branching this
 removes.
 
 **`settled()`** - the wait after a write, which has to stay *per device*. A
 board re-enumerates over USB and starting Klipper before its node exists brings
 it up in an error state; the last board of a batch would otherwise race the
-service restart. A screen has nothing to wait for, so it is a no-op there rather
-than an ``if kind ==``.
+service restart. A PlatformIO device has nothing to wait for, so it is a no-op
+there rather than an ``if kind ==``.
 
-**Selection is not here.** Which devices exist, where they are and which of them
-want firmware is the Inventory axis, and that stays deferred on its own
-criterion - each remains a *write*, never a *selection*. CAN and serial
-Katapult targets share `Flashtool`, while the agent still selects the identity
-and supplies it in `FlashTarget.detail`. Half-inventing selection inside this
-seam is how a deferral quietly stops being one. The agent selects; a flasher
-writes.
+**Selection is a question each flasher answers.** `supports(device, helper)`
+says whether this flasher can write a device given its family's helper, and
+`target()` turns that device into the `FlashTarget` it will write.
+`flashers.registry.select` walks the family's `flashers:` list in order and
+takes the first yes. Which devices exist and which of them want firmware stays
+the inventory's business: the caller brings a `Device`, the family decides who
+writes it, and the flasher writes.
 """
 
 from __future__ import annotations
 
 import dataclasses
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, MutableMapping, Sequence
 from contextlib import AbstractContextManager
-from typing import Any, Protocol
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
+from ..artifacts import Artifact
+from ..errors import FlashError
 from ..paths import Paths
 from ..service import ServiceController
 from ..settings import Settings
+
+if TYPE_CHECKING:
+    from ..build import Reporter
+    from ..helpers.spec import Helper
 
 
 @dataclasses.dataclass(frozen=True)
@@ -56,8 +64,8 @@ class Bench:
     """The host a write happens on, as a flasher needs to see it.
 
     `controller` rather than a `ServiceController`, because the units are not
-    known until the batch is: a display family names its own port watcher, and a
-    batch spanning two families needs two. The factory keeps the *backend*
+    known until the batch is: a PlatformIO family names its own port watcher, and
+    a batch spanning two families needs two. The factory keeps the *backend*
     choice in one place - a dry run must stay a dry run for every unit, or a
     rehearsal stops a real service.
     """
@@ -68,27 +76,71 @@ class Bench:
     controller: Callable[[str | None], ServiceController]
 
 
+#: How a `Device` is addressed, which is most of what decides who can write it.
+#: A by-id serial.
+KIND_SERIAL = "serial"
+#: A CAN UUID. Its liveness is often unknown, and flashtool writes it anyway.
+KIND_CANBUS = "canbus_uuid"
+#: A device reached at a configured port; its identity, if its family has a way
+#: to know one, is confirmed at write time.
+KIND_PORT = "port"
+#: A board with no firmware of ours yet, in a ROM bootloader (DFU or BOOTSEL).
+KIND_BARE = "bare"
+
+
+@dataclasses.dataclass(frozen=True)
+class Device:
+    """One device a write is being chosen for.
+
+    What `Flasher.supports` reads and `Flasher.target` turns into a
+    `FlashTarget`. `type`, `id`, `chipset` and `state` are the facts selection
+    needs; `fw` is the family the device's `[type]` resolved to.
+
+    `detail` is the caller's addressing payload, carried onto the target for
+    the flasher that ends up owning it: the board dict for flashtool,
+    `{"env", "port", "device_id", "name", "section"}` for platformio. It never
+    names a file. Which file a
+    flasher writes is selection's answer (`FlashTarget.artifact`), read from
+    what the family's builder staged, so no caller can hand a flasher a file
+    of a kind it cannot write.
+    """
+
+    type: str
+    id: str
+    chipset: str
+    state: str
+    fw: str
+    kind: str = KIND_SERIAL
+    detail: Mapping[str, Any] = dataclasses.field(default_factory=dict)
+
+
 @dataclasses.dataclass(frozen=True)
 class FlashTarget:
     """One device to write, and who writes it.
 
     A key plus an envelope. `type` and `id` are the two facts every caller needs
     and are the same two slots `targets[].devices[]` already uses - the board's
-    `[mcu]` name and its serial, the display's `[display]` name and its
+    `[type]` name and its serial, a PlatformIO device's `[type]` name and its
     configured port.
 
     `detail` is the owning flasher's private payload and nothing else reads it.
-    That is deliberate: a chipset means nothing to esptool and a klippy section
-    means nothing to flashtool, and inventing a union of the two would be a
-    third description of a device to keep in step with the two that exist.
+    That is deliberate: a chipset means nothing to a PlatformIO upload and a
+    klippy section means nothing to flashtool, and inventing a union of the two
+    would be a third description of a device to keep in step with the two that
+    exist.
+    Mutable, deliberately: `write` and `settled` for the same target share one
+    `FlashTarget` instance, and `detail` is the one channel a flasher has to
+    carry something `write` only learns partway through (Bootsel's handoff
+    topology) to the `settled` call that follows it, without a batch-wide
+    cache keyed on anything.
     """
 
     #: Key into `flashers.FLASHERS`.
     flasher: str
-    #: The `[mcu ...]` or `[display ...]` section name.
+    #: The `[type ...]` section name.
     type: str
     #: What identifies the device: a serial for a board, a configured port for a
-    #: screen.
+    #: PlatformIO device.
     id: str
     #: Units to stop before this write, resolved by whoever selected the
     #: device - same shape as `flasher`, a uniform-slice fact rather than
@@ -96,12 +148,46 @@ class FlashTarget:
     #: `needs_services_stopped` is `False`: the list is then never consulted,
     #: so there is nothing to resolve.
     stop_services: tuple[str, ...] = ()
-    detail: Mapping[str, Any] = dataclasses.field(default_factory=dict)
+    detail: MutableMapping[str, Any] = dataclasses.field(default_factory=dict)
+    #: Overrides the flasher's `needs_services_stopped` for this one write when
+    #: set. `Bootsel` is why: a board already in BOOTSEL holds no port Klipper
+    #: could have open, while asking a running board to enter BOOTSEL goes over
+    #: exactly that port. One flasher, two answers, decided when the target is
+    #: built - the same way `stop_services` already is. Read it through
+    #: `flashers.registry.needs_services_stopped`, never directly.
+    needs_services_stopped: bool | None = None
+    #: The staged file this flasher writes, chosen by selection from what the
+    #: family's builder staged: the first of `Flasher.accepts` that exists.
+    #: `None` only for a target built by hand in a test. Read the path through
+    #: `artifact_path`, which names the problem instead of an AttributeError.
+    artifact: Artifact | None = None
 
     def to_json(self) -> dict[str, Any]:
         """The uniform slice. `detail` never goes on the wire - it holds live
         objects, and it is one flasher's business."""
         return {"type": self.type, "id": self.id, "flasher": self.flasher}
+
+
+@dataclasses.dataclass(frozen=True)
+class FlashRecord:
+    """What a completed write is worth remembering, in `FlashLog`'s vocabulary.
+
+    A flasher describes; `write_all` files. The three decisions a record used
+    to carry with it at four separate call sites - whether this run was a
+    rehearsal, where the ledger lives, and whether a lost write is worth
+    failing a good flash over - are the batch's, and there is one of each now.
+
+    `key` is what the entry is filed under and is *not* always `target.id`: a
+    PlatformIO device's id is a port, which is not durable, so it files under
+    `build.hardware_id_key` of its hardware id instead.
+    """
+
+    key: str
+    mcu_type: str
+    fw: str
+    bin_sha256: str | None
+    fw_sha: str | None
+    version: str | None = None
 
 
 class Flasher(Protocol):
@@ -115,9 +201,7 @@ class Flasher(Protocol):
     #: `stm32*` part exposes the same protocol as any other, so this is prefixes
     #: rather than the two hundred exact names Klipper supports.
     #:
-    #: Together with `states`, this is the whole answer `flashers.registry.
-    #: select_for` matches against - there is no separate lookup table, so a
-    #: route registering a new flasher is a route selection already knows about.
+    #: An input to `supports`, through `chipset_matches`.
     chipsets: tuple[str, ...]
     #: Bus/device states (`devices.STATE_*`) this flasher answers to. A board
     #: already running Klipper and one sitting in Katapult are both states
@@ -130,7 +214,7 @@ class Flasher(Protocol):
     #: Scoped to the write and to any state transition the flasher performs
     #: itself - not to the device's lifetime. flashtool needs it not because the
     #: write does but because *getting there* does: the reboot-into-katapult
-    #: request goes over the serial port Klipper is holding. esptool needs it
+    #: request goes over the serial port Klipper is holding. platformio needs it
     #: because the klippy module holds the port for the write itself.
     #:
     #: `False` means `FlashTarget.stop_services` is never consulted at all -
@@ -143,6 +227,33 @@ class Flasher(Protocol):
     #: transition goes over a port Klipper may be holding and this flips to
     #: True.
     needs_services_stopped: bool
+    #: Artifact kinds (`artifacts.KIND_*`) this flasher can write, most
+    #: preferred first. Selection hands `target()` the first of these the
+    #: family's builder staged, and passes over a flasher with none of them.
+    accepts: tuple[str, ...]
+
+    def supports(self, device: Device, helper: Helper | None) -> bool:
+        """Can this flasher write `device`, given its family's helper?
+
+        Pure: no bus access, no config reads. The family's list decides the
+        order these are asked in, so this answers only "could I", never
+        "should I".
+        """
+        ...
+
+    def target(
+        self,
+        paths: Paths,
+        device: Device,
+        helper: Helper | None,
+        artifact: Artifact,
+        *,
+        stop_services: tuple[str, ...],
+    ) -> FlashTarget:
+        """`device` as the target this flasher writes, carrying `artifact`.
+        Only called after `supports` said yes and `artifact` is of a kind in
+        `accepts`."""
+        ...
 
     def prepared(
         self, bench: Bench, targets: list[FlashTarget], ctx: Any
@@ -153,9 +264,9 @@ class Flasher(Protocol):
         anything requiring free ports belongs here and nowhere else.
 
         Yields a session, which is opaque to the batch and handed back to this
-        same flasher's `write`. Untyped on purpose: what esptool needs to carry
-        across a batch is a map of which screen answered on which port, and
-        what flashtool needs is nothing at all.
+        same flasher's `write`. Untyped on purpose: what platformio needs to
+        carry across a batch is each type's answer to "which device is on which
+        port", and what flashtool needs is nothing at all.
         """
         ...
 
@@ -168,7 +279,28 @@ class Flasher(Protocol):
         board, so the batch checks between targets and never inside one.
 
         Returns whatever is worth recording beside the uniform result - the chip
-        esptool reported, a board's serial under the name it has always had.
+        a PlatformIO upload reported, a board's serial under the name it has
+        always had.
+
+        A `"confidence"` key is special: `write_all` takes it off the result
+        and passes it to the ledger, so it never reaches the wire. How a board
+        was identified is known inside the write and nowhere else - the batch
+        cannot re-derive it afterwards, because the ports are no longer free.
+        """
+        ...
+
+    def record(self, bench: Bench, target: FlashTarget) -> FlashRecord | None:
+        """What was just written to this target, for the ledger.
+
+        Called only after a successful `write`, and never on a dry run - the
+        batch owns both of those conditions. `None` means there is nothing
+        durable to file this under: a bare board with no tracked serial, a
+        PlatformIO device that would not say which one it is.
+
+        Reads what the family's builder has staged *now*, through
+        `staged_record`, rather than anything captured at selection: the
+        bytes a write sent are the bytes at the staged path when it ran, and
+        the op lock keeps a build from landing between the write and this.
         """
         ...
 
@@ -182,4 +314,159 @@ class Flasher(Protocol):
         ...
 
 
-__all__ = ["Bench", "FlashTarget", "Flasher"]
+@dataclasses.dataclass(frozen=True)
+class TrackedBoard:
+    """A board the type list already tracks - what a scan names its finds by."""
+
+    type: str
+    serial: str
+    chipset: str
+
+
+@dataclasses.dataclass(frozen=True)
+class CandidateScan:
+    """What a flasher can see that it could write as a new board.
+
+    `reason` is the flasher's own vocabulary (`none`, `ambiguous`, ...) and
+    `extra` carries the flasher-specific keys its wire result always had
+    (`vid_pid`, `mounts`, `output`), merged in unchanged by `to_json`.
+    Every device dict carries `port` - `usb.UsbDevice.name`, or None when the
+    flasher cannot say - which is what the post-write wait is keyed on.
+
+    `message` explains a scan that is not `ready`. On a ready one it is a
+    warning - something the scan could not settle but that does not stop the
+    write - and every caller surfaces it.
+
+    `target` is the index of the device a ready write reaches, for a flasher
+    that can say so among several (BOOTSEL: the one whose volume is mounted).
+    Left None, only a sole device is that device.
+    """
+
+    ready: bool
+    reason: str | None
+    message: str | None
+    devices: list[dict[str, Any]]
+    extra: dict[str, Any] = dataclasses.field(default_factory=dict)
+    target: int | None = None
+
+    @property
+    def chosen(self) -> dict[str, Any] | None:
+        """The device a write would go to, when `ready` and the scan can say."""
+        if not self.ready:
+            return None
+        if self.target is not None:
+            return self.devices[self.target]
+        return self.devices[0] if len(self.devices) == 1 else None
+
+    @property
+    def port(self) -> str | None:
+        """The port a write would go to: `chosen`'s, when there is one."""
+        port = (self.chosen or {}).get("port")
+        return str(port) if port else None
+
+    def to_json(self) -> dict[str, Any]:
+        return {
+            "devices": self.devices,
+            "count": len(self.devices),
+            "ready": self.ready,
+            "reason": self.reason,
+            "message": self.message,
+            **self.extra,
+        }
+
+
+@runtime_checkable
+class CandidateScanner(Protocol):
+    """A flasher that can find a bare board it could write.
+
+    Optional, and reached through `flashers.candidate_scanner`. Implementing
+    it is what makes a flasher able to set up a new board - `first_install`
+    asks nothing else. `candidate_prefix` spells the refusal code a not-ready
+    scan becomes (`<prefix>_<reason>`), so no caller names a flasher.
+    """
+
+    name: str
+    candidate_prefix: str
+
+    def scan_candidates(
+        self, paths: Paths, *, tracked: Sequence[TrackedBoard], reporter: Reporter
+    ) -> CandidateScan: ...
+
+
+def name_tracked(
+    devices: list[dict[str, Any]], owners: dict[str, list[tuple[str, str]]], field: str
+) -> None:
+    """Set each device's `tracked_by`/`known_serial` from `owners`, keyed on
+    `device[field]`.
+
+    A device matching nothing is what a genuinely new board looks like, not an
+    error. Two owners for one key names neither: an unlabelled board is a
+    small annoyance, and a board labelled as the wrong one is how you flash
+    the toolhead you meant to leave alone.
+    """
+    for device in devices:
+        device["known_serial"] = None
+        device["tracked_by"] = None
+        matches = owners.get(str(device.get(field) or ""), [])
+        if len(matches) == 1:
+            device["tracked_by"], device["known_serial"] = matches[0]
+
+
+def chipset_matches(flasher: Flasher, chipset: str) -> bool:
+    """Does `chipset` start with one of the flasher's chipset prefixes?"""
+    return any(chipset.startswith(prefix) for prefix in flasher.chipsets)
+
+
+def artifact_path(target: FlashTarget) -> str:
+    """The file `target` writes, or a named refusal when it has none."""
+    if target.artifact is None:
+        raise FlashError(
+            f"no staged image was chosen for {target.type} {target.id} - it was "
+            f"not selected through its family.",
+            type=target.type,
+            id=target.id,
+        )
+    return target.artifact.path
+
+
+def staged_record(bench: Bench, target: FlashTarget, *, fw: str, kind: str) -> FlashRecord:
+    """The ledger entry for `target`, from what `fw`'s builder has staged.
+
+    `kind` is the kind that was written, so a board written from the `.uf2`
+    files the `.uf2`'s hash. A hash is only ever the one the build recorded
+    *and* the bytes still match (see `providers.staged`), so a file replaced
+    behind its sidecar files no hash rather than a wrong one.
+    """
+    from .. import firmware, providers
+
+    family = firmware.resolve(bench.paths, fw)
+    staged = providers.staged(bench.paths, target.type, family)
+    artifact = staged.first_of((kind,))
+    return FlashRecord(
+        key=target.id,
+        mcu_type=target.type,
+        fw=family.name,
+        bin_sha256=artifact.sha256 if artifact is not None else None,
+        fw_sha=staged.fw_sha,
+        version=staged.version,
+    )
+
+
+__all__ = [
+    "KIND_BARE",
+    "KIND_CANBUS",
+    "KIND_PORT",
+    "KIND_SERIAL",
+    "Bench",
+    "CandidateScan",
+    "CandidateScanner",
+    "Device",
+    "FlashRecord",
+    "FlashTarget",
+    "Flasher",
+    "TrackedBoard",
+    "artifact_path",
+    "chipset_matches",
+    "name_tracked",
+    "staged_record",
+]

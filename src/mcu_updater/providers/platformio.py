@@ -23,7 +23,10 @@ from __future__ import annotations
 import os
 import threading
 
+from .. import firmware
+from ..artifacts import Staged
 from ..build import Reporter
+from ..paths import Paths
 from ..states import ArtifactStatus
 from . import pio as pio_mod
 from .spec import BuildTarget, Install
@@ -60,8 +63,8 @@ class PlatformIO:
 
     def targets(self, install: Install) -> list[BuildTarget]:
         return [
-            BuildTarget(self.name, name, display.firmware)
-            for name, display in install.displays.items()
+            BuildTarget(self.name, name, entry.firmware)
+            for name, entry in install.platformio.items()
         ]
 
     def blocked(self, install: Install, target: BuildTarget) -> str | None:
@@ -69,19 +72,19 @@ class PlatformIO:
 
         The counterpart of "has this been through menuconfig": the one thing
         somebody has to do outside this tool before a build is possible at all.
-        A display with no source tree is skipped rather than failed for the same
-        reason an unconfigured MCU type is - there is nothing the batch could do
-        about it, and it should not take the fleet down with it.
+        A PlatformIO type with no source tree is skipped rather than failed for the
+        same reason an unconfigured MCU type is - there is nothing the batch could
+        do about it, and it should not take the fleet down with it.
         """
-        display = install.displays.get(target.name)
-        if display is None:
-            return f"no display type '{target.name}' is configured."
-        return source_problem(display)
+        entry = install.platformio.get(target.name)
+        if entry is None:
+            return f"no platformio type '{target.name}' is configured."
+        return source_problem(entry)
 
     def artifact_status(self, install: Install, target: BuildTarget) -> ArtifactStatus:
-        display = install.displays[target.name]
+        entry = install.platformio[target.name]
         return pio_mod.artifact_status(
-            install.paths, display, pio_mod.source_state(display.source)
+            install.paths, entry, pio_mod.source_state(entry.source)
         )
 
     def build(
@@ -95,10 +98,18 @@ class PlatformIO:
         pio_mod.build(
             install.paths,
             install.settings,
-            install.displays[target.name],
+            install.platformio[target.name],
             reporter=reporter,
             cancel=cancel,
         )
 
     def describe(self, target: BuildTarget) -> str:
         return target.name
+
+    def clean(self, install: Install, target: BuildTarget) -> str | None:
+        # PlatformIO owns its own build directory under `.pio/` and manages
+        # its staleness itself. Same answer as kconfig, same reason.
+        return None
+
+    def staged(self, paths: Paths, type_name: str, family: firmware.FirmwareFamily) -> Staged:
+        return pio_mod.staged(paths, type_name, family)

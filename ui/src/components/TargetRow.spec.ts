@@ -1,8 +1,9 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { mount } from "@vue/test-utils";
 import TargetRow from "./TargetRow.vue";
 import UiIcon from "./UiIcon.vue";
 import type { Action, Target } from "../api/targets";
+import * as store from "../store/agent";
 import { state } from "../store/agent";
 import type { Job } from "../api/jobs";
 
@@ -31,16 +32,19 @@ const mcuTarget: Target = {
       actions: [],
     },
   ],
+  source: null,
+  extras: [],
+  devices_note: null,
 };
 
-const displayTarget: Target = {
+const platformioTarget: Target = {
   provider: "platformio",
   name: "knomi",
   descriptor: "esp32dev",
-  firmware: null,
+  firmware: "knomi_serial",
   artifact: {
     state: "stale",
-    tone: "attention",
+    tone: "warn",
     label: "Needs a build",
     reason: "source_changed",
   },
@@ -48,13 +52,17 @@ const displayTarget: Target = {
   needs_flash: null,
   actions: [],
   devices: [],
-  extra: {
-    module_version: "0.5.0",
-    source_version: "d34db33",
-    source_dirty: false,
-    klipper_section: "knomi_serial",
-    reachable: true,
-  },
+  source: { path: "/home/pi/knomi_serial", version: "d34db33", dirty: false },
+  extras: [
+    {
+      seam: "helper",
+      name: "knomi_serial",
+      key: "module_version",
+      label: "Module",
+      value: "0.5.0",
+    },
+  ],
+  devices_note: "Nothing is declared under [fake_dev ...].",
 };
 
 const flashAction: Action = {
@@ -104,7 +112,7 @@ describe("TargetRow", () => {
     const target: Target = { ...mcuTarget, actions: [flashAction] };
     const wrapper = mount(TargetRow, { props: { target } });
     // Icon actions carry their reason as a title (a tooltip on hover, same
-    // as FirmwareUpdaterPanelTarget.vue's actionHint), not as visible text.
+    // as the target row's action hint), not as visible text.
     const flashButton = wrapper
       .findAll("button")
       .find((b) => b.attributes("title") === "build is already running");
@@ -124,28 +132,74 @@ describe("TargetRow", () => {
     expect(deviceIcon.find("svg").attributes("data-tone")).toBe("ok");
   });
 
-  it("shows the display-specific hint when there are no devices", () => {
-    const wrapper = mount(TargetRow, { props: { target: displayTarget } });
-    expect(wrapper.text()).toContain("knomi_serial");
-    expect(wrapper.text()).not.toContain("No serial devices");
+  it("says what the agent says when a type lists no devices", () => {
+    const wrapper = mount(TargetRow, { props: { target: platformioTarget } });
+    expect(wrapper.text()).toContain(
+      "Nothing is declared under [fake_dev ...].",
+    );
   });
 
-  it("says Klipper was unreachable rather than implying a confirmed empty list", () => {
-    // docs/agent-api.md's fw.device.list section: "no displays configured"
-    // and "we could not ask Klipper" must not look the same.
+  it("does not invent its own empty-row wording", () => {
+    // The sentence is the agent's, so a new builder or helper never needs a
+    // UI release to explain an empty row.
     const target: Target = {
-      ...displayTarget,
-      extra: { ...displayTarget.extra!, reachable: false },
+      ...mcuTarget,
+      devices: [],
+      devices_note: "Something only the agent knows.",
     };
     const wrapper = mount(TargetRow, { props: { target } });
-    expect(wrapper.text()).toContain("Could not reach Klipper");
-    expect(wrapper.text()).not.toContain("No screens found");
+    expect(wrapper.text()).toContain("Something only the agent knows.");
+    expect(wrapper.text()).not.toContain("No serial devices are tracked");
   });
 
-  it("shows the MCU-generic hint when there are no devices and no extra", () => {
-    const target: Target = { ...mcuTarget, devices: [] };
+  it("renders every extra as label and value, without knowing any of them", () => {
+    const target: Target = {
+      ...mcuTarget,
+      extras: [
+        ...platformioTarget.extras,
+        {
+          seam: "builder",
+          name: "cmake",
+          key: "anything",
+          label: "Board rev",
+          value: 3,
+        },
+      ],
+    };
     const wrapper = mount(TargetRow, { props: { target } });
-    expect(wrapper.text()).toContain("No serial devices are tracked");
+    expect(wrapper.text()).toContain("Module 0.5.0");
+    expect(wrapper.text()).toContain("Board rev 3");
+    expect(wrapper.findAll("[data-extra]")).toHaveLength(2);
+  });
+
+  it("leaves out an extra with no value rather than showing a bare label", () => {
+    const target: Target = {
+      ...mcuTarget,
+      extras: [
+        {
+          seam: "helper",
+          name: "any",
+          key: "module_version",
+          label: "Module",
+          value: null,
+        },
+        {
+          seam: "builder",
+          name: "cmake",
+          key: "anything",
+          label: "Board rev",
+          value: 3,
+        },
+      ],
+    };
+    const wrapper = mount(TargetRow, { props: { target } });
+    expect(wrapper.findAll("[data-extra]")).toHaveLength(1);
+    expect(wrapper.text()).not.toContain("Module");
+  });
+
+  it("renders a row with no extras without an empty caption", () => {
+    const wrapper = mount(TargetRow, { props: { target: mcuTarget } });
+    expect(wrapper.findAll("[data-extra]")).toHaveLength(0);
   });
 
   it("offers a scope override on a flash whose stale preview is empty", async () => {
@@ -161,15 +215,58 @@ describe("TargetRow", () => {
 
     let confirmButton = wrapper
       .findAll("button")
-      .find((b) => b.text() === "Confirm");
+      .find((b) => b.text() === "Flash bttebb36");
     expect(confirmButton?.attributes("disabled")).toBeDefined();
 
     await wrapper.get('input[type="checkbox"]').setValue(true);
     expect(wrapper.text()).toContain("mcu EBBT0");
     confirmButton = wrapper
       .findAll("button")
-      .find((b) => b.text() === "Confirm");
+      .find((b) => b.text() === "Flash bttebb36");
     expect(confirmButton?.attributes("disabled")).toBeUndefined();
+  });
+
+  it("confirms the overflow menu's build-and-flash before running it", async () => {
+    const spy = vi.spyOn(store, "invokeAction").mockResolvedValue(true);
+    const updateAction: Action = {
+      id: "update",
+      label: "Build and flash",
+      method: "fw.update_all",
+      params: { name: "bttebb36", scope: "stale" },
+      blocked: null,
+    };
+    const target: Target = {
+      ...mcuTarget,
+      actions: [flashAction, updateAction],
+    };
+    // Attached, so the menu's document-level click-outside handler is live:
+    // the confirm renders inside the menu, and a handler that treated a click
+    // in it as outside would unmount it before Confirm could land.
+    const wrapper = mount(TargetRow, {
+      props: { target },
+      attachTo: document.body,
+    });
+    await wrapper.get('[aria-label="More actions"]').trigger("click");
+    await wrapper
+      .findAll("button")
+      .find((b) => b.text() === "Build and flash")!
+      .trigger("click");
+
+    expect(spy).not.toHaveBeenCalled();
+    expect(wrapper.text()).toContain("Build and flash bttebb36");
+    // The menu's instance gets the switch too, not only the header's.
+    const toggle = wrapper.get('input[type="checkbox"]');
+    await toggle.trigger("mousedown");
+    await toggle.setValue(true);
+    const primary = wrapper
+      .findAll("button")
+      .find((b) => b.text() === "Build and flash bttebb36")!;
+    await primary.trigger("mousedown");
+    await primary.trigger("click");
+
+    expect(spy).toHaveBeenCalledWith(updateAction, { scope: "all" });
+    wrapper.unmount();
+    spy.mockRestore();
   });
 
   it("toggles the detail panel without a connected client", async () => {

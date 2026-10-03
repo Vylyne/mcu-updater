@@ -16,6 +16,7 @@ import os
 import pytest
 
 from mcu_updater import flashers
+from mcu_updater.artifacts import KIND_BIN, Artifact
 from mcu_updater.discovery.canbus import ARPHRD_CAN
 from mcu_updater.errors import (
     DeviceNotFoundError,
@@ -25,6 +26,8 @@ from mcu_updater.errors import (
 )
 from mcu_updater.flashers import flash as flash_mod
 from mcu_updater.flashers.flash import flash_katapult_can
+
+from .conftest import seed_base_firmwares
 
 UUID = "bcb5346fc731"
 
@@ -53,6 +56,7 @@ def _with_interfaces(paths, fake_root, names):
 def ready(paths, settings, fake_root):
     """A staged firmware binary, an installed flashtool.py, and a real write
     (not dry-run) - the interface trial loop only matters once dry_run is off."""
+    seed_base_firmwares(paths)
     settings.dry_run = False
     (fake_root / "katapult" / "scripts").mkdir(parents=True, exist_ok=True)
     (fake_root / "katapult" / "scripts" / "flashtool.py").write_text("", encoding="utf-8")
@@ -87,12 +91,14 @@ def _script_run_streamed(monkeypatch, script: dict):
 
 
 def test_missing_flashtool_raises(paths, settings, fake_root):
+    seed_base_firmwares(paths)
     _stage_bin(paths)
     with pytest.raises(ToolMissingError):
         flash_katapult_can(paths, settings, "board", UUID)
 
 
 def test_missing_firmware_binary_raises(paths, settings, fake_root):
+    seed_base_firmwares(paths)
     (fake_root / "katapult" / "scripts").mkdir(parents=True)
     (fake_root / "katapult" / "scripts" / "flashtool.py").write_text("", encoding="utf-8")
     with pytest.raises(FlashError):
@@ -179,6 +185,31 @@ def test_native_node_probe_mismatch_refuses_before_writing(paths, ready, fake_ro
     # The probe ran; the write never did.
     assert len(calls) == 1
     assert "-s" in calls[0]
+
+
+def test_a_native_node_refusal_says_the_probe_left_it_in_katapult(
+    paths, ready, fake_root, monkeypatch
+):
+    """The path bug the USB side had is CAN-proof - `-i <iface> -u <uuid>`
+    addresses the board either way - but the *reboot* is not: `-s` shares
+    `-f`'s handshake and has no finish step, so refusing here leaves a native
+    node sitting in katapult. The message says so, same as the USB refusal."""
+    ready_paths = _with_interfaces(paths, fake_root, ["can0"])
+    _write_sidecar(paths, "board", "klipper", app_address=0x08004000)
+    _script_run_streamed(
+        monkeypatch,
+        {
+            ("can0", "probe"): (
+                0,
+                [f"Requesting CAN bootloader for {UUID}...", "Application Start: 0x8000"],
+            )
+        },
+    )
+
+    with pytest.raises(OffsetMismatchError) as exc:
+        flash_katapult_can(ready_paths, ready, "board", UUID)
+
+    assert "katapult now" in str(exc.value)
 
 
 def test_native_node_agreeing_addresses_proceed_to_write(paths, ready, fake_root, monkeypatch):
@@ -318,16 +349,11 @@ def test_a_known_native_node_never_writes_after_every_probe_fails(
 # --------------------------------------------------------------------------
 
 
-def test_a_real_flash_records_canbus_uuid_confidence(paths, ready, fake_root, monkeypatch):
-    from mcu_updater.build import FlashLog
-
+def test_a_real_can_flash_reports_canbus_uuid_confidence(paths, ready, fake_root, monkeypatch):
     ready_paths = _with_interfaces(paths, fake_root, ["can0"])
     _script_run_streamed(monkeypatch, {("can0", "write"): (0, [])})
 
-    flash_katapult_can(ready_paths, ready, "board", UUID)
-
-    record = FlashLog(paths).all()[UUID]
-    assert record["confidence"] == "canbus_uuid"
+    assert flash_katapult_can(ready_paths, ready, "board", UUID) == "canbus_uuid"
 
 
 # --------------------------------------------------------------------------
@@ -352,12 +378,36 @@ def test_flashtool_writes_a_can_target_and_returns_its_uuid(paths, ready, fake_r
 
     bench = flashers.Bench(paths=ready_paths, settings=ready, controller=lambda name=None: None)
     target = flashers.flashtool.target_for(
-        {"type": "board", "uuid": UUID, "chipset": "stm32g431xx", "fw": "klipper"}
+        {"type": "board", "uuid": UUID, "chipset": "stm32g431xx", "fw": "klipper"},
+        artifact=Artifact(KIND_BIN, paths.bin_file("board", "klipper")),
     )
     result = flashers.Flashtool().write(
         bench, None, target, flashers.PlainContext(lambda *a: None)
     )
-    assert result == {"uuid": UUID}
+    assert result == {"uuid": UUID, "confidence": "canbus_uuid"}
+
+
+def test_flashtool_writes_the_artifact_it_was_handed_not_the_default_path(
+    paths, ready, fake_root, monkeypatch, tmp_path
+):
+    """M-1: nothing else pinned this. `write` must read the path off the
+    target's own artifact, not resolve `paths.bin_file(type, fw)` itself -
+    the whole point of routing through `artifact_path(target)`."""
+    ready_paths = _with_interfaces(paths, fake_root, ["can0"])
+    calls = _script_run_streamed(monkeypatch, {("can0", "write"): (0, [])})
+
+    other = tmp_path / "elsewhere.bin"
+    other.write_bytes(b"\0" * 16)
+    assert str(other) != paths.bin_file("board", "klipper")
+
+    bench = flashers.Bench(paths=ready_paths, settings=ready, controller=lambda name=None: None)
+    target = flashers.flashtool.target_for(
+        {"type": "board", "uuid": UUID, "chipset": "stm32g431xx", "fw": "klipper"},
+        artifact=Artifact(KIND_BIN, str(other)),
+    )
+    flashers.Flashtool().write(bench, None, target, flashers.PlainContext(lambda *a: None))
+
+    assert calls[0][calls[0].index("-f") + 1] == str(other)
 
 
 def test_flashtool_settles_a_can_target_as_a_harmless_no_op(paths, settings):

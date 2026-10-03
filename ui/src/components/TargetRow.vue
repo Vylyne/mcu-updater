@@ -1,13 +1,13 @@
 <script setup lang="ts">
-// One targets[] row, rendered the same way for an MCU or a display - see
+// One targets[] row, rendered the same way whatever builds it - see
 // docs/decisions.md and docs/agent-api.md's "targets" section for why the
 // two are one shape. Actions ride on the same row's own actions[] /
 // devices[].actions[] - ActionButton.vue is the {id, label, method, params,
 // blocked, choices?} renderer, this file just supplies preview devices and
 // the transient busy gate a payload never carries.
 //
-// Layout mirrors FirmwareUpdaterPanelTarget.vue in the Mainsail fork: a
-// header line (name, descriptor, module version, device count, spacer,
+// Layout for a firmware target row: a
+// header line (name, descriptor, device count, extras, spacer,
 // artifact chip, profile chip, actions, overflow menu), then one sub-row per
 // device (state icon, identity, spacer, version, verdict, device actions,
 // detail expander), then a trailing divider.
@@ -21,7 +21,7 @@ import {
   state,
 } from "../store/agent";
 import type { Target, TargetDevice } from "../api/targets";
-import { devicesToFlash } from "../api/bulk";
+import { bulkBuildTargets, devicesToFlash } from "../api/bulk";
 import ActionButton from "./ActionButton.vue";
 import UiIcon from "./UiIcon.vue";
 import UiDialog from "./UiDialog.vue";
@@ -55,22 +55,12 @@ const detailText = computed(() =>
   detail.value ? JSON.stringify(detail.value, null, 2) : "",
 );
 
-// A display always carries `extra.klipper_section`; an MCU row carries no
-// `extra` at all. Reading that presence, not `target.provider`, is what
-// keeps this row generic - the provider branch the fork has here is exactly
-// the one this file exists to not repeat.
-//
-// `extra.reachable` gets its own branch first: docs/agent-api.md's
-// fw.device.list section is explicit that "no displays configured" and "we
-// could not ask Klipper" must not look the same, because the module that
-// would otherwise report a screen missing is exactly the thing an
-// unreachable Klipper takes down too.
-const noDevicesHint = computed(() => {
-  const extra = props.target.extra;
-  if (!extra) return "No serial devices are tracked for this type yet.";
-  if (!extra.reachable) return "Could not reach Klipper to check for screens.";
-  return `No screens found under [${extra.klipper_section} ...].`;
-});
+// The wire lets an extra's value be null - "the seam knows this fact exists
+// and cannot say it right now". A label with nothing after it says less than
+// no caption at all.
+const shownExtras = computed(() =>
+  props.target.extras.filter((e) => e.value !== null),
+);
 
 const deviceSummary = computed(() => {
   const present = props.target.devices.filter((d) => d.present).length;
@@ -106,6 +96,19 @@ function allPreviewFor(): TargetDevice[] {
   return devicesToFlash(props.target, "all");
 }
 
+/** What a build-and-flash on this row would build first, for its confirm -
+ * the same selection BulkDialog's "Will build:" list makes, over one row. */
+function buildPreviewFor(
+  action: Target["actions"][number],
+  scope: "stale" | "all",
+): { name: string; label: string }[] | undefined {
+  if (action.method !== "fw.update_all") return undefined;
+  return bulkBuildTargets([props.target], scope).map((t) => ({
+    name: t.name,
+    label: t.artifact.label,
+  }));
+}
+
 /** Only the type-level fw.flash_all action carries a `scope` param -
  * a device-level fw.flash never does (see _device_actions in status.py) -
  * so this is the same signal previewFor already reads above. */
@@ -115,7 +118,7 @@ function offersOverride(action: Target["actions"][number]): boolean {
 
 /** The ones that belong in the header itself; everything else goes in the
  * overflow menu - same split, and same reasoning, as
- * FirmwareUpdaterPanelTarget.HEADER_ACTIONS: a board with no profile yet
+ * Header actions: a board with no profile yet
  * shows a blocked Build right beside the thing that unblocks it, rather than
  * burying it a click away. */
 const HEADER_ACTION_ORDER = ["build", "profile", "flash"];
@@ -152,10 +155,10 @@ const reseedDefault = computed(
       ?.reseed_on_build !== false,
 );
 
-/** The profile chip, or nothing - nothing for a display (no answers to
- * seed) and nothing for an unmanaged type (every type predating profiles).
+/** The profile chip, or nothing - nothing for a PlatformIO type (no answers
+ * to seed) and nothing for an unmanaged type (every type predating profiles).
  * A moved seed names the profile rather than saying "profile updated",
- * mirroring FirmwareUpdaterPanelTarget.vue's profileChip getter. */
+ * mirroring the target row's profile chip getter. */
 const profileChip = computed(() => {
   const profile = props.target.profile;
   if (!profile || !profile.managed) return null;
@@ -178,8 +181,8 @@ const profileHint = computed(() => {
 });
 
 // MCU-type management (fw.type.add/.update/.remove) applies to a
-// kconfig_make target only - a display has no registry entry of this kind
-// to edit. Kept here rather than a provider branch on the row's rendering:
+// kconfig_make target only - a PlatformIO type has no registry entry of this
+// kind to edit. Kept here rather than a provider branch on the row's rendering:
 // this is the one place docs/standalone-ui.md records as "still unscheduled"
 // before this phase, and it stays additive - two extra menu rows, not a
 // change to how the row itself renders.
@@ -266,13 +269,15 @@ async function toggle(): Promise<void> {
       >
         {{ target.descriptor }}
       </span>
+      <span class="text-caption text--disabled">{{ deviceSummary }}</span>
       <span
-        v-if="target.extra?.module_version"
+        v-for="extra in shownExtras"
+        :key="`${extra.seam}:${extra.name}:${extra.key}`"
+        data-extra
         class="text-caption text--disabled"
       >
-        {{ target.extra.module_version }}
+        {{ extra.label }} {{ extra.value }}
       </span>
-      <span class="text-caption text--disabled">{{ deviceSummary }}</span>
 
       <span class="spacer" />
 
@@ -331,6 +336,12 @@ async function toggle(): Promise<void> {
             :disabled="busyReason !== null"
             :disabled-reason="busyReason"
             :preview-devices="previewFor(action)"
+            :offers-override="offersOverride(action)"
+            :all-preview-devices="
+              offersOverride(action) ? allPreviewFor() : undefined
+            "
+            :preview-builds="buildPreviewFor(action, 'stale')"
+            :all-preview-builds="buildPreviewFor(action, 'all')"
           />
           <template v-if="canManageType">
             <hr v-if="menuActions.length" class="divider" />
@@ -387,7 +398,7 @@ async function toggle(): Promise<void> {
       </li>
     </ul>
     <p v-else class="muted">
-      {{ noDevicesHint }}
+      {{ target.devices_note }}
     </p>
 
     <button type="button" class="detail-toggle text-caption" @click="toggle">

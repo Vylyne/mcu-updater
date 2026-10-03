@@ -5,7 +5,7 @@ each one has been proposed again at least once — so the reasoning lives here
 rather than in a commit message nobody re-reads.
 
 This file is for *standing* decisions. Rules that a change can violate silently
-live in [CLAUDE.md](../CLAUDE.md)'s ground-rules table instead; the split is
+live in [AGENTS.md](../AGENTS.md)'s ground rules instead; the split is
 that a ground rule is checked before every commit, and a decision here is
 consulted before starting work that would undo it.
 
@@ -56,14 +56,14 @@ suppressed, because it must not read as out of date.
 Cartographer's fork patches Klipper's `buildcommands.py` to stamp
 `CONFIG_VERSION` (a literal from the `.config`) instead of `build_version()`'s
 git describe. The describe is still computed, just discarded — so `mcu_version`
-carries no commit at all, and `_running_sha` (`agent/methods/status.py`)
-correctly returns `None`.
+carries no commit at all, and `CartographerHelper.running_sha()`
+(`helpers/cartographer.py`) correctly returns `None`.
 
 Since `read_config_version()` returns the string verbatim, appending the fork's
-HEAD before `make` — `CARTOGRAPHER 6.2.0-gd34db33` — would work: `_FW_SHA_RE`
-would match it and the whole existing sha-comparison path would run unchanged.
-Rejected anyway, because the cost lands on things that matter more than the
-convenience:
+HEAD before `make` — `CARTOGRAPHER 6.2.0-gd34db33` — would work:
+`device_info.KLIPPER`'s sha regex would match it and the whole existing
+sha-comparison path would run unchanged. Rejected anyway, because the cost
+lands on things that matter more than the convenience:
 
 - A synthesized value in the saved `.config` differs from the vendor seed, so
   `profiles.status` reports `customised` permanently — destroying the one
@@ -137,8 +137,70 @@ collector supplies the reusable data path; the old split is no longer a reason
 to defer topology or CAN support.
 
 The standalone UI runs `fw.status` and the explicit `fw.canbus.scan` together
-on refresh. Their results are stored independently, and a generation guard
-prevents an older overlapping CAN scan from replacing a newer result.
+on refresh. Their results are stored independently, but the refresh itself is
+single-flight: initial load, reconnect, event reactions and the toolbar all
+share the same in-progress pair rather than starting overlapping scans. The
+agent independently refuses a second concurrent CAN scan, protecting it from
+multiple tabs and non-UI clients, and each flashtool query has a ten-second
+deadline so an abandoned browser request cannot strand a subprocess.
+
+### New firmware-specific code goes behind the helper seam
+
+`helpers/` exists because of Cartographer. Its one oddity - a hand-maintained
+`CONFIG_VERSION` literal with no commit in it - was squeezed into the build and
+status paths as special cases, and it is still there, spread across files that
+have no other reason to know that vendor's name. The seam was added so the next
+such oddity would have somewhere to go that is not "inside whichever generic
+path noticed it first".
+
+So, going forward:
+
+- **Providers are generic.** A provider answers questions about a *build
+  system* - PlatformIO, CMake, kconfig+make. Nothing in `providers/` should
+  name a vendor or a board.
+- **Flashers are generic.** A flasher answers questions about a *transport* -
+  flashtool over USB/CAN, a PlatformIO upload to a port (`platformio`), DFU,
+  BOOTSEL mass-storage. `dfu` and `bootsel` are the shape to copy: they
+  describe a mechanism, not a product.
+- **Discovery may be firmware-specific, and legitimately is.** How a board
+  announces itself is a property of its firmware, so `discovery/roadrunner.py`
+  and `discovery/knomi_serial/` are in the right place. `byid` is generic.
+  `canbus`, as built, is Klipper/Katapult-specific - that is a known
+  inaccuracy of the current shape, not a licence to add more.
+- **Everything else vendor-shaped goes in `helpers/`.** A one-off protocol, a
+  provisioning step, a version string only one firmware stamps: a helper, named
+  in config on the `[firmware ...]` family, reached through `helpers/spec.py`.
+
+This is a rule about *new* code. Migrating what already exists - Cartographer's
+version handling in particular - needs its own design and plan; see the
+`## TODO` entry in [README.md](../README.md). The seam answers a narrower
+question today than discovery and version reporting need, so it likely has to
+widen before anything moves.
+
+### Auto-provisioning is opt in, watcher-inline, and deployment-gated
+
+Spec section 10, Ruling 14. The klippy extra provisions on `klippy:connect`,
+which reaches only boards already configured in Klipper; the host's watcher is
+the component that sees a board plugged in and configured nowhere.
+
+`auto_provision: true` is per-family opt-in because a `[firmware]` section
+should not write to hardware nobody mentioned. It is not sufficient authority
+on its own: the deployment-wide hardware-write predicate that controls the
+advertised maintenance methods also gates this unattended irreversible write,
+and defaults closed at the provisioning function's boundary. Late adoption is
+not gated because it is a registry write completing an operation the operator
+already requested.
+
+Provisioning runs inline on the watcher thread, with no job: it is a sub-second
+helper call, and a job entry would appear in the panel for something nobody
+asked for. A held operation lock is the one failure worth retrying because the
+unchanged bus would not otherwise prompt another attempt. Deployment-policy
+refusals and non-busy updater errors are not retries. A handler retry does not
+re-emit the `bus` event because its payload is identical.
+
+Within one watcher sweep, a serial reaches the provisioning write path at most
+once, even if multiple opted-in families claim it. A failed or busy attempt is
+also spent for that sweep; the next poll is the retry boundary.
 
 ### Do not give `Confidence` a fourth degree of certainty
 
@@ -148,6 +210,69 @@ Three tones and a tri-state `safe_to_write`, built the way `states.py` is. A
 `safe_to_write` is never `True` on absent evidence, for the reason
 `DeviceStatus.needs_flash` already enforces: absence of evidence is not
 evidence.
+
+### Do not derive `tone` from `needs_flash`
+
+`tone` is `ok` | `warn` | `problem`: how bad the state is for the printer. It
+was `needs_flash` coloured in (`ok` | `unknown` | `attention`) until
+2026-10-02, which made "wants a flash" the loudest thing on the panel and an
+offline toolhead a quiet grey. The two are separate questions now, with a
+table each in `states.py` - `_NEEDS_FLASH` drives every button and the bulk
+flash filter and did not change; `_DEVICE_TONE` only picks a colour.
+
+Two things here look wrong and are not:
+
+- **A bench with nothing plugged in is a wall of red.** `offline` is a
+  `problem` on purpose. A board the printer cannot reach is the worst thing
+  this panel can report, and on a test host that is the validation.
+- **`unexpected_image` is amber, though it wants a flash.** A digest mismatch
+  says the bytes differ, not how far: a rebuild nobody flashed and a different
+  firmware altogether are the same measurement, and telling them apart is not
+  this tool's job - see the next entry.
+
+### Do not detect a board running the wrong firmware family
+
+A type declared `klipper` whose board answers as Cartographer is not this
+tool's to catch. Whether the firmware on a board is one the printer can drive
+is Klipper's question, and the firmware's own klippy extras'; this tool
+compares the versions, commits and digests of the family it was told to expect
+and reports what it finds. Such a board shows as `source_changed` or
+`unexpected_image`, amber, and that stands.
+
+So: no family comparison in `verdict.decide`, no red reason for it, and no
+per-family "this version string is not mine" hook. It was written up as a
+NEEDS DESIGN item for a day (2026-10-02) and withdrawn.
+
+### Config keys borrow the upstream tool's own vocabulary
+
+When a key names a concept some external tool already owns, spell it that
+tool's way rather than inventing a house word for it. `cmake_target:` names
+what `add_executable()` creates and what `make <target>` / `cmake --build
+--target <name>` address; an earlier draft called it `variant:`, which was
+wrong twice — it is not CMake's word, and CMake Tools already uses "variant"
+for the *build type* (Debug, Release, MinSizeRel), so a user would reasonably
+have put `Release` in it. `platformio_env:` follows the same rule: `env` is
+what `platformio.ini` calls the section, and the `platformio_` prefix says
+which module reads it.
+
+The user reading the key has the upstream tool's documentation open, not ours.
+A house synonym means they have to learn a mapping, and a synonym that
+*collides* with a real upstream term means they learn the wrong one first.
+
+Namespace it when the bare word is already loaded here. `cmake_target:` rather
+than `target:`, because `BuildTarget`, `FlashTarget` and the `targets[]` wire
+shape are three different things a bare `target:` would sit ambiguously
+beside. The prefix also says which vocabulary the word belongs to, which is
+the point.
+
+A key read by one seam module is spelled `<seam module>_<param>`:
+`platformio_env`, `cmake_target`, `kconfig_make_profile`,
+`knomi_serial_device_map`. The param keeps the upstream word; the prefix says
+which builder or helper reads it. Keys every type has (`firmware`, `chipset`,
+`serials`, `canbus_uuids`, `stop_services`) and keys every family can have
+(`source`, `builder`, `helper`, `flashers`, `submodules`) stay unprefixed, and
+per-family kconfig keys keep their family prefix (`klipper_extra_args`). An
+old spelling is refused with the new one named, never read under both.
 
 ### Do not spell the stop-list key `managed_services:`
 
@@ -227,37 +352,455 @@ this.
 
 ## Conclusions that close an avenue
 
-### `vue-tsc` cannot type-check the Mainsail fork, at any version
+### Historical Mainsail-fork decisions
 
-Investigated 2026-08-21. The `.vue` `<script>` blocks in `Vylyne/mainsail` are
-unchecked by `npx vite build` — `vite.config.ts`'s `checker({ typescript })`
-covers bare `.ts` only — and that gap hid a real bug through every gate. Adding
-`vueTsc: true`, or a `vue-tsc` CI job, does not close it:
+The former fork and its release channel are retired. This historical decision
+is superseded; the supported client is the standalone UI documented in
+`docs/mainsail-fork.md`.
 
-- **Newest `vue-tsc` (3.3.10**, the only major compatible with this tree's
-  `typescript@6.0.3`) emits **6307** `error TS2339`, every one shaped
-  `Property '<x>' does not exist on type 'Vue3Instance<...>'`.
-  `@vue/language-core` infers a component's public type from a
-  `defineComponent(...)`-shaped export, which a `@Component class X extends Vue`
-  decorator export never produces. A real regression would be error #6308 among
-  6307 identical false positives.
-- **`vueCompilerOptions.target` is not the knob.** Tested explicitly at both
-  `2.7` and `3`, identical error count both times, with the override confirmed
-  read via `@vue/language-core`'s `CompilerOptionsResolver`. That setting
-  changes template-directive nuances, not whether class-component properties are
-  visible on `this`.
-- **Old `vue-tsc` (1.8.27**, contemporaneous with `vue-class-component`'s peak
-  usage) crashes against `typescript@6.0.3`:
-  `Search string not found: "/supportedTSExtensions = .*(?=;)/"`. It patches
-  TypeScript's internals by regex against compiled `tsc` source, and the pattern
-  is gone.
+### One walk over `[type]` sections
 
-The two failure modes bracket the whole option space: new `vue-tsc` runs but is
-structurally blind to this tree's component pattern; old `vue-tsc` understood
-that pattern but cannot load against this TypeScript version.
+`typelist.py` is the only code that decides which builder owns a `[type]`
+section. `Registry.load`, `pio.load` and `cmake.load` are views that filter its
+list by builder, until their callers read the list directly. Three private
+walks were how a Roadrunner type existed for the agent and not for the CLI. A
+new reader of type sections reads the list; it does not open the file.
 
-**So the gap stays open, and it is a real one** — treat `npx vite build` as
-proving nothing about `.vue` script blocks, and review those by hand. The
-upstream half (raising the class-component pattern with
-`mainsail-crew/mainsail`) is in `docs/backlog.md`. Do not spend the fork's
-edited-file rebase budget on a fallback without asking.
+`Registry`'s `declared_*` methods (`declared_type_names`,
+`find_declared_types_for_serial`, and friends) still call `sections.read`
+directly - deliberately, since they answer "what's in the file, whoever builds
+it", the one place ownership does not apply. That walk names sections; it
+never decides who builds them.
+
+`typelist.read` never raises and `typelist.validate` is strict. Anything that
+answers a question about one name (`providers.selection`) uses the lenient
+half, so one malformed section cannot break another type.
+
+### Presence comes from the inventory
+
+`inventory.py` joins the declared identities from the one type list with one
+injected sweep. A status path, the CLI or anything else that asks "is this
+board plugged in" reads a row; it does not scan and match on its own. The rule
+is exact serial, exactly one sighting. The by-id chipset segment is not a
+filter: it is the firmware's choice of name, not the board's identity.
+
+### A family declares its flashers and its helper
+
+`flashers:` is required on every `[firmware ...]` section. Neither it nor
+`helper:` is inferred: an inferred flasher list is the chipset-and-state guess
+the one-pipeline design removes. The known names are static tuples in
+`firmware.py` held equal to the registries by tests, so `typelist` never
+imports hardware code.
+
+The two keys are refused in different places, on purpose. A missing or
+misspelt `flashers:` is refused when the config loads, which `fw.status`
+reaches too - so a printer upgrading past this shows a config error naming the
+line to edit instead of a panel, and the hand edit is the migration. A
+misspelt `helper:` raises from `helpers.for_name`, where a capability is
+actually asked for. That difference is the asymmetry it looks like: `flashers:`
+is required of every section, so a config missing it cannot flash anything,
+while `helper:` is optional and a typo in it should cost one family rather
+than every row in the panel.
+
+A `[type]` whose `firmware:` names no declared family is refused at load too,
+for every builder (`typelist.validate`), and `fw.status` answers
+`config_corrupt` naming the fix. Confirmed as intended on 2026-10-01: it is not
+to be softened into one degraded row.
+
+### A family's list picks the flasher
+
+`flashers.select` walks the family's `flashers:` list and takes the first
+flasher whose `supports(device, helper)` says yes. There is no global
+chipset-and-state table: the former global selector made an RP2040 reach exactly
+one flasher whatever it ran. `helper_bootsel` is folded into `bootsel` because a flasher
+describes a mechanism, and "ask the firmware to enter BOOTSEL first" is a step
+of that mechanism the helper supplies, not a second product-named flasher.
+`needs_services_stopped` can therefore differ per target, and a target's own
+value wins over its flasher's. Do not turn it back into a class-only
+attribute: a board already in BOOTSEL would then stop Klipper for nothing, or a
+helper-requested one would write under a running Klipper.
+
+### Do not infer builder/flasher compatibility from the staged filename
+
+The family's `flashers:` list is configuration-authoritative. An artifact's
+extension can provide positive evidence for a mechanism - a staged UF2 is what
+BOOTSEL copies - but it cannot prove that another mechanism is incompatible.
+A `.bin` does not reveal whether it contains an application, a Katapult image,
+or something with a vendor-specific layout, and a filename is not an image
+contract.
+
+Do not add a builder-to-flasher compatibility matrix or reject a family from
+extensions alone. The configured flasher and its runtime requirements remain
+the authority; an administrator who pairs them is asserting knowledge the
+updater cannot derive from arbitrary firmware bytes. Add a validation rule only
+when a builder or image format supplies actual machine-readable evidence, not
+because today's known trees happen to use different suffixes.
+
+Resolved without a matrix (2026-09-24): a builder now reports what it staged
+*by kind* - `bin`, `uf2`, `pio_env` - and each flasher declares the kinds it
+`accepts`. That is the machine-readable evidence the paragraph above asks for:
+the builder says which file it made, not a filename guessed at by selection.
+Selection hands a flasher the first staged file of a kind it takes, and a
+family whose builder staged nothing its flashers take is refused with the
+missing kind. It still does not judge what is *inside* a file: a `.bin`
+flashtool is handed is trusted to be an application, exactly as before. Do
+not grow `accepts` into a content check.
+
+### A device nothing can write is a failure, not an abort
+
+Spec §8 step 1. `flashers.select_each` turns a `NoFlasherError` into a
+`failures[]` entry with `"flasher": null`, and `write_all` reports it with the
+writes that failed. A single-device RPC raises instead, before a job exists.
+First install asks the type's install family the same question - its
+bootloader family, or its application family when it has none - and keeps its
+`unsupported_chipset` refusal, naming that family's `flashers:` line. The
+serial `fw.flash` job collects its write's exception (`write_all(errors=...)`)
+and re-raises it, because the job's error code was already on the wire.
+
+### The batch loop is the only writer of the flash ledger
+
+Ruling 12. `Flasher.record` describes what was written; `flashers.batch.
+write_all` files it, right after the write and before `settled`, the service
+restart, or a later device's failure. Four writers each carried their own
+dry-run guard and their own idea of which sidecar schema to read, and the
+CMake one filed after the batch returned — so a failed service restart lost
+the record of a copy that had already landed.
+
+A flasher still reads its own builder's sidecar, because the two schemas in
+this tree spell the tree commit differently (`fw_sha`, `sha`) and the flasher
+that wrote the image is the one side that knows which it is reading. What a
+flasher no longer decides is whether the run was a rehearsal, where the ledger
+lives, or whether losing it is worth failing a good write over.
+
+### Device info is read through the family's helper
+
+What a board is running - its commit, whether it was dirty, its image digest -
+is read by the handler its family's helper supplies (`helpers.DeviceInfoReader`,
+`helpers.ImageReporter`), and by `device_info.KLIPPER` for a family with none.
+There used to be a sha regex in `status.py` for boards and another in `pio.py`
+for screens, and a Roadrunner's describe went through whichever the caller
+reached for. One reader per firmware means one answer per board. Cartographer
+has a helper for exactly one reason: to say its version has no sha, rather
+than leave that to a regex that happens not to match. A Roadrunner reports the
+same device info on usbserial, i2c and uart; a field firmware does not report
+is absence, never mismatch, whatever the transport.
+
+### A digest match is the end of the question
+
+`verdict.decide` checks the board's reported image digest before it looks at
+any version string, and the check is decisive in both directions. A mismatch is
+`unexpected_image`; a match is up to date, and neither a version that reads as
+older, nor a dirty tree, nor this tool's own flash record can overturn it.
+
+The tempting extra caution - "the digest matches, but our record says we last
+wrote a different binary, so call it `artifact_changed`" - is wrong, and
+`artifact_changed`'s own definition says why. It exists because a *commit*
+match is a weak proxy: same commit, edited makefile patch, different bytes. The
+record is what makes that case visible. A digest match is not a proxy for
+anything; it is the running bytes measured against the bytes on disk, and the
+sidecar computes `bin_sha256` and the digest fields from the same file in the
+same write, so they cannot disagree about which image they describe. Letting
+the weaker witness overrule the stronger one would report "newer build
+available" for a board provably holding the newest build - and send someone to
+reflash it mid-print.
+
+That only holds while both sides digest the same span. A board digests its
+linked image; a UF2 pads its last block past the end of it and does not say
+where the image stops. So the sidecar takes the image's length from the raw
+`.bin` the same build staged, once that `.bin` is shown to be the container's
+own leading bytes (`uf2._linked_length`), and digests the container over that
+length. Recorded over the padded extent instead, a Roadrunner running exactly
+the staged build read as `unexpected_image` (2026-10-01: a 30004-byte image
+against a 30208-byte record). Without a `.bin` the padded extent is still what
+gets recorded - right for an image that ends on a block boundary, and a false
+`unexpected_image` for one that does not. Do not "fix" that by rounding the
+board's length up, or by stripping trailing zeros off the container: an image
+can end in zeros.
+
+The same reasoning puts the digest ahead of `device_dirty`, which is
+`needs_flash: null`, "cannot be shown current". The digest shows it current.
+The unrecoverable-tree worry behind `device_dirty` is real, but it is a fact
+about the artifact and is already reported there as `built_dirty`; carrying it
+on the device axis as well double-counts one doubt as two.
+
+### Trackability owns identity durability, not registry uniqueness
+
+Spec section 11, Ruling 13. A firmware helper's optional `Trackable` capability
+judges one serial string: whether it is a durable identity and, if not, the
+operator-facing reason and a machine-readable remedy. It performs no I/O and
+receives no paths or registry. A helper without the capability makes every
+serial trackable.
+
+`tracking.add_serial` understands the `provision` remedy: when the same helper
+also offers `Provisioner` and caller policy permits the irreversible write, it
+provisions under the op lock and tracks what came back. A missing provisioner,
+withheld write, or unknown remedy is a refusal carrying the helper's reason; an
+unknown token is never silently treated as trackable. Registry uniqueness stays
+in `tracking.py` because "already tracked under another type" is one shared fact
+about the registry, not firmware knowledge. Helpers are not passed `Paths` or
+taught to read the registry to answer trackability.
+
+The refusal remains `UnprovisionedSerialError`, with wire code
+`serial_unprovisioned` since the version-5 rename (was
+`roadrunner_unprovisioned`; see "Codes renamed in version 5" in
+`docs/agent-api.md`). Only the message now comes from the helper. A held lock
+still refuses rather than waits: the
+write is irreversible, and a caller queued behind a flash would perform it at
+a moment nobody chose.
+
+### The provisioning gate lives on the branch, not the method
+
+`fw.serial.add` performs the same irreversible hardware write
+`fw.identity.provision` does whenever the type it is asked to track under
+has an unprovisioned board and a family that can provision it - reached from
+ordinary tracking rather than the dedicated maintenance call. Left alone,
+that write would sit in the ungated `METHODS` table: a read-only agent, or
+one with `enable_flashing` off, already cannot reach `fw.identity.provision`
+for exactly this reason, and would otherwise reach the identical write through
+`fw.serial.add` regardless.
+
+`fw.serial.add` is not moved into `HARDWARE_METHODS`, and is not itself
+withheld: every other outcome it can produce - tracking a serial that needs no
+provisioning, refusing one already tracked elsewhere - has nothing to do with
+hardware and must keep working under any deployment. Instead
+`tracking.add_serial` takes a `may_provision` keyword the caller answers for
+itself, and the agent passes `_hardware_writes_allowed()` - the same
+expression `available_methods` already uses to decide whether
+`HARDWARE_METHODS` is advertised, shared rather than re-derived so the two
+cannot drift. Withheld, the write refuses with the same generic code,
+`serial_unprovisioned`, exactly as a family with no provisioner would -
+not a new code for what is, from the caller's side, the same "I can't do
+that here" answer. The CLI passes no such gate and provisions unconditionally
+by default: `enable_flashing` is documented as an agent-only safety gate the
+CLI has always ignored (`Settings.enable_flashing`), and grepping `cli.py`
+confirms it never consults it anywhere today.
+
+### First install is gated by flashers
+
+Setting up a bare board is a question for the install family's `flashers:`
+list, not for the builder or a chipset prefix: `flashers.first_install` walks
+that list and takes the first `CandidateScanner` whose `supports()` takes a
+bare device of the type's `chipset`. A new mechanism (a bare-device scanner
+for the `platformio` flasher, say) is one capability on its flasher module,
+with no change to the agent, the wire, or the wizard.
+
+Identification lives in the scanner, not in a caller: it is handed the type
+list's tracked boards, because deriving a ROM id from a running serial is
+flasher knowledge, and no generic path should carry it.
+
+The wait after the write is keyed on the USB port the scan saw, never on the
+by-id chipset segment - the same rule "Presence comes from the inventory"
+(above) gives for tracking. It falls back to any new board, with a warning,
+only when the scan cannot trace a port.
+
+Staged vs just-built is two right answers for two callers, not one to
+reconcile: `fw.add_mcu.start` writes a build made earlier, so it reads
+`providers.staged`. The CLI's `add-mcu` builds first and writes the files it
+just made, which is why `flash_initial_bootloader` rejects `providers.staged`.
+Neither is to be "fixed" to match the other.
+
+The wizard's DFU pick-a-serial is the one sanctioned flasher-specific branch in
+a caller. It exists because only DFU can target one of several boards sitting
+in front of it at once; nothing else needs to ask a human to disambiguate.
+
+### One selection per identity, every builder
+
+A fleet flash's selection is one list per kind of identity a type can declare -
+a by-id `serials:` entry, a `canbus_uuids:` entry, a cmake type's `serials:` -
+and the callers concatenate them. Adding a builder adds a selection beside the
+others; it never adds a branch to a caller, and it never adds a refusal saying
+this operation does not serve that builder. `type_not_bulk_flashable` and the
+CLI's `-t`-only CMake refusal were both honest while the selection did not
+exist, and both became the only remaining way to leave a board behind once it
+did.
+
+The verdict behind each selection is the verdict the panel shows.
+`_cmake_devices` is the one judgement both read, which makes "the panel says
+this board is behind" and "the fleet flash writes this board" the same claim.
+
+Whether a host has any types at all is `providers.Install.empty`, not a list of
+section maps at the call site. The list was `registry` and `platformio`, and it
+told a Roadrunner-only host it had nothing configured.
+
+### Identity is a helper capability, not a discovery source
+
+`discovery`'s sources — `byid`, `dfu`, `bootsel`, the knomi listen pass, the
+knomi watcher map — all answer the same question: *which of these sightings do
+I trust?* They exist because a board can be seen twice, differently, and
+something has to rank the answers. Every one of them is about an identity the
+host can already read off the bus.
+
+A KNOMI screen has no such identity. The CH340K in front of it reports no USB
+serial at all, so `/dev/serial/by-id` has nothing to say and neither does
+anything else the host can do on its own. The only stable name the screen has
+is one its *firmware* knows and will state if asked — which makes "what is this
+thing" a question about the firmware, not about the host, and therefore a
+`helpers.Identifier` rather than a `discovery.Source`.
+
+Both seams stay, and each has its own caller. The identifier answers at write
+time too: the `platformio` flasher asks it with `ask=True` inside the stop,
+and never runs `confirm()`. `confirm()` ranks sightings for boards.
+
+The capability carries `ask` as a required keyword because the two sources cost
+three orders of magnitude apart — reading `devices.json` versus opening every
+free serial port for six seconds — and only the caller knows whether it has
+stopped the services holding those ports. `fw.status`'s `targets[]` row no
+longer calls this at all: a device's listing comes from the klippy module's
+own printer objects (`DeviceLister.device_from_klipper`), which is read-only
+and costs no port, so there is nothing left for a status poll to `identify()`
+for. The CLI, choosing what to flash inside `_ports_free`, passes False first
+and True only when the map is empty, because the write asks again anyway. For
+knomi_serial, True means the listen is the answer: the map is used only when
+the listen cannot run, and a device the listen did not hear is not reported
+with a remembered port. There is no default, so that cost cannot be acquired
+by omission.
+
+One consequence worth stating: `providers.pio` no longer re-exports
+`read_device_map`, `discover` or `device_map_path`. A provider is handed its
+configuration and builds from it; going looking for devices was never its job,
+and the shim that made it look like it was is gone.
+
+### The PlatformIO flasher is `platformio`, not `esptool`
+
+It runs `pio run -t upload` for any PlatformIO env and does not implement
+esptool; PlatformIO runs esptool underneath for an ESP32, and would run
+something else for another target. The name `esptool` stays free for a real
+ESP32 image flasher, one that writes an image without PlatformIO - nothing
+needs one yet. The old name was dropped without an alias because the
+`flashers:` key had not reached `main`.
+
+Its kind is `KIND_PORT`, and its `detail` names an env and a port, not a
+display or a screen. That vocabulary no longer survives on the wire either
+(`displays`, `screens`, `display_flash` are all gone as of `API_VERSION` 5 -
+see "Screen and display are firmware words" below). The flash log's keys were
+not wire, so they moved here, to `hwid:<id>`. There is no migration from the
+old `display:<id>` keys: one shipped briefly on `develop` and was dropped
+(2026-09-28) once every host running the agent had reflashed its screens, and
+nobody else is known to run it. A log that still holds a `display:` key just
+reports that screen's image as unknown until its next flash.
+
+### Screen and display are firmware words
+
+Only `helpers/knomi_serial.py` and `discovery/knomi_serial/` may use "screen"
+or "display" for a device; everywhere else - the wire, the core seams, every
+other helper - the word is "device". `tests/test_vocabulary.py` enforces it,
+with a line-by-line allowlist for the other meanings the words have - a
+menuconfig "screen", a CSS `display: none`. Why: the wire grew a second
+vocabulary once - `displays`, `screens`, `display_flash` alongside `targets`,
+`devices`, `flash` - and every consumer of the API paid for carrying both
+until version 5 removed the first set outright. One vocabulary, enforced,
+costs a test; two vocabularies cost every reader forever.
+
+### `extras` is a list the UI renders blind
+
+A seam that knows a fact worth showing on a `targets[]` row returns an
+`Extra` (`{seam, name, key, label, value}`); the row collects them and the UI
+renders `label value`, never branching on `key`. Why: a new builder, flasher
+or helper should not need a UI release to show one field - the per-builder
+`extra` bag this replaced grew one TypeScript type per builder, which is
+exactly the branching a uniform list exists to remove. Reversing it means
+putting the branch back in the UI, and relearning why that was the wrong
+place for it.
+
+### Identity writes route by claim, not by name
+
+`fw.identity.provision`/`.clear` name no family - every registered helper
+with the provisioning capability is asked whether the serial is its identity
+and in which state, and the one that claims it takes the call. None, or more
+than one, refuses `not_provisionable` rather than guessing. Why: the board is
+untracked at the point this runs, so there is no family to name, and picking
+one claimant over another ahead of an irreversible write is not a call this
+tool gets to make on a caller's behalf. Reversing it - routing by a `family`
+param instead - would need the caller to already know which firmware a board
+that has, by definition, no durable identity yet is running.
+
+### The identity lock is process-local, and stays that way
+
+`fw.identity.provision`, `fw.identity.clear` and `fw.serial.add` refuse each
+other with `busy` while one is running (`_identity_change` in
+`agent/methods/status.py`), so a serial cannot become tracked between an
+identity write's untracked check and the write itself. The lock is a
+`threading.Lock`: it covers the agent's RPC pool and nothing else.
+
+The known gap is the CLI. A `provision` or `add` run from a shell while the
+agent handles the other call is a second process, and can still land in that
+window - leaving the registry naming a serial the board no longer has.
+Accepted, not pending: both commands have to start within the same moment, on
+the same board, from two different front ends, and the result is a stale
+registry entry an untrack fixes, not a bad write.
+
+Do not close it by taking the operation lock in `fw.serial.add`. That lock is
+held by every build and flash, so tracking would be refused for the length of
+any job, and `tracking.add_serial`'s own provisioning branch takes it again
+underneath and would refuse itself. A second untracked check inside the write's
+lock only narrows the window, and makes the first check's mutation guards
+redundant. And do not make the lock wait instead of refuse: a queued add tracks
+the old serial the moment a clear finishes, which is the outcome the lock
+exists to prevent.
+
+### One loop per operation, and handlers for everything else
+
+Ten changes, one rule: a caller never branches on which firmware, which
+builder or which flasher it is holding. The branch becomes a capability
+somebody registered by hand.
+
+What that looks like in practice. `fw.status` joins one inventory against one
+type list and produces one verdict per device, and a firmware with an odd
+version string answers through a `DeviceInfoReader` rather than being special-
+cased in the join. `fw.flash_all` walks every provider's boards through one
+selection, and a family that needs a particular tool says so in `flashers:`
+rather than being routed by a name comparison. A board that has to be talked
+into its bootloader first has a `BootselRequester`; a screen whose hardware
+carries no name has an `Identifier`; a board that needs an identity written to
+it before it can be tracked has a `Provisioner`. `update-all` is build-all then
+flash-all, over the same lists, for every provider there is.
+
+The cost is real and worth stating. There are now four capability Protocols and
+a registry of helpers, where before there were `if` statements - more
+indirection to read through, and a new firmware means writing a module and
+adding two lines to two registries rather than one branch in one function.
+That trade was taken because the branches did not stay in one function: the
+same "is this a display?" question was being asked in `status.py`, `flash.py`,
+`bulk.py` and `cli.py`, and the four answers drifted. A Roadrunner tracked in
+the UI and invisible to the CLI was that drift, reported as a bug.
+
+Configuration never chooses which Python module gets imported. Every helper is
+named in `helpers.registry.HELPERS` and every flasher in the flashers registry,
+by hand, because a helper can stop services and write firmware. A misspelt
+`flashers:` refuses the config when it loads, naming the known values; a
+misspelt `helper:` resolves lazily when that family's capability is asked for,
+so it costs one family rather than the whole panel. Both refuse rather than
+falling back.
+
+### The config is one snapshot per file, keyed on stat
+
+`mcu-updater.cfg` is parsed once per process and reused by every loader until
+its `(st_dev, st_ino, st_size, st_mtime_ns, st_ctime_ns)` changes
+(`cfgsnapshot.py`). One `fw.status` poll used to parse it 46 times. Every
+reader still opens the file, because the key comes from `fstat` on the handle
+the text is read from, never from `os.stat(path)`: on Windows, Python 3.12+
+reports the change time as `st_ctime`, and a path's can trail the handle's.
+
+A parse is kept only if its read began more than 2 s after the file's mtime -
+git's racy-clean rule. A rewrite in place, at the same size, inside one mtime
+tick keeps every field of the key, and nano rewrites in place and ext4 reuses
+the inode `os.replace` frees; any read that could have raced such a rewrite
+began inside that tick, so it is never kept. The key is taken from the handle
+before the read and after it, and a parse whose key moved is not kept: `cp -p`
+or `rsync --inplace -t` landing mid-read puts the old mtime back, but not the
+ctime. Writers (`Registry.mutate`,
+`settings.mutate`, `seed`) never read the snapshot - they parse under their
+lock, so the lost-update guarantee does not rest on the window - and drop it
+after `os.replace`, as belt and braces. The shared parse is frozen: an edit
+through a `Registry.load` raises rather than changing every reader's view.
+
+The accepted gap is narrow on Linux: `utime` itself moves ctime, so restoring
+an mtime changes the key. What is left is two same-size, mtime-restoring
+rewrites inside one ctime tick (a few ms), the first after a read has already
+been kept. On Windows `st_ctime` is creation time, so any same-size in-place
+rewrite with its mtime restored goes unseen until the next real change - not a
+host this runs on. Writers are unaffected either way.
+
+Do not replace this with inotify. It is not stdlib, it needs a thread, and an
+event still leaves a gap between the write and the read that the stat check
+has to cover anyway.

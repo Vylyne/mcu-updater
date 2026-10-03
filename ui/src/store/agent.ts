@@ -45,6 +45,9 @@ export interface AgentStoreState {
   agentAvailable: boolean | null;
   ping: Record<string, unknown> | null;
   status: Record<string, unknown> | null;
+  /** True for the one shared status/CAN refresh, regardless of which caller
+   * started it (initial connection, reconnect, event reaction, or toolbar). */
+  refreshing: boolean;
   job: Job | null;
   bus: unknown[];
   canbus: CanbusScan | null;
@@ -109,6 +112,7 @@ export const state: AgentStoreState = reactive({
   agentAvailable: null,
   ping: null,
   status: null,
+  refreshing: false,
   job: null,
   bus: [],
   canbus: null,
@@ -143,6 +147,7 @@ watch(
 );
 
 const MAX_EVENT_LOG = 50;
+const RECENT_JOB_RESTORE_SECONDS = 15 * 60;
 const logCursor: LogCursor = { current: 0 };
 
 let client: MoonrakerClient | null = null;
@@ -194,21 +199,54 @@ export function isBusy(): boolean {
 }
 
 let refreshGeneration = 0;
+let refreshInFlight: Promise<void> | null = null;
+let jobEventGeneration = 0;
 
-async function refreshStatus(): Promise<void> {
-  if (client === null) return;
+function restorableJob(status: Record<string, unknown>): Job | null {
+  const current = status.job as Job | null | undefined;
+  if (current !== null && current !== undefined) return current;
+  const recent = status.recent;
+  if (!Array.isArray(recent)) return null;
+  const cutoff = Date.now() / 1000 - RECENT_JOB_RESTORE_SECONDS;
+  return (
+    (recent as Job[]).find(
+      (job) => typeof job.finished === "number" && job.finished >= cutoff,
+    ) ?? null
+  );
+}
+
+function refreshStatus(): Promise<void> {
+  if (client === null) return Promise.resolve();
+  if (refreshInFlight !== null) return refreshInFlight;
+  const refreshClient = client;
   const generation = ++refreshGeneration;
-  const statusPromise = callAgent<Record<string, unknown>>(client, "fw.status");
+  const jobEventsAtStart = jobEventGeneration;
+  const statusPromise = callAgent<Record<string, unknown>>(
+    refreshClient,
+    "fw.status",
+  );
   const canbusPromise = hasCapability("fw.canbus.scan")
-    ? callAgent<CanbusScan>(client, "fw.canbus.scan")
+    ? callAgent<CanbusScan>(refreshClient, "fw.canbus.scan")
     : Promise.resolve(null);
-  await Promise.all([
+  state.refreshing = true;
+  const pending = Promise.all([
     statusPromise
-      .then((status) => {
+      .then(async (status) => {
         if (generation !== refreshGeneration) return;
         state.status = status;
         state.bus = (status.bus as unknown[] | undefined) ?? state.bus;
         state.error = null;
+        // A job transition notification is fresher than the snapshot whose
+        // request was already in flight. Keep it, but still hydrate its
+        // retained log so a reload cannot miss the lines before that event.
+        const job =
+          jobEventGeneration === jobEventsAtStart
+            ? restorableJob(status)
+            : state.job;
+        if (job !== null) {
+          state.job = job;
+          await resyncLog(job.id);
+        }
       })
       .catch((error) => {
         if (generation === refreshGeneration)
@@ -231,7 +269,15 @@ async function refreshStatus(): Promise<void> {
           state.canbusError = error as NormalizedAgentError;
         }
       }),
-  ]);
+  ]).then(() => undefined);
+  refreshInFlight = pending;
+  void pending.finally(() => {
+    if (refreshInFlight === pending) {
+      refreshInFlight = null;
+      state.refreshing = false;
+    }
+  });
+  return pending;
 }
 
 /** The toolbar's Refresh button - refreshStatus itself stays module-private
@@ -252,10 +298,11 @@ async function ping(): Promise<void> {
       return;
     }
     state.unsupportedApiVersion = null;
-    // A fresh ping means a fresh connection to reason about the log from -
-    // any job still running comes back as its own `job`/`log` events per
-    // docs/agent-api.md's "A job outlives the connection" note.
+    // A fresh ping means a fresh connection to reason about the log from.
+    // refreshStatus restores the active job (or a recent completed one) and
+    // its retained log from the authoritative status snapshot.
     logCursor.current = 0;
+    state.job = null;
     state.log = null;
     state.logOmitted = false;
     await refreshStatus();
@@ -297,6 +344,9 @@ async function afterConnect(): Promise<void> {
 }
 
 function resetOnDisconnect(): void {
+  refreshGeneration += 1;
+  refreshInFlight = null;
+  state.refreshing = false;
   state.agentAvailable = null;
   state.ping = null;
   state.unsupportedApiVersion = null;
@@ -319,17 +369,22 @@ async function resyncLog(jobId: string): Promise<void> {
       job_id: jobId,
       log_from: cursorBeforeGap,
     });
-    const kept =
-      state.log !== null && state.log.job_id === jobId
-        ? state.log.lines.filter((line) => line.i < cursorBeforeGap)
-        : [];
+    if (state.job !== null && state.job.id !== jobId) return;
+    const merged = new Map<number, { i: number; s: string; t: string }>();
+    if (state.log !== null && state.log.job_id === jobId) {
+      for (const line of state.log.lines) merged.set(line.i, line);
+    }
+    for (const line of result.log) merged.set(line.i, line);
     // `log_from` can be higher than asked for - the log is a ring buffer and
     // a long build evicts its own beginning. Surface that rather than
     // silently renumbering, per docs/agent-api.md.
     state.logOmitted =
       result.log_from > cursorBeforeGap || result.log_dropped > 0;
-    state.log = { job_id: jobId, lines: [...kept, ...result.log] };
-    logCursor.current = result.log_next;
+    state.log = {
+      job_id: jobId,
+      lines: [...merged.values()].sort((a, b) => a.i - b.i),
+    };
+    logCursor.current = Math.max(logCursor.current, result.log_next);
   } catch (error) {
     state.error = error as NormalizedAgentError;
   }
@@ -360,7 +415,10 @@ function handleNotification(method: string, params: unknown): void {
       // but Vi wants the finished job (and its log) to stay on screen rather
       // than vanish, so that clear is ignored here. A real new job always
       // arrives as a non-null object and replaces it normally.
-      if (job !== null) state.job = job as Job;
+      if (job !== null) {
+        jobEventGeneration += 1;
+        state.job = job as Job;
+      }
     },
     onLog: (batch, isGap) => {
       if (isGap) {
@@ -596,6 +654,41 @@ export async function unignoreSerial(serial: string): Promise<boolean> {
   }
 }
 
+/** Explicit direct-USB provisioning of one confirmed, untracked board -
+ * docs/agent-api.md's `fw.identity.provision`, routed server-side to
+ * whichever helper claims the serial. Deliberately separate from
+ * adoptSerial/fw.serial.add: this only writes the board's identity, it never
+ * tracks the board under a type. Refuses server-side unless `serial` is
+ * currently untracked and exactly one helper claims it unprovisioned. */
+export async function provisionIdentity(serial: string): Promise<boolean> {
+  if (client === null) return false;
+  try {
+    await callAgent(client, "fw.identity.provision", { serial });
+    state.error = null;
+    void refreshStatus();
+    return true;
+  } catch (error) {
+    state.error = error as NormalizedAgentError;
+    return false;
+  }
+}
+
+/** Reverse of provisionIdentity - `fw.identity.clear` returns one
+ * confirmed, untracked board to its unprovisioned state, still
+ * untracked. */
+export async function clearIdentity(serial: string): Promise<boolean> {
+  if (client === null) return false;
+  try {
+    await callAgent(client, "fw.identity.clear", { serial });
+    state.error = null;
+    void refreshStatus();
+    return true;
+  } catch (error) {
+    state.error = error as NormalizedAgentError;
+    return false;
+  }
+}
+
 /** Run a fleet-wide build_all/flash_all/update_all. Deliberately no `name`
  * (agent-api.md's methods table gives fw.build_all only `fw?, scope?`) and no
  * `force` - overriding the print gate stays reachable through the API but
@@ -632,11 +725,11 @@ export async function runBulk(
 
 /** Register a new board model - no hardware has to be present, which is how
  * a probe still in the post gets a saved menuconfig answer before it
- * arrives. `serial` (from the untracked-devices list) is adopted afterwards
- * as a separate fw.serial.add call, mirroring the fork's
- * createTypeAndTrack: a type created without its board is recoverable in one
- * tap, the reverse is not, so the two calls are sequenced rather than one
- * request doing both. */
+ * arrives. `serial` or `canbusUuid` (from the untracked-devices list) is
+ * adopted afterwards as a separate fw.serial.add/fw.canbus.add call,
+ * because a type created without its board is recoverable in one tap, while
+ * the reverse is not, so the two calls are
+ * sequenced rather than one request doing both. */
 export async function addType(
   draft: TypeDraft,
 ): Promise<{ ok: boolean; warnings: string[] }> {
@@ -667,6 +760,10 @@ export async function addType(
   }
   if (draft.serial) {
     const adopted = await adoptSerial(draft.name, draft.serial);
+    return { ok: adopted, warnings };
+  }
+  if (draft.canbusUuid) {
+    const adopted = await adoptCanbus(draft.name, draft.canbusUuid);
     return { ok: adopted, warnings };
   }
   return { ok: true, warnings };
@@ -742,6 +839,37 @@ export async function scanBareBoard(
     state.error = error as NormalizedAgentError;
     return null;
   }
+}
+
+/** `fw.add_mcu.scan`: the scan `first_install` chose for this type, plus
+ * `flasher` - so the wizard never chooses a mechanism itself. Null (routed
+ * into state.error) on failure, like every other store call. */
+export async function scanNewBoard(
+  name: string,
+): Promise<Record<string, unknown> | null> {
+  if (client === null) return null;
+  try {
+    const result = await callAgent<Record<string, unknown>>(
+      client,
+      "fw.add_mcu.scan",
+      { name },
+    );
+    state.error = null;
+    return result;
+  } catch (error) {
+    state.error = error as NormalizedAgentError;
+    return null;
+  }
+}
+
+/** Whether the agent answers the flasher-gated first install: the method
+ * and `first_install` on its rows. Both, because the release order pairs a
+ * newer UI with an older agent for a window - see AddMcuWizard.vue. */
+export function firstInstallAware(targets: Target[]): boolean {
+  return (
+    hasCapability("fw.add_mcu.scan") &&
+    targets.some((target) => target.first_install !== undefined)
+  );
 }
 
 /** Write Katapult to a bare board over DFU/BOOTSEL. Returns immediately with

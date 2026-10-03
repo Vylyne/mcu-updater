@@ -1,10 +1,10 @@
 <script setup lang="ts">
-// The fleet-wide counts across the top of the panel - FirmwareUpdaterPanel.vue's
+// The fleet-wide counts across the top of the panel - the panel's
 // v-chip row, said over `targets[]` rather than `types`. That distinction is
-// load-bearing: the fork's own comments record that counting `types` alone
-// let "all up to date" go green with a screen three commits behind, because
-// displays were left out and a type's verdict was read from an artifact it
-// would never build. Six independent counts, each answering a different
+// load-bearing: counting `types` alone can let "all up to date" go green with
+// a PlatformIO device three commits behind, because PlatformIO types were
+// left out and a type's verdict was read from an artifact it would never
+// build. Six independent counts, each answering a different
 // question - stale/unprovable is about artifacts needing a rebuild,
 // needsFlash/allFlashed is about devices needing a flash, and they must not
 // be conflated.
@@ -17,9 +17,9 @@ const staleCount = computed(
   () => props.targets.filter((t) => t.artifact.state === "stale").length,
 );
 
-// A separate claim from stale, and deliberately not amber: nobody can vouch
-// for this image either way, which is a different thing to be told than
-// "rebuild it".
+// A separate claim from stale, so a separate chip: nobody can vouch for this
+// image either way, which is a different thing to be told than "rebuild it".
+// The same severity, so the same amber - outlined, to keep the two apart.
 const unprovableCount = computed(
   () => props.targets.filter((t) => t.artifact.state === "unprovable").length,
 );
@@ -66,24 +66,24 @@ const allFlashed = computed(
 
 <template>
   <div class="summary-chips">
-    <span class="chip" :data-tone="staleCount ? 'attention' : 'ok'">
+    <span class="chip" :data-tone="staleCount ? 'warn' : 'ok'">
       {{
         staleCount
           ? `${staleCount}/${targets.length} need a rebuild`
           : "All up to date"
       }}
     </span>
-    <span v-if="unprovableCount" class="chip chip--outlined">
+    <span v-if="unprovableCount" class="chip chip--outlined" data-tone="warn">
       {{ unprovableCount }} unprovable
     </span>
     <span v-if="allFlashed" class="chip" data-tone="ok"> All flashed </span>
-    <span v-if="needsFlashCount" class="chip chip--outlined">
+    <span v-if="needsFlashCount" class="chip chip--outlined" data-tone="warn">
       {{ needsFlashCount }} need flashing
     </span>
     <span class="chip chip--outlined">
       {{ boardCount }} board{{ boardCount === 1 ? "" : "s" }}
     </span>
-    <span v-if="offlineCount" class="chip" data-tone="attention">
+    <span v-if="offlineCount" class="chip" data-tone="problem">
       {{ offlineCount }} offline
     </span>
   </div>

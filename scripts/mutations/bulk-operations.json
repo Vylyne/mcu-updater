@@ -28,7 +28,7 @@
     {
       "name": "a write that needs no stop stays outside the outage",
       "file": "src/mcu_updater/flashers/registry.py",
-      "find": "        (stopped if by_name(target.flasher).needs_services_stopped else free).append(\n            target\n        )",
+      "find": "        (stopped if needs_services_stopped(target) else free).append(target)",
       "replace": "        stopped.append(target)"
     },
     {
@@ -61,8 +61,8 @@
     {
       "name": "a fleet build reaches every build system",
       "file": "src/mcu_updater/providers/registry.py",
-      "find": "PROVIDERS: tuple[Provider, ...] = (KconfigMake(), PlatformIO())",
-      "replace": "PROVIDERS: tuple[Provider, ...] = (KconfigMake(),)"
+      "find": "PROVIDERS: tuple[Provider, ...] = (KconfigMake(), PlatformIO(), Cmake())",
+      "replace": "PROVIDERS: tuple[Provider, ...] = (KconfigMake(), PlatformIO())"
     },
     {
       "name": "fw filters a fleet build rather than forcing a family",

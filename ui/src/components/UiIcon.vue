@@ -1,5 +1,5 @@
 <script setup lang="ts">
-// One glyph from icons.ts, at one of the sizes the fork panel uses (a plain
+// One glyph from icons.ts, at one of the sizes the panel uses (a plain
 // <v-icon> there defaults to 24px; `small`/`x-small` are what the row and
 // chip contexts pass explicitly).
 const props = withDefaults(

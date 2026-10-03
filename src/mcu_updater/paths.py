@@ -20,15 +20,13 @@ Env overrides (all honoured by :meth:`Paths.from_env`):
   MCU_UPDATER_FAKE_USB_SYSFS  replace /sys/bus/usb/devices for USB inventory
   MCU_UPDATER_FAKE_TTY_SYSFS  replace /sys/class/tty when joining a serial
                                 by-id link to its USB device
+  MCU_UPDATER_FAKE_BLOCK_SYSFS replace /sys/class/block when finding a volume's port
 """
 
 from __future__ import annotations
 
 import dataclasses
 import os
-
-#: The two firmware trees this tool builds. Order matters for display only.
-FW_TARGETS = ("klipper", "katapult")
 
 #: Waiting for a board to come back after katapult's `-r` bootloader request.
 #: USB re-enumeration is fast; if it hasn't happened in 15s it isn't going to.
@@ -87,6 +85,9 @@ class Paths:
     #: Empty in production: `discovery.usb.device_for_tty` reads `/sys/class/tty`.
     #: An exact override supplies a copied or synthetic tty sysfs tree in tests.
     tty_sysfs: str = ""
+    #: Replaces `/sys/class/block`, where a boot ROM's mass-storage volume is
+    #: traced back to its USB port. Mirrors `tty_sysfs` above.
+    block_sysfs: str = ""
 
     # --- hand-edited config ---
 
@@ -152,15 +153,18 @@ class Paths:
         """
         return os.path.join(self.data_dir, ".dfu-pairings.json")
 
-    def display_sidecar(self, env: str) -> str:
-        """Build provenance for one display env: which commit the image is from.
+    def platformio_sidecar(self, env: str) -> str:
+        """Build provenance for one PlatformIO env: which commit the image is from.
 
         In our data tree even though the image itself lives in the source repo's
         `.pio/build/<env>/`. That directory is PlatformIO's, and writing our
         bookkeeping into it would put it in the path of `pio run -t clean` and
         into the user's git status.
+
+        Not migrated from the folder it used to live in: one rebuild restores
+        provenance, and until then the type reports `no_provenance`.
         """
-        return os.path.join(self.data_dir, "displays", f"{env}.build.json")
+        return os.path.join(self.data_dir, "platformio", f"{env}.build.json")
 
     @property
     def journal_file(self) -> str:
@@ -170,20 +174,12 @@ class Paths:
     # --- external tools / trees ---
 
     @property
-    def flashtool(self) -> str:
-        return os.path.join(self.home, "katapult", "scripts", "flashtool.py")
-
-    @property
     def moonraker_sock(self) -> str:
         return os.path.join(self.printer_data, "comms", "moonraker.sock")
 
     @property
     def log_dir(self) -> str:
         return os.path.join(self.printer_data, "logs")
-
-    def fw_dir(self, fw: str) -> str:
-        """Source tree for a firmware target, e.g. ~/klipper."""
-        return os.path.join(self.home, fw)
 
     # --- per-type saved state ---
 
@@ -282,6 +278,7 @@ class Paths:
         can_sysfs_net = e.get("MCU_UPDATER_FAKE_CAN_SYSFS") or ""
         usb_sysfs = e.get("MCU_UPDATER_FAKE_USB_SYSFS") or ""
         tty_sysfs = e.get("MCU_UPDATER_FAKE_TTY_SYSFS") or ""
+        block_sysfs = e.get("MCU_UPDATER_FAKE_BLOCK_SYSFS") or ""
 
         return cls(
             home=resolved_home,
@@ -293,4 +290,5 @@ class Paths:
             can_sysfs_net=can_sysfs_net,
             usb_sysfs=usb_sysfs,
             tty_sysfs=tty_sysfs,
+            block_sysfs=block_sysfs,
         )

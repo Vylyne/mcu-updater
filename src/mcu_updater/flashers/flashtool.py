@@ -9,11 +9,26 @@ from __future__ import annotations
 
 import contextlib
 from collections.abc import Iterator
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
+from ..artifacts import KIND_BIN, Artifact
 from ..devices import STATE_KATAPULT, STATE_KLIPPER
 from ..paths import REENUMERATE_TIMEOUT
-from .spec import Bench, FlashTarget
+from .spec import (
+    KIND_CANBUS,
+    KIND_SERIAL,
+    Bench,
+    Device,
+    FlashRecord,
+    FlashTarget,
+    artifact_path,
+    chipset_matches,
+    staged_record,
+)
+
+if TYPE_CHECKING:
+    from ..helpers.spec import Helper
+    from ..paths import Paths
 
 
 class Flashtool:
@@ -24,13 +39,51 @@ class Flashtool:
     #: Both states a board on the Klipper bus can be in - the write itself
     #: reboots it from one into the other, so this flasher owns both rather
     #: than needing to be told which it is starting from.
-    chipsets: tuple[str, ...] = ("stm32", "rp2040")
+    #: lpc176x boards run Katapult too (profiles.py), and flash-all has always
+    #: written them.
+    chipsets: tuple[str, ...] = ("stm32", "rp2040", "lpc176")
     states: tuple[str, ...] = (STATE_KLIPPER, STATE_KATAPULT)
     #: Not because the write needs it - by then the board is in Katapult and
     #: Klipper has long since let go. Because *getting* it there does: the
     #: reboot-into-bootloader request is sent over the serial port Klipper is
     #: holding open, and it goes nowhere while Klipper has it.
     needs_services_stopped = True
+    accepts: tuple[str, ...] = (KIND_BIN,)
+
+    def supports(self, device: Device, helper: Helper | None) -> bool:
+        """A serial or CAN board whose chipset Katapult runs on.
+
+        Not narrowed by state. A board that is absent right now is still
+        flashtool's to write, and the write says `device_not_found`, which
+        names the fix; a CAN board's liveness is often unknown and has always
+        been written anyway.
+        """
+        return device.kind in (KIND_SERIAL, KIND_CANBUS) and chipset_matches(
+            self, device.chipset
+        )
+
+    def target(
+        self,
+        paths: Paths,
+        device: Device,
+        helper: Helper | None,
+        artifact: Artifact,
+        *,
+        stop_services: tuple[str, ...],
+    ) -> FlashTarget:
+        # The board dict every write below reads, built from the device so a
+        # caller whose detail carries none of it (a CMake family listing
+        # flashtool) is still a board. A caller's own dict wins key by key:
+        # its shape is on the wire, and `force` rides only there.
+        identity = "uuid" if device.kind == KIND_CANBUS else "serial"
+        board = {
+            "type": device.type,
+            identity: device.id,
+            "chipset": device.chipset,
+            "fw": device.fw,
+            **device.detail,
+        }
+        return target_for(board, stop_services=stop_services, artifact=artifact)
 
     @contextlib.contextmanager
     def prepared(
@@ -45,7 +98,7 @@ class Flashtool:
         from .flash import flash_katapult, flash_katapult_can
 
         if "uuid" in target.detail:
-            flash_katapult_can(
+            confidence = flash_katapult_can(
                 bench.paths,
                 bench.settings,
                 target.type,
@@ -55,10 +108,11 @@ class Flashtool:
                 force=bool(target.detail.get("force", False)),
                 bridge=target.detail.get("bridge"),
                 interface=target.detail.get("interface"),
+                fw_bin=artifact_path(target),
             )
-            return {"uuid": target.id}
+            return {"uuid": target.id, "confidence": confidence}
 
-        flash_katapult(
+        confidence = flash_katapult(
             bench.paths,
             bench.settings,
             target.type,
@@ -69,11 +123,16 @@ class Flashtool:
             # Absent for any caller that never sets it - a batch across more
             # than one board never should. See cli.py's _board_targets.
             force=bool(target.detail.get("force", False)),
+            fw_bin=artifact_path(target),
         )
         # `serial` as well as the uniform `id`, because that is what a board's
         # id has always been called on this wire and in the CLI. Same reason
         # `targets[].devices[]` carries both an `id` and a `name`.
-        return {"serial": target.id}
+        return {"serial": target.id, "confidence": confidence}
+
+    def record(self, bench: Bench, target: FlashTarget) -> FlashRecord | None:
+        kind = target.artifact.kind if target.artifact is not None else KIND_BIN
+        return staged_record(bench, target, fw=target.detail.get("fw") or "klipper", kind=kind)
 
     def settled(self, bench: Bench, target: FlashTarget, ctx: Any) -> None:
         """Wait for the board to come back as a Klipper device.
@@ -109,7 +168,10 @@ class Flashtool:
 
 
 def target_for(
-    board: dict[str, Any], *, stop_services: tuple[str, ...] = ()
+    board: dict[str, Any],
+    *,
+    stop_services: tuple[str, ...] = (),
+    artifact: Artifact | None = None,
 ) -> FlashTarget:
     """One entry from the agent's board selection, as a target.
 
@@ -126,4 +188,5 @@ def target_for(
         id=board.get("uuid") or board["serial"],
         stop_services=stop_services,
         detail=board,
+        artifact=artifact,
     )

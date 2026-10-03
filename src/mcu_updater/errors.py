@@ -81,6 +81,12 @@ class SerialTrackedElsewhereError(ConfigError):
     code = "serial_tracked_elsewhere"
 
 
+class UnprovisionedSerialError(ConfigError):
+    """A helper refused a serial because it is not a durable identity."""
+
+    code = "serial_unprovisioned"
+
+
 class UuidTrackedElsewhereError(ConfigError):
     """A CAN uuid already tracked under a different type.
 
@@ -145,6 +151,16 @@ class DeviceNotFoundError(FlashError):
     code = "device_not_found"
 
 
+class NoFlasherError(FlashError):
+    """No flasher in a family's `flashers:` list can write this device.
+
+    A config fact, not a hardware one: the fix is the family's list, and the
+    message names it.
+    """
+
+    code = "no_flasher"
+
+
 class BootloaderTimeoutError(FlashError):
     code = "bootloader_timeout"
 
@@ -184,6 +200,22 @@ class DfuPermissionError(FlashError):
     """
 
     code = "dfu_permission_denied"
+
+
+class BareImageOffsetError(FlashError):
+    """A first image, with no bootloader below it, built to start past flash base.
+
+    A bare board boots whatever sits at the start of flash. An application built
+    for a bootloader offset leaves that start empty, so it writes cleanly and the
+    board never comes up. Refused before anything is written.
+
+    Shares ``offset_mismatch`` with `OffsetMismatchError` on purpose: to a
+    caller both mean "the image's address does not match what will boot it",
+    and the fix for both is the offset answer in menuconfig. This one is a
+    `FlashError` because it is refused at the write, not when a config is seeded.
+    """
+
+    code = "offset_mismatch"
 
 
 class ToolMissingError(UpdaterError):

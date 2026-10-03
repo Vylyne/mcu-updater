@@ -18,7 +18,9 @@ import threading
 
 from .. import build as build_mod
 from .. import firmware
+from ..artifacts import Staged
 from ..build import Reporter
+from ..paths import Paths
 from ..states import ArtifactStatus
 from .spec import BuildTarget, Install
 
@@ -105,6 +107,12 @@ class KconfigMake:
     def describe(self, target: BuildTarget) -> str:
         return f"{target.fw} for {target.name}"
 
+    def clean(self, install: Install, target: BuildTarget) -> str | None:
+        # `make clean` already runs inside build() under `clean_before_build`,
+        # and a kconfig tree has no generated directory whose staleness
+        # survives that. Nothing to offer here; see the protocol docstring.
+        return None
+
     @staticmethod
     def _family(target: BuildTarget) -> str:
         """The family, insisted upon rather than defaulted.
@@ -120,3 +128,6 @@ class KconfigMake:
                 f"family; every target it enumerates carries one."
             )
         return target.fw
+
+    def staged(self, paths: Paths, type_name: str, family: firmware.FirmwareFamily) -> Staged:
+        return build_mod.staged(paths, type_name, family)

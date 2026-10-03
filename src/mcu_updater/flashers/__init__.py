@@ -10,8 +10,8 @@
                     flasher.write(bench, session, target, ctx)
                     flasher.settled(bench, target, ctx)
 
-See :mod:`.spec` for what a flasher has to answer, and why selection is not part
-of it.
+See :mod:`.spec` for what a flasher has to answer - `supports`, `target`, and
+the rest - and :func:`.registry.select` for how a family picks one.
 """
 
 from __future__ import annotations
@@ -19,32 +19,76 @@ from __future__ import annotations
 from .batch import PlainContext, write_all
 from .bootsel import Bootsel
 from .dfu_util import DfuUtil
-from .esptool import Esptool
 from .flashtool import Flashtool
+from .platformio import PlatformIO
 from .registry import (
     FLASHERS,
+    FirstInstall,
     by_flasher,
     by_name,
+    candidate_scanner,
+    first_install,
     group_by_stop,
-    select_for,
+    needs_services_stopped,
+    refusal,
+    resolve,
+    select,
+    select_device,
+    select_each,
     stop_services_union,
 )
-from .spec import Bench, Flasher, FlashTarget
+from .spec import (
+    KIND_BARE,
+    KIND_CANBUS,
+    KIND_PORT,
+    KIND_SERIAL,
+    Bench,
+    CandidateScan,
+    CandidateScanner,
+    Device,
+    Flasher,
+    FlashRecord,
+    FlashTarget,
+    TrackedBoard,
+    artifact_path,
+    name_tracked,
+    staged_record,
+)
 
 __all__ = [
     "FLASHERS",
+    "KIND_BARE",
+    "KIND_CANBUS",
+    "KIND_PORT",
+    "KIND_SERIAL",
     "Bench",
     "Bootsel",
+    "CandidateScan",
+    "CandidateScanner",
+    "Device",
     "DfuUtil",
-    "Esptool",
+    "FirstInstall",
+    "FlashRecord",
     "FlashTarget",
     "Flasher",
     "Flashtool",
     "PlainContext",
+    "PlatformIO",
+    "TrackedBoard",
+    "artifact_path",
     "by_flasher",
     "by_name",
+    "candidate_scanner",
+    "first_install",
     "group_by_stop",
-    "select_for",
+    "name_tracked",
+    "needs_services_stopped",
+    "refusal",
+    "resolve",
+    "select",
+    "select_device",
+    "select_each",
+    "staged_record",
     "stop_services_union",
     "write_all",
 ]

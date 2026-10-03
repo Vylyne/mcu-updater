@@ -32,8 +32,8 @@ from collections.abc import Iterator
 #: A comment may follow the header. Klipper's own parser allows it, so a config
 #: sitting next to printer.cfg has to as well - and without this the line simply
 #: did not match, which is silent: the section was never registered, every option
-#: under it was attributed to the section above, and the type or display it
-#: declared just did not exist. `[display knomi_toolchanger]  # env name` is how
+#: under it was attributed to the section above, and the type or device it
+#: declared just did not exist. `[type knomi_toolchanger]  # env name` is how
 #: the README suggests writing it.
 _SECTION_RE = re.compile(r"^\[(?P<name>[^\]]+)\]\s*(?:[#;].*)?$")
 _OPTION_RE = re.compile(r"^(?P<key>[^\s:=#;][^:=]*?)\s*[:=](?P<value>.*)$")
@@ -43,6 +43,15 @@ INDENT = "    "
 
 _TRUE = {"true", "yes", "on", "1"}
 _FALSE = {"false", "no", "off", "0"}
+
+
+class FrozenDocumentError(RuntimeError):
+    """An edit to a document that is shared read-only.
+
+    `cfgsnapshot.read` hands the same parse to every reader, so an edit through
+    one would silently change what every other reader sees - and could never be
+    saved, since the write paths read their own copy under the lock.
+    """
 
 
 def parse_bool(raw: str | None, default: bool | None = False) -> bool | None:
@@ -122,6 +131,7 @@ class CfgDocument:
         #: Names appearing more than once. First wins, so the later copy is dead
         #: text - which is silent and confusing enough that callers refuse on it.
         self.duplicate_sections: list[str] = []
+        self._frozen = False
         self._parse()
 
     # -- parsing -----------------------------------------------------------
@@ -247,6 +257,14 @@ class CfgDocument:
         sec = self.sections.get(section)
         return [] if sec is None else list(sec.options)
 
+    def freeze(self) -> None:
+        """Refuse every edit from here on. See `FrozenDocumentError`."""
+        self._frozen = True
+
+    @property
+    def frozen(self) -> bool:
+        return self._frozen
+
     # -- writing -----------------------------------------------------------
 
     @staticmethod
@@ -319,6 +337,11 @@ class CfgDocument:
         return [f"{key}: {text}" + (f"  {comment}" if comment else "")]
 
     def _splice(self, start: int, end: int, replacement: list[str]) -> None:
+        if self._frozen:
+            raise FrozenDocumentError(
+                "this document is the shared config snapshot and is read-only; "
+                "write through Registry.mutate or settings.mutate"
+            )
         self.lines[start:end] = replacement
         # Line numbers everywhere else are now wrong, so rebuild. The files are
         # tens of lines; correctness beats cleverness here.

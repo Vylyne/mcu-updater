@@ -8,6 +8,8 @@ redoing a step that already worked.
 
 from __future__ import annotations
 
+import subprocess
+
 import pytest
 
 from mcu_updater.agent.methods import Api
@@ -45,16 +47,24 @@ Cannot open DFU device 0483:df11 found on devnum 51 (LIBUSB_ERROR_ACCESS)
 
 
 class FakeRun:
-    """Stands in for `subprocess.run(["dfu-util", "-l"])`."""
+    """Stands in for `subprocess.run(["dfu-util", "-l"])`.
+
+    The patch replaces `subprocess.run` everywhere, not only in devices.py, so
+    the fake host answers the one other probe a DFU path makes - the git head
+    `providers.staged` reads beside a staged image - as what its source trees
+    are: not git checkouts.
+    """
 
     def __init__(self, stdout="", stderr="", exc=None):
         self.stdout = stdout
         self.stderr = stderr
         self.exc = exc
 
-    def __call__(self, *args, **kwargs):
+    def __call__(self, cmd=(), *args, **kwargs):
         if self.exc is not None:
             raise self.exc
+        if cmd and cmd[0] == "git":
+            return subprocess.CompletedProcess(cmd, 128, "", "fatal: not a git repository")
         return self
 
 

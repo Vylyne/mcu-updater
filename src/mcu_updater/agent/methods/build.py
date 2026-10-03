@@ -7,8 +7,10 @@ from typing import Any
 
 from ... import firmware, profiles, providers
 from ...errors import (
+    UnknownTypeError,
     UpdaterError,
 )
+from ...lock import exclusive
 from ..rpc import ERR_INVALID_PARAMS, ERR_METHOD_NOT_FOUND, RpcError
 from ._api import _Base
 
@@ -31,35 +33,44 @@ class BuildMixin(_Base):
         return self.runner
 
     def _provider_of(self, name: str) -> str:
-        """Which build system owns this type, by name.
+        """Which build system owns this type, by name, in RPC terms.
 
-        The whole reason `fw.display.build` existed as a separate method: the
-        caller had to know which kind of thing it was addressing, so the panel
-        carried a `kind` and picked a method from it. It does not have to. A type
-        name resolves to exactly one provider, and this is where that happens -
-        once, rather than at every call site that would otherwise branch.
-
-        Raises rather than guessing. A name belonging to neither is a typo or a
-        section somebody deleted, and defaulting it to kconfig would produce
-        "no saved klipper config" for a screen.
+        An adapter over `providers.provider_of`, which is the resolver itself
+        and is shared with the CLI. Only the error shape is this layer's: the
+        panel reads an `unknown_type` payload keyed `name`, while the package
+        error carries the package-wide `type=`/`known=` pair, so the two are
+        translated here rather than either being bent to the other.
         """
-        if name in self.pio_types():
-            return providers.PlatformIO.name
-        if name in self.registry().names():
-            return providers.KconfigMake.name
-        raise RpcError(
-            f"no type '{name}' is configured.",
-            data={
-                "code": "unknown_type",
-                "message": "no such type",
-                "data": {
-                    "name": name,
-                    "known": sorted(
-                        set(self.registry().names()) | set(self.pio_types())
-                    ),
+        try:
+            return providers.provider_of(self.paths, name)
+        except UnknownTypeError as exc:
+            raise RpcError(
+                exc.message,
+                data={
+                    "code": "unknown_type",
+                    # The sentence, not "no such type". `normalizeAgentError`
+                    # prefers this nested message over the outer one, so a bare
+                    # category label is what the operator actually reads - and
+                    # `fw.flash_all` used to reach them through `reg.get`, which
+                    # said the sentence. Unifying upward rather than downward.
+                    "message": f"MCU type '{name}' does not exist.",
+                    "data": {
+                        "name": name,
+                        "known": exc.data["known"],
+                    },
                 },
-            },
-        )
+            ) from None
+
+    def _cmake_types(self) -> dict:
+        """Configured types whose declared family is cmake-built.
+
+        Mirrors `platformio_types()`, and read the same way: from the config each
+        time, because a type added over `fw.type.add` has to be answerable
+        without restarting the agent.
+        """
+        from ...providers import cmake as cmake_mod
+
+        return cmake_mod.load(self.paths)
 
     def build(self, args: dict) -> dict[str, Any]:
         """Start a build. Returns a job id immediately - never blocks.
@@ -71,8 +82,12 @@ class BuildMixin(_Base):
         """
         runner = self._require_runner()
         name = args.get("name")
-        if name and self._provider_of(str(name)) == providers.PlatformIO.name:
-            return self._pio_build(args)
+        if name:
+            owner = self._provider_of(str(name))
+            if owner == providers.PlatformIO.name:
+                return self._pio_build(args)
+            if owner == providers.Cmake.name:
+                return self._cmake_build(args)
 
         fw = args.get("fw")
         known = self._fw_names()
@@ -143,7 +158,7 @@ class BuildMixin(_Base):
         """Compile one PlatformIO env. Touches no hardware."""
         runner = self._require_runner()
         name = self._require_str(args, "name")
-        types = self.pio_types()
+        types = self.platformio_types()
         if name not in types:
             raise RpcError(
                 f"no PlatformIO type '{name}' is configured.",
@@ -153,19 +168,120 @@ class BuildMixin(_Base):
                     "data": {"name": name, "known": sorted(types)},
                 },
             )
-        display = types[name]
+        entry = types[name]
 
         def run(ctx) -> dict[str, Any]:
             from ...providers import pio as pio_mod
 
-            ctx.step(f"Building {display.env}", 0, 1)
+            ctx.step(f"Building {entry.env}", 0, 1)
             path = pio_mod.build(
-                self.paths, self.settings(), display, reporter=ctx.reporter, cancel=ctx.cancel
+                self.paths, self.settings(), entry, reporter=ctx.reporter, cancel=ctx.cancel
             )
-            ctx.step(f"Built {display.env}", 1, 1)
-            return {"name": name, "env": display.env, "firmware": path}
+            ctx.step(f"Built {entry.env}", 1, 1)
+            return {"name": name, "env": entry.env, "firmware": path}
 
-        job = runner.submit("display_build", {"name": name}, run)
+        # Kind `build`, as the cmake route: a compile like any other, and so
+        # immediately cancellable (`pio_mod.build` takes `cancel=ctx.cancel`).
+        job = runner.submit("build", {"name": name, "fw": entry.firmware}, run)
+        return {"job_id": job.id, "job": job.to_dict()}
+
+    def clean(self, args: dict) -> dict[str, Any]:
+        """Delete a type's generated build directory. Synchronous, no job.
+
+        Not a job: it is an `rmtree` of one directory, so the runner's
+        machinery would outweigh the work and a progress bar for it would be a
+        lie. It does take the exclusive lock, for the one way this could do
+        damage - removing a build directory out from under a compile using it -
+        which is why `fw.identity.*` takes it for its own synchronous work.
+
+        Answers `removed: null` rather than failing for a build system that
+        keeps no such directory, so a panel can offer the action on any type
+        and get a true answer instead of having to know which providers have
+        one.
+        """
+        name = self._require_str(args, "name")
+        owner = self._provider_of(name)
+        if owner != providers.Cmake.name:
+            return {"name": name, "provider": owner, "removed": None}
+
+        from ...providers import cmake as cmake_mod
+
+        entry = self._cmake_types()[name]
+        with exclusive(self.paths, f"clean {name}"):
+            removed = cmake_mod.clean_build_dir(entry.source)
+        return {"name": name, "provider": owner, "removed": removed}
+
+    def _cmake_build(self, args: dict) -> dict[str, Any]:
+        """Compile one cmake target and stage its image. Touches no hardware.
+
+        The module function rather than the provider adapter, exactly as
+        `_pio_build` does: the adapter returns nothing, and the staged path is
+        what a caller wants back from a build it asked for by name.
+        """
+        runner = self._require_runner()
+        name = self._require_str(args, "name")
+        types = self._cmake_types()
+        if name not in types:
+            raise RpcError(
+                f"no cmake type '{name}' is configured.",
+                data={
+                    "code": "unknown_type",
+                    "message": "no such type",
+                    "data": {"name": name, "known": sorted(types)},
+                },
+            )
+        entry = types[name]
+
+        # Refuse synchronously, as the CLI's cmake branch does, rather than
+        # submitting a job that will fail. `build()` refuses authoritatively on
+        # its own - it will not stage an image from a target this tree no
+        # longer declares - but that answer arrives inside a job, as a failed
+        # build somebody has to go and read. This is the readable one.
+        #
+        # `source_problem()` rather than `Cmake().blocked()`: they return the
+        # identical string here (`blocked()`'s only other branch is the missing
+        # entry, and `name` was just looked up in `types`), and reaching the
+        # adapter would mean building an `Install`, which parses the config a
+        # third time in this method and would make a malformed `[mcu ...]` or
+        # PlatformIO section refuse a cmake build that has nothing to do with
+        # either.
+        from ...providers import cmake as cmake_mod
+
+        problem = cmake_mod.source_problem(entry)
+        if problem:
+            raise RpcError(
+                problem,
+                data={
+                    "code": "build_blocked",
+                    "message": "this type cannot be built here",
+                    "data": {"name": name, "fw": entry.firmware, "reason": problem},
+                },
+            )
+
+        def run(ctx) -> dict[str, Any]:
+            ctx.step(f"Building {entry.cmake_target}", 0, 1)
+            path = cmake_mod.build(
+                self.paths, self.settings(), entry, reporter=ctx.reporter, cancel=ctx.cancel
+            )
+            ctx.step(f"Built {entry.cmake_target}", 1, 1)
+            return {
+                # Both keys, deliberately. `type` is what every other job of
+                # kind `build` carries, and reusing the kind without it would
+                # leave a client reading `result.type` with `undefined`;
+                # `name` is what `_pio_build` returns and what this method was
+                # called with.
+                "type": name,
+                "name": name,
+                "fw": entry.firmware,
+                "cmake_target": entry.cmake_target,
+                "uf2_path": path,
+            }
+
+        # Kind `build`, not a new one. It is a compile like any other - so it
+        # is immediately cancellable (jobs.py's IMMEDIATELY_CANCELLABLE) and a
+        # client already knows how to render it, where an unheard-of kind would
+        # be a wire surprise for nothing.
+        job = runner.submit("build", {"name": name, "fw": entry.firmware}, run)
         return {"job_id": job.id, "job": job.to_dict()}
 
     def _sessions(self) -> Any:
@@ -226,7 +342,7 @@ class BuildMixin(_Base):
 
         # The type has to exist: the answers are saved per type, and inventing a
         # directory for a typo is not a helpful thing to do.
-        self.registry().get(name)
+        mcu = self.registry().get(name)
 
         store = self._sessions()
         if not bool(args.get("force")):
@@ -244,14 +360,19 @@ class BuildMixin(_Base):
                     },
                 )
 
-        session = store.open(name, fw)
+        session = store.open(name, fw, chipset=mcu.chipset)
         with session.lock:
             payload = session.menu()
         payload["available"] = self.kconfig_available()
+        # Only ever non-empty on the open that produced it - a fresh session
+        # with no saved config, pre-set from this type's own recorded
+        # chipset. Lets the panel say where the defaults came from instead of
+        # presenting them as if the user had already chosen them.
+        payload["seeded"] = session.seeded
         return payload
 
     def kconfig_menu(self, args: dict) -> dict[str, Any]:
-        """Re-read the current screen, for a client that lost its copy."""
+        """Re-read the current menu, for a client that lost its copy."""
         session = self._session(args)
         with session.lock:
             return session.menu()

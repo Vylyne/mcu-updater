@@ -14,6 +14,9 @@ Files are split by *what they are*, following the `printer_data` conventions.
     bttebb36/klipper.build.json            #   build provenance, for staleness
     bttebb36/klipper.profile.json          #   what was seeded, for drift detection
     flylllplusbuffer/klipper.uf2
+    roadrunner/roadrunner.uf2              #   staged cmake_target, for a [type roadrunner]
+    roadrunner/roadrunner.build.json       #   build provenance - the source subtree's sha
+    platformio/knomi_toolchanger.build.json #  PlatformIO build provenance, one per env
     .updater.lock                          #   runtime state
     .updater.state
 ```
@@ -78,11 +81,11 @@ canbus_uuids:
 
 | Key | Meaning |
 | --- | --- |
-| `chipset` | Required on every type, PlatformIO included. Matches the chipset segment of the `/dev/serial/by-id` name. |
+| `chipset` | Required on every type, PlatformIO included. Drives flasher and build selection, not presence - see docs/decisions.md "Presence comes from the inventory". |
 | `serials` | One tracked board per line, using the canonical hardware serial without udev's terminal `-if00` suffix. The full `/dev/serial/by-id` path remains the transport address and is rediscovered. |
 | `canbus_uuids` | One tracked CAN-addressed board's uuid per line, parallel to `serials` but a separate key. No interface is stored — Linux CAN interface names (`can0`, `can1`, ...) are enumeration order, not stable identity, so the flasher re-discovers one at write time instead of trusting a remembered one. |
 | `firmware` | A **list** of the families this board runs, e.g. `cartographer, katapult`. A type with no bootloader simply omits it. See `[firmware ...]` sections, below. |
-| `profile` | The vendor answer file the config was seeded from, e.g. `config.CartoV4USB`. |
+| `kconfig_make_profile` | The vendor answer file the config was seeded from, e.g. `config.CartoV4USB`. |
 | `<fw>_extra_args` | Appended to the `make` command line. |
 | `<fw>_makefile_patches` | `<file> -> <line>`, appended to that Makefile for one build then reverted. |
 | `<fw>_extra_repos` | Secondary source trees whose git SHA is tracked alongside the main tree; a commit in any of them is reported the same as a change in the main source. |
@@ -92,7 +95,7 @@ canbus_uuids:
 `builder:` lives on `[firmware ...]`, not on `[type ...]` — how a tree
 compiles is a property of the tree, not of a board that happens to use it. A
 type declaring only `[firmware ...]` sections whose builder is `platformio`
-needs no Kconfig and no Katapult; the env named by `env:` is the type. There
+needs no Kconfig and no Katapult; the env named by `platformio_env:` is the type. There
 is no `provider:` key on `[type ...]` — it is derived from the families the
 type names.
 
@@ -101,11 +104,23 @@ A source tree that doesn't follow the `~/<name>` / `out/<name>.bin` convention
 its own, with `source:` and `artifact:` keys. See the main
 [README](../README.md#firmware-families).
 
-For Kconfig Make trees, `out/` is transient. The requested `.bin` and optional
-`.uf2` are copied into `~/printer_data/mcu-updater/` with their provenance, then
+A `[firmware ...]` section may also declare `helper: roadrunner`. `helper` is a
+capability name in the package's explicit static registry, never a Python module
+path. It lets a firmware family supply narrowly scoped operations such as a
+confirmed BOOTSEL request without adding vendor branches to `fw.flash`.
+
+For Kconfig Make trees, `out/` is transient. Whichever of the `.bin` and `.uf2`
+the build produced - an RP2040 Klipper build makes one or the other - is copied
+into `~/printer_data/mcu-updater/` with its provenance, then
 `make clean` removes the source-tree outputs. Cleanup runs after failed and
 cancelled builds too, so another tool cannot later flash whichever image a
 previous updater build happened to leave in `out/`.
+
+For a `builder: cmake` type, the staged artifact lands at
+`~/printer_data/mcu-updater/<type>/<fw>.uf2`, with its provenance sidecar at
+`<fw>.build.json` — the same shape as every other builder. The source tree's
+own `build/` directory, where cmake actually leaves `<cmake_target>.uf2`
+before it is copied, is not managed by this tool and stays in the source tree.
 
 The `[updater]` section holds `make_jobs`, `clean_before_build`,
 `reseed_on_build`, `service`, `service_backend`, `dry_run`, `enable_flashing`,
@@ -113,6 +128,17 @@ The `[updater]` section holds `make_jobs`, `clean_before_build`,
 UI-managed `ignored_serials` and `ignored_canbus_uuids` device lists. All
 optional. A PlatformIO firmware family's own source tree is named on its
 `[firmware ...]` section, not in `[updater]`.
+
+Roadrunner's `fw.identity.provision`/`.clear` (docs/agent-api.md) write no
+key here at all - not even a "last known identity" - by design: discovery
+stays read-only, provisioning is a direct-USB write to the board itself, and
+a provisioned board remains as untracked as before until it is separately
+adopted through `serials:` above.
+
+USB topology captured during a helper-backed flash is equally transient. It is
+used only to correlate the running serial device with the BOOTSEL mass-storage
+mount during that operation and is never written to this config or treated as
+durable identity.
 
 **Edit the existing `[updater]` section rather than appending a second one.** A
 duplicate section is refused outright: first-wins would mean
@@ -165,6 +191,7 @@ Every path derives from one `Paths` object, so nothing is hardcoded elsewhere:
 | `MCU_UPDATER_FAKE_CAN_SYSFS` | `/sys/class/net` |
 | `MCU_UPDATER_FAKE_USB_SYSFS` | `/sys/bus/usb/devices` |
 | `MCU_UPDATER_FAKE_TTY_SYSFS` | `/sys/class/tty` |
+| `MCU_UPDATER_FAKE_BLOCK_SYSFS` | `/sys/class/block` |
 
 ## The standalone UI lives outside all of this
 
@@ -188,8 +215,9 @@ choices, not something the agent itself reads at runtime:
 
 ## Coming from the old layout
 
-**Historical.** Both migrations below predate the schema-first rebuild
-(`docs/rebuild-plan.md`) and describe moves off layouts nothing still ships.
+**Historical.** Both migrations below predate the schema-first rebuild that
+introduced firmware families, and describe moves off layouts nothing still
+ships.
 The pre-rebuild `[mcu ...]`/`[display ...]`/single-`firmware`-key config had a
 migration script as well; it was retired once the one install it existed for
 had run it, on the same reasoning as "Registry moves" below — a one-time job is

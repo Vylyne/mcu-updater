@@ -32,7 +32,7 @@
     },
     {
       "name": "the pairing is recorded BEFORE the re-enumeration wait",
-      "find": "            pairing_key = bootsel_id if is_bootsel else target\n            if pairing_key:\n                from ...flashers.pairings import Pairings\n\n                Pairings(self.paths).record(pairing_key, name)\n",
+      "find": "            pairing_key = bootsel_id or dfu_serial\n            if pairing_key:\n                from ...flashers.pairings import Pairings\n\n                Pairings(self.paths).record(pairing_key, name)\n",
       "replace": ""
     }
   ]

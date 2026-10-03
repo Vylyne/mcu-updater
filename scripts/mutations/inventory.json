@@ -1,0 +1,37 @@
+{
+  "_comment": "The inventory is the one place a declared board meets what is on the bus. A match rule that loosens reports the wrong board as present; a caller that stops reading the row reports every board offline; a builder filter reintroduces the tracked-in-the-UI-but-not-the-CLI split this module exists to end.",
+  "file": "src/mcu_updater/inventory.py",
+  "command": [
+    "python",
+    "-m",
+    "pytest",
+    "tests/test_inventory.py",
+    "tests/test_agent_targets.py",
+    "tests/test_agent_methods.py",
+    "-q"
+  ],
+  "mutations": [
+    {
+      "name": "exactly one sighting is a match, never the first of several",
+      "find": "            match = matches[0] if len(matches) == 1 else None",
+      "replace": "            match = matches[0] if matches else None"
+    },
+    {
+      "name": "every builder's types are joined, not just kconfig's",
+      "find": "    for entry in entries:",
+      "replace": "    for entry in [e for e in entries if e.builder == \"kconfig_make\"]:"
+    },
+    {
+      "name": "a kconfig board's state is read from its inventory row",
+      "file": "src/mcu_updater/agent/methods/status.py",
+      "find": "            state = row.state if row is not None else STATE_OFFLINE",
+      "replace": "            state = STATE_OFFLINE"
+    },
+    {
+      "name": "a cmake board's presence is read from its inventory row",
+      "file": "src/mcu_updater/agent/methods/status.py",
+      "find": "            present = device_row is not None and device_row.present",
+      "replace": "            present = False"
+    }
+  ]
+}

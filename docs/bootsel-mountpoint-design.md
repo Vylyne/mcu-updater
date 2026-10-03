@@ -1,0 +1,294 @@
+# BOOTSEL mountpoint — design
+
+Status: mount path, dual-layout scan and installer migration implemented on
+`develop`, and **verified on hestia 2026-09-04** - `ID_PATH_TAG` populated, the
+three-deep mountpoint created, two boards mounted at distinct paths, and the
+serial/disk `by-path` pair captured (see "Correlating a board" below). One
+finding: mountpoint directories are not cleaned up on unplug; a udev remove rule
+that ran `rmdir` directly (version 3) lost an unwinnable race, so version 5
+schedules it through `systemd-run` with a tmpfiles.d sweep behind it. The
+generic manual BOOTSEL scan still refuses multiple volumes. The separate
+helper-backed closed loop now implements topology correlation, stopped-service
+handling, and post-write readiness; it has host-test coverage but has not yet
+been verified end to end on hardware.
+
+Verified against mcu-updater `0c446f2`. Every file and line reference below was
+read at that commit; re-check them before implementing if the tree has moved.
+
+## Problem
+
+`scripts/udev.d-mcu-updater-bootsel.rules` mounts every RP2040 BOOTSEL volume at
+one hardcoded path:
+
+```
+ACTION=="add", SUBSYSTEM=="block", ENV{DEVTYPE}=="partition", ENV{ID_FS_LABEL}=="RPI-RP2", \
+  RUN{program}+="/usr/bin/systemd-mount --no-block --collect --owner=%USER% $devnode /media/%USER%/RPI-RP2"
+```
+
+A single fixed mountpoint produces three distinct failures:
+
+1. **Two boards in BOOTSEL collide.** The second mount lands on an occupied
+   path. Whatever happens next — a failed mount, a shadowed one — the second
+   board is not independently addressable.
+
+2. **One bystander board blocks all flashing.** `_find_mount()`
+   (`src/mcu_updater/flashers/bootsel.py:111`) refuses when more than one
+   RPI-RP2 volume is mounted, because there is no way to tell them apart. That
+   guard is correct given the information available, but it also fires when the
+   board you want to flash is joined by an unrelated spare Pico on the same
+   host.
+
+3. **The flash UID cannot break the tie.** `bootsel_id_for()` extracts the flash
+   chip UID from `/dev/disk/by-id/usb-RPI_RP2_<UID>-part1`, and
+   `flashers/bootsel.py:134`'s `target_for()` records it as the flash target's
+   `id`. **That UID is not unique** — two Roadrunners from one batch report the
+   same `pico_get_unique_board_id()`, confirmed on hardware. So the one piece of
+   per-device data the BOOTSEL interface exposes cannot serve as an identity,
+   and `target_for()`'s docstring claim that a flash can be "recorded against a
+   real identity" is false.
+
+The underlying issue is that the mount path carries no information about *which*
+board it belongs to.
+
+## Decision
+
+**Mount each BOOTSEL volume under its own USB topology path.**
+
+```
+ACTION=="add", SUBSYSTEM=="block", ENV{DEVTYPE}=="partition", ENV{ID_FS_LABEL}=="RPI-RP2", \
+  RUN{program}+="/usr/bin/systemd-mount --no-block --collect --owner=%USER% \
+  $devnode /media/%USER%/BOOTSEL/by-path/$env{ID_PATH_TAG}"
+```
+
+Topology is the only per-device fact available at this layer that is actually
+unique, and it is stable for a fixed installation — a board plugged into the
+same port always mounts at the same path.
+
+### Use `ID_PATH_TAG`, not `ID_PATH`
+
+The `path_id` builtin sets both. `ID_PATH` is the raw form and contains `:` and
+`/`; `ID_PATH_TAG` is the sanitized variant systemd itself uses for unit names,
+and is the one safe to embed in a directory path.
+
+### Rule ordering is already correct
+
+`ID_PATH`/`ID_PATH_TAG` exist only after `60-persistent-storage.rules` has run
+the `path_id` builtin. The rule installs as
+`/etc/udev/rules.d/99-mcu-updater-bootsel.rules` (`install.sh:44`), so it runs
+after 60- and both variables are populated. No ordering change is needed.
+
+## Consequences in the codebase
+
+### `bootsel_scan()` changes shape, and its marker check becomes load-bearing
+
+Today it looks for a directory *named* `RPI-RP2` and then confirms
+`INFO_UF2.TXT` inside it. With topology-named directories the name proves
+nothing, so the scan becomes a glob of `BOOTSEL/by-path/*` and the
+`INFO_UF2.TXT` check goes from belt-and-braces to **the only thing
+distinguishing a real bootloader volume from any other directory**. That check
+is already written; it just needs a comment saying it is now doing the whole
+job.
+
+`paths.bootsel_root` remains the test seam and needs no change.
+
+### The multi-volume refusal can go
+
+`_find_mount()`'s `len(mounts) > 1` refusal exists solely because the mounts
+were indistinguishable. Once each mount names its port, a caller that knows
+which port it wants can address it directly, and a bystander board stops
+blocking unrelated work.
+
+**This is a behaviour change, not just a cleanup.** Anything that today relies
+on "exactly one volume or refuse" must be given a port to target instead. Do not
+delete the guard without giving callers that parameter.
+
+### `target_for()` stops claiming the UID is an identity
+
+`flashers/bootsel.py:134` should record the topology path, not
+`bootsel_id_for()`'s output, and the docstring's "recorded against a real
+identity" language goes with it. The UID keeps one legitimate use: distinguishing
+"no board attached" from "board attached, nothing mounted it", which is what
+`bootsel_devices()` does for `BootselNotMountedError`. That is a *presence*
+check, not an identity check, and stays valid.
+
+## Correlating a board across the BOOTSEL reboot
+
+This is what the change unlocks, and the reason it matters beyond tidiness. A
+closed-loop flash needs to know that the board that came back is the board that
+went away.
+
+**The flash UID cannot do this** — see Problem 3. Topology is the only key.
+
+The two paths are *not* string-equal, and that is the detail most likely to be
+got wrong. Measured on hestia, 2026-09-04, one board across the reboot:
+
+```
+serial (CDC)    /dev/serial/by-path/platform-fd880000.usb-usb-0:1.3:1.0            -> ttyACM10
+mass storage    /dev/disk/by-path/platform-fd880000.usb-usb-0:1.3:1.0-scsi-0:0:0:0-part1 -> sda1
+mountpoint      /media/klipper/BOOTSEL/by-path/platform-fd880000_usb-usb-0_1_3_1_0-scsi-0_0_0_0
+```
+
+The USB port prefix is stable across the reboot; the trailing SCSI and partition
+segments are not. **The match must be prefix-normalized, never equality.**
+
+Two wrinkles the measurement exposed, neither of them guessable from the code:
+
+1. **Every device appears twice in both `by-path` namespaces**, once as `usb-`
+   and once as `usbv2-` (`platform-fd880000.usb-usb-0:1.3:1.0` and
+   `platform-fd880000.usb-usbv2-0:1.3:1.0`, both symlinking to the same
+   `ttyACM10`). A correlation pass must either normalize the alias away or
+   accept that one physical board yields two candidate paths.
+2. **The mountpoint name is not the `by-path` name.** `ID_PATH_TAG` is the
+   sanitized form: `.` and `:` both become `_`. So
+   `platform-fd880000.usb-usb-0:1.3:1.0-scsi-0:0:0:0` on disk is
+   `platform-fd880000_usb-usb-0_1_3_1_0-scsi-0_0_0_0` as a directory. Going from
+   a mountpoint back to a device path means comparing sanitized forms, not raw
+   ones — and the sanitization is lossy, since `.` and `:` map to the same
+   character.
+
+`/dev/serial/by-path` ↔ `/dev/disk/by-path` is the pairing. The implemented
+closed loop reads this full controller-qualified path before requesting
+BOOTSEL. `discovery/usb.py`'s
+`UsbDevice` already carries a sysfs topology name (`1-1.2` style), which is a
+*third* namespace and does not directly equal either `by-path` form; if the
+implementation wants to use it, the mapping needs writing and testing rather
+than assuming.
+
+### Closed-loop flasher consequences
+
+- The manual `Bootsel` flasher remains the initial-install path and retains its
+  one-mounted-volume ambiguity guard.
+- The separate `HelperBootsel` flasher requires services stopped, requests
+  BOOTSEL through the configured firmware helper, and selects exactly one
+  topology-matched marker-bearing mount. Bystander mounts do not count.
+- `HelperBootsel.settled()` asks the helper to confirm the expected serial and
+  firmware protocol before services restart. Every outcome of that wait is a
+  warning, never a refusal: the UF2 is already on the board by then, and the
+  spec's error list is entirely pre-copy or at-copy. A timeout, a probe that
+  would not answer, a wrong identity and an ambiguous one are all reported the
+  same way - a completed copy is a successful flash with a readiness warning.
+
+## Migration — the part most likely to be missed
+
+`install.sh:216` skips installation entirely when the rule file already exists:
+
+```sh
+if [ -f "${BOOTSEL_UDEV_RULE}" ]; then
+    printf "[BOOTSEL]  udev rule already present.\n\n"
+    return 0
+fi
+```
+
+**So every existing install keeps the old single-mountpoint rule and never
+receives the new one.** Exactly the hosts that have been using this feature are
+the ones that would not get the fix.
+
+The installer needs a version check rather than a presence check — compare
+against the shipped template, or embed a version marker comment in the rule and
+compare that. Offer to replace when it differs, the same way the install already
+prompts before writing.
+
+Until an upgraded rule is in place, `bootsel_scan()` must tolerate **both**
+layouts: the old `/media/<user>/RPI-RP2` and the new
+`/media/<user>/BOOTSEL/by-path/<tag>`. Since the scan is driven by the
+`INFO_UF2.TXT` marker rather than the directory name, supporting both is a
+matter of globbing two roots.
+
+## Verified on hardware (hestia, 2026-09-04)
+
+None of the following could be settled by reading code. All five were run on a
+bench board; results recorded here so nobody has to re-derive them.
+
+- **`systemd-mount` creating a nested mountpoint** — ✅ created.
+  `findmnt` showed `/dev/sda1` mounted at
+  `/media/klipper/BOOTSEL/by-path/platform-fd880000_usb-usb-0_1_3_1_0-scsi-0_0_0_0`,
+  three levels deep, `uid=1001,gid=1001`. The shipped tmpfiles.d entry is
+  belt-and-braces rather than load-bearing: `systemd.mount(5)`'s `DirectoryMode=`
+  creates mountpoint parents anyway. It buys known ownership and mode, nothing
+  more.
+- **`ID_PATH_TAG` set for the partition** — ✅ populated.
+  `udevadm test /sys/class/block/sda1` expanded the RUN line to a non-empty leaf
+  (`…/by-path/platform-fd880000_usb-usb-0_1_3_1_0-scsi-0_0_0_0`), never a bare
+  `by-path/`. The empty-tag fallback rule has therefore not been exercised in
+  practice — it remains as a guard, not as a tested path.
+- **Two boards in BOOTSEL simultaneously** — ✅ distinct paths.
+  Two directories (`platform-fd800000_usb-usb-0_1_6_3_1_1_1_0-scsi-0_0_0_0` and
+  `platform-fd880000_usb-usb-0_1_3_1_0-scsi-0_0_0_0`), and `bootsel_scan()`
+  returned both. Note what this now produces downstream: two mounts is an
+  `ambiguous` refusal, so the spec's failure #2 (a bystander board blocking a
+  manual flash) is not changed by the mount layout. The helper-backed closed
+  loop does fix it for a known running board by supplying captured topology;
+  unrelated mounts are ignored.
+- **Stale directory accumulation** — ⚠️ confirmed, and the obvious fix does not
+  work. `--collect` reaps the transient mount *unit* and leaves the directory,
+  so an empty directory per port accumulates across replugs. Never a
+  correctness problem — `bootsel_scan` gates on `INFO_UF2.TXT`, so a leftover
+  never reads as an attached board — but the clutter is real.
+
+  Version 3 tried `ACTION=="remove"` rules that `rmdir` the leaf. **It loses a
+  race it cannot win.** The rule matched and ran (so `ID_FS_LABEL` and
+  `ID_PATH_TAG` *are* available from the udev database on remove — worth
+  knowing separately), but udev processes the remove event while systemd is
+  still tearing the mount down, so `rmdir` always found the directory still
+  mounted:
+
+  ```
+  (udev-worker)[66892]: sda1: Process '/bin/rmdir /media/klipper/BOOTSEL/by-path/
+  platform-fd880000_usb-usb-0_1_3_1_0-scsi-0_0_0_0' failed with exit code 1.
+  ```
+
+  Three unplugs, three identical failures, directory still there afterwards
+  (unmounted and empty by then, `root:root` — the leaf is created by
+  systemd-mount, not by the tmpfiles.d entry, which only owns the two parents).
+
+  Version 4 replaced those rules with an age on the tmpfiles.d `by-path` entry,
+  and `systemd-tmpfiles --clean` was confirmed on hestia to remove the leftover.
+  That works but is slow: `systemd-tmpfiles-clean.timer` is daily, so the age
+  only decides when a directory becomes *eligible*.
+
+  Version 5 keeps that as the backstop and adds prompt cleanup, by dispatching
+  rather than waiting: the remove rule runs
+  `systemd-run --no-block --on-active=10 /bin/rmdir <dir>`, which returns
+  immediately (udev is never blocked) and fires the `rmdir` once the unmount
+  has settled. Confirmed on hestia, 2026-09-05 — the directory goes:
+
+  ```text
+  14:20:13 Started run-ra1ec….timer   - [systemd-run] /bin/rmdir /media/klipper/BOOTSEL/by-path/platform-fd880000_usb-…
+  14:20:41 Started run-ra1ec….service - [systemd-run] /bin/rmdir /media/klipper/BOOTSEL/by-path/platform-fd880000_usb-…
+  ```
+
+  Note the 28 seconds, not 10: `--on-active=` is the *earliest* fire time, and
+  a transient timer inherits `AccuracySec=1min`, so systemd coalesces it into a
+  wakeup window. `--timer-property=AccuracySec=1s` would tighten it, and is
+  deliberately not used — the delay is invisible (the directory is empty and
+  `bootsel_scan` ignores it either way), and every rule-version bump costs an
+  install prompt on every host.
+
+  Waiting inside the udev rule instead was considered and rejected — udev blocks
+  its worker on a `RUN` program and kills long-running ones, and waiting on
+  systemd from udev is a known deadlock shape. Asking `systemd-mount --umount`
+  from the remove rule is also pointless: the transient unit is `BindsTo=` the
+  device, so systemd is already unmounting.
+
+  The safety property underneath all of these: an active mountpoint is busy and
+  the kernel refuses to remove it, so no cleanup pass can take out a live
+  board's directory. Only timing decides whether one succeeds, which is why the
+  fix is about *when* the `rmdir` runs and never about what it guards.
+- **The prefix normalization** — ✅ captured; see "Correlating a board across the
+  BOOTSEL reboot" above for the measured pair and the two wrinkles it exposed
+  (the `usbv2` alias, and `ID_PATH_TAG`'s lossy `.`/`:` → `_` sanitization).
+
+## Closed-loop implementation status
+
+The Roadrunner firmware family's `helper: roadrunner` implementation confirms
+the exact provisioned serial, captures serial `by-path` topology, sends
+`REBOOT_BOOTSEL` (opcode `02`), waits for the old CDC device to leave, and hands
+that transient topology to `HelperBootsel`. The flasher requires exactly one
+matching `INFO_UF2.TXT` volume, copies the UF2, then waits for the same serial
+and Roadrunner INFO response before stopped services restart. Topology is never
+persisted as identity.
+
+This new loop is host-test-only so far. The mount layout and normalization facts
+above retain their separately recorded hardware verification. A bare first-time
+board cannot use the helper because it has no running firmware or durable serial;
+the manual BOOTSEL scan therefore still requires exactly one mounted board.

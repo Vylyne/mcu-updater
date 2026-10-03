@@ -6,13 +6,13 @@ where displays were; this describes where they are with esptool about to
 write - which is what the display project's own docs require, because a
 remembered path is the thing the whole identity scheme exists to avoid.
 
-Split out of `test_pio.py` in Step 25, alongside `discover()`'s own move to
-`discovery/listen.py`; moved again in Step 25b into `discovery/knomi_serial/`,
+Split out of `test_pio.py` alongside `discover()`'s own move to
+`discovery/listen.py`; moved again into `discovery/knomi_serial/`,
 the subpackage named for the firmware this module integrates with. The
 monkeypatch targets moved both times: `discover()` calls `shutil.which`/
 `run_streamed` from its own module's namespace, not `providers.pio`'s, so
 patching the old path would silently stop reaching it - the same
-shared-object lesson Step 24 hit with `bootsel_scan`.
+shared-object lesson `bootsel_scan`'s own move taught.
 """
 
 from __future__ import annotations

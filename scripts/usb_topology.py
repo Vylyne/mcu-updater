@@ -24,6 +24,11 @@ import argparse
 import dataclasses
 import os
 import sys
+from pathlib import Path
+
+# This diagnostic runs directly from a source checkout, whose package uses a
+# ``src`` layout rather than living beside ``scripts``.
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent / "src"))
 
 from mcu_updater.discovery import usb
 from mcu_updater.paths import Paths

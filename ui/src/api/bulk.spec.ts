@@ -52,6 +52,9 @@ function target(overrides: Partial<Target> = {}): Target {
     needs_flash: false,
     devices: [],
     actions: [],
+    source: null,
+    extras: [],
+    devices_note: "No serial devices are tracked for this type yet.",
     ...overrides,
   };
 }
@@ -110,7 +113,7 @@ describe("bulkBuildTargets", () => {
       actions: [action({ id: "build" })],
       artifact: {
         state: "stale",
-        tone: "attention",
+        tone: "warn",
         label: "Needs a build",
         reason: null,
       },
@@ -140,7 +143,7 @@ describe("bulkBuildTargets", () => {
     expect(bulkBuildTargets([t], "all")).toHaveLength(0);
   });
 
-  it("drops a target with no build action at all (a display with no build)", () => {
+  it("drops a target with no build action at all (a type with no build)", () => {
     const t = target({ provider: "platformio", actions: [] });
     expect(bulkBuildTargets([t], "all")).toHaveLength(0);
   });
@@ -168,7 +171,7 @@ describe("bulkHasWork", () => {
   it("build_all has work only from the build list", () => {
     const t = target({
       actions: [action({ id: "build" })],
-      artifact: { state: "stale", tone: "attention", label: "x", reason: null },
+      artifact: { state: "stale", tone: "warn", label: "x", reason: null },
     });
     expect(bulkHasWork([t], "build_all", "stale")).toBe(true);
     expect(bulkHasWork([target()], "build_all", "stale")).toBe(false);
@@ -177,7 +180,7 @@ describe("bulkHasWork", () => {
   it("flash_all ignores the build list entirely", () => {
     const t = target({
       actions: [action({ id: "build" })],
-      artifact: { state: "stale", tone: "attention", label: "x", reason: null },
+      artifact: { state: "stale", tone: "warn", label: "x", reason: null },
     });
     expect(bulkHasWork([t], "flash_all", "stale")).toBe(false);
   });

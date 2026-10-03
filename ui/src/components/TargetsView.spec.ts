@@ -1,12 +1,14 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { mount } from "@vue/test-utils";
 import TargetsView from "./TargetsView.vue";
+import TypeDialog from "./TypeDialog.vue";
 import type { Target } from "../api/targets";
 import { state } from "../store/agent";
 
 afterEach(() => {
   state.ping = null;
   state.status = null;
+  state.refreshing = false;
 });
 
 function makeTarget(provider: Target["provider"], name: string): Target {
@@ -25,6 +27,9 @@ function makeTarget(provider: Target["provider"], name: string): Target {
     needs_flash: false,
     actions: [],
     devices: [],
+    source: null,
+    extras: [],
+    devices_note: "No serial devices are tracked for this type yet.",
   };
 }
 
@@ -39,7 +44,7 @@ describe("TargetsView", () => {
     expect(wrapper.text()).toContain("No targets configured yet.");
   });
 
-  it("renders one row per target, MCU and display alike, through one component", () => {
+  it("renders one row per target, whatever builds them, through one component", () => {
     const targets = [
       makeTarget("kconfig_make", "bttebb36"),
       makeTarget("platformio", "knomi"),
@@ -73,6 +78,13 @@ describe("TargetsView", () => {
     ).toBe(true);
   });
 
+  it("disables refresh while any caller already has a refresh in flight", () => {
+    state.refreshing = true;
+    const wrapper = mount(TargetsView, { props: { targets: [] } });
+
+    expect(wrapper.get('[title="Refresh"]').attributes("disabled")).toBe("");
+  });
+
   it("keeps the add-board wizard mounted after its menu closes", async () => {
     state.ping = { capabilities: ["fw.add_mcu.start"] };
     state.status = {
@@ -92,5 +104,78 @@ describe("TargetsView", () => {
 
     expect(wrapper.find(".dialog-backdrop").exists()).toBe(true);
     expect(wrapper.find(".menu-list").exists()).toBe(false);
+  });
+
+  it("offers the add-board menu entry once a first_install row names a flasher", async () => {
+    state.ping = { capabilities: ["fw.add_mcu.start", "fw.add_mcu.scan"] };
+    const targets = [
+      {
+        ...makeTarget("cmake", "roadrunner"),
+        first_install: { fw: "roadrunner", flasher: "bootsel", reason: null },
+      },
+    ];
+    state.status = { targets } as never;
+    const wrapper = mount(TargetsView, { props: { targets } });
+
+    await wrapper.get('[aria-label="More actions"]').trigger("click");
+    const addBoard = wrapper
+      .get(".menu-list")
+      .findAll("button")
+      .find((button) => button.text().includes("Add new board"));
+    expect(addBoard).toBeDefined();
+  });
+
+  it("hides the add-board menu entry when first_install names no flasher", async () => {
+    // fw.update_all keeps the menu itself rendered (hasMenu = canUpdateAll
+    // || canManageTypes || canAddMcu) regardless of canAddMcu, so this
+    // asserts unconditionally on the "Add new board" entry rather than
+    // skipping the check when the whole menu happens to be absent.
+    state.ping = {
+      capabilities: ["fw.add_mcu.start", "fw.add_mcu.scan", "fw.update_all"],
+    };
+    const targets = [
+      {
+        ...makeTarget("cmake", "roadrunner"),
+        first_install: {
+          fw: null,
+          flasher: null,
+          reason: "no scanner",
+        },
+      },
+    ];
+    state.status = { targets } as never;
+    const wrapper = mount(TargetsView, { props: { targets } });
+
+    await wrapper.get('[aria-label="More actions"]').trigger("click");
+    const addBoard = wrapper
+      .get(".menu-list")
+      .findAll("button")
+      .find((button) => button.text().includes("Add new board"));
+    expect(addBoard).toBeUndefined();
+  });
+
+  it("protects the unified type namespace across providers", async () => {
+    state.ping = {
+      capabilities: ["fw.type.add", "fw.type.update", "fw.type.remove"],
+    };
+    const targets = [
+      makeTarget("kconfig_make", "bttebb36"),
+      makeTarget("cmake", "roadrunner"),
+      makeTarget("platformio", "knomi"),
+    ];
+    const wrapper = mount(TargetsView, { props: { targets } });
+
+    await wrapper.get('[aria-label="More actions"]').trigger("click");
+    const newType = wrapper
+      .get(".menu-list")
+      .findAll("button")
+      .find((button) => button.text().includes("New type"));
+    await newType!.trigger("click");
+
+    expect(wrapper.getComponent(TypeDialog).props("existingNames")).toEqual([
+      "bttebb36",
+      "roadrunner",
+      "knomi",
+    ]);
   });
 });

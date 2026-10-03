@@ -6,6 +6,7 @@
     "-m",
     "pytest",
     "tests/test_states.py",
+    "tests/test_verdict.py",
     "tests/test_pio.py",
     "tests/test_build.py",
     "-q"
@@ -48,18 +49,48 @@
     },
     {
       "name": "an image we cannot vouch for is never painted green",
-      "find": "    ARTIFACT_UNPROVABLE: TONE_UNKNOWN,",
+      "find": "    ARTIFACT_UNPROVABLE: TONE_WARN,",
       "replace": "    ARTIFACT_UNPROVABLE: TONE_OK,"
     },
     {
-      "name": "a device we cannot judge is never painted green",
-      "find": "    None: TONE_UNKNOWN,",
-      "replace": "    None: TONE_OK,"
+      "name": "a device whose version we cannot read is never painted green",
+      "find": "    UNKNOWN_VERSION: TONE_WARN,",
+      "replace": "    UNKNOWN_VERSION: TONE_OK,"
     },
     {
-      "name": "a stale image asks for attention rather than shrugging",
-      "find": "    ARTIFACT_STALE: TONE_ATTENTION,",
-      "replace": "    ARTIFACT_STALE: TONE_UNKNOWN,"
+      "name": "a release match nothing backs is never painted green",
+      "find": "    VERSION_ONLY: TONE_WARN,",
+      "replace": "    VERSION_ONLY: TONE_OK,"
+    },
+    {
+      "name": "a stale image is never painted green",
+      "find": "    ARTIFACT_STALE: TONE_WARN,",
+      "replace": "    ARTIFACT_STALE: TONE_OK,"
+    },
+    {
+      "name": "an offline board is a problem, not a caveat",
+      "find": "    OFFLINE: TONE_PROBLEM,",
+      "replace": "    OFFLINE: TONE_WARN,"
+    },
+    {
+      "name": "a board waiting in its bootloader is a problem, not a pending update",
+      "find": "    IN_BOOTLOADER: TONE_PROBLEM,",
+      "replace": "    IN_BOOTLOADER: TONE_WARN,"
+    },
+    {
+      "name": "a pending update is a deviation, not a problem",
+      "find": "    SOURCE_CHANGED: TONE_WARN,",
+      "replace": "    SOURCE_CHANGED: TONE_PROBLEM,"
+    },
+    {
+      "name": "a built image is never a problem",
+      "find": "    ARTIFACT_ABSENT: TONE_WARN,",
+      "replace": "    ARTIFACT_ABSENT: TONE_PROBLEM,"
+    },
+    {
+      "name": "a tone is chosen per reason, not read off the flash verdict",
+      "find": "        return _DEVICE_TONE[self.reason]",
+      "replace": "        return _DEVICE_TONE.get(self.needs_flash, TONE_WARN)"
     }
   ]
 }

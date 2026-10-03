@@ -10,20 +10,20 @@ const families: Family[] = [
     source: "~/klipper",
     artifact: "out/klipper.bin",
     builder: "kconfig_make",
+    cmake_args: "",
     bootloader: false,
     present: true,
     configurable: true,
-    builtin: true,
   },
   {
     name: "katapult",
     source: "~/katapult",
     artifact: "out/katapult.bin",
     builder: "kconfig_make",
+    cmake_args: "",
     bootloader: true,
     present: true,
     configurable: true,
-    builtin: true,
   },
 ];
 
@@ -163,5 +163,45 @@ describe("TypeDialog", () => {
     await save!.trigger("click");
 
     expect(wrapper.emitted("close")).toBeTruthy();
+  });
+
+  it.each([
+    ["a staged .bin", { has_bin: true, has_uf2: false }],
+    ["only a staged .uf2", { has_bin: false, has_uf2: true }],
+  ])(
+    "warns before a chipset change when the build left %s",
+    async (_label, staged) => {
+      vi.spyOn(store, "fetchTargetDetail").mockResolvedValue({
+        ...detail,
+        artifacts: { klipper: staged },
+      });
+      const wrapper = mount(TypeDialog, {
+        props: { typeName: "bttebb36", existingNames: [], families },
+      });
+      await flushPromises();
+
+      await wrapper
+        .find('input[placeholder="e.g. stm32g0b1xx"]')
+        .setValue("rp2040");
+
+      expect(wrapper.text()).toContain("was compiled for stm32g0b1xx");
+    },
+  );
+
+  it("does not warn about a chipset change when nothing was built", async () => {
+    vi.spyOn(store, "fetchTargetDetail").mockResolvedValue({
+      ...detail,
+      artifacts: { klipper: { has_bin: false, has_uf2: false } },
+    });
+    const wrapper = mount(TypeDialog, {
+      props: { typeName: "bttebb36", existingNames: [], families },
+    });
+    await flushPromises();
+
+    await wrapper
+      .find('input[placeholder="e.g. stm32g0b1xx"]')
+      .setValue("rp2040");
+
+    expect(wrapper.text()).not.toContain("was compiled for");
   });
 });

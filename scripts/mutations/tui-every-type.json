@@ -1,0 +1,43 @@
+{
+  "_comment": "The TUI's pickers read the kconfig-only Registry, so a Roadrunner, CMake or PlatformIO type the CLI tracks did not exist in the menu. The type list is what every picker reads; menuconfig still offers kconfig types only; add-serial reaches the CLI handler for a non-kconfig type. Build asks for a firmware target only for types whose handler reads -f. A new type the handler refused is not carried on into the menu that offered it.",
+  "file": "src/mcu_updater/tui.py",
+  "command": [
+    "python",
+    "-m",
+    "pytest",
+    "tests/test_tui.py",
+    "-q"
+  ],
+  "mutations": [
+    {
+      "name": "the type picker reads every declared type, not the kconfig registry's",
+      "find": "    return typelist.load(cli.ctx().paths)\n",
+      "replace": "    return [e for e in typelist.load(cli.ctx().paths) if e.builder == \"kconfig_make\"]\n"
+    },
+    {
+      "name": "menuconfig offers kconfig types only",
+      "find": "        allow_new=True, accepts=kconfig_type, none_accepted=KCONFIG_ONLY_MENUCONFIG\n",
+      "replace": "        allow_new=True, none_accepted=KCONFIG_ONLY_MENUCONFIG\n"
+    },
+    {
+      "name": "add-serial reaches the CLI handler for a non-kconfig type",
+      "find": "    if entry is None:\n        return\n    untracked = _untracked_for(entry, entries)\n",
+      "replace": "    if entry is None or entry.builder != \"kconfig_make\":\n        return\n    untracked = _untracked_for(entry, entries)\n"
+    },
+    {
+      "name": "only a kconfig type's detected boards are narrowed to its chipset",
+      "find": "    chipset = (entry.chipset or None) if filters_by_chipset(entry) else None\n",
+      "replace": "    chipset = entry.chipset or None\n"
+    },
+    {
+      "name": "build asks for a firmware target only where the handler reads one",
+      "find": "    if build_asks_fw(entry):\n",
+      "replace": "    if True:\n"
+    },
+    {
+      "name": "a refused new type is not carried on into the picked menu",
+      "find": "    return type_name if added else None\n",
+      "replace": "    return type_name\n"
+    }
+  ]
+}

@@ -13,10 +13,12 @@ export interface Family {
   source: string;
   artifact: string;
   builder: string;
+  /** `[firmware ...]`'s own `cmake_args:` - always present, empty for every
+   * family whose builder is not `cmake`. */
+  cmake_args: string;
   bootloader: boolean;
   present: boolean;
   configurable: boolean;
-  builtin: boolean;
 }
 
 /** One `<fw>_makefile_patches` entry - the shape `MakefilePatch.to_json()`
@@ -41,13 +43,15 @@ export interface TypeDraft {
   /** A board to adopt once the type exists - the untracked-device entry
    * point. Empty when opened from the toolbar's "New type…". */
   serial?: string;
+  /** A CAN uuid to adopt once the type exists - the CAN-side equivalent of
+   * `serial`, mutually exclusive with it. */
+  canbusUuid?: string;
 }
 
 /** Mirrors config.py's TYPE_NAME_RE/TYPE_NAME_MAX exactly - a whitelist, not
  * a blacklist, because the name becomes both a config section and a
  * directory. The agent stays the authority; this only spares a round trip
- * and says why before the fact, the same reasoning the fork's own
- * FirmwareUpdaterPanelTypeDialog.vue gives for its identical regex. */
+ * and says why before the fact. */
 export const TYPE_NAME_RE = /^[A-Za-z0-9._-]+$/;
 export const TYPE_NAME_MAX = 64;
 

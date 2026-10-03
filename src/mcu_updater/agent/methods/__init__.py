@@ -24,7 +24,7 @@ from .bulk import BulkMixin
 from .flash import FlashMixin
 from .profiles import ProfilesMixin
 from .registry import RegistryMixin
-from .status import StatusMixin, _running_sha  # noqa: F401 - re-exported for tests
+from .status import StatusMixin
 
 
 class Api(StatusMixin, RegistryMixin, BuildMixin, FlashMixin, ProfilesMixin, BulkMixin):

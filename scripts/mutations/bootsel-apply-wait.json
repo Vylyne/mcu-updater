@@ -1,0 +1,60 @@
+{
+  "_comment": "BOOTSEL apply wait: the copy is synced, then write waits for the volume to go (60s clean, 10s after a late error) before any re-enumerate timeout starts.",
+  "file": "src/mcu_updater/flashers/bootsel.py",
+  "command": [
+    "python",
+    "-m",
+    "pytest",
+    "tests/test_flash.py",
+    "tests/test_agent_add_mcu.py",
+    "tests/test_agent_bootsel.py",
+    "-q"
+  ],
+  "mutations": [
+    {
+      "name": "the copy is synced before the wait",
+      "find": "            os.fsync(out.fileno())\n",
+      "replace": ""
+    },
+    {
+      "name": "an fsync error counts as the late case",
+      "find": "            complete = True\n            os.fsync(out.fileno())\n",
+      "replace": "            os.fsync(out.fileno())\n            complete = True\n"
+    },
+    {
+      "name": "a clean copy waits the full minute",
+      "find": "APPLY_TIMEOUT = 60.0",
+      "replace": "APPLY_TIMEOUT = 10.0"
+    },
+    {
+      "name": "a late error gets the short wait",
+      "find": "APPLY_TIMEOUT_AFTER_ERROR = 10.0",
+      "replace": "APPLY_TIMEOUT_AFTER_ERROR = 60.0"
+    },
+    {
+      "name": "the late path picks the short timeout",
+      "find": "        timeout = APPLY_TIMEOUT_AFTER_ERROR\n",
+      "replace": "        timeout = APPLY_TIMEOUT\n"
+    },
+    {
+      "name": "copy_uf2 waits at all",
+      "find": "    if not _wait_for_apply(mount, timeout):",
+      "replace": "    if False:"
+    },
+    {
+      "name": "the presence check looks at the volume",
+      "find": "    return os.path.isfile(os.path.join(mount, _BOOTSEL_MARKER))",
+      "replace": "    return False"
+    },
+    {
+      "name": "the wait gives up at the deadline",
+      "find": "        if time.monotonic() >= deadline:\n            return False\n",
+      "replace": "        if time.monotonic() >= deadline:\n            return True\n"
+    },
+    {
+      "name": "a volume that stays is a warning",
+      "find": "            \"warn\",\n            f\"{mount} is still mounted",
+      "replace": "            \"info\",\n            f\"{mount} is still mounted"
+    }
+  ]
+}

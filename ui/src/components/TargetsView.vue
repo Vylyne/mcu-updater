@@ -1,7 +1,7 @@
 <script setup lang="ts">
 // targets[] said in one shape, rendered through one row component - this is
 // Phase 4's whole point. See docs/decisions.md. Phase 10 adds the fleet-wide
-// toolbar (build/flash/update all, refresh, new type) FirmwareUpdaterPanel.vue
+// toolbar (build/flash/update all, refresh, new type) in the panel
 // carries and this UI didn't yet.
 import { computed, nextTick, ref, watch } from "vue";
 import { flipMenuIfOffscreen, useClickOutsideToClose } from "../clickOutside";
@@ -20,13 +20,18 @@ import {
   mdiHammerWrench,
   mdiPlusCircleOutline,
   mdiRefresh,
-  mdiTrayArrowUp,
   mdiUpdate,
 } from "../icons";
 import { targetKey, type Target } from "../api/targets";
 import type { Family } from "../api/mcutype";
 import type { BulkOperation } from "../api/bulk";
-import { hasCapability, isBusy, refresh, state } from "../store/agent";
+import {
+  firstInstallAware,
+  hasCapability,
+  isBusy,
+  refresh,
+  state,
+} from "../store/agent";
 
 const props = defineProps<{ targets: Target[] | undefined }>();
 
@@ -34,9 +39,9 @@ const targets = computed(() => props.targets ?? []);
 const families = computed(
   () => (state.status?.firmware_families as Family[] | undefined) ?? [],
 );
-const existingTypeNames = computed(() =>
-  targets.value.filter((t) => t.provider === "kconfig_make").map((t) => t.name),
-);
+const existingTypeNames = computed(() => [
+  ...new Set(targets.value.map((t) => t.name)),
+]);
 
 const needsFlashCount = computed(() =>
   targets.value.reduce(
@@ -61,15 +66,15 @@ const canManageTypes = computed(
 const canAddMcu = computed(
   () =>
     hasCapability("fw.add_mcu.start") &&
-    targets.value.some((target) => target.provider === "kconfig_make"),
+    (firstInstallAware(targets.value)
+      ? targets.value.some((target) => target.first_install?.flasher)
+      : targets.value.some((target) => target.provider === "kconfig_make")),
 );
 const hasMenu = computed(
   () => canUpdateAll.value || canManageTypes.value || canAddMcu.value,
 );
 
-const flashAllIcon = computed(() =>
-  needsFlashCount.value ? mdiTrayArrowUp : mdiFlash,
-);
+const flashAllIcon = computed(() => mdiFlash);
 
 const menuOpen = ref(false);
 const menuRef = ref<HTMLElement | null>(null);
@@ -80,7 +85,6 @@ watch(menuOpen, (open) => {
 const bulkOperation = ref<BulkOperation | null>(null);
 const typeDialogOpen = ref(false);
 const addMcuOpen = ref(false);
-const refreshing = ref(false);
 
 function openBulk(operation: BulkOperation): void {
   bulkOperation.value = operation;
@@ -98,9 +102,7 @@ function openAddMcu(): void {
 }
 
 async function onRefresh(): Promise<void> {
-  refreshing.value = true;
   await refresh();
-  refreshing.value = false;
 }
 </script>
 
@@ -179,7 +181,7 @@ async function onRefresh(): Promise<void> {
         type="button"
         class="btn-icon btn-icon--primary"
         title="Refresh"
-        :disabled="refreshing"
+        :disabled="state.refreshing"
         @click="onRefresh"
       >
         <UiIcon :path="mdiRefresh" size="small" />
@@ -190,7 +192,7 @@ async function onRefresh(): Promise<void> {
 
     <p v-if="targets.length === 0" class="muted">No targets configured yet.</p>
     <!-- No separator element here - TargetRow ends with its own trailing
-         divider, same as FirmwareUpdaterPanelTarget.vue's <v-divider>. -->
+         divider, matching the target row's <v-divider>. -->
     <TargetRow
       v-for="target in targets"
       :key="targetKey(target)"

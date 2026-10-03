@@ -1,0 +1,18 @@
+{
+  "_comment": "M4: seed_firmware_sections took the registry lock before checking whether anything was missing, so a no-op re-run that overlapped a panel write could exit install.sh with 1 for a run that had nothing to do. The unlocked pre-read and its early return are what make a no-op re-run never touch the lock at all.",
+  "file": "src/mcu_updater/seed.py",
+  "command": [
+    "python",
+    "-m",
+    "pytest",
+    "tests/test_seed.py",
+    "-q"
+  ],
+  "mutations": [
+    {
+      "name": "a no-op re-run is decided before the lock is taken, not after",
+      "find": "    text, missing = _read_missing(paths)\n    if not missing:\n        return []\n\n    with ExclusiveLock(paths, path=paths.registry_lock_file).acquire(\"seed firmware sections\"):",
+      "replace": "    with ExclusiveLock(paths, path=paths.registry_lock_file).acquire(\"seed firmware sections\"):"
+    }
+  ]
+}

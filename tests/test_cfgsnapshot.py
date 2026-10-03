@@ -1,0 +1,301 @@
+"""The config snapshot: one parse per file, reused until its stat changes.
+
+`os.utime` ages a file past `RACY_WINDOW_NS` so its parse can be kept; a file
+written moments ago never is, which is also why the rest of the suite - whose
+fixtures write their configs just before reading them - never hits the cache.
+"""
+
+from __future__ import annotations
+
+import os
+import time
+
+import pytest
+
+from mcu_updater import cfgsnapshot
+from mcu_updater.cfgdoc import CfgDocument, FrozenDocumentError
+
+#: Well past the window.
+AGED_NS = 10 * cfgsnapshot.RACY_WINDOW_NS
+
+
+def _write(path, text: str, *, aged: bool = True) -> None:
+    with open(path, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(text)
+    if aged:
+        then = time.time_ns() - AGED_NS
+        os.utime(path, ns=(then, then))
+
+
+@pytest.fixture
+def parses(monkeypatch) -> list[str]:
+    """Every parse `cfgsnapshot` makes from here on."""
+    calls: list[str] = []
+    real = cfgsnapshot._parse
+
+    def spy(fh):
+        calls.append(fh.name)
+        return real(fh)
+
+    monkeypatch.setattr(cfgsnapshot, "_parse", spy)
+    return calls
+
+
+def test_an_unchanged_aged_file_is_parsed_once(tmp_path, parses):
+    cfg = tmp_path / "a.cfg"
+    _write(cfg, "[a]\nk: v\n")
+
+    first = cfgsnapshot.read(str(cfg))
+    second = cfgsnapshot.read(str(cfg))
+
+    assert first is second
+    assert len(parses) == 1
+
+
+def test_a_path_stat_that_lags_the_handle_still_reuses_the_parse(tmp_path, monkeypatch, parses):
+    """On Windows, Python 3.12+ reports the change time as st_ctime, and
+    `os.stat(path)` can trail `os.fstat` on a handle to the same file until
+    the OS catches up. The check must compare keys taken the same way."""
+    from types import SimpleNamespace
+
+    cfg = tmp_path / "a.cfg"
+    _write(cfg, "[a]\nk: v\n")
+    real_stat = os.stat
+
+    def lagging(path, *args, **kwargs):
+        st = real_stat(path, *args, **kwargs)
+        if isinstance(path, (str, os.PathLike)) and os.path.abspath(path) == os.path.abspath(cfg):
+            return SimpleNamespace(
+                st_dev=st.st_dev,
+                st_ino=st.st_ino,
+                st_size=st.st_size,
+                st_mtime_ns=st.st_mtime_ns,
+                st_ctime_ns=st.st_ctime_ns - 500_000,
+            )
+        return st
+
+    monkeypatch.setattr(os, "stat", lagging)
+
+    first = cfgsnapshot.read(str(cfg))
+    second = cfgsnapshot.read(str(cfg))
+
+    assert first is second
+    assert len(parses) == 1
+
+
+def test_a_changed_file_is_parsed_again(tmp_path, parses):
+    cfg = tmp_path / "a.cfg"
+    _write(cfg, "[a]\n")
+    cfgsnapshot.read(str(cfg))
+
+    _write(cfg, "[a]\nk: v\n")
+    doc = cfgsnapshot.read(str(cfg))
+
+    assert doc is not None and doc.get("a", "k") == "v"
+    assert len(parses) == 2
+
+
+def test_a_replaced_file_is_parsed_again(tmp_path, parses):
+    """An editor that saves by rename: same size, new inode."""
+    cfg = tmp_path / "a.cfg"
+    _write(cfg, "[a]\n")
+    cfgsnapshot.read(str(cfg))
+
+    tmp = tmp_path / "a.cfg.tmp"
+    _write(tmp, "[b]\n")
+    os.replace(tmp, cfg)
+    doc = cfgsnapshot.read(str(cfg))
+
+    assert doc is not None and doc.has_section("b")
+    assert len(parses) == 2
+
+
+def test_a_freshly_written_file_is_parsed_on_every_read(tmp_path, parses):
+    cfg = tmp_path / "a.cfg"
+    _write(cfg, "[a]\n", aged=False)
+
+    cfgsnapshot.read(str(cfg))
+    cfgsnapshot.read(str(cfg))
+
+    assert len(parses) == 2
+
+
+def test_a_rewrite_the_stat_key_cannot_see_is_caught_by_the_window(tmp_path, monkeypatch):
+    """Same size, same inode, same mtime tick: the key cannot tell. The read
+    that could have raced it began inside the window, so it was never kept."""
+    monkeypatch.setattr(cfgsnapshot, "_stat_key", lambda st: (0, 0, 0, 0, 0))
+    cfg = tmp_path / "a.cfg"
+    _write(cfg, "[a]\n", aged=False)
+    cfgsnapshot.read(str(cfg))
+
+    _write(cfg, "[b]\n", aged=False)
+    doc = cfgsnapshot.read(str(cfg))
+
+    assert doc is not None and doc.has_section("b")
+
+
+def _rewrite_after_the_read(monkeypatch, cfg, text: str) -> None:
+    """The next read of `cfg` is raced: the moment its text is read, `text`
+    lands in place - same inode - and the old mtime is put back, as
+    `cp -p backup.cfg mcu-updater.cfg` or `rsync --inplace -t` would."""
+    real_open = open
+
+    def racing_open(path, *args, **kwargs):
+        fh = real_open(path, *args, **kwargs)
+        real_read = fh.read
+
+        def read(*a):
+            got = real_read(*a)
+            old = os.stat(cfg).st_mtime_ns
+            with real_open(cfg, "w", encoding="utf-8", newline="\n") as out:
+                out.write(text)
+            os.utime(cfg, ns=(old, old))
+            monkeypatch.delattr(cfgsnapshot, "open")
+            return got
+
+        fh.read = read
+        return fh
+
+    monkeypatch.setattr(cfgsnapshot, "open", racing_open, raising=False)
+
+
+def test_a_rewrite_that_races_the_read_is_not_kept(tmp_path, monkeypatch):
+    """The key is taken before the read and after it: a rewrite in between,
+    even one that puts the mtime back, keeps nothing - so the next read parses
+    the file as it now is, rather than serving the text it replaced."""
+    cfg = tmp_path / "a.cfg"
+    _write(cfg, "[a]\nk: 1\n")
+    _rewrite_after_the_read(monkeypatch, cfg, "[a]\nk: 22\n")
+
+    raced = cfgsnapshot.read(str(cfg))
+    assert raced is not None and raced.get("a", "k") == "1"
+
+    doc = cfgsnapshot.read(str(cfg))
+    assert doc is not None and doc.get("a", "k") == "22"
+
+
+@pytest.mark.skipif(os.name != "posix", reason="st_ctime is change time only on POSIX")
+def test_a_same_size_rewrite_that_races_the_read_is_not_kept(tmp_path, monkeypatch):
+    """Same size, same inode, mtime put back: only ctime moved, and it moved
+    between the two keys."""
+    cfg = tmp_path / "a.cfg"
+    _write(cfg, "[a]\nk: 1\n")
+    _rewrite_after_the_read(monkeypatch, cfg, "[a]\nk: 2\n")
+
+    cfgsnapshot.read(str(cfg))
+
+    doc = cfgsnapshot.read(str(cfg))
+    assert doc is not None and doc.get("a", "k") == "2"
+
+
+def test_outside_the_window_a_forged_key_is_trusted(tmp_path, monkeypatch):
+    """The accepted limitation, pinned so the window test above is known to be
+    what catches it: with the key forged and the file aged, the parse is kept."""
+    monkeypatch.setattr(cfgsnapshot, "_stat_key", lambda st: (0, 0, 0, 0, 0))
+    cfg = tmp_path / "a.cfg"
+    _write(cfg, "[a]\n")
+    cfgsnapshot.read(str(cfg))
+
+    _write(cfg, "[b]\n")
+    doc = cfgsnapshot.read(str(cfg))
+
+    assert doc is not None and doc.has_section("a")
+
+
+def test_a_clock_behind_the_mtime_trusts_nothing(tmp_path, monkeypatch, parses):
+    monkeypatch.setattr(cfgsnapshot, "_now_ns", lambda: 0)
+    cfg = tmp_path / "a.cfg"
+    _write(cfg, "[a]\n")
+
+    cfgsnapshot.read(str(cfg))
+    cfgsnapshot.read(str(cfg))
+
+    assert len(parses) == 2
+
+
+def test_a_missing_file_is_none_and_not_cached(tmp_path, parses):
+    cfg = tmp_path / "absent.cfg"
+
+    assert cfgsnapshot.read(str(cfg)) is None
+    assert parses == []
+    assert os.path.abspath(cfg) not in cfgsnapshot._cache
+
+
+def test_a_deleted_file_is_none_and_drops_its_parse(tmp_path):
+    cfg = tmp_path / "a.cfg"
+    _write(cfg, "[a]\n")
+    cfgsnapshot.read(str(cfg))
+
+    os.remove(cfg)
+
+    assert cfgsnapshot.read(str(cfg)) is None
+    assert os.path.abspath(cfg) not in cfgsnapshot._cache
+
+
+def test_an_unreadable_file_raises_and_is_not_cached(tmp_path):
+    cfg = tmp_path / "a.cfg"
+    cfg.mkdir()
+
+    with pytest.raises(OSError):
+        cfgsnapshot.read(str(cfg))
+    assert os.path.abspath(cfg) not in cfgsnapshot._cache
+
+
+def test_invalidate_drops_the_parse(tmp_path, parses):
+    cfg = tmp_path / "a.cfg"
+    _write(cfg, "[a]\n")
+    cfgsnapshot.read(str(cfg))
+
+    cfgsnapshot.invalidate(str(cfg))
+    cfgsnapshot.read(str(cfg))
+
+    assert len(parses) == 2
+
+
+def test_the_shared_parse_is_frozen(tmp_path):
+    cfg = tmp_path / "a.cfg"
+    _write(cfg, "[a]\n")
+    doc = cfgsnapshot.read(str(cfg))
+
+    assert doc is not None and doc.frozen
+    with pytest.raises(FrozenDocumentError):
+        doc.set("a", "k", "v")
+
+
+def test_read_fresh_is_writable_and_leaves_the_shared_parse_alone(tmp_path):
+    cfg = tmp_path / "a.cfg"
+    _write(cfg, "[a]\n")
+    shared = cfgsnapshot.read(str(cfg))
+
+    fresh = cfgsnapshot.read_fresh(str(cfg))
+    assert fresh is not None and fresh is not shared and not fresh.frozen
+    fresh.set("a", "k", "v")
+
+    again = cfgsnapshot.read(str(cfg))
+    assert again is shared and again.get("a", "k") is None
+
+
+def test_read_fresh_of_a_missing_file_is_none(tmp_path):
+    assert cfgsnapshot.read_fresh(str(tmp_path / "absent.cfg")) is None
+
+
+@pytest.mark.parametrize(
+    "edit",
+    [
+        lambda d: d.set("a", "k", "w"),
+        lambda d: d.set("a", "new", "w"),
+        lambda d: d.remove_option("a", "k"),
+        lambda d: d.rename_section("a", "b"),
+        lambda d: d.add_section("c"),
+        lambda d: d.remove_section("a"),
+    ],
+    ids=["set", "set-new", "remove_option", "rename_section", "add_section", "remove_section"],
+)
+def test_every_edit_refuses_a_frozen_document(edit):
+    doc = CfgDocument("[a]\nk: v\n")
+    doc.freeze()
+
+    with pytest.raises(FrozenDocumentError, match="Registry.mutate"):
+        edit(doc)
+    assert doc.render() == "[a]\nk: v\n"
+    assert doc.get("a", "k") == "v"

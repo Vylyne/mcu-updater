@@ -9,6 +9,7 @@ from ..paths import Paths
 
 _DEFAULT_SYSFS = "/sys/bus/usb/devices"
 _DEFAULT_TTY_SYSFS = "/sys/class/tty"
+_DEFAULT_BLOCK_SYSFS = "/sys/class/block"
 
 
 def _read(path: str) -> str | None:
@@ -41,12 +42,14 @@ class UsbDevice:
     ports: int
 
 
-def collect(paths: Paths) -> list[UsbDevice]:
-    """Return physical USB devices, excluding their ``:1.0`` interfaces."""
+def collect(paths: Paths, *, strict: bool = False) -> list[UsbDevice]:
+    """Return physical USB devices, optionally surfacing an unreadable root."""
     root = paths.usb_sysfs or _DEFAULT_SYSFS
     try:
         names = sorted(os.listdir(root))
     except OSError:
+        if strict:
+            raise
         return []
     devices = []
     for name in names:
@@ -90,4 +93,16 @@ def device_for_tty(devices: list[UsbDevice], paths: Paths, tty: str) -> UsbDevic
     return device_for_sysfs_path(devices, os.path.join(root, tty, "device"))
 
 
-__all__ = ["UsbDevice", "collect", "device_for_sysfs_path", "device_for_tty"]
+def device_for_block(devices: list[UsbDevice], paths: Paths, node: str) -> UsbDevice | None:
+    """Return the physical USB device owning a block device node.
+
+    `node` is anything that resolves to the node - a `/dev/disk/by-id/...`
+    link included - so a boot ROM's mass-storage volume maps to the same
+    port the board's tty will hang off once it reboots.
+    """
+    root = paths.block_sysfs or _DEFAULT_BLOCK_SYSFS
+    dev = os.path.basename(os.path.realpath(node))
+    return device_for_sysfs_path(devices, os.path.join(root, dev))
+
+
+__all__ = ["UsbDevice", "collect", "device_for_block", "device_for_sysfs_path", "device_for_tty"]

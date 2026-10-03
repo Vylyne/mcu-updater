@@ -12,6 +12,8 @@ import pytest
 
 from mcu_updater.discovery import canbus
 
+from .conftest import seed_base_firmwares
+
 # --------------------------------------------------------------------------
 # parsing flashtool's own stdout - pure function, no subprocess at all
 # --------------------------------------------------------------------------
@@ -162,9 +164,15 @@ def test_no_sysfs_net_directory_at_all_is_not_an_error(paths, fake_root):
 # --------------------------------------------------------------------------
 
 
+def _flashtool_path(paths) -> str:
+    return os.path.join(paths.home, "katapult", "scripts", "flashtool.py")
+
+
 def _fake_flashtool(paths) -> None:
-    os.makedirs(os.path.dirname(paths.flashtool), exist_ok=True)
-    with open(paths.flashtool, "w", encoding="utf-8") as fh:
+    seed_base_firmwares(paths)
+    flashtool = _flashtool_path(paths)
+    os.makedirs(os.path.dirname(flashtool), exist_ok=True)
+    with open(flashtool, "w", encoding="utf-8") as fh:
         fh.write("# fake flashtool.py, never actually executed\n")
 
 
@@ -172,10 +180,18 @@ def test_query_parses_the_fake_subprocess_output(paths, settings, monkeypatch):
     _fake_flashtool(paths)
 
     def fake_run_streamed(
-        cmd, *, cwd=None, reporter=None, dry_run=False, fake_delay=0.0, cancel=None
+        cmd,
+        *,
+        cwd=None,
+        reporter=None,
+        dry_run=False,
+        fake_delay=0.0,
+        cancel=None,
+        timeout=None,
     ):
         assert "-i" in cmd and "can0" in cmd
         assert "--query" in cmd
+        assert timeout == 10.0
         if reporter is not None:
             reporter("stdout", "Detected UUID: bcb5346fc731, Application: Klipper")
             reporter("stdout", "CANBus UUID Query Complete")
@@ -264,7 +280,14 @@ def test_query_with_nothing_unclaimed_returns_an_empty_list(paths, settings, mon
     _fake_flashtool(paths)
 
     def fake_run_streamed(
-        cmd, *, cwd=None, reporter=None, dry_run=False, fake_delay=0.0, cancel=None
+        cmd,
+        *,
+        cwd=None,
+        reporter=None,
+        dry_run=False,
+        fake_delay=0.0,
+        cancel=None,
+        timeout=None,
     ):
         if reporter is not None:
             reporter("stdout", "CANBus UUID Query Complete")
@@ -276,6 +299,7 @@ def test_query_with_nothing_unclaimed_returns_an_empty_list(paths, settings, mon
 
 
 def test_query_raises_if_flashtool_itself_is_missing(paths, settings):
+    seed_base_firmwares(paths)
     with pytest.raises(FileNotFoundError):
         canbus.query(paths, settings, "can0")
 
@@ -288,7 +312,14 @@ def test_scan_all_sweeps_every_interface_and_merges(paths, settings, fake_root, 
     _fake_flashtool(fake_paths)
 
     def fake_run_streamed(
-        cmd, *, cwd=None, reporter=None, dry_run=False, fake_delay=0.0, cancel=None
+        cmd,
+        *,
+        cwd=None,
+        reporter=None,
+        dry_run=False,
+        fake_delay=0.0,
+        cancel=None,
+        timeout=None,
     ):
         interface = cmd[cmd.index("-i") + 1]
         uuid = f"bcb5346fc73{interface[-1]}"

@@ -85,6 +85,17 @@ describe("KconfigNode", () => {
     expect(wrapper.text()).toContain("🔒");
   });
 
+  it("mutes a node that is not editable, without giving it a severity", () => {
+    // It used to borrow the grey of a tone. A locked option is not a verdict
+    // about anything, and the tones are all severities now.
+    const wrapper = mount(KconfigNode, {
+      props: { node: { ...boolNode, editable: false } },
+    });
+    const root = wrapper.get(".kconfig-node");
+    expect(root.classes()).toContain("kconfig-node--locked");
+    expect(root.attributes("data-tone")).toBeUndefined();
+  });
+
   it("emits help without touching the value", async () => {
     const wrapper = mount(KconfigNode, { props: { node: boolNode } });
     await wrapper.get(".kconfig-help-btn").trigger("click");

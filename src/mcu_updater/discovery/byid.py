@@ -57,7 +57,7 @@ KNOWN_SERIAL_BRIDGE_NAMES = (
     "usb_serial",                  # generic "USB Serial"/"USB2.0-Serial" iProduct text
 )
 
-#: Display-only. Never use these to build a path you then test for existence.
+#: For showing only. Never use these to build a path you then test for existence.
 KLIPPER_FW_NAME = "Klipper"
 KATAPULT_FW_NAME = "katapult"
 
@@ -117,7 +117,7 @@ class BusDevice:
         which `parse_entry` parses to fw=``1a86``, chipset=``USB`` - a
         perfectly well-formed `BusDevice` that is not a board at all. That
         mattered once the panel grew a one-tap "track this" next to the
-        untracked list: a Knomi display sitting in that list is one tap from
+        untracked list: a Knomi device sitting in that list is one tap from
         being added to the registry and having Klipper firmware built and
         flashed at it.
 
@@ -144,10 +144,10 @@ class Byid:
     A by-id serial is die-derived - the kernel names it, not an application
     that has to be running and cooperative to answer - so a match here is
     `UNIQUE_BUS_ID`, the same strength `discovery.confirm` gives a knomi
-    display that just answered a listen pass. Deferred import of
+    device that just answered a listen pass. Deferred import of
     `discovery.spec`: that module imports `.. devices`, which re-exports this
     module, so importing it at module scope here would be a cycle - the same
-    shape Step 24 already hit and resolved for `dfu_selector`.
+    shape `dfu_selector` already hit and resolved the same way.
     """
 
     name = "byid"
@@ -229,6 +229,22 @@ def scan(paths: Paths) -> list[BusDevice]:
     return out
 
 
+def port_of(
+    paths: Paths, dev: BusDevice, inventory: list[usb.UsbDevice] | None = None
+) -> str | None:
+    """The USB port (`usb.UsbDevice.name`, e.g. "1-1.2") a by-id device hangs
+    off, or None when sysfs cannot say.
+
+    The port, not the serial, is what survives a reboot into new firmware -
+    the rule `helpers/klipper.py`'s topology wait already follows.
+    """
+    if inventory is None:
+        inventory = usb.collect(paths)
+    tty = os.path.basename(os.path.realpath(dev.path))
+    hardware = usb.device_for_tty(inventory, paths, tty)
+    return hardware.name if hardware is not None else None
+
+
 def find_device(
     paths: Paths,
     chipset: str,
@@ -281,12 +297,13 @@ def find_untracked(
     *,
     fw: str | None = None,
     chipset: str | None = None,
+    port: str | None = None,
 ) -> list[BusDevice]:
     """Boards on the bus whose serial isn't tracked under any MCU type.
 
     Filtered by `is_mcu`, so a CH340 behind a Knomi never appears here. Every
     caller is asking "what could I adopt?" - the CLI status listing, both TUI
-    pickers, and the add-mcu wait - and a display offered as an adoptable board
+    pickers, and the add-mcu wait - and a Knomi offered as an adoptable board
     is one keystroke from being tracked and having Klipper built and flashed at
     it.
 
@@ -294,6 +311,9 @@ def find_untracked(
     adoptable list applies it); the CLI and the TUI did not, so the two front
     ends disagreed about what counted as a board. That is the split
     `validate_type_name` avoids by living in the model, and this now does too.
+
+    `port` keeps only boards on that USB port - the add-mcu wait, where the
+    chipset segment of a by-id name is not a filter (docs/decisions.md).
     """
     known = set(known_serials)
     wanted_group: tuple[str, ...] | None = None
@@ -305,6 +325,7 @@ def find_untracked(
         else:
             wanted_group = (fw.lower(),)
 
+    inventory = usb.collect(paths) if port else None
     out = []
     for dev in scan(paths):
         if not dev.is_mcu:
@@ -314,6 +335,8 @@ def find_untracked(
         if wanted_group is not None and dev.fw.lower() not in wanted_group:
             continue
         if chipset and dev.chipset != chipset:
+            continue
+        if port and port_of(paths, dev, inventory) != port:
             continue
         out.append(dev)
     return out
@@ -377,6 +400,7 @@ def wait_for_new_device(
     *,
     fw: str | None = None,
     chipset: str | None = None,
+    port: str | None = None,
     timeout: float = REENUMERATE_TIMEOUT,
     poll: float = 0.5,
     settle: float = 1.0,
@@ -391,11 +415,11 @@ def wait_for_new_device(
     known = set(baseline)
     deadline = time.monotonic() + timeout
     while True:
-        found = find_untracked(paths, known, fw=fw, chipset=chipset)
+        found = find_untracked(paths, known, fw=fw, chipset=chipset, port=port)
         if found:
             if settle:
                 _sleep_checked(settle, cancel)
-            return find_untracked(paths, known, fw=fw, chipset=chipset) or found
+            return find_untracked(paths, known, fw=fw, chipset=chipset, port=port) or found
         if time.monotonic() >= deadline:
             return []
         _sleep_checked(poll, cancel)

@@ -19,7 +19,7 @@ from mcu_updater.discovery.canbus import ARPHRD_CAN
 from mcu_updater.flashers import flash as flash_mod
 from mcu_updater.jobs import JobRunner
 
-from .conftest import write_settings
+from .conftest import stage_uf2_only, write_settings
 
 TYPE = "hexadistrofusion"
 CHIPSET = "stm32f072xb"
@@ -38,9 +38,14 @@ def _stage_artifact(paths, mcu_type=TYPE) -> str:
     return path
 
 
+def _flashtool_path(paths) -> str:
+    return os.path.join(paths.home, "katapult", "scripts", "flashtool.py")
+
+
 def _make_flashtool(paths) -> None:
-    os.makedirs(os.path.dirname(paths.flashtool), exist_ok=True)
-    with open(paths.flashtool, "w", encoding="utf-8") as fh:
+    flashtool = _flashtool_path(paths)
+    os.makedirs(os.path.dirname(flashtool), exist_ok=True)
+    with open(flashtool, "w", encoding="utf-8") as fh:
         fh.write("# fake flashtool.py, never actually executed\n")
 
 
@@ -367,8 +372,23 @@ def test_cross_reference_miss_falls_back_to_unconditional_inclusion(paths, live_
     assert boards[0]["state"] == "unknown"
 
 
+def test_a_can_type_that_staged_only_a_uf2_is_not_skipped_as_unbuilt(
+    paths, live_registry_text
+):
+    """Built is "staged anything". Selection then refuses the uf2 for a CAN
+    board by kind, with the fix named - not this pass, silently."""
+    with open(paths.registry_file, "w", encoding="utf-8") as fh:
+        fh.write(live_registry_text)
+    stage_uf2_only(paths, TYPE)
+    _track_uuid(paths)
+    api = Api(paths, call=_moonraker_canbus(declared=False))
+
+    boards = api._canbus_boards_to_flash(Registry.load(paths), "stale")
+    assert [b["uuid"] for b in boards] == [UUID]
+
+
 def test_flash_all_selection_includes_both_serial_and_canbus_boards(paths, live_registry_text):
-    """`_board_target` must route each dict shape to the right flasher -
+    """`_board_request` must route each dict shape to the right flasher -
     both identities to Flashtool - inside one combined batch."""
     with open(paths.registry_file, "w", encoding="utf-8") as fh:
         fh.write(live_registry_text)
@@ -378,9 +398,13 @@ def test_flash_all_selection_includes_both_serial_and_canbus_boards(paths, live_
 
     reg = Registry.load(paths)
     boards = api._boards_to_flash(reg, "all") + api._canbus_boards_to_flash(reg, "all")
-    from mcu_updater.agent.methods.bulk import _board_target
+    from mcu_updater import firmware, flashers
+    from mcu_updater.agent.methods.bulk import _board_request
 
-    targets = [_board_target(b) for b in boards]
+    targets, refused = flashers.select_each(
+        paths, firmware.load(paths), [_board_request(b) for b in boards]
+    )
+    assert refused == []
     by_flasher = {t.flasher for t in targets}
     assert by_flasher == {"flashtool"}
     can_targets = [t for t in targets if "uuid" in t.detail]

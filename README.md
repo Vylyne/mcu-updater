@@ -1,6 +1,6 @@
 # mcu-updater
 
-![The MCU Firmware panel in Mainsail](docs/img/panel_1.png)
+![The standalone MCU Firmware panel](docs/img/panel_1.png)
 
 Firmware management for a Klipper printer with more than one MCU. It keeps a
 registry of your board types and the USB serials of the physical boards of each
@@ -24,7 +24,7 @@ invoked with `sys.executable`, can import apt's `python3-serial`.
 - [Configuration](#configuration)
   - [Firmware families](#firmware-families)
   - [Profiles](#profiles)
-  - [ESP32 displays](#esp32-displays)
+  - [PlatformIO devices](#platformio-devices)
 - [Layout](#layout)
 - [Development](#development)
   - [The release gate](#the-release-gate)
@@ -37,15 +37,18 @@ Build systems ("builders" - one module + one registry line to add another):
 
 - [x] `kconfig_make` - Klipper, Katapult, and forks (menuconfig + make)
 - [x] `platformio` - anything with a `platformio.ini`
+- [x] `cmake` - a `CMakeLists.txt` tree, `cmake_target:` picks which of its executables gets staged
 - [ ] prebuilt images - download a release asset instead of building
 
 Flashing:
 
 - [x] `flashtool.py` - Katapult over USB, STM32 and RP2040
 - [x] `dfu-util` - bare STM32, first bootloader install
-- [x] `esptool` - ESP32, via PlatformIO
+- [x] `platformio` - any PlatformIO env, uploaded to its configured port
 - [x] RP2040 BOOTSEL - copy a `.uf2` to the mounted volume
 - [x] CAN - unified `flashtool.py` transport, with live interface discovery
+- [x] Per-firmware `flashers:` lists - a family declares which tools may write it, tried in order; each tool takes the first file its builder staged of a kind it accepts (`bin`, `uf2`, `pio_env`), and a device no tool can write is refused by name - naming the missing build when that is the reason
+- [x] Klipper through BOOTSEL - `helper: klipper` puts a running RP2040 into BOOTSEL with Katapult's `flashtool.py -r`, for boards without Katapult
 
 Firmware and boards:
 
@@ -54,41 +57,66 @@ Firmware and boards:
 - [x] Per-type saved menuconfig answers, per firmware
 - [x] Per-type Makefile patches
 - [x] Vendor profile seeding, custom profiles, drift detection
+- [x] A first, unsaved menuconfig session pre-set from the type's own recorded chipset
 - [x] Flash-time bootloader offset check
 - [x] Board tracking by `/dev/serial/by-id` serial
+- [x] The CLI's `status`, `add-serial`, `remove-serial` and `remove-type` cover every type, whatever builds it
 - [x] Displays re-identified at flash time, once the ports are free
 - [x] Discovery surface - one vocabulary for where a device is and how sure we are
 - [x] CAN device discovery and tracking by `canbus_uuid`
 - [x] Ignore an untracked USB or CAN bus device
+- [x] Explicit provision/clear identity actions for an untracked Roadrunner
+- [x] Optional auto-provisioning of a Roadrunner that appears unprovisioned
+      (`auto_provision:` on its `[firmware]` section), once per board per watcher sweep
+- [x] Firmware-specific behaviour behind reviewed helper capabilities - device info, identity, BOOTSEL entry and provisioning, never a caller branch
+- [x] One verdict per device, from one inventory join, whatever builds or flashes it
+- [x] A screen's identity comes from its firmware, and is what `targets[]` reports it as
+- [x] One `targets[]` row shape for every builder: `source`, `extras` and `devices_note`, with no builder-specific bag
 
 Interfaces:
 
 - [x] CLI and interactive TUI
 - [x] Moonraker agent (JSON-RPC over the unix socket)
-- [x] Bulk build / flash / update-all
-- [x] Guided first-time MCU setup over DFU and BOOTSEL
-- [x] Standalone embeddable UI
+- [x] Bulk build / flash / update-all, covering every provider - kconfig, PlatformIO and cmake alike
+- [x] Guided first-time setup for any type whose firmware's flashers can find and write a bare board - STM32 over DFU and RP2040 over BOOTSEL, for kconfig and cmake builds alike
+- [x] Standalone embeddable UI, with single-flight refreshes and retained job-log restoration after reload
 
 ## TODO
 
 [docs/decisions.md](docs/decisions.md) for the standing decisions that came out
 of it. What is still open:
 
-- [ ] **CANBUS** Test child devices.
-- [ ] Allow using non default klipper and katapult paths
+- [x] ~~**NEXT** Remove the remaining screen/display vocabulary from the wire, left out of the `platformio` flasher rename because each is a wire change of its own: the `displays` keys (`fw.device.list`, `fw.flash`'s PlatformIO response, `fw.flash_all`), the status payload's `screens`, the `display_flash` job kind, and `pio_status`. Any wire rename bumps `API_VERSION`, so the UI release is promoted first - see AGENTS.md's release ordering.~~ Done in `api_version` 5: `targets[]` rows carry `source`/`extras`/`devices_note` uniformly, `fw.device.list` is gone, `fw.flash_all` and the PlatformIO `fw.flash` answer `{job_id, job}`, and job kinds are `flash`/`build` - see [docs/agent-api.md](docs/agent-api.md).
+- [ ] Deduplicate the device list across all types. Nothing notices when two entries are one physical device: two types whose helpers list the same Klipper prefix, a configured `/dev/ttyACM8` beside another device's by-id symlink that resolves to it, or a hand-made link or udev rule. `fw.flash_all` then writes that device once per entry and the last image wins. Scanners and listers should resolve to the real device path and carry it as a core property (`ListedDevice.resolved_path` already does), so the core can refuse a conflict before a write.
+- [ ] Dead code and stale docs already known, for the dead-code pass. Dead: `service.paused` has no caller since the watcher stop moved into the verified `stop_services` union, and its docstring still argues the old best-effort design. Stale: `build_all`'s docstring in `bulk.py` says a PlatformIO env has no family.
+- [ ] Per-device helper actions: a helper contributes a device's action rows (identity provision/clear today is chosen in `BusPanel.vue` by `isRoadrunnerDevice`) so the UI stops naming a firmware.
+- [ ] **NEEDS DESIGN** First-time flashing of a PlatformIO device that cannot answer the listen pass yet (a blank ESP32, or firmware that does not broadcast its id) while others of its type do. The `platformio` flasher refuses it at write time; the fix belongs in first install, where a PlatformIO type has no candidate scanner yet. The same scanner is what adopting a `/dev/serial/by-id` device into a PlatformIO type needs: the flasher already resolves a symlink at write time (`pio.resolve_port`), but a type's device list comes only from its family's lister, so a family without one lists nothing.
 - [ ] **TEST ERROR** Reproduce and fix the flaky teardown `RuntimeError` in `test_an_unknown_inbound_method_gets_an_error_not_silence`.
+- [ ] **NEEDS DESIGN** Run config migrations as the first step of agent startup, so that restarting the service migrates an existing install. First check the restrictions the service runs under.
+- [ ] **BUG** A Roadrunner flash reports `Could not confirm that the Roadrunner CDC device disappeared` on an otherwise successful write. `_await_disappearance` in [src/mcu_updater/discovery/roadrunner.py](src/mcu_updater/discovery/roadrunner.py) sets `unknown = True` when `_entry_candidates(paths, strict=True)` raises `OSError`, then treats "I could not look" as "the device is still there" and spins to `REENUMERATE_TIMEOUT`. The usual cause is `/dev/serial/by-id` disappearing entirely once the last CDC device leaves - which is evidence the board *did* go, not absence of evidence. Seen on the bench 2026-09-19; the flash itself succeeded.
+- [ ] Identify a tracked board sitting in BOOTSEL by its boot-ROM ID and hand it to flasher selection, so a helper flash that stopped after the reboot can be finished without a power-cycle. `Bootsel.scan_candidates` in [src/mcu_updater/flashers/bootsel.py](src/mcu_updater/flashers/bootsel.py) already maps boot-ROM IDs to tracked serials.
 
 ## Requirements
 
 - Klipper checked out at `~/klipper`
-- [Katapult](https://github.com/Arksine/katapult) at `~/katapult` (for the
-  `flashtool.py` used to flash over USB/CAN) - override with `flashtool_path`
-  in `[updater]` if it lives somewhere else, e.g. a fork
+- Katapult: install.sh writes `[firmware katapult]` with the tree it finds at
+  `~/katapult`, offers a single-branch clone if there is none, or takes a path
+  to an existing checkout or fork. `flashtool.py` is found under the declared
+  `[firmware katapult]` `source:` (`<source>/scripts/flashtool.py`), or at
+  `flashtool_path` in `[updater]` if that is set
 - An ARM toolchain and `make`, i.e. whatever already builds Klipper for you
-- `python3-serial`- Katapult's `flashtool.py` imports it. `install.sh` offers to apt-install it.
-- `dfu-util`, only for installing Katapult onto a brand-new STM32 board
-- `systemd-mount`, only for installing Katapult onto a brand-new RP2040 board - it mounts the BOOTSEL mass-storage volume so `add-mcu` can copy the `.uf2` onto it without root; `install.sh` offers to add the udev rule that wires it up
+- `python3-serial`- Katapult's `flashtool.py` imports it. `install.sh` offers to apt-install it. It is also the only system package the Roadrunner direct-USB provision/clear helper needs - no separate dependency to install for that feature.
+- `dfu-util`, only for the first install onto a brand-new STM32 board
+- `systemd-mount`, only for the first install onto a brand-new RP2040 board - it mounts the BOOTSEL mass-storage volume so `add-mcu` can copy the `.uf2` onto it without root; `install.sh` offers to add the udev rule that wires it up
 - Passwordless `sudo` for `systemctl {start,stop} klipper`(for cli)
+
+### Upgrading to API version 5
+
+PlatformIO build records now live under `platformio/` in the data tree, and
+are not migrated from where they used to live, so each PlatformIO type reports
+`no_provenance` until it is built or flashed once. The UI and the agent must both be on
+this release - see AGENTS.md's "one ordering rule". Any caller of
+`fw.roadrunner.provision`/`.clear` moves to `fw.identity.provision`/`.clear`.
 
 ## CLI Usage
 
@@ -111,7 +139,17 @@ of it. What is still open:
 | `build -t NAME -f FW [--no-reseed]` | Compile and stage the artifact, then clean source-tree outputs |
 | `flash -t NAME [-s SERIAL]` | Flash one board, or every board of a type |
 | `update-all` | Stop Klipper, rebuild and reflash everything, start Klipper |
-| `add-mcu -t NAME` | Guided first-time Katapult install on a new board |
+| `add-mcu -t NAME` | Guided first-time install on a new board: Katapult, or the type's own Klipper when it has none |
+
+`add-mcu` builds and writes the type's first image. It sets up kconfig types
+only - it builds through menuconfig, so a cmake or PlatformIO type is refused
+by name; add it from the web panel's "Add new board…" instead. A type with
+`katapult_installed: false` gets its Klipper build written directly, so build it
+with no bootloader offset (`Bootloader offset: No bootloader`) - one built for an
+offset is refused with nothing written - and list `bootsel` (RP2040) or
+`dfu_util` (STM32) on `[firmware klipper]`'s `flashers:`. It matches the new
+board by the USB port the scan saw, falling back to any new board with a
+warning when the port can't be traced.
 
 `FW` is `klipper`, `katapult`, or the name of any declared [firmware
 family](#firmware-families). `apply-profile` defaults `-f` to whichever family
@@ -127,6 +165,12 @@ overrides a refused [bootloader offset check](#profiles), never a whole type or
 `update-all`, where one board's exception would otherwise force every board in
 the batch past a check that exists to stop a fleet-wide brick.
 
+The offset check writes nothing, but asking is not free: it speaks katapult's
+handshake, and against a board running its application that means rebooting it
+into the bootloader. So a *refused* flash leaves that board sitting in katapult
+rather than running Klipper - the refusal says so. It comes back on the next
+flash or a power cycle; nothing was written to it.
+
 ## Web UI
 
 Everything above also works from a browser instead of SSH, via the standalone UI
@@ -137,8 +181,11 @@ Same registry, same `mcu-updater.cfg`, same builds - the panel shown at the top
 of this page lists every tracked type, whether its firmware is current, and
 whether each board is online, expandable down to the individual serial.
 
-**Kconfig in the browser**, seeded from a vendor [profile](#profiles) instead of
-an empty menu:
+**Kconfig in the browser**, seeded from a vendor [profile](#profiles) if one has
+been applied - or, for a type's first, unsaved session, pre-set from its own
+recorded `chipset` (architecture and processor model, plus `LOW_LEVEL_OPTIONS`
+where the tree prompts for it) instead of an empty menu. Dismissible, and
+abandoned rather than guessed at if the chipset does not resolve cleanly:
 
 ![menuconfig panel](docs/img/panel_menu_config.png)
 
@@ -146,7 +193,7 @@ an empty menu:
 
 ![settings panel](docs/img/panel_settings.png)
 
-**ESP32 displays tracked alongside the MCUs:**
+**PlatformIO devices tracked alongside the MCUs:**
 
 ![knomi displays panel](docs/img/panel_knomi_serial.png)
 
@@ -154,9 +201,22 @@ an empty menu:
 
 ![untracked board panel](docs/img/pannel_untracked.png)
 
+A Roadrunner shows up here the same as any other untracked board - discovery
+is entirely read-only, and identifying one takes no board-specific server
+field, just its own USB descriptor (see `docs/agent-api.md`'s
+`fw.identity.provision`/`.clear`). An unprovisioned one offers **Provision
+Roadrunner**; a provisioned one offers **Clear identity**; both require an
+explicit confirmation naming the board before anything is written - there is
+no automatic-provision setting, and neither action tracks the board under an
+MCU type. A freshly provisioned board stays untracked until you separately
+adopt it here, the same as any other new board. The flash UID a provision
+confirmation names and the `/dev/serial/by-id` path shown for every row are
+diagnostics only, not values this panel or the agent ever persists.
+
 `install.sh` sets up the agent and prints the one-line `moonraker.conf` change
-that points Mainsail's Update Manager at the fork instead of upstream. See
-[docs/agent-api.md](docs/agent-api.md) for the JSON-RPC contract between the two.
+for Moonraker's Update Manager. The standalone UI can be embedded in Mainsail
+with an iframe. See [docs/agent-api.md](docs/agent-api.md) for the JSON-RPC
+contract between the two.
 
 Flashing from the panel is **off by default** - installing or updating the
 agent never silently grants a browser the ability to write to a board. Turn it
@@ -186,10 +246,12 @@ ui_accent_color: 2196f3    ; standalone UI's accent colour, no '#' - see below
 source: ~/klipper                 ; default: ~/<name>
 builder: kconfig_make             ; default: kconfig_make
 artifact: klipper                 ; default: <name>
+flashers: flashtool
 
 [firmware katapult]
 source: ~/katapult
 bootloader: true                  ; a bootloader, not an application
+flashers: dfu_util, bootsel
 
 # Toolhead boards. The buffer patch is specific to this batch.
 [type flylllplusbuffer]
@@ -204,13 +266,47 @@ klipper_extra_repos:
     ~/buffer_manager
 ```
 
-`[firmware ...]` names a build system's own tree - `builder:` lives there, not
-on the type, because how a tree compiles is a property of the tree, not of a
-board that happens to use it. `[type ...]` names a board model and lists
-which families it runs. A section for `klipper` or `katapult` is only needed
-to override their defaults; every type that lists them resolves the plain
-`~/<name>` / `kconfig_make` / `out/<name>.bin` convention with no section at
-all.
+Every family a type names is declared, `klipper` and `katapult` included.
+install.sh writes those two with the source paths it finds. A config missing
+one is refused with the exact lines to add. Within a section every key is
+optional: no `source:` means `~/<name>`.
+
+`builder:` takes three values: `kconfig_make` (the default, above), `platformio`
+(see [PlatformIO devices](#platformio-devices)) and `cmake` (see
+[RP2040 cmake trees](#rp2040-cmake-trees)); any other value refuses the config
+when it loads. A cmake family also takes
+`cmake_args:`, split shell-style and appended to the configure step - quoting
+groups words (`-DX="two words"` arrives as one argument) and is consumed, the
+same way a shell consumes it. `${git_describe}` is the one substitution it
+supports, expanding to the source tree's own `git describe` so the board's
+`INFO` reports a version you can trace back to a commit - and, in a tree that
+is not a git checkout, to the literal `dev` rather than failing, so firmware
+reporting `dev` means the tree it came from could not be identified:
+
+```ini
+[firmware roadrunner]
+source: ~/roadrunner/rp2040
+builder: cmake
+cmake_args: -DROADRUNNER_FIRMWARE_VERSION=${git_describe}
+submodules: yes
+helper: roadrunner
+flashers: bootsel
+```
+
+`submodules:` runs `git submodule update --init --recursive` in the source tree
+before each build, for trees that vendor their SDK that way. It defaults to
+**no**, and is opt-in rather than automatic because it is not free: that command
+also resets an *already* initialized submodule to the recorded commit, throwing
+away a checkout you made on purpose while working on a vendored dependency. With
+it off, a tree whose submodules are empty is refused before the build with a
+message naming the one to run by hand. Turning it on suppresses that refusal,
+since the build now runs the command the message asks for.
+
+It syncs before reading the tree's provenance, not after, so the recorded commit
+describes what was actually compiled. Note that a submodule sitting at any commit
+other than the recorded one makes the parent tree **dirty** - so with
+`submodules:` off, that state is visible in `updatefw status`, and with it on, it
+is silently corrected at the start of every build.
 
 Per-type keys:
 
@@ -222,7 +318,7 @@ Per-type keys:
 - **`firmware`** - a **list** of the families this board actually runs, e.g.
   `cartographer, katapult` (comma- or space-separated). A type that uses no
   bootloader simply omits it. See [Firmware families](#firmware-families).
-- **`profile`** - the vendor answer file this type's config is seeded from, e.g.
+- **`kconfig_make_profile`** - the vendor answer file this type's config is seeded from, e.g.
   `config.CartoV4USB`. Names a file in that firmware's *own source tree*, not
   one shipped here. See [Profiles](#profiles).
 - **`<fw>_extra_args`** - appended to the `make` command line. `<fw>` is any
@@ -232,6 +328,32 @@ Per-type keys:
   has no way to add `src-y +=` lines from the command line, and a permanent edit
   would leak into every other type sharing that chipset and conflict on the next
   `git pull` of Klipper.
+- **`cmake_target`** - required on a type whose family is `builder: cmake`. The
+  cmake target to stage, spelled exactly as that tree's `add_executable()`
+  names it - not a short form, since expanding one would mean knowing a
+  naming convention that belongs to one vendor's `CMakeLists.txt`. A mixed
+  RGB/GRB fleet needs two `[type]` sections, since `cmake_target:` is per-type.
+- **`flashers`** - required on every `[firmware ...]`. The flashers that may write
+  this family, tried in order: `flashtool`, `platformio`, `dfu_util`, `bootsel`.
+  Each takes one kind of staged file - `flashtool` and `dfu_util` a `.bin`,
+  `bootsel` a `.uf2`, `platformio` a PlatformIO env - and one whose file was not
+  staged is passed over for the next. So `flashtool, bootsel` reaches bootsel,
+  through the family's helper, only when no `.bin` was staged - which, for an
+  RP2040 Klipper build, is exactly a build with no bootloader offset (see
+  "Klipper through BOOTSEL" below).
+  A section without the key refuses the config with the line to add.
+- **`helper`** - optional on `[firmware ...]`. Names a reviewed, statically
+  registered firmware helper; it is not a module path and configuration cannot
+  import arbitrary Python. A helper-backed CMake family can use its running
+  firmware to enter BOOTSEL and complete a normal `fw.flash`. Roadrunner uses
+  `helper: roadrunner`. `helper: klipper` does the same for a Klipper RP2040
+  with no Katapult: `flashers: bootsel` with `helper: klipper` asks the running
+  board for BOOTSEL and copies its `.uf2` (see "Klipper through BOOTSEL"
+  below). A misspelt helper raises where a capability is asked for, naming
+  the registered helpers. The key is optional: a family names a
+  helper when its hardware needs firmware-specific access or carries no
+  identity of its own - a BTT KNOMI v2 names `helper: knomi_serial` because its
+  CH340K reports no USB serial - and a board that enumerates by-id names none.
 - **`<fw>_extra_repos`** - one directory per line. Secondary source trees whose
   git SHA is tracked alongside the main tree, so a type is reported stale if
   *either* the main source or one of these has moved - e.g. `flylllplusbuffer`
@@ -268,14 +390,15 @@ stop_services: klipper
 
 [firmware knomi_serial]
 stop_services: klipper, knomi_serial     ; OVERRIDE - replaces, never merges
+flashers: platformio
 
 [type bttebb36]
 stop_services: klipper                   ; OVERRIDE - only the last tier applies
 ```
 
-`[type ...]`/`[display ...]` beats `[firmware ...]` beats `[updater]` beats the
+`[type ...]` beats `[firmware ...]` beats `[updater]` beats the
 built-in default (`klipper` alone for a plain board; `klipper, knomi_serial`
-for a PlatformIO display). Absent inherits the next level out; a bare key with
+for a PlatformIO type). Absent inherits the next level out; a bare key with
 nothing after it means *stop nothing at all* for that level:
 
 ```ini
@@ -333,15 +456,16 @@ project does not edit another project's allowlist on your behalf.
 
 ### Firmware families
 
-Every type builds klipper and katapult by convention: source at `~/<name>`,
-output at `out/<name>.bin`. A vendor fork breaks both. Cartographer's firmware
-is a Klipper fork that lives in `~/MCU-Firmware---Based-on-Klipper` and, being
-a Klipper fork, still drops `out/klipper.bin`. Declare the mismatch once:
+A declared family with no `source:` builds from `~/<name>` and leaves
+`out/<artifact>.bin`. A vendor fork breaks both. Cartographer's firmware is a
+Klipper fork that lives in `~/MCU-Firmware---Based-on-Klipper` and, being a
+Klipper fork, still drops `out/klipper.bin`. Declare the mismatch once:
 
 ```ini
 [firmware cartographer]
 source: ~/MCU-Firmware---Based-on-Klipper
 artifact: klipper           ; what the build actually leaves in out/
+flashers: flashtool
 ```
 
 then point a type at it:
@@ -356,11 +480,18 @@ Both keys on `[firmware ...]` are optional, and so is the section itself -
 with none declared, every family resolves to the plain convention, which is
 every install predating this. `menuconfig -f`/`build -f` take `cartographer`
 exactly like `klipper` or `katapult`, and so do `cartographer_extra_args` /
-`cartographer_makefile_patches`. Which flasher writes the board is still
-chosen by chipset, not by family, since one firmware can need `dfu-util` on an
-STM32 board and BOOTSEL on an RP2040 one - there is no `flasher:` key
-anywhere; flashers declare which chipsets and device states they can write and
-selection is a capability match.
+`cartographer_makefile_patches`. Which flasher writes the board is the
+family's `flashers:` list, tried in
+order: the first one that can write the device *and* was staged a file it
+takes. A family whose builder made no file any listed flasher takes is
+refused with the kind it is missing - "bootsel could write ... but [firmware
+klipper] staged no uf2 - build it first" when nothing was staged. When the
+build staged the other image, rebuilding as configured would only make it
+again, so the refusal names the bootloader offset that decides which image an
+RP2040 build makes instead. For a staged `.uf2` it also names the config that
+would write it: bootsel reaches a running board only through a helper, so a
+family listing `bootsel` with no `helper:` is told to add `helper: klipper`
+(see [Klipper through BOOTSEL](#klipper-through-bootsel)).
 
 ### Profiles
 
@@ -446,7 +577,7 @@ config is always left alone. `build --no-reseed` skips the check for one build.
 > sets `STM32_DFU_ROM_ADDRESS` to 0 without USB), and the **bootloader offset**.
 > The rest is genuinely inert for a board like this.
 
-### ESP32 displays
+### PlatformIO devices
 
 Knomis and anything else PlatformIO builds, managed alongside the MCUs. A
 PlatformIO env already names the board, its partitions and its build flags,
@@ -458,41 +589,61 @@ from, which is why `chipset` still has to be given by hand (`esp32`):
 [firmware knomi_serial]
 source: ~/knomi_serial      ; one repo, shared by every env
 builder: platformio
+helper: knomi_serial
+flashers: platformio
 
 [type knomi_toolchanger]
 chipset: esp32
 firmware: knomi_serial
-env: knomi_toolchanger      ; REQUIRED - no default, unlike everything else here
+platformio_env: knomi_toolchanger      ; REQUIRED - no default, unlike everything else here
 ```
 
-`env:` is required and never defaulted, deliberately: the type name is often
-wrong for it (`knomi_serial` itself ships a `knomi_i2cscan` diagnostic env
-beside the firmware one) and `platformio.ini`'s `default_envs` names what
+`platformio_env:` is required and never defaulted, deliberately: the type name
+is often wrong for it (`knomi_serial` itself ships a `knomi_i2cscan` diagnostic
+env beside the firmware one) and `platformio.ini`'s `default_envs` names what
 builds by default, not a canonical choice - so guessing either would build the
-wrong thing silently. `platformio_bin` in `[updater]` points at `pio` if
+wrong thing silently.
+
+A family's devices are only confirmed at write time if it also names its
+`helper:` (`helper: knomi_serial` above, for a KNOMI). Without one, `flashers:
+platformio` still writes every device to its configured port, just with no
+confidence and a warning that nothing could confirm which device that is.
+
+`platformio_bin` in `[updater]` points at `pio` if
 neither the `PATH` nor `~/.platformio/penv/bin/pio` finds it.
 
 | Key | Meaning |
 | --- | --- |
-| `env` | The PlatformIO env to build. **Required, no default.** |
-| `source` | This display's own source tree, overriding the firmware family's |
-| `klipper_section` | The `printer.cfg` prefix its displays are declared under. Default `knomi_serial` |
-| `stop_services` | Units stopped before flashing this display, overriding `[firmware ...]`/`[updater]`. Default `klipper, knomi_serial`. See [Which services stop before a write](#which-services-stop-before-a-write) |
-| `device_map` | Where that watcher writes its id → port map, relative to `printer_data`. Default `knomi/devices.json` |
+| `platformio_env` | The PlatformIO env to build. **Required, no default.** |
+| `source` | This device's own source tree, overriding the firmware family's |
+| `stop_services` | Units stopped before flashing this type, overriding `[firmware ...]`/`[updater]`. Default `klipper, knomi_serial`. See [Which services stop before a write](#which-services-stop-before-a-write) |
+| `knomi_serial_device_map` | Where that watcher writes its id → port map, relative to `printer_data`. Default `knomi/devices.json` |
 
-Every key but `env` defaults to what a Knomi needs - the three that usually
-change are for a second display family with its own klippy module and port
-watcher.
+Every key but `platformio_env` defaults to what a Knomi needs - the three that usually
+change are for a second PlatformIO device family with its own klippy module
+and port watcher.
 
-The screens themselves are not listed here - `[knomi_serial T0_knomi]` in
-`printer.cfg` already names its port, and a second copy would only be something
-to disagree with.
+The devices themselves are not listed here - `[knomi_serial T0_knomi]` in
+`printer.cfg` already names them, and a second copy would only be something to
+disagree with. A section names *either* a port (`serial:`) or the device's own
+burned-in id (`device_id:`), and that choice is what identifies it: `status`,
+`fw.status` and `fw.flash` all address a `device_id:` device by its id and a
+`serial:` device by its path. The port a `device_id:` device is actually on is
+whatever discovery found this boot, and is reported beside its id rather than
+standing in for it.
+
+`fw.flash` accepts more than it reports, because a caller may hold an identity
+this tool never configured: the path, the configured id, or the id the device
+itself reported - so a `serial:` device can still be named by its burned-in id
+even though its section carries none. Ids compare case-insensitively, the
+vendor's docs being explicit that their lowercase output is not a guarantee;
+the path does not, because a path is a path.
 
 A few things to know:
 
 - **A port is never inferred.** `pio run -t upload` picks one on its own when
-  told nothing, and every screen is an indistinguishable CH340 - so an upload
-  that guesses writes firmware to the wrong display. Every write pins its port.
+  told nothing, and every KNOMI screen is an indistinguishable CH340 - so an
+  upload that guesses writes firmware to the wrong one. Every write pins its port.
 - **A udev symlink is resolved first.** `pio device list` enumerates through
   pyserial, which reports `/dev/ttyUSB0` and never the `/dev/knomi_t0` pointing
   at it, so PlatformIO handed the symlink looks for a board on a port it cannot
@@ -517,7 +668,128 @@ A few things to know:
   the error names the file, the section and the line to add.
 - **A missing screen is otherwise invisible.** The klippy module runs as a no-op
   when a port won't open, so Klipper starts happily with a blank display and no
-  error. `fw.device.list` is the only thing that says so.
+  error. `present: false` on that device's row in `fw.status`'s `targets[]`
+  (there is no separate listing call any more) is the only thing that says so.
+
+### RP2040 cmake trees
+
+One `CMakeLists.txt` commonly declares several executables at once -
+Roadrunner's declares six, three transports times two neopixel orderings.
+`cmake_target:` is what selects which one gets built and staged for a given
+board:
+
+```ini
+# mcu-updater.cfg
+[firmware roadrunner]
+source: ~/roadrunner/rp2040     ; the cmake directory, not the repo root
+builder: cmake
+cmake_args: -DROADRUNNER_FIRMWARE_VERSION=${git_describe}
+submodules: yes                 ; the tree vendors its SDK as a submodule
+helper: roadrunner              ; reviewed firmware-specific BOOTSEL requester
+flashers: bootsel
+
+[type roadrunner]
+chipset: rp2040
+firmware: roadrunner
+cmake_target: roadrunner_v1_i2c_rgb    ; -> build/roadrunner_v1_i2c_rgb.uf2
+serials:
+    RR-ABCDEFGHIJKLMNOPQRSTUVWXYZ
+```
+
+A tree that also links a `.bin` (pico-sdk's `pico_add_extra_outputs`) has it
+staged beside the `.uf2`, so a CMake family may list `flashtool` as well as
+`bootsel`. Not `dfu_util`: `DfuUtil.supports` needs `KIND_BARE` and DFU on an
+stm32 chipset, and a cmake device is never `KIND_BARE`.
+
+A mixed RGB/GRB fleet - or any fleet where boards need different targets out
+of the same tree - takes two `[type]` sections, since `cmake_target:` is
+per-type, not per-board. With `helper: roadrunner`, `fw.flash` selects one
+exactly declared `serials:` identity, confirms that Roadrunner over its admin
+protocol, captures its full controller-qualified USB topology before asking it
+to enter BOOTSEL, and copies the staged UF2 only to the one marker-bearing
+`INFO_UF2.TXT` mount that matches that topology. Other BOOTSEL boards may remain
+attached; zero or multiple matching mounts are refused. After the copy it waits
+for the same serial and protocol identity before stopped services restart.
+
+Cmake types are ordinary members of every batch. `flash -t roadrunner` with no
+`-s` writes every serial the type declares, `update-all` builds and then flashes
+them alongside the kconfig and PlatformIO types, and `status` gives each board a
+real verdict rather than the `unknown_version` stub it used to. A board whose
+declared serial is not on the bus is reported offline and skipped, exactly as a
+kconfig board is.
+
+This closed loop is verified end to end on hardware: a Roadrunner over
+usbserial, confirmed over its admin protocol, dropped to BOOTSEL, written at
+the mount its captured USB topology names, and waited for by the same identity
+before services restart. The current udev rule mounts each board at
+`BOOTSEL/by-path/<topology tag>`, so a second RP2040 sitting in BOOTSEL beside
+it takes a different tag and is never a candidate. The ambiguity refusal in
+`mount_for_topology` remains as the backstop for installs still on the older
+rule, which mounted every board at one shared `RPI-RP2` path; that refusal has
+host-test coverage only. The manual first-install path is unchanged: a bare board that
+is already in BOOTSEL has no provisioned serial or running helper to address,
+so hold `BOOT`, press and release `RESET`, release `BOOT`, and use the ordinary
+one-board-at-a-time BOOTSEL workflow.
+
+### Klipper through BOOTSEL
+
+An RP2040 that runs Klipper with no Katapult - because Katapult will not work
+on the board, or its owner would rather not use it - is written through
+BOOTSEL:
+
+```ini
+[firmware klipper]
+source: ~/klipper
+flashers: bootsel
+helper: klipper
+```
+
+Build it with no bootloader offset (`Bootloader offset: No bootloader` in
+menuconfig) so it produces a `klipper.uf2` that starts at the start of flash.
+Klipper's RP2040 build makes one image or the other, never both: with no
+offset only `klipper.uf2`, with Katapult's offset only `klipper.bin`. The
+build stages whichever it made, and removes the other kind's image from an
+earlier build. A `.uf2` built for Katapult's offset is refused before the board is touched: a
+board asked for BOOTSEL by its own firmware has no Katapult below the image to
+boot it, so the write could only leave it needing a press of the physical
+BOOTSEL button. A file that is not a valid UF2 image is refused the same way,
+before the board is touched.
+
+To flash, the batch stops Klipper first, then the helper asks the running
+board for BOOTSEL with Katapult's `flashtool.py -r` (Katapult's source is
+still needed for its `flashtool.py`, not on the board). It copies the `.uf2`
+to the volume on the same USB port, then waits for the board to come back as
+Klipper on that port, so it is found whatever serial it comes back under. If
+no matching BOOTSEL volume turns up once the board has rebooted, nothing is
+written; the board is left sitting in BOOTSEL, and unplugging it or a power
+cycle boots the firmware it already had. If that serial changed - a config
+that sets a literal `CONFIG_USB_SERIAL_NUMBER`, or one that goes back to the
+chip ID - the flash says so. Update `printer.cfg` to match.
+
+A board that has Katapult *and* runs a Klipper built for Katapult's offset
+lands in Katapult, not BOOTSEL, when asked. The flash refuses with nothing
+written. If the staged build has no bootloader offset, rebuild it with
+Katapult's 16 KiB offset first - an offset-less build stages only a `.uf2`,
+which flashtool does not take. Then list `flashtool` before `bootsel`
+(`flashers: flashtool, bootsel`) and a board with Katapult is written through
+it from the `.bin`.
+
+So one family can serve both kinds of board, since the offset is each type's
+own menuconfig answer:
+
+```ini
+[firmware klipper]
+source: ~/klipper
+flashers: flashtool, bootsel
+helper: klipper
+```
+
+A type built with Katapult's offset stages a `.bin`, and flashtool writes it
+through Katapult. A type built with no offset stages only a `.uf2`, so
+flashtool is passed over and bootsel writes it through `helper: klipper`.
+
+USB only: a CAN board cannot be asked for BOOTSEL this way, and selection
+refuses it by name.
 
 ## Layout
 
@@ -534,6 +806,7 @@ reasoning.
 
 ~/printer_data/mcu-updater/          generated, not backed up
     <type>/<fw>.bin                      built firmware
+    <type>/<fw>.uf2                      built firmware, as a UF2 (RP2040)
     <type>/<fw>.build.json               build provenance, for staleness checks
     <type>/<fw>.profile.json             what was seeded, for drift detection
 ```
@@ -543,8 +816,9 @@ editor. Firmware binaries deliberately don't: backup tools git-commit everything
 in that directory, so a `.bin` there means a binary churn commit after every
 build - and they're regenerable anyway.
 
-After a Kconfig build stages its `.bin`, optional `.uf2`, and provenance in the
-data tree, it runs `make clean` in the firmware source tree. This keeps
+After a Kconfig build stages whichever of its `.bin` and `.uf2` `make`
+produced (an RP2040 Klipper build makes one or the other) and its provenance
+in the data tree, it runs `make clean` in the firmware source tree. This keeps
 `~/klipper/out` and `~/katapult/out` from retaining an image that a standalone
 flasher could pick up later. Cleanup also runs after a failed or cancelled
 build. If cleanup itself fails after successful staging, the build is reported
@@ -577,7 +851,7 @@ in order. The dev box cannot test what matters here.
 2. `updatefw build <type>`. Then confirm the offsets agree *before* any write:
    the application's `FLASH_APPLICATION_ADDRESS` against the
    `Application Start:` the handshake reports.
-3. `updatefw flash <serial>`, then `fw.flash` from the Mainsail panel - both
+3. `updatefw flash <serial>`, then `fw.flash` from the standalone UI - both
    paths, because they select a flasher differently.
 4. `updatefw update-all --dry-run`, then for real.
 5. **Klipper is running and ready after every one of these.**

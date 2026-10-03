@@ -1,5 +1,5 @@
 // The single funnel every `fw.*` call goes through, mirroring
-// mainsail/src/store/server/fwUpdater/actions.ts's `request` action - one
+// The client request action - one
 // place to hold the timeout and the error-shape translation, so no component
 // writes the server.extensions.request envelope by hand.
 //
@@ -10,7 +10,7 @@
 import type { MoonrakerClient, RpcError } from "./moonraker";
 
 export const AGENT_NAME = "mcu_updater";
-export const SUPPORTED_API_VERSION = 4;
+export const SUPPORTED_API_VERSION = 5;
 
 /** The identify `version` field is informational on the Moonraker side, not
  * parsed - it does not need to track ui/package.json. */

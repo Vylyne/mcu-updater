@@ -10,8 +10,9 @@ only one quietly served only one.
 
 The cost was a bug, not an aesthetic complaint. ``build_all`` walked the
 ``[mcu ...]`` registry because that was the only list it had, so "Build All"
-meant "build all the MCUs" and left every screen on whatever it happened to be
-running. Nothing said so. There was no seam for it to walk instead.
+meant "build all the MCUs" and left every PlatformIO device on whatever it
+happened to be running. Nothing said so. There was no seam for it to walk
+instead.
 
 This is that seam, and it is deliberately small: enumerate, judge, build. It
 carries no opinion about *what* a target is - an MCU type with a firmware
@@ -34,7 +35,7 @@ from __future__ import annotations
 
 import dataclasses
 import threading
-from typing import Protocol
+from typing import TYPE_CHECKING, Protocol
 
 from ..build import Reporter
 from ..config import Registry
@@ -42,6 +43,11 @@ from ..paths import Paths
 from ..settings import Settings
 from ..states import ArtifactStatus
 from . import pio as pio_mod
+
+if TYPE_CHECKING:
+    from ..artifacts import Staged
+    from ..firmware import FirmwareFamily
+    from .cmake import CmakeType
 
 
 @dataclasses.dataclass(frozen=True)
@@ -65,16 +71,26 @@ class Install:
     #: Types this host builds with kconfig and make.
     registry: Registry
     #: Types this host builds with PlatformIO.
-    displays: dict[str, pio_mod.PioType]
+    platformio: dict[str, pio_mod.PioType]
+    #: Types this host builds with cmake.
+    cmake: dict[str, CmakeType] = dataclasses.field(default_factory=dict)
 
     @classmethod
     def load(cls, paths: Paths, settings: Settings) -> Install:
+        from . import cmake as cmake_mod
+
         return cls(
             paths=paths,
             settings=settings,
             registry=Registry.load(paths),
-            displays=pio_mod.load(paths),
+            platformio=pio_mod.load(paths),
+            cmake=cmake_mod.load(paths),
         )
+
+    @property
+    def empty(self) -> bool:
+        """No type of any provider is configured on this host."""
+        return not self.registry and not self.platformio and not self.cmake
 
 
 @dataclasses.dataclass(frozen=True)
@@ -89,7 +105,7 @@ class BuildTarget:
 
     #: Which provider owns it - the key into `providers.PROVIDERS`.
     provider: str
-    #: The `[mcu <name>]` or `[display <name>]` section name.
+    #: The `[type <name>]` section name.
     name: str
     #: The firmware family. Every target carries one: a kconfig_make pair
     #: names the family it builds; a PlatformIO type names its declared
@@ -204,5 +220,34 @@ class Provider(Protocol):
 
         "cartographer for carto_v4" and "knomi_toolchanger" are both the whole
         truth about their target, and neither reads well in the other's shape.
+        """
+        ...
+
+    def clean(self, install: Install, target: BuildTarget) -> str | None:
+        """Discard this target's generated build tree. Returns what it removed.
+
+        `None` means this provider keeps no such tree - not that cleaning
+        failed. Only cmake has one today: its configure step writes a `build/`
+        directory whose `CMakeCache.txt` pins absolute paths to the toolchain
+        it found, so a tree configured against a since-upgraded `picotool`
+        stays broken through any number of rebuilds. `make clean` does not
+        help; only removing the directory does.
+
+        kconfig and PlatformIO both answer `None` on purpose. Their equivalent
+        already runs inside the build (`clean_before_build`), and a second door
+        onto it would be a different feature wearing this one's name.
+
+        The path rather than a bool, because the caller reports it: "removed
+        ~/roadrunner/rp2040/build" is a sentence a user can check, and
+        "cleaned" is not.
+        """
+        ...
+
+    def staged(self, paths: Paths, type_name: str, family: FirmwareFamily) -> Staged:
+        """What this builder left staged for `type_name`, by kind.
+
+        Read at selection and again when the ledger is filed, so it takes
+        `paths` rather than an `Install`: a single-device flash must not pay
+        for every provider's validating load to learn which file it writes.
         """
         ...

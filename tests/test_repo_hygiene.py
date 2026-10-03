@@ -14,10 +14,24 @@ from __future__ import annotations
 import pathlib
 import shutil
 import subprocess
+import sys
 
 import pytest
 
 REPO_ROOT = pathlib.Path(__file__).resolve().parents[1]
+
+
+def test_helper_contract_imports_in_a_clean_interpreter():
+    """The helper protocol must not initialize the flasher registry."""
+    result = subprocess.run(
+        [sys.executable, "-c", "from mcu_updater.helpers import BootselHandoff"],
+        cwd=REPO_ROOT / "src",
+        capture_output=True,
+        text=True,
+        timeout=30,
+    )
+
+    assert result.returncode == 0, result.stderr
 
 
 def _tracked_modes() -> dict[str, str]:
@@ -248,9 +262,66 @@ def test_install_sh_names_every_scripts_file_it_needs_at_runtime():
         "scripts/nginx.conf.d-mcu-updater.conf",
         "scripts/nginx.sites-available-mcu-updater",
         "scripts/moonraker-update-manager-ui.conf",
+        "scripts/udev.d-mcu-updater-bootsel.rules",
+        "scripts/tmpfiles.d-mcu-updater-bootsel.conf",
     ):
         assert relative in install_sh, f"install.sh no longer references {relative}"
         assert (REPO_ROOT / relative).is_file(), f"{relative} does not exist"
+
+
+def test_the_bootsel_rule_version_marker_agrees_across_rule_installer_and_python():
+    """install.sh decides whether an already-installed BOOTSEL udev rule needs
+    replacing by comparing a `mcu-updater-bootsel-rule-version: N` marker in
+    the shipped rule against the same marker in the installed one - see
+    `check_bootsel_permissions` in install.sh. Nothing else keeps the rule
+    file, the installer's regex, and the Python that parses its mount layout
+    in step; a rename or reword in any one of them would let the version
+    check silently stop upgrading anyone, or leave `bootsel_scan` looking in
+    the wrong place.
+    """
+    import re
+
+    rule = (
+        REPO_ROOT / "scripts" / "udev.d-mcu-updater-bootsel.rules"
+    ).read_text(encoding="utf-8")
+    install_sh = (REPO_ROOT / "install.sh").read_text(encoding="utf-8")
+
+    assert re.search(r"mcu-updater-bootsel-rule-version: [0-9]+", rule), (
+        "scripts/udev.d-mcu-updater-bootsel.rules has no version marker"
+    )
+    assert "mcu-updater-bootsel-rule-version" in install_sh, (
+        "install.sh no longer looks for the rule's version marker"
+    )
+    assert "/BOOTSEL/by-path/" in rule
+
+    from mcu_updater.discovery.bootsel import BOOTSEL_BY_PATH_SUBDIR
+
+    assert BOOTSEL_BY_PATH_SUBDIR == ("BOOTSEL", "by-path")
+
+
+def test_install_sh_prints_through_its_output_helpers():
+    """install.sh's output layout lives in one place - the `section`, `ok`,
+    `skip`, `warn`, `err`, `step` and `note` helpers at the top of the file.
+
+    It got its ragged tags and doubled blank lines one `echo "[TAG] ..."` at a
+    time, each perfectly reasonable on its own, so the guard is against the
+    first one coming back rather than against the state it produced. Two
+    deliberate exceptions: the `MCU_UPDATER_UI_CHANNEL` validation runs before
+    the helpers are defined, and the `printf "\\n"` calls inside the
+    moonraker.conf append blocks write to that file, not to the terminal.
+    """
+    import re
+
+    lines = (REPO_ROOT / "install.sh").read_text(encoding="utf-8").splitlines()
+    offenders = [
+        (number, line.strip())
+        for number, line in enumerate(lines, start=1)
+        if re.match(r'\s+(echo|printf) +"\[', line)
+    ]
+    assert not offenders, (
+        "install.sh prints a bracketed tag directly instead of using its "
+        f"output helpers: {offenders}"
+    )
 
 
 def test_the_ui_update_manager_conf_agrees_with_install_sh_defaults():

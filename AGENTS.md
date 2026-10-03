@@ -33,6 +33,8 @@ Violating any of these produces a bug that tests will not catch.
 | **`posix_only` tests silently skip on Windows** | Every flock/signal/`/proc` assertion. A green Windows run proves nothing about locking. CI runs Linux too — trust that. |
 | **Use `scripts/mutation_test.py`, never a throwaway** | An inline mutation script once stranded a sabotaged guard on disk. `tests/test_mutation_helper.py` exists because of it. |
 | **Run `mutation_test.py` one spec at a time** | Never in parallel, and never a full sweep under a shell timeout shorter than it needs. An interrupted sweep strands a *live* mutation in the source — this happened once, in `firmware.py`, and only `test_no_mutation_is_left_live_in_the_source` caught it. After any interrupted run, read the hygiene test's output; do not settle for "the command finished". |
+| **Rewriting a line? Grep `scripts/mutations/` for it first** | Every spec anchors its sabotage to a *verbatim* source line, so any edit to a guarded line breaks `test_no_mutation_is_left_live_in_the_source` — inside the gate, so the commit is blocked. This has bitten twice on one branch (`pio-provider-selection.json`, `bulk-operations.json`), both times as a surprise mid-task. Re-anchor the spec in the same commit, and rename it if the rule it proves has widened. |
+| **Work a topic branch in its own worktree** | `git worktree add .worktrees/<topic> -b <topic>` — inside the repo, in the git-ignored `.worktrees/`, so the IDE sees it. One checkout shared between me and an agent means whatever I commit mid-session lands on *their* branch: a flash fix landed on `feat/cmake-provider` while an agent was running there, and its whole-branch review had to be re-scoped around commits nobody had planned to ship together. Separate worktrees keep the histories apart without either side waiting. Removing one: `git worktree remove <path>`, and never `--force` — the refusal means files exist only there. |
 | **Git Bash mangles `/FI`-style switches** into paths | Silently turns wait-for-process loops into no-ops. Use PowerShell for those. |
 | **Never interrupt a firmware write** | Cancellation is checked *between* targets, never inside one. Half an image is a brick. |
 | **Bench board only** for any flash test | Never the toolhead. Recovery from a bad flash there is a DFU hunt inside the hotend assembly. |
@@ -128,13 +130,22 @@ global "never commit unless explicitly asked" default does not apply here.
 Follow [Commit voice](#commit-voice) below. Still surface what was committed
 in the reply; this authorizes the commit, not silence about it.
 
-## Extending providers, flashers or discovery sources
+## Extending providers, flashers, discovery sources or helpers
 
 No plugin auto-discovery (`pkgutil`, entry points) — this process holds the
 exclusive lock, writes firmware, and has NOPASSWD `systemctl` for Klipper, so
 importing whatever `.py` landed in a directory is privilege escalation. The
 extension point is deliberately manual: **one module + one line in the
 registry tuple.** See [docs/decisions.md](docs/decisions.md).
+
+**Which seam takes new code.** Providers are per-*build system* and flashers
+are per-*transport*; neither may name a vendor or a board. Discovery may be
+firmware-specific, because how a board announces itself is a property of its
+firmware. Anything else vendor-shaped — a one-off protocol, a provisioning
+step, a version string only one firmware stamps — is a **helper**
+(`src/mcu_updater/helpers/`), named in config on its `[firmware ...]` family.
+Squeezing it into a generic path instead is the Cartographer mistake, and that
+one is still being paid for.
 
 ## Commit voice
 

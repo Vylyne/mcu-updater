@@ -4,6 +4,7 @@ import type { Action } from "../api/targets";
 import {
   adoptSerial,
   cancelJob,
+  clearIdentity,
   closeKconfig,
   connect,
   disconnect,
@@ -12,6 +13,7 @@ import {
   ignoreCanbus,
   kconfigEnter,
   openKconfig,
+  provisionIdentity,
   refresh,
   scanBareBoard,
   startAddMcu,
@@ -201,7 +203,7 @@ describe("refresh discovery", () => {
     await call;
   });
 
-  it("does not let an older CAN scan overwrite a newer refresh", async () => {
+  it("coalesces a second refresh while the first one is still running", async () => {
     let socket!: FakeWebSocket;
     connect("ws://test/websocket", () => {
       socket = new FakeWebSocket();
@@ -214,37 +216,52 @@ describe("refresh discovery", () => {
     state.ping = { capabilities: ["fw.canbus.scan"] };
     const first = refresh();
     await new Promise((resolve) => setTimeout(resolve, 0));
-    const firstCan = socket.sent
-      .slice(before)
-      .map((raw) => JSON.parse(raw))
-      .find((request) => request.params?.method === "fw.canbus.scan")!;
     const second = refresh();
     await new Promise((resolve) => setTimeout(resolve, 0));
-    const canRequests = socket.sent
-      .slice(before)
-      .map((raw) => JSON.parse(raw))
-      .filter((request) => request.params?.method === "fw.canbus.scan");
-    const secondCan = canRequests.at(-1)!;
-    for (const request of socket.sent
-      .slice(before)
-      .map((raw) => JSON.parse(raw))
-      .filter((request) => request.params?.method === "fw.status")) {
-      socket.message({ jsonrpc: "2.0", id: request.id, result: { bus: [] } });
-    }
+    expect(state.refreshing).toBe(true);
+    const requests = socket.sent.slice(before).map((raw) => JSON.parse(raw));
+    const statusRequests = requests.filter(
+      (request) => request.params?.method === "fw.status",
+    );
+    const canRequests = requests.filter(
+      (request) => request.params?.method === "fw.canbus.scan",
+    );
+    expect(statusRequests).toHaveLength(1);
+    expect(canRequests).toHaveLength(1);
+
     socket.message({
       jsonrpc: "2.0",
-      id: secondCan.id,
-      result: { devices: [{ uuid: "new" }] },
+      id: statusRequests[0].id,
+      result: { bus: [] },
     });
     socket.message({
       jsonrpc: "2.0",
-      id: firstCan.id,
-      result: { devices: [{ uuid: "old" }] },
+      id: canRequests[0].id,
+      result: { devices: [{ uuid: "one-scan" }] },
     });
     await Promise.all([first, second]);
+    expect(state.refreshing).toBe(false);
     expect(
       (state.canbus as { devices: { uuid: string }[] }).devices[0].uuid,
-    ).toBe("new");
+    ).toBe("one-scan");
+  });
+
+  it("clears the shared refresh state when the connection drops", async () => {
+    let socket!: FakeWebSocket;
+    connect("ws://test/websocket", () => {
+      socket = new FakeWebSocket();
+      return socket;
+    });
+    socket.open();
+    await drainHandshake(socket);
+    state.ping = { capabilities: ["fw.canbus.scan"] };
+
+    void refresh();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(state.refreshing).toBe(true);
+
+    disconnect();
+    expect(state.refreshing).toBe(false);
   });
 
   it("does not call CAN scan when the agent lacks that capability", async () => {
@@ -856,6 +873,163 @@ describe("Phase 8: settings, bus adoption, add_mcu", () => {
   });
 });
 
+describe("roadrunner", () => {
+  afterEach(() => {
+    disconnect();
+  });
+
+  it("provisionIdentity calls fw.identity.provision with just the serial", async () => {
+    let socket!: FakeWebSocket;
+    connect("ws://test/websocket", () => {
+      socket = new FakeWebSocket();
+      return socket;
+    });
+    socket.open();
+    await drainHandshake(socket);
+
+    const before = socket.sent.length;
+    const call = provisionIdentity("RR-UNPROVISIONED-0123456789ABCDEF");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const request = JSON.parse(socket.sent[before]);
+    expect(request.params.method).toBe("fw.identity.provision");
+    expect(request.params.arguments).toEqual({
+      serial: "RR-UNPROVISIONED-0123456789ABCDEF",
+    });
+    socket.message({
+      jsonrpc: "2.0",
+      id: request.id,
+      result: {
+        serial: "RR-0123456789ABCDEFGHJKMNPQRS",
+        prior_serial: "RR-UNPROVISIONED-0123456789ABCDEF",
+        state: "provisioned",
+      },
+    });
+    expect(await call).toBe(true);
+  });
+
+  it("provisionIdentity refreshes fw.status after a confirmed result", async () => {
+    let socket!: FakeWebSocket;
+    connect("ws://test/websocket", () => {
+      socket = new FakeWebSocket();
+      return socket;
+    });
+    socket.open();
+    await drainHandshake(socket);
+
+    const before = socket.sent.length;
+    const call = provisionIdentity("RR-UNPROVISIONED-0123456789ABCDEF");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const request = JSON.parse(socket.sent[before]);
+    socket.message({
+      jsonrpc: "2.0",
+      id: request.id,
+      result: {
+        serial: "RR-0123456789ABCDEFGHJKMNPQRS",
+        prior_serial: "RR-UNPROVISIONED-0123456789ABCDEF",
+        state: "provisioned",
+      },
+    });
+    await call;
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const refreshed = socket.sent
+      .slice(before + 1)
+      .map((raw) => JSON.parse(raw))
+      .some((msg) => msg.params?.method === "fw.status");
+    expect(refreshed).toBe(true);
+  });
+
+  it("provisionIdentity routes a refusal into state.error and returns false", async () => {
+    let socket!: FakeWebSocket;
+    connect("ws://test/websocket", () => {
+      socket = new FakeWebSocket();
+      return socket;
+    });
+    socket.open();
+    await drainHandshake(socket);
+
+    const call = provisionIdentity("RR-UNPROVISIONED-0123456789ABCDEF");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const request = JSON.parse(socket.sent[socket.sent.length - 1]);
+    socket.message({
+      jsonrpc: "2.0",
+      id: request.id,
+      error: {
+        code: -32000,
+        message: "no matching candidate",
+        data: {
+          code: "device_not_found",
+          message: "No matching untracked Roadrunner was found.",
+        },
+      },
+    });
+
+    expect(await call).toBe(false);
+    expect(state.error?.code).toBe("device_not_found");
+    expect(state.error?.message).toBe(
+      "No matching untracked Roadrunner was found.",
+    );
+  });
+
+  it("clearIdentity calls fw.identity.clear with just the serial", async () => {
+    let socket!: FakeWebSocket;
+    connect("ws://test/websocket", () => {
+      socket = new FakeWebSocket();
+      return socket;
+    });
+    socket.open();
+    await drainHandshake(socket);
+
+    const before = socket.sent.length;
+    const call = clearIdentity("RR-0123456789ABCDEFGHJKMNPQRS");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const request = JSON.parse(socket.sent[before]);
+    expect(request.params.method).toBe("fw.identity.clear");
+    expect(request.params.arguments).toEqual({
+      serial: "RR-0123456789ABCDEFGHJKMNPQRS",
+    });
+    socket.message({
+      jsonrpc: "2.0",
+      id: request.id,
+      result: {
+        serial: "RR-UNPROVISIONED-0123456789ABCDEF",
+        prior_serial: "RR-0123456789ABCDEFGHJKMNPQRS",
+        state: "unprovisioned",
+      },
+    });
+    expect(await call).toBe(true);
+  });
+
+  it("clearIdentity routes a refusal into state.error and returns false", async () => {
+    let socket!: FakeWebSocket;
+    connect("ws://test/websocket", () => {
+      socket = new FakeWebSocket();
+      return socket;
+    });
+    socket.open();
+    await drainHandshake(socket);
+
+    const call = clearIdentity("RR-0123456789ABCDEFGHJKMNPQRS");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const request = JSON.parse(socket.sent[socket.sent.length - 1]);
+    socket.message({
+      jsonrpc: "2.0",
+      id: request.id,
+      error: {
+        code: -32000,
+        message: "already tracked",
+        data: {
+          code: "device_tracked",
+          message: "This board is tracked by a type; untrack it first.",
+        },
+      },
+    });
+
+    expect(await call).toBe(false);
+    expect(state.error?.code).toBe("device_tracked");
+  });
+});
+
 describe("log gap-heal", () => {
   afterEach(() => {
     disconnect();
@@ -975,5 +1149,339 @@ describe("log gap-heal", () => {
     await new Promise((resolve) => setTimeout(resolve, 0));
 
     expect(state.logOmitted).toBe(true);
+  });
+});
+
+describe("job log restoration", () => {
+  afterEach(() => {
+    disconnect();
+    state.job = null;
+    state.log = null;
+    state.logOmitted = false;
+  });
+
+  it("clears a stale displayed job when a fresh connection has none to restore", async () => {
+    state.job = { id: "job-stale" } as never;
+    state.log = {
+      job_id: "job-stale",
+      lines: [{ i: 0, s: "stdout", t: "old" }],
+    };
+    let socket!: FakeWebSocket;
+    connect("ws://test/websocket", () => {
+      socket = new FakeWebSocket();
+      return socket;
+    });
+    socket.open();
+    await drainHandshake(socket);
+
+    expect(state.job).toBeNull();
+    expect(state.log).toBeNull();
+  });
+
+  it("restores an active job and its retained log from fw.status", async () => {
+    let socket!: FakeWebSocket;
+    connect("ws://test/websocket", () => {
+      socket = new FakeWebSocket();
+      return socket;
+    });
+    socket.open();
+    await drainHandshake(socket);
+    state.ping = { capabilities: [] };
+
+    const job = {
+      id: "job-7",
+      kind: "build",
+      params: { name: "toolhead" },
+      state: "running",
+      created: 100,
+      started: 101,
+      finished: null,
+      duration: 2,
+      progress: { step: "Compiling", index: 1, total: 2 },
+      result: null,
+      error: null,
+      cancel_requested: false,
+      log_next: 2,
+      log_dropped: 0,
+    };
+    const before = socket.sent.length;
+    const call = refresh();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const statusRequest = socket.sent
+      .slice(before)
+      .map((raw) => JSON.parse(raw))
+      .find((request) => request.params?.method === "fw.status")!;
+    socket.message({
+      jsonrpc: "2.0",
+      id: statusRequest.id,
+      result: { bus: [], job, recent: [] },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const logRequest = socket.sent
+      .slice(before)
+      .map((raw) => JSON.parse(raw))
+      .find((request) => request.params?.method === "fw.job.get");
+    expect(logRequest?.params.arguments).toEqual({
+      job_id: "job-7",
+      log_from: 0,
+    });
+    socket.message({
+      jsonrpc: "2.0",
+      id: logRequest.id,
+      result: {
+        job,
+        log: [
+          { i: 0, s: "cmd", t: "make" },
+          { i: 1, s: "stdout", t: "Compiling" },
+        ],
+        log_from: 0,
+        log_next: 2,
+        log_dropped: 0,
+      },
+    });
+    await call;
+
+    expect(state.job?.id).toBe("job-7");
+    expect(state.log?.lines.map((line) => line.i)).toEqual([0, 1]);
+  });
+
+  it("restores the newest completed job when it finished within 15 minutes", async () => {
+    let socket!: FakeWebSocket;
+    connect("ws://test/websocket", () => {
+      socket = new FakeWebSocket();
+      return socket;
+    });
+    socket.open();
+    await drainHandshake(socket);
+    state.ping = { capabilities: [] };
+
+    const recentJob = {
+      id: "job-6",
+      kind: "flash_all",
+      params: {},
+      state: "succeeded",
+      created: Date.now() / 1000 - 120,
+      started: Date.now() / 1000 - 110,
+      finished: Date.now() / 1000 - 60,
+      duration: 50,
+      progress: { step: "Complete", index: 2, total: 2 },
+      result: {},
+      error: null,
+      cancel_requested: false,
+      log_next: 1,
+      log_dropped: 0,
+    };
+    const before = socket.sent.length;
+    const call = refresh();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const statusRequest = socket.sent
+      .slice(before)
+      .map((raw) => JSON.parse(raw))
+      .find((request) => request.params?.method === "fw.status")!;
+    socket.message({
+      jsonrpc: "2.0",
+      id: statusRequest.id,
+      result: { bus: [], job: null, recent: [recentJob] },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+
+    const logRequest = socket.sent
+      .slice(before)
+      .map((raw) => JSON.parse(raw))
+      .find((request) => request.params?.method === "fw.job.get");
+    expect(logRequest?.params.arguments).toEqual({
+      job_id: "job-6",
+      log_from: 0,
+    });
+    socket.message({
+      jsonrpc: "2.0",
+      id: logRequest.id,
+      result: {
+        job: recentJob,
+        log: [{ i: 0, s: "info", t: "Complete" }],
+        log_from: 0,
+        log_next: 1,
+        log_dropped: 0,
+      },
+    });
+    await call;
+
+    expect(state.job?.id).toBe("job-6");
+    expect(state.log?.lines[0].t).toBe("Complete");
+  });
+
+  it("does not restore a completed job older than 15 minutes", async () => {
+    let socket!: FakeWebSocket;
+    connect("ws://test/websocket", () => {
+      socket = new FakeWebSocket();
+      return socket;
+    });
+    socket.open();
+    await drainHandshake(socket);
+    state.ping = { capabilities: [] };
+
+    const before = socket.sent.length;
+    const call = refresh();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const statusRequest = socket.sent
+      .slice(before)
+      .map((raw) => JSON.parse(raw))
+      .find((request) => request.params?.method === "fw.status")!;
+    socket.message({
+      jsonrpc: "2.0",
+      id: statusRequest.id,
+      result: {
+        bus: [],
+        job: null,
+        recent: [
+          {
+            id: "job-old",
+            state: "succeeded",
+            finished: Date.now() / 1000 - 15 * 60 - 1,
+          },
+        ],
+      },
+    });
+    await call;
+
+    const methods = socket.sent
+      .slice(before)
+      .map((raw) => JSON.parse(raw).params?.method);
+    expect(methods).not.toContain("fw.job.get");
+    expect(state.job).toBeNull();
+    expect(state.log).toBeNull();
+  });
+
+  it("keeps a live log batch that arrives while retained history is loading", async () => {
+    let socket!: FakeWebSocket;
+    connect("ws://test/websocket", () => {
+      socket = new FakeWebSocket();
+      return socket;
+    });
+    socket.open();
+    await drainHandshake(socket);
+    state.ping = { capabilities: [] };
+
+    const job = {
+      id: "job-race",
+      kind: "build",
+      state: "running",
+      finished: null,
+    };
+    const before = socket.sent.length;
+    const call = refresh();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const statusRequest = socket.sent
+      .slice(before)
+      .map((raw) => JSON.parse(raw))
+      .find((request) => request.params?.method === "fw.status")!;
+    socket.message({
+      jsonrpc: "2.0",
+      id: statusRequest.id,
+      result: { bus: [], job, recent: [] },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const logRequest = socket.sent
+      .slice(before)
+      .map((raw) => JSON.parse(raw))
+      .find((request) => request.params?.method === "fw.job.get")!;
+
+    socket.message({
+      jsonrpc: "2.0",
+      method: "notify_agent_event",
+      params: [
+        {
+          agent: "mcu_updater",
+          event: "log",
+          data: {
+            job_id: "job-race",
+            seq: 0,
+            lines: [{ i: 0, s: "stdout", t: "arrived live" }],
+          },
+        },
+      ],
+    });
+    socket.message({
+      jsonrpc: "2.0",
+      id: logRequest.id,
+      result: {
+        job,
+        log: [],
+        log_from: 0,
+        log_next: 0,
+        log_dropped: 0,
+      },
+    });
+    await call;
+
+    expect(state.log?.lines).toEqual([
+      { i: 0, s: "stdout", t: "arrived live" },
+    ]);
+  });
+
+  it("does not replace a live job event with an older status snapshot", async () => {
+    let socket!: FakeWebSocket;
+    connect("ws://test/websocket", () => {
+      socket = new FakeWebSocket();
+      return socket;
+    });
+    socket.open();
+    await drainHandshake(socket);
+    state.ping = { capabilities: [] };
+
+    const before = socket.sent.length;
+    const call = refresh();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const statusRequest = socket.sent
+      .slice(before)
+      .map((raw) => JSON.parse(raw))
+      .find((request) => request.params?.method === "fw.status")!;
+    socket.message({
+      jsonrpc: "2.0",
+      method: "notify_agent_event",
+      params: [
+        {
+          agent: "mcu_updater",
+          event: "job",
+          data: { job: { id: "job-new", state: "running" } },
+        },
+      ],
+    });
+    socket.message({
+      jsonrpc: "2.0",
+      id: statusRequest.id,
+      result: {
+        bus: [],
+        job: null,
+        recent: [
+          {
+            id: "job-old",
+            state: "succeeded",
+            finished: Date.now() / 1000 - 10,
+          },
+        ],
+      },
+    });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const logRequest = socket.sent
+      .slice(before)
+      .map((raw) => JSON.parse(raw))
+      .find((request) => request.params?.method === "fw.job.get")!;
+    socket.message({
+      jsonrpc: "2.0",
+      id: logRequest.id,
+      result: {
+        job: { id: "job-new", state: "running" },
+        log: [],
+        log_from: 0,
+        log_next: 0,
+        log_dropped: 0,
+      },
+    });
+    await call;
+
+    expect(state.job?.id).toBe("job-new");
+    expect(logRequest.params.arguments.job_id).toBe("job-new");
   });
 });

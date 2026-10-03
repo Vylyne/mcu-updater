@@ -14,7 +14,8 @@ Klipper-style, because it lives next to ``printer.cfg`` and gets hand-edited::
 Per-type keys, and that is all:
 
 ``chipset``
-    Required. Matches the chipset segment of the /dev/serial/by-id name.
+    Required. Drives flasher and build selection, not presence - see
+    docs/decisions.md "Presence comes from the inventory".
 ``serials``
     One tracked board per line.
 ``canbus_uuids``
@@ -27,7 +28,7 @@ Per-type keys, and that is all:
     Required. Which families this board runs, comma- or space-separated - an
     application and, for a board with one, its bootloader, e.g.
     ``cartographer, katapult``. A type with no bootloader simply omits one.
-``profile``
+``kconfig_make_profile``
     The vendor answer file this type's application config is seeded from, e.g.
     ``config.CartoV4USB``. Names a file in that firmware's own source tree, not
     one shipped here - see :mod:`mcu_updater.profiles`.
@@ -52,7 +53,7 @@ import re
 from collections.abc import Iterable, Iterator
 from typing import Any
 
-from . import firmware, sections
+from . import cfgsnapshot, firmware, sections, typelist
 from .cfgdoc import CfgDocument
 from .errors import (
     AmbiguousSerialError,
@@ -117,24 +118,6 @@ class FwConfig:
         return out
 
 
-def _is_platformio_only(
-    paths: Paths, doc: CfgDocument, section: str, families_map: dict[str, Any]
-) -> bool:
-    """Whether a `[type ...]` section's only declared firmware is built by
-    platformio - meaning the type belongs to `providers/pio.py`'s registry,
-    not this one.
-    """
-    declared_fws = doc.get_csv(section, "firmware") or []
-    if not declared_fws:
-        # Vacuously false, not "defaults to klipper" - load() refuses a
-        # section with no firmware: key before this is ever reachable for one.
-        return False
-    return all(
-        firmware.resolve(paths, fw, families_map).builder == "platformio"
-        for fw in declared_fws
-    )
-
-
 def _is_bootloader(fw: str, families: dict[str, Any] | None) -> bool:
     """Whether a declared family is a bootloader.
 
@@ -187,10 +170,11 @@ class McuType:
         """Read a firmware family's config without creating a slot.
 
         Distinct from `fw()`, which is `setdefault` and therefore *creates* a
-        slot as a side effect of merely being asked for one - the bug behind
-        docs/rebuild-plan.md Step 18, where a read-only loop over every
-        globally declared family left every type carrying phantom slots for
-        families it never declared. Use this wherever a family's config is
+        slot as a side effect of merely being asked for one. That was a real
+        bug: a read-only loop over every globally declared family left every
+        type carrying phantom slots for families it never declared, and the
+        panel then reported a perfectly good board's firmware as never built.
+        Use this wherever a family's config is
         only being read, never assigned into.
         """
         return self.fws.get(fw, FwConfig())
@@ -236,14 +220,13 @@ class McuType:
         return None
 
     def fw_order(self) -> list[str]:
-        """The families this type carries, built-ins first.
+        """The families this type carries, in declaration order.
 
-        Self-contained rather than asking the config: an McuType is handed
-        around without a Paths, and the order only has to be *stable* - it is
-        what the artifacts payload and the CLI listing are keyed by.
+        Families it holds per-family keys for but no longer declares follow, so
+        nothing a caller iterates is dropped.
         """
-        first = [fw for fw in firmware.BUILTIN if fw in self.fws]
-        return first + sorted(fw for fw in self.fws if fw not in firmware.BUILTIN)
+        declared = [fw for fw in self.firmwares if fw in self.fws]
+        return declared + [fw for fw in self.fws if fw not in self.firmwares]
 
     def to_json(self) -> dict[str, Any]:
         out: dict[str, Any] = {
@@ -324,101 +307,47 @@ class Registry:
 
     @classmethod
     def load(cls, paths: Paths) -> Registry:
+        """The registry, over the shared config snapshot.
+
+        Its document is frozen: a Registry from here is for reading. Every
+        edit goes through `mutate`, which reads its own copy under the lock.
+        """
+        return cls._from_doc(paths, typelist.read_doc(paths))
+
+    @classmethod
+    def _from_doc(cls, paths: Paths, doc: CfgDocument | None) -> Registry:
         path = paths.registry_file
-        if not os.path.exists(path):
+        if doc is None:
             return cls({}, CfgDocument())
-
-        try:
-            with open(path, encoding="utf-8") as fh:
-                doc = CfgDocument(fh.read())
-        except OSError as exc:
-            raise ConfigCorruptError(f"could not read {path}: {exc}", path=path) from exc
-
-        if doc.duplicate_sections:
-            dupes = ", ".join(f"[{name}]" for name in doc.duplicate_sections)
-            raise ConfigCorruptError(
-                f"{path}: duplicate section(s) {dupes}. Only the first copy is read, so "
-                f"everything in the later one is silently ignored - merge them into one.",
-                path=path,
-                value=doc.duplicate_sections,
-            )
 
         # Which families exist is itself config, and it is in this same
         # document - so read it from the doc already parsed rather than
-        # reopening the file once per registry load. Kept whole (not just the
-        # names) so a type's declared families can be checked against their
-        # builders below.
+        # reopening the file once per registry load.
         families_map = firmware.load_from_doc(doc)
-        fw_names = firmware.names_of(families_map)
+        entries = typelist.read(doc, families_map)
+        typelist.validate(entries, families_map, path=path)
 
         types: dict[str, McuType] = {}
-        for declared in sections.read(doc):
-            name, section = declared.name, declared.section
-            mcu = McuType(name=name, chipset=(doc.get(section, "chipset") or "").strip())
-            mcu.serials = doc.get_list(section, "serials")
-            mcu.canbus_uuids = doc.get_list(section, "canbus_uuids")
-
-            declared_fws = doc.get_csv(section, "firmware") or []
-            if not declared_fws:
-                # Refused, not defaulted to klipper - silence used to mean
-                # klipper (kconfig_make), which is exactly the implicit
-                # behaviour this key exists to remove. See docs/rebuild-plan.md
-                # Step 11.
-                raise ConfigCorruptError(
-                    f"{path}: '{name}' declares no firmware: key. Every type "
-                    f"must name at least one firmware family it runs, e.g. "
-                    f"'firmware: klipper'.",
-                    path=path,
-                    type=name,
-                )
-            for fw in declared_fws:
-                if fw not in fw_names:
-                    # Refused rather than defaulted. A typo here would otherwise
-                    # build and flash klipper at a board that runs something else,
-                    # which is exactly the mistake this key exists to prevent.
-                    raise ConfigCorruptError(
-                        f"{path}: '{name}' declares firmware '{fw}', which is not "
-                        f"a known family. Known: {', '.join(fw_names)}. Declare it with a "
-                        f"[firmware {fw}] section, or fix the spelling.",
-                        path=path,
-                        type=name,
-                        value=fw,
-                    )
-            builders = {
-                firmware.resolve(paths, fw, families_map).builder for fw in declared_fws
-            }
-            if declared_fws and builders == {"platformio"}:
-                # A type whose only declared firmware is built by platformio
-                # belongs to providers/pio.py's registry, not this one - a
-                # type with no explicit firmware: at all defaults to klipper
-                # (kconfig_make) and is unaffected. See pio.load().
+        for entry in entries:
+            if entry.builder != "kconfig_make":
+                # Another builder's type. Its provider's view reads it from the
+                # same list; this registry holds the kconfig_make types.
                 continue
-            if len(builders) > 1:
-                # A type is built by exactly one provider - the seam that
-                # compiles it is chosen from its families' builder, so a type
-                # whose declared families disagree has no single answer.
-                raise ConfigCorruptError(
-                    f"{path}: '{name}' declares firmware families built by "
-                    f"different tools ({', '.join(sorted(builders))}): "
-                    f"{', '.join(declared_fws)}. A type is built by exactly one "
-                    f"provider - split it into two types if it genuinely needs "
-                    f"both.",
-                    path=path,
-                    type=name,
-                    value=declared_fws,
-                )
-            mcu.firmwares = declared_fws
-            mcu.profile = (doc.get(section, "profile") or "").strip()
-            mcu.stop_services = doc.get_csv(section, "stop_services")
+            name, block = entry.name, entry.block
+            mcu = McuType(name=name, chipset=entry.chipset)
+            mcu.serials = list(entry.serials)
+            mcu.canbus_uuids = list(entry.canbus_uuids)
+            mcu.firmwares = list(entry.firmwares)
+            mcu.profile = (block.get("kconfig_make_profile") or "").strip()
+            mcu.stop_services = block.get_csv("stop_services")
             # Only the families this type actually declares - not every
             # globally-declared [firmware ...] section. mcu.fw() is
-            # setdefault, so iterating fw_names here would seed a phantom
-            # slot for every family in the file on every type, not just the
-            # ones it runs. See docs/rebuild-plan.md Step 18.
+            # setdefault, so iterating every family here would seed a phantom
+            # slot for each one on every type.
             for fw in mcu.firmwares:
                 cfg = mcu.fw(fw)
-                cfg.extra_args = (doc.get(section, f"{fw}_extra_args") or "").strip()
-                for raw_patch in doc.get_list(section, f"{fw}_makefile_patches"):
+                cfg.extra_args = (block.get(f"{fw}_extra_args") or "").strip()
+                for raw_patch in block.get_list(f"{fw}_makefile_patches"):
                     patch = MakefilePatch.parse(raw_patch)
                     if patch is None:
                         raise ConfigCorruptError(
@@ -429,7 +358,7 @@ class Registry:
                             value=raw_patch,
                         )
                     cfg.makefile_patches.append(patch)
-                cfg.extra_repos = doc.get_list(section, f"{fw}_extra_repos")
+                cfg.extra_repos = block.get_list(f"{fw}_extra_repos")
             types[name] = mcu
 
         return cls(types, doc)
@@ -441,7 +370,10 @@ class Registry:
 
         ``with Registry.mutate(paths, "add serial") as reg: reg.add_serial(...)``
 
-        The load happens *inside* the lock, deliberately. `save()` rewrites the
+        The only way a registry reaches disk: `_save` is private so that no caller
+        can write one it read outside the lock.
+
+        The load happens *inside* the lock, deliberately. `_save()` rewrites the
         whole document, so saving a Registry that was read before someone else's
         edit erases that edit - and the agent and the CLI are separate processes
         that both write this file. Re-reading under the lock makes that impossible
@@ -456,26 +388,29 @@ class Registry:
         from .lock import ExclusiveLock
 
         with ExclusiveLock(paths, path=paths.registry_lock_file).acquire(label):
-            reg = cls.load(paths)
+            # Fresh from disk, never the snapshot: the lock exists so another
+            # process's edit cannot be lost, and that must not rest on the
+            # snapshot's racy window judging right.
+            reg = cls._from_doc(paths, typelist.read_doc(paths, fresh=True))
             yield reg
-            reg.save(paths)
+            reg._save(paths)
 
-    def save(self, paths: Paths) -> None:
-        """Atomic write, preserving everything the document already had."""
+    def _save(self, paths: Paths) -> None:
+        """Atomic write, preserving everything the document already had.
+
+        Writes the types this registry holds and deletes nothing. A section is
+        deleted by `remove_type` / `remove_declared_type`, so a type this
+        registry does not hold (another builder's) cannot be lost by a save.
+
+        Validated with the same check `Registry.load` applies before any byte
+        reaches disk - a mutation that sets `mcu.firmwares` to something
+        `typelist.validate` would refuse (an undeclared family, a mixed-builder
+        type, ...) must not produce a document the next `load` refuses, which
+        would take every type down with it rather than only the bad one.
+        """
         doc = self._doc
         families_map = firmware.load_from_doc(doc)
         fw_names = firmware.names_of(families_map)
-
-        for declared in sections.read(doc):
-            if declared.name in self.types:
-                continue
-            if _is_platformio_only(paths, doc, declared.section, families_map):
-                # Not one of ours by its declared firmware's builder - load()
-                # excludes it from self.types for the same reason. Leaving it
-                # alone here is what stops that exclusion from reading as "the
-                # user deleted this type".
-                continue
-            doc.remove_section(declared.section)
 
         for name, mcu in self.types.items():
             # Whatever section a type already has, so an untouched config
@@ -495,14 +430,14 @@ class Registry:
                 doc.remove_option(section, "canbus_uuids")
 
             # Always written, never omitted as a restated default: load() now
-            # refuses a type with no firmware: key at all, so save() cannot
+            # refuses a type with no firmware: key at all, so _save() cannot
             # leave it implicit even for the plain-klipper case.
             doc.set(section, "firmware", ", ".join(mcu.firmwares))
 
             if mcu.profile.strip():
-                doc.set(section, "profile", mcu.profile.strip())
+                doc.set(section, "kconfig_make_profile", mcu.profile.strip())
             else:
-                doc.remove_option(section, "profile")
+                doc.remove_option(section, "kconfig_make_profile")
 
             if mcu.stop_services is None:
                 doc.remove_option(section, "stop_services")
@@ -513,7 +448,7 @@ class Registry:
             # is in `firmware:`. Dropped on every save rather than left stale.
             doc.remove_option(section, "katapult_installed")
 
-            for fw in fw_names:
+            for fw in dict.fromkeys([*mcu.fws, *fw_names]):
                 cfg = mcu.fws.get(fw)
                 args_key = f"{fw}_extra_args"
                 patch_key = f"{fw}_makefile_patches"
@@ -535,11 +470,20 @@ class Registry:
                 else:
                     doc.remove_option(section, repos_key)
 
+        # `read`/`validate` rather than a second validator - reusing the exact
+        # walk `Registry.load` uses, over the document as it now stands (every
+        # `doc.set`/`remove_option` above has already run). Raising here means
+        # nothing below this line executes: no tmp file, no replace.
+        typelist.validate(
+            typelist.read(doc, families_map), families_map, path=paths.registry_file
+        )
+
         os.makedirs(os.path.dirname(paths.registry_file), exist_ok=True)
         tmp = paths.registry_file + ".tmp"
         with open(tmp, "w", encoding="utf-8", newline="\n") as fh:
             fh.write(doc.render())
         os.replace(tmp, paths.registry_file)
+        cfgsnapshot.invalidate(paths.registry_file)
 
     # --- lookups ---
 
@@ -554,6 +498,30 @@ class Registry:
 
     def names(self) -> list[str]:
         return sorted(self.types)
+
+    def declared_type_names(self) -> list[str]:
+        """All configured types, including those owned by another builder.
+
+        A provider owns a type's build/configuration semantics, while the
+        registry document owns physical identity.  Keeping those axes separate
+        lets adoption edit a CMake or PlatformIO type without pretending its
+        build belongs to Kconfig+make.
+        """
+        return sorted(declared.name for declared in sections.read(self._doc))
+
+    def _declared_section(self, name: str) -> str:
+        for declared in sections.read(self._doc):
+            if declared.name == name:
+                return declared.section
+        raise UnknownTypeError(
+            f"MCU type '{name}' does not exist.", type=name, known=self.declared_type_names()
+        )
+
+    def get_declared_chipset(self, name: str) -> str:
+        """Chipset for any declared type, regardless of its build provider."""
+        if name in self.types:
+            return self.types[name].chipset
+        return (self._doc.get(self._declared_section(name), "chipset") or "").strip()
 
     def get(self, name: str) -> McuType:
         try:
@@ -573,6 +541,14 @@ class Registry:
         """Types tracking this serial. Normally 0 or 1; >1 is a misconfiguration."""
         return [name for name, mcu in self.types.items() if serial in mcu.serials]
 
+    def find_declared_types_for_serial(self, serial: str) -> list[str]:
+        """Every declared type tracking a serial, across all builders."""
+        return [
+            declared.name
+            for declared in sections.read(self._doc)
+            if serial in self._doc.get_list(declared.section, "serials")
+        ]
+
     def find_types_for_uuid(self, uuid: str) -> list[str]:
         """Types tracking this CAN uuid. Normally 0 or 1; >1 is a misconfiguration.
 
@@ -581,6 +557,14 @@ class Registry:
         different identity namespaces.
         """
         return [name for name, mcu in self.types.items() if uuid in mcu.canbus_uuids]
+
+    def find_declared_types_for_uuid(self, uuid: str) -> list[str]:
+        """Every declared type tracking a CAN uuid, across all builders."""
+        return [
+            declared.name
+            for declared in sections.read(self._doc)
+            if uuid in self._doc.get_list(declared.section, "canbus_uuids")
+        ]
 
     def resolve_serial(self, serial: str, mcu_type: str | None = None) -> str:
         """Work out which type a serial belongs to.
@@ -611,6 +595,48 @@ class Registry:
             )
 
         matches = self.find_types_for_serial(serial)
+        if not matches:
+            raise UnknownSerialError(
+                f"serial '{serial}' isn't tracked under any MCU type.", serial=serial
+            )
+        if len(matches) > 1:
+            raise AmbiguousSerialError(
+                f"serial '{serial}' is tracked under multiple types "
+                f"({', '.join(sorted(matches))}) - pass -t to disambiguate.",
+                serial=serial,
+                tracked_under=sorted(matches),
+            )
+        return matches[0]
+
+    def resolve_declared_serial(
+        self, serial: str, mcu_type: str | None = None
+    ) -> str:
+        """Resolve a serial across every declared type, regardless of builder.
+
+        This is the identity counterpart to :meth:`resolve_serial`: provider
+        registries own build semantics, while the shared document owns the
+        configured serial-to-type pairing.
+        """
+        if mcu_type is not None:
+            section = self._declared_section(mcu_type)
+            if serial in self._doc.get_list(section, "serials"):
+                return mcu_type
+            elsewhere = self.find_declared_types_for_serial(serial)
+            if elsewhere:
+                raise SerialTrackedElsewhereError(
+                    f"serial '{serial}' is already tracked under '{elsewhere[0]}', "
+                    f"not '{mcu_type}'. Did you mean -t {elsewhere[0]}?",
+                    serial=serial,
+                    requested=mcu_type,
+                    tracked_under=elsewhere,
+                )
+            raise UnknownSerialError(
+                f"serial '{serial}' isn't tracked under '{mcu_type}' yet.",
+                serial=serial,
+                requested=mcu_type,
+            )
+
+        matches = self.find_declared_types_for_serial(serial)
         if not matches:
             raise UnknownSerialError(
                 f"serial '{serial}' isn't tracked under any MCU type.", serial=serial
@@ -690,18 +716,41 @@ class Registry:
         have not wired up yet - which is the order the work actually happens in
         when a new probe arrives.
 
-        `application` is not validated here. The registry is a data structure
-        and does not know which `[firmware ...]` sections the config file
-        declares; `save()` and `load()` both check against that document, and
-        the agent checks before it calls this so the refusal names the families
-        that do exist.
+        Every family in the resulting `firmwares` must be declared in this
+        registry's document; an undeclared one is refused with the section to
+        add.
         """
         validate_type_name(name)
+        # Whatever `overwrite` says. This registry holds only kconfig_make types,
+        # so a name another builder declares is absent from `self.types` - and
+        # `_save` would write this type into that section, emptying its serials
+        # and replacing its `firmware:` while leaving the other builder's keys
+        # behind. Overwriting is for replacing one of this registry's own types.
+        if name not in self.types and name in self.declared_type_names():
+            families_map = firmware.load_from_doc(self._doc)
+            owner = next(
+                (e.builder for e in typelist.read(self._doc, families_map) if e.name == name),
+                "",
+            )
+            raise DuplicateTypeError(
+                f"MCU type '{name}' already exists, built by "
+                f"{repr(owner) if owner else 'another builder'} - remove that type "
+                f"first to declare a new one under this name.",
+                type=name,
+            )
         if name in self.types and not overwrite:
             raise DuplicateTypeError(f"MCU type '{name}' already exists.", type=name)
         firmwares = [application]
         if katapult_installed and "katapult" not in firmwares:
             firmwares.append("katapult")
+        declared = firmware.load_from_doc(self._doc)
+        for fw in firmwares:
+            if fw not in declared:
+                raise ConfigCorruptError(
+                    f"'{name}' names firmware '{fw}'. {firmware.missing_section_message(fw)}",
+                    type=name,
+                    value=fw,
+                )
         mcu = McuType(
             name=name,
             chipset=chipset,
@@ -719,6 +768,7 @@ class Registry:
     def remove_type(self, name: str) -> McuType:
         mcu = self.get(name)
         del self.types[name]
+        self._drop_section(name)
         return mcu
 
     def add_serial(self, name: str, serial: str) -> bool:
@@ -729,6 +779,17 @@ class Registry:
         mcu.serials.append(serial)
         return True
 
+    def add_declared_serial(self, name: str, serial: str) -> bool:
+        """Add an identity without broadening provider build ownership."""
+        if name in self.types:
+            return self.add_serial(name, serial)
+        section = self._declared_section(name)
+        serials = self._doc.get_list(section, "serials")
+        if serial in serials:
+            return False
+        self._doc.set(section, "serials", [*serials, serial])
+        return True
+
     def remove_serial(self, name: str, serial: str) -> bool:
         """Returns True if it was removed, False if it wasn't tracked."""
         mcu = self.get(name)
@@ -736,6 +797,38 @@ class Registry:
             return False
         mcu.serials.remove(serial)
         return True
+
+    def remove_declared_serial(self, name: str, serial: str) -> bool:
+        """Remove an identity without broadening provider build ownership."""
+        if name in self.types:
+            return self.remove_serial(name, serial)
+        section = self._declared_section(name)
+        serials = self._doc.get_list(section, "serials")
+        if serial not in serials:
+            return False
+        self._doc.set(section, "serials", [item for item in serials if item != serial])
+        return True
+
+    def declared_serials(self, name: str) -> list[str]:
+        """A declared type's serials, whichever builder owns it."""
+        if name in self.types:
+            return list(self.types[name].serials)
+        return self._doc.get_list(self._declared_section(name), "serials")
+
+    def remove_declared_type(self, name: str) -> list[str]:
+        """Delete a declared type, whichever builder owns it.
+
+        Returns the serials it tracked, so a caller can say what went with it.
+        """
+        serials = self.declared_serials(name)
+        self.types.pop(name, None)
+        self._drop_section(name)
+        return serials
+
+    def _drop_section(self, name: str) -> None:
+        """Delete a type's section, if the document has one yet."""
+        if name in self.declared_type_names():
+            self._doc.remove_section(self._declared_section(name))
 
     def add_canbus_uuid(self, name: str, uuid: str) -> bool:
         """Returns True if it was added, False if already present."""
@@ -745,12 +838,38 @@ class Registry:
         mcu.canbus_uuids.append(uuid)
         return True
 
+    def add_declared_canbus_uuid(self, name: str, uuid: str) -> bool:
+        """Add a CAN identity without broadening provider build ownership."""
+        if name in self.types:
+            return self.add_canbus_uuid(name, uuid)
+        section = self._declared_section(name)
+        uuids = self._doc.get_list(section, "canbus_uuids")
+        if uuid in uuids:
+            return False
+        self._doc.set(section, "canbus_uuids", [*uuids, uuid])
+        return True
+
     def remove_canbus_uuid(self, name: str, uuid: str) -> bool:
         """Returns True if it was removed, False if it wasn't tracked."""
         mcu = self.get(name)
         if uuid not in mcu.canbus_uuids:
             return False
         mcu.canbus_uuids.remove(uuid)
+        return True
+
+    def remove_declared_canbus_uuid(self, name: str, uuid: str) -> bool:
+        """Remove a CAN identity without broadening provider build ownership."""
+        if name in self.types:
+            return self.remove_canbus_uuid(name, uuid)
+        section = self._declared_section(name)
+        uuids = self._doc.get_list(section, "canbus_uuids")
+        if uuid not in uuids:
+            return False
+        remaining = [item for item in uuids if item != uuid]
+        if remaining:
+            self._doc.set(section, "canbus_uuids", remaining)
+        else:
+            self._doc.remove_option(section, "canbus_uuids")
         return True
 
     def items(self) -> Iterable[tuple[str, McuType]]:

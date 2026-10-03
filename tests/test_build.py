@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import hashlib
 import json
+import os
 
 import pytest
 
@@ -13,13 +15,14 @@ from mcu_updater.errors import (
     SourceTreeMissingError,
 )
 
-from .conftest import cmd_tokens
+from .conftest import cmd_tokens, save_registry, seed_base_firmwares
 
 
 def _registry(paths) -> Registry:
+    seed_base_firmwares(paths)
     reg = Registry.load(paths)
     reg.add_type("board", "stm32f072xb")
-    reg.save(paths)
+    save_registry(reg, paths)
     return reg
 
 
@@ -151,6 +154,37 @@ def test_artifact_status_detects_a_changed_config(paths, settings):
     assert artifact_status(paths, "board", "klipper").reason == "config_changed"
 
 
+def test_artifact_status_detects_an_image_rebuilt_outside_the_tool(paths, settings):
+    settings.dry_run = True
+    reg = _registry(paths)
+    _write_config(paths)
+    build(paths, reg, settings, "board", "klipper")
+
+    with open(paths.bin_file("board", "klipper"), "wb") as fh:
+        fh.write(b"somebody else's build")
+
+    assert artifact_status(paths, "board", "klipper").reason == "foreign_build"
+
+
+def test_a_sidecar_too_old_to_carry_a_hash_accuses_nobody(paths, settings):
+    """Same rule as the cmake ladder: `foreign_build` is an accusation, and a
+    record written before `bin_sha256` existed has no evidence for one."""
+    settings.dry_run = True
+    reg = _registry(paths)
+    _write_config(paths)
+    build(paths, reg, settings, "board", "klipper")
+
+    side_path = paths.sidecar_file("board", "klipper")
+    side = json.load(open(side_path, encoding="utf-8"))
+    del side["bin_sha256"]
+    with open(side_path, "w", encoding="utf-8") as fh:
+        json.dump(side, fh)
+    with open(paths.bin_file("board", "klipper"), "wb") as fh:
+        fh.write(b"somebody else's build")
+
+    assert artifact_status(paths, "board", "klipper").reason != "foreign_build"
+
+
 def test_artifact_status_detects_a_changed_source_tree(paths, settings):
     settings.dry_run = True
     reg = _registry(paths)
@@ -181,7 +215,7 @@ def test_artifact_status_detects_a_changed_extra_repo(paths, settings):
     _write_config(paths)
     build(paths, reg, settings, "board", "klipper")
 
-    extra_repo = paths.fw_dir("klipper")
+    extra_repo = os.path.join(paths.home, "klipper")
     side_path = paths.sidecar_file("board", "klipper")
     side = json.load(open(side_path, encoding="utf-8"))
     side.setdefault("extra_repo_shas", {})[extra_repo] = "deadbee"
@@ -204,7 +238,7 @@ def test_an_extra_repo_absent_from_the_sidecar_does_not_false_flag(paths, settin
     build(paths, reg, settings, "board", "klipper")
 
     status = artifact_status(
-        paths, "board", "klipper", extra_repos=[paths.fw_dir("klipper")]
+        paths, "board", "klipper", extra_repos=[os.path.join(paths.home, "klipper")]
     )
     assert status.is_current
 
@@ -212,7 +246,7 @@ def test_an_extra_repo_absent_from_the_sidecar_does_not_false_flag(paths, settin
 def _has_git(paths) -> bool:
     from mcu_updater.build import git_head
 
-    return git_head(paths.fw_dir("klipper")) is not None
+    return git_head(os.path.join(paths.home, "klipper")) is not None
 
 
 def test_missing_sidecar_means_no_provenance(paths, settings):
@@ -236,7 +270,7 @@ def test_extra_args_are_split_shell_style(paths, settings):
     settings.dry_run = True
     reg = _registry(paths)
     reg.get("board").fw("klipper").extra_args = 'FOO=bar BAZ="a b"'
-    reg.save(paths)
+    save_registry(reg, paths)
     _write_config(paths)
 
     cmds: list[str] = []
@@ -532,3 +566,147 @@ def _stage_config(paths, mcu_type: str, fw: str) -> None:
     os.makedirs(paths.type_dir(mcu_type), exist_ok=True)
     with open(paths.config_file(mcu_type, fw), "w", encoding="utf-8") as fh:
         fh.write("CONFIG_MACH_STM32=y\n")
+
+
+def test_a_build_records_a_hash_per_staged_kind(paths, settings, fake_root, monkeypatch):
+    reg = _registry(paths)
+    _write_config(paths)
+    out = fake_root / "klipper" / "out"
+    out.mkdir()
+    (out / "klipper.bin").write_bytes(b"firmware")
+    (out / "klipper.uf2").write_bytes(b"uf2 firmware")
+    monkeypatch.setattr("mcu_updater.build.run_streamed", lambda command, **kwargs: 0)
+
+    result = build(paths, reg, settings, "board", "klipper")
+
+    assert result.uf2_sha256 == hashlib.sha256(b"uf2 firmware").hexdigest()
+    side = read_sidecar(paths, "board", "klipper")
+    assert side["artifacts"] == {
+        "bin": {"sha256": hashlib.sha256(b"firmware").hexdigest()},
+        "uf2": {"sha256": hashlib.sha256(b"uf2 firmware").hexdigest()},
+    }
+    # Kept for every reader written before `artifacts` existed.
+    assert side["bin_sha256"] == hashlib.sha256(b"firmware").hexdigest()
+
+
+def test_a_build_without_a_uf2_removes_a_stale_one(paths, settings, fake_root, monkeypatch):
+    """Review Focus 4: the sidecar stops listing it, so leaving it would put an
+    image nobody can vouch for one config edit away from BOOTSEL."""
+    reg = _registry(paths)
+    _write_config(paths)
+    out = fake_root / "klipper" / "out"
+    out.mkdir()
+    (out / "klipper.bin").write_bytes(b"firmware")
+    os.makedirs(paths.artifact_dir("board"), exist_ok=True)
+    with open(paths.uf2_file("board", "klipper"), "wb") as fh:
+        fh.write(b"an older build's uf2")
+    monkeypatch.setattr("mcu_updater.build.run_streamed", lambda command, **kwargs: 0)
+
+    result = build(paths, reg, settings, "board", "klipper")
+
+    assert result.uf2_path is None
+    assert not os.path.exists(paths.uf2_file("board", "klipper"))
+    assert set(read_sidecar(paths, "board", "klipper")["artifacts"]) == {"bin"}
+
+
+def test_a_uf2_changed_behind_the_sidecar_is_a_foreign_build(paths, settings, fake_root, monkeypatch):
+    reg = _registry(paths)
+    _write_config(paths)
+    out = fake_root / "klipper" / "out"
+    out.mkdir()
+    (out / "klipper.bin").write_bytes(b"firmware")
+    (out / "klipper.uf2").write_bytes(b"uf2 firmware")
+    monkeypatch.setattr("mcu_updater.build.run_streamed", lambda command, **kwargs: 0)
+    build(paths, reg, settings, "board", "klipper")
+
+    with open(paths.uf2_file("board", "klipper"), "wb") as fh:
+        fh.write(b"somebody else's uf2")
+
+    assert artifact_status(paths, "board", "klipper").reason == "foreign_build"
+
+
+def test_a_build_that_made_only_a_uf2_stages_it(paths, settings, fake_root, monkeypatch):
+    """Klipper's rp2040 Makefile makes one image or the other: with no
+    bootloader offset, only `out/klipper.uf2`. That is a build, not a failure,
+    and a `.bin` an earlier offset build staged is not this build's."""
+    reg = _registry(paths)
+    _write_config(paths)
+    out = fake_root / "klipper" / "out"
+    out.mkdir()
+    (out / "klipper.uf2").write_bytes(b"uf2 firmware")
+    os.makedirs(paths.artifact_dir("board"), exist_ok=True)
+    with open(paths.bin_file("board", "klipper"), "wb") as fh:
+        fh.write(b"an older build's bin")
+    monkeypatch.setattr("mcu_updater.build.run_streamed", lambda command, **kwargs: 0)
+
+    result = build(paths, reg, settings, "board", "klipper")
+
+    assert result.bin_path is None
+    assert result.bin_sha256 is None
+    assert result.uf2_path == paths.uf2_file("board", "klipper")
+    with open(result.uf2_path, "rb") as fh:
+        assert fh.read() == b"uf2 firmware"
+    assert not os.path.exists(paths.bin_file("board", "klipper"))
+    side = read_sidecar(paths, "board", "klipper")
+    assert side["artifacts"] == {"uf2": {"sha256": hashlib.sha256(b"uf2 firmware").hexdigest()}}
+    assert "bin_sha256" in side
+    assert side["bin_sha256"] is None
+
+
+def test_a_build_that_made_neither_image_names_both(paths, settings, fake_root, monkeypatch):
+    reg = _registry(paths)
+    _write_config(paths)
+    (fake_root / "klipper" / "out").mkdir()
+    monkeypatch.setattr("mcu_updater.build.run_streamed", lambda command, **kwargs: 0)
+
+    with pytest.raises(BuildError) as exc:
+        build(paths, reg, settings, "board", "klipper")
+
+    expected = [
+        str(fake_root / "klipper" / "out" / "klipper.bin"),
+        str(fake_root / "klipper" / "out" / "klipper.uf2"),
+    ]
+    assert [os.path.normpath(p) for p in exc.value.data["expected"]] == [
+        os.path.normpath(p) for p in expected
+    ]
+    message = str(exc.value)
+    for path in exc.value.data["expected"]:
+        assert path in message
+
+
+def test_staged_after_a_uf2_only_build_offers_only_the_uf2(paths, settings, fake_root, monkeypatch):
+    from mcu_updater import firmware
+    from mcu_updater.artifacts import KIND_UF2, Artifact
+    from mcu_updater.build import staged
+
+    reg = _registry(paths)
+    _write_config(paths)
+    out = fake_root / "klipper" / "out"
+    out.mkdir()
+    (out / "klipper.uf2").write_bytes(b"uf2 firmware")
+    monkeypatch.setattr("mcu_updater.build.run_streamed", lambda command, **kwargs: 0)
+    build(paths, reg, settings, "board", "klipper")
+
+    found = staged(paths, "board", firmware.resolve(paths, "klipper"))
+
+    assert found.artifacts == (
+        Artifact(
+            KIND_UF2,
+            paths.uf2_file("board", "klipper"),
+            hashlib.sha256(b"uf2 firmware").hexdigest(),
+        ),
+    )
+
+
+def test_a_uf2_only_build_is_built_and_current(paths, settings, fake_root, monkeypatch):
+    reg = _registry(paths)
+    _write_config(paths)
+    out = fake_root / "klipper" / "out"
+    out.mkdir()
+    (out / "klipper.uf2").write_bytes(b"uf2 firmware")
+    monkeypatch.setattr("mcu_updater.build.run_streamed", lambda command, **kwargs: 0)
+
+    assert artifact_status(paths, "board", "klipper").reason == "never_built"
+    build(paths, reg, settings, "board", "klipper")
+
+    assert artifact_status(paths, "board", "klipper").reason is None

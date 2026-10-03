@@ -58,7 +58,7 @@ def api(paths, live_registry_text, fake_root, screens):
         fh.write(live_registry_text)
     write_settings(paths, dry_run="true", service_backend="null", enable_flashing="true")
     with open(paths.main_config, "a", encoding="utf-8") as fh:
-        fh.write(f"\n[type {ENV}]\nchipset: esp32\nfirmware: knomi_serial\nenv: {ENV}\n")
+        fh.write(f"\n[type {ENV}]\nchipset: esp32\nfirmware: knomi_serial\nplatformio_env: {ENV}\n")
 
     runner = JobRunner(
         paths,
@@ -103,7 +103,7 @@ def test_flashing_displays_needs_it_enabled(paths, live_registry_text, fake_root
         fh.write(live_registry_text)
     write_settings(paths, dry_run="true", service_backend="null")
     with open(paths.registry_file, "a", encoding="utf-8") as fh:
-        fh.write(f"\n[type {ENV}]\nchipset: esp32\nfirmware: knomi_serial\nenv: {ENV}\n")
+        fh.write(f"\n[type {ENV}]\nchipset: esp32\nfirmware: knomi_serial\nplatformio_env: {ENV}\n")
     runner = JobRunner(paths, lambda: __import__(
         "mcu_updater.settings", fromlist=["load_settings"]
     ).load_settings(paths.settings_file))
@@ -165,13 +165,13 @@ def test_the_screens_are_read_before_klipper_is_stopped(api, no_pio, monkeypatch
 
     monkeypatch.setattr(svc, "stop", watched_stop)
 
-    original = api.device_list
+    original = api.platformio_devices
 
-    def watched_list(args):
+    def watched_list(*args):
         order.append("listed")
-        return original(args)
+        return original(*args)
 
-    monkeypatch.setattr(api, "device_list", watched_list)
+    monkeypatch.setattr(api, "platformio_devices", watched_list)
 
     res = api.dispatch("fw.flash", {"name": ENV})
     assert api.runner.wait(timeout=30)
@@ -216,11 +216,36 @@ def test_every_upload_names_its_port(api, no_pio):
         ].endswith("knomi_t1_knomi")
 
 
+def _count_type_list_loads(api):
+    loads = []
+    types_of = api.platformio_types
+    api.platformio_types = lambda: loads.append(1) or types_of()
+    return loads
+
+
+def test_a_flash_reads_the_type_list_once(api, no_pio):
+    """The handler hands the types it loaded to the device listing, rather
+    than the listing loading them again."""
+    loads = _count_type_list_loads(api)
+
+    api._pio_flash({"name": ENV})
+    assert api.runner.wait(timeout=30)
+
+    assert len(loads) == 1
+
+
+def test_selecting_for_a_flash_all_reads_the_type_list_once(api, no_pio):
+    loads = _count_type_list_loads(api)
+
+    api._platformio_to_flash("all")
+
+    assert len(loads) == 1
+
+
 def test_one_screen_can_be_singled_out(api, no_pio, screens):
     port = screens["knomi_serial t0_knomi"]["serial"]
     res = api.dispatch("fw.flash", {"name": ENV, "port": port})
 
-    assert len(res["displays"]) == 1
     assert api.runner.wait(timeout=30)
     assert len(api.runner.get(res["job_id"]).result["flashed"]) == 1
 
@@ -276,7 +301,7 @@ def test_a_build_touches_no_display_and_needs_no_flash_permission(
         fh.write(live_registry_text)
     write_settings(paths, dry_run="true", service_backend="null")
     with open(paths.main_config, "a", encoding="utf-8") as fh:
-        fh.write(f"\n[type {ENV}]\nchipset: esp32\nfirmware: knomi_serial\nenv: {ENV}\n")
+        fh.write(f"\n[type {ENV}]\nchipset: esp32\nfirmware: knomi_serial\nplatformio_env: {ENV}\n")
 
     runner = JobRunner(paths, lambda: __import__(
         "mcu_updater.settings", fromlist=["load_settings"]
@@ -465,7 +490,7 @@ def screens_port(screens: dict, which: str) -> str:
 
 
 def _found(**by_id):
-    from mcu_updater.providers.pio import WatcherDevice
+    from mcu_updater.discovery.knomi_serial import WatcherDevice
 
     return {
         i: WatcherDevice(device_id=i, port=p, present=True) for i, p in by_id.items()
@@ -473,11 +498,9 @@ def _found(**by_id):
 
 
 def _discover_only_for(name, **by_id):
-    """A `discover()` stand-in scoped to one display family, the way the real
-    thing is - it is asked once per configured family, including ones this
-    test's fixture registry declares but never touches (the sample `[type
-    knomi]` alongside the fixture's own `[type knomi_toolchanger]`), and must
-    answer nothing for a family it was not told to."""
+    """A `discover()` stand-in scoped to one PlatformIO type, the way the real
+    thing is - the flasher asks once per type in the batch, and a type it was
+    not told about answers nothing."""
 
     def fake(paths, settings, display, *a, **k):
         if display.name != name:
@@ -492,6 +515,90 @@ def _with_ids(screens, **ids):
     return {f"knomi_serial {name}": {"reported_id": i} for name, i in ids.items()}
 
 
+def test_a_screen_can_be_flashed_by_its_device_id(api, paths, fake_root, no_pio):
+    """Ruling 18: either spelling of the one identity. A caller reading
+    `targets[].devices[].id` off the wire hands it back without knowing
+    whether the section it came from named a path or an id.
+
+    Overrides the call channel rather than using the `screens` fixture: that
+    fixture builds two `serial:` sections, and the case here is the other kind
+    of section entirely - `device_id:`, whose path Klipper's own discovery
+    resolved and reported back.
+    """
+    port = fake_root / "knomi_discovered"
+    port.write_text("", encoding="utf-8")
+    api._call = serve_klipper(
+        display_objects(
+            {"knomi_serial t0_knomi": {"device_id": "aaa111"}},
+            {"knomi_serial t0_knomi": {"port": str(port)}},
+        )
+    )
+
+    res = api.flash({"name": ENV, "id": "aaa111"})  # the spelling a caller may pick
+
+    assert api.runner.wait(timeout=30)
+    job = api.runner.get(res["job_id"])
+    assert [f["id"] for f in job.result["flashed"]] == [str(port)]
+
+
+def test_a_serial_screen_can_be_flashed_by_its_reported_id(
+    api, no_pio, screens
+):
+    api._call = serve_klipper(
+        display_objects(screens, _with_ids(screens, t0_knomi="19aa44"))
+    )
+
+    for slot in ("id", "port"):
+        res = api.flash({"name": ENV, slot: "19aa44"})
+
+        assert api.runner.wait(timeout=30)
+        job = api.runner.get(res["job_id"])
+        assert job.state == "succeeded"
+        assert [f["id"] for f in job.result["flashed"]] == [
+            screens_port(screens, "t0")
+        ]
+
+
+def test_a_configured_device_id_is_matched_case_insensitively(
+    api, fake_root, no_pio
+):
+    port = fake_root / "knomi_discovered"
+    port.write_text("", encoding="utf-8")
+    api._call = serve_klipper(
+        display_objects(
+            {"knomi_serial t0_knomi": {"device_id": "19AA44"}},
+            {"knomi_serial t0_knomi": {"port": str(port)}},
+        )
+    )
+
+    res = api.flash({"name": ENV, "id": "19aa44"})
+
+    assert api.runner.wait(timeout=30)
+    job = api.runner.get(res["job_id"])
+    assert [f["id"] for f in job.result["flashed"]] == [str(port)]
+    assert "job_id" in res
+
+
+def test_a_serial_path_is_matched_case_sensitively(api, monkeypatch):
+    import os
+
+    configured = "/dev/ttyUSB0"
+    api._call = serve_klipper(
+        display_objects({"knomi_serial t0_knomi": {"serial": configured}})
+    )
+    real_exists = os.path.exists
+    monkeypatch.setattr(
+        "mcu_updater.agent.methods.status.os.path.exists",
+        lambda path: path == configured or real_exists(path),
+    )
+
+    with pytest.raises(RpcError) as exc:
+        api.flash({"name": ENV, "port": "/dev/TTYUSB0"})
+
+    assert exc.value.data["code"] == "nothing_to_do"
+    assert api.runner.current() is None
+
+
 def test_a_screen_is_written_where_it_answered_not_where_it_was(
     api, paths, no_pio, screens, monkeypatch, fake_root
 ):
@@ -500,7 +607,7 @@ def test_a_screen_is_written_where_it_answered_not_where_it_was(
     moved_to = str(fake_root / "ttyUSB9")
     write_settings(paths, dry_run="false", enable_flashing="true", service_backend="null")
     monkeypatch.setattr(
-        "mcu_updater.discovery.knomi_serial.listen.discover",
+        "mcu_updater.helpers.knomi_serial.discover",
         _discover_only_for(ENV, aaa111=moved_to),
     )
     api._call = serve_klipper(display_objects(screens, _with_ids(screens, t0_knomi="aaa111")))
@@ -526,7 +633,7 @@ def test_a_screen_that_does_not_answer_is_not_flashed_at_its_old_port(
     there - and its old path now names whatever is on that path."""
     write_settings(paths, dry_run="false", enable_flashing="true", service_backend="null")
     monkeypatch.setattr(
-        "mcu_updater.discovery.knomi_serial.listen.discover",
+        "mcu_updater.helpers.knomi_serial.discover",
         _discover_only_for(ENV, somebodyelse=str(fake_root / "ttyUSB9")),
     )
     api._call = serve_klipper(display_objects(screens, _with_ids(screens, t0_knomi="aaa111")))
@@ -559,7 +666,7 @@ def test_discovery_failing_falls_back_to_the_configured_ports(
         raise ToolMissingError("pyserial is not installed", tool="discover")
 
     write_settings(paths, dry_run="false", enable_flashing="true", service_backend="null")
-    monkeypatch.setattr("mcu_updater.discovery.knomi_serial.listen.discover", boom)
+    monkeypatch.setattr("mcu_updater.helpers.knomi_serial.discover", boom)
     api._call = serve_klipper(display_objects(screens, _with_ids(screens, t0_knomi="aaa111")))
 
     ports: list[str] = []
@@ -583,7 +690,7 @@ def test_a_screen_with_no_hardware_id_is_still_flashed(
     ability to flash."""
     write_settings(paths, dry_run="false", enable_flashing="true", service_backend="null")
     monkeypatch.setattr(
-        "mcu_updater.discovery.knomi_serial.listen.discover",
+        "mcu_updater.helpers.knomi_serial.discover",
         _discover_only_for(ENV, somebodyelse=str(fake_root / "ttyUSB9")),
     )
     api._call = serve_klipper(display_objects(screens))  # no live fields at all
@@ -607,13 +714,84 @@ def test_a_dry_run_never_opens_a_serial_port(api, paths, no_pio, screens, monkey
     def boom(*a, **k):
         raise AssertionError("opened serial ports during a dry run")
 
-    monkeypatch.setattr("mcu_updater.discovery.knomi_serial.listen.discover", boom)
+    monkeypatch.setattr("mcu_updater.helpers.knomi_serial.discover", boom)
     write_settings(paths, dry_run="true", enable_flashing="true", service_backend="null")
     api._call = serve_klipper(display_objects(screens, _with_ids(screens, t0_knomi="aaa111")))
 
     res = api.dispatch("fw.flash", {"name": ENV})
     assert api.runner.wait(timeout=30)
     assert api.runner.get(res["job_id"]).state == "succeeded"
+
+
+def test_a_remembered_port_does_not_stand_in_for_a_silent_screen(
+    api, paths, no_pio, screens, monkeypatch, fake_root
+):
+    """The narrowing the helper seam made on purpose. The watcher's map still
+    names this screen, but the ports were free, another screen answered and
+    this one did not - so it is not there, and the map's port is a memory."""
+    from mcu_updater.helpers import knomi_serial as handler
+
+    write_settings(paths, dry_run="false", enable_flashing="true", service_backend="null")
+    monkeypatch.setattr(
+        handler, "read_device_map", lambda p, e: _found(aaa111=screens_port(screens, "t0"))
+    )
+    monkeypatch.setattr(
+        handler, "discover", _discover_only_for(ENV, somebodyelse=str(fake_root / "ttyUSB9"))
+    )
+    api._call = serve_klipper(display_objects(screens, _with_ids(screens, t0_knomi="aaa111")))
+    ports = _no_upload(monkeypatch)
+
+    job = _flash_one(api, screens)
+
+    assert job.state == "succeeded", job.error
+    assert ports == [], "nothing was written"
+    assert "did not answer" in job.result["failures"][0]["error"]
+
+
+def test_a_listen_that_hears_nothing_writes_the_configured_port_unconfirmed(
+    api, paths, no_pio, screens, monkeypatch, fake_root
+):
+    """Nothing spoke at all, so there is nothing to match against: the
+    configured port, as before identity existed, and no confidence. The map
+    naming another port does not make it a confirmed one."""
+    from mcu_updater.helpers import knomi_serial as handler
+
+    write_settings(paths, dry_run="false", enable_flashing="true", service_backend="null")
+    monkeypatch.setattr(
+        handler, "read_device_map", lambda p, e: _found(aaa111=str(fake_root / "ttyUSB9"))
+    )
+    monkeypatch.setattr(handler, "discover", lambda *a, **k: {})
+    api._call = serve_klipper(display_objects(screens, _with_ids(screens, t0_knomi="aaa111")))
+    ports = _no_upload(monkeypatch)
+
+    assert _flash_one(api, screens).state == "succeeded"
+
+    assert ports == [screens_port(screens, "t0")]
+    assert _flashlog(paths)["hwid:aaa111"]["confidence"] is None
+
+
+def test_a_listen_that_cannot_run_writes_where_the_map_says(
+    api, paths, no_pio, screens, monkeypatch, fake_root
+):
+    """No pyserial: the watcher's map is the best answer left. Written where
+    the map says, and recorded as remembered - never as answered."""
+    from mcu_updater.errors import ToolMissingError
+    from mcu_updater.helpers import knomi_serial as handler
+
+    def boom(*a, **k):
+        raise ToolMissingError("pyserial is not installed", tool="discover")
+
+    moved_to = str(fake_root / "ttyUSB9")
+    write_settings(paths, dry_run="false", enable_flashing="true", service_backend="null")
+    monkeypatch.setattr(handler, "read_device_map", lambda p, e: _found(aaa111=moved_to))
+    monkeypatch.setattr(handler, "discover", boom)
+    api._call = serve_klipper(display_objects(screens, _with_ids(screens, t0_knomi="aaa111")))
+    ports = _no_upload(monkeypatch)
+
+    assert _flash_one(api, screens).state == "succeeded"
+
+    assert ports == [moved_to]
+    assert _flashlog(paths)["hwid:aaa111"]["confidence"] == "remembered"
 
 
 # --------------------------------------------------------------------------
@@ -656,7 +834,7 @@ def test_a_confirmed_screen_records_how_it_was_identified(
     inside the Klipper stop rather than trusting a remembered path."""
     write_settings(paths, dry_run="false", enable_flashing="true", service_backend="null")
     monkeypatch.setattr(
-        "mcu_updater.discovery.knomi_serial.listen.discover",
+        "mcu_updater.helpers.knomi_serial.discover",
         _discover_only_for(ENV, aaa111=screens_port(screens, "t0")),
     )
     api._call = serve_klipper(display_objects(screens, _with_ids(screens, t0_knomi="aaa111")))
@@ -664,7 +842,7 @@ def test_a_confirmed_screen_records_how_it_was_identified(
 
     assert _flash_one(api, screens).state == "succeeded"
 
-    assert _flashlog(paths)["display:aaa111"]["confidence"] == "answered"
+    assert _flashlog(paths)["hwid:aaa111"]["confidence"] == "answered"
 
 
 def test_the_record_is_keyed_by_hardware_id_and_never_by_port(
@@ -677,7 +855,7 @@ def test_the_record_is_keyed_by_hardware_id_and_never_by_port(
     moved_to = str(fake_root / "ttyUSB9")
     write_settings(paths, dry_run="false", enable_flashing="true", service_backend="null")
     monkeypatch.setattr(
-        "mcu_updater.discovery.knomi_serial.listen.discover",
+        "mcu_updater.helpers.knomi_serial.discover",
         _discover_only_for(ENV, aaa111=moved_to),
     )
     api._call = serve_klipper(display_objects(screens, _with_ids(screens, t0_knomi="aaa111")))
@@ -686,7 +864,7 @@ def test_the_record_is_keyed_by_hardware_id_and_never_by_port(
     assert _flash_one(api, screens).state == "succeeded"
 
     keys = list(_flashlog(paths))
-    assert keys == ["display:aaa111"]
+    assert keys == ["hwid:aaa111"]
     assert moved_to not in keys and screens_port(screens, "t0") not in keys
 
 
@@ -703,13 +881,13 @@ def test_a_write_to_a_remembered_port_records_no_confidence(
         raise ToolMissingError("pyserial is not installed", tool="discover")
 
     write_settings(paths, dry_run="false", enable_flashing="true", service_backend="null")
-    monkeypatch.setattr("mcu_updater.discovery.knomi_serial.listen.discover", boom)
+    monkeypatch.setattr("mcu_updater.helpers.knomi_serial.discover", boom)
     api._call = serve_klipper(display_objects(screens, _with_ids(screens, t0_knomi="aaa111")))
     _no_upload(monkeypatch)
 
     assert _flash_one(api, screens).state == "succeeded"
 
-    assert _flashlog(paths)["display:aaa111"]["confidence"] is None
+    assert _flashlog(paths)["hwid:aaa111"]["confidence"] is None
 
 
 def test_a_screen_with_no_hardware_id_is_recorded_nowhere(
@@ -720,7 +898,7 @@ def test_a_screen_with_no_hardware_id_is_recorded_nowhere(
     it simply leaves no record rather than a port-keyed one."""
     write_settings(paths, dry_run="false", enable_flashing="true", service_backend="null")
     monkeypatch.setattr(
-        "mcu_updater.discovery.knomi_serial.listen.discover",
+        "mcu_updater.helpers.knomi_serial.discover",
         _discover_only_for(ENV, somebodyelse=str(fake_root / "ttyUSB9")),
     )
     api._call = serve_klipper(display_objects(screens))  # no live fields at all
@@ -736,7 +914,7 @@ def test_a_dry_run_records_nothing(api, paths, no_pio, screens, monkeypatch):
     """Nothing was written, so nothing is true afterwards. The same guard the
     board path has, for the same reason."""
     monkeypatch.setattr(
-        "mcu_updater.discovery.knomi_serial.listen.discover",
+        "mcu_updater.helpers.knomi_serial.discover",
         _discover_only_for(ENV, aaa111=screens_port(screens, "t0")),
     )
     write_settings(paths, dry_run="true", enable_flashing="true", service_backend="null")
@@ -753,10 +931,10 @@ def test_a_dry_run_records_nothing(api, paths, no_pio, screens, monkeypatch):
 
 
 def _record(paths, ident="aaa111", *, fw_sha=None, confidence="answered") -> None:
-    from mcu_updater.build import FlashLog, display_key
+    from mcu_updater.build import FlashLog, hardware_id_key
 
     FlashLog(paths).record(
-        display_key(ident),
+        hardware_id_key(ident),
         mcu_type=ENV,
         fw=ENV,
         bin_sha256=None,
@@ -836,7 +1014,7 @@ def _built(api, paths, fake_root) -> None:
     """An image on disk for the display env, so there is something to write."""
     from mcu_updater.providers import pio as dm
 
-    display = api.pio_types()[ENV]
+    display = api.platformio_types()[ENV]
     path = pathlib.Path(dm.firmware_bin(display))
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_bytes(b"\0" * 512)
@@ -855,12 +1033,13 @@ def test_flash_all_selects_screens_beside_boards(api, paths, fake_root, screens)
     api.runner.cancel(res["job_id"])
     api.runner.wait(timeout=30)
 
-    assert [d["flasher"] for d in res["displays"]] == ["esptool", "esptool"]
-    assert {d["id"] for d in res["displays"]} == {
+    selected, _refused = api._platformio_to_flash("all")
+    assert [t.to_json()["flasher"] for t in selected] == ["platformio", "platformio"]
+    assert {t.to_json()["id"] for t in selected} == {
         screens_port(screens, "t0"),
         screens_port(screens, "t1"),
     }
-    assert all(d["reason"] == "forced" for d in res["displays"])
+    assert all(t.detail["reason"] == "forced" for t in selected)
 
 
 def test_a_display_with_nothing_built_is_not_selected(api, paths, screens):
@@ -890,7 +1069,7 @@ def test_a_fleet_flash_writes_boards_and_screens_under_one_stop(
     job = api.runner.get(res["job_id"])
 
     assert job.state == "succeeded", job.error
-    assert [f["flasher"] for f in job.result["flashed"]] == ["esptool", "esptool"]
+    assert [f["flasher"] for f in job.result["flashed"]] == ["platformio", "platformio"]
     # Stopped once for the batch, not once per device.
     assert made["klipper"].actions == ["stop", "start"]
 
@@ -903,8 +1082,8 @@ def test_a_fleet_flash_writes_boards_and_screens_under_one_stop(
 # it could pick one - which is the branching the Provider and Flasher seams
 # removed everywhere else. `fw.build` and `fw.flash` route on the type's own
 # provider instead. Both display-specific methods are retired now that
-# nothing calls them (Step 14 for `fw.display.flash`, Step 16 for
-# `fw.display.list`/`fw.display.build`).
+# nothing calls them: `fw.display.flash` went at API_VERSION 2, and
+# `fw.display.list`/`fw.display.build` with the wire fold that followed.
 # --------------------------------------------------------------------------
 
 
@@ -947,3 +1126,42 @@ def test_a_name_belonging_to_no_type_is_refused_rather_than_guessed(api, no_pio)
     with pytest.raises(RpcError) as exc:
         api.dispatch("fw.build", {"name": "not_a_type"})
     assert exc.value.data["code"] == "unknown_type"
+
+
+def test_a_platformio_flash_answers_with_the_job_alone(api, no_pio, screens):
+    port = screens["knomi_serial t0_knomi"]["serial"]
+
+    res = api.dispatch("fw.flash", {"name": ENV, "port": port})
+
+    assert set(res) == {"job_id", "job"}
+    assert res["job"]["kind"] == "flash"
+    assert res["job"]["params"] == {"name": ENV, "port": port}
+    assert api.runner.wait(timeout=30)
+
+
+def test_a_whole_type_flash_names_no_port(api, no_pio, screens):
+    res = api.dispatch("fw.flash", {"name": ENV})
+
+    assert res["job"]["params"] == {"name": ENV}
+    assert api.runner.wait(timeout=30)
+
+
+def test_a_platformio_flash_cancels_only_between_devices(api, no_pio, screens):
+    """The bug this kind rename fixes: the panel told the user this job
+    would stop at once, mid-write."""
+    from mcu_updater.jobs import IMMEDIATELY_CANCELLABLE
+
+    res = api.dispatch("fw.flash", {"name": ENV})
+
+    assert res["job"]["kind"] not in IMMEDIATELY_CANCELLABLE
+    api.runner.wait(timeout=30)
+
+
+def test_a_platformio_build_is_a_build_job(api, paths, fake_root, no_pio):
+    _built(api, paths, fake_root)
+
+    res = api.dispatch("fw.build", {"name": ENV})
+
+    assert res["job"]["kind"] == "build"
+    assert res["job"]["params"] == {"name": ENV, "fw": "knomi_serial"}
+    api.runner.wait(timeout=30)

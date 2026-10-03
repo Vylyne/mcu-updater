@@ -1,6 +1,6 @@
 <script setup lang="ts">
 // Create or edit an MCU type - fw.type.add/.update, mirroring
-// FirmwareUpdaterPanelTypeDialog.vue. `targets[]` (the fw.status projection)
+// The type dialog. `targets[]` (the fw.status projection)
 // doesn't carry chipset/katapult_installed/extra_args, so editing fetches the
 // same on-demand detail TargetRow's "Show detail" already uses
 // (fw.target.get) rather than adding a second wire shape for the same data.
@@ -28,6 +28,9 @@ const props = defineProps<{
   /** A board to adopt once the type exists - the untracked-device entry
    * point. Empty when opened from the toolbar's "New type…". */
   serial?: string | null;
+  /** A CAN uuid to adopt once the type exists - the CAN-side equivalent of
+   * `serial`, mutually exclusive with it. */
+  canbusUuid?: string | null;
 }>();
 
 const emit = defineEmits<{ close: [] }>();
@@ -43,7 +46,10 @@ interface TypeDetail {
   firmware: string;
   katapult_installed: boolean;
   katapult?: FamilyBlock;
-  artifacts?: Record<string, { has_bin?: boolean } | undefined>;
+  artifacts?: Record<
+    string,
+    { has_bin?: boolean; has_uf2?: boolean } | undefined
+  >;
   [family: string]: unknown;
 }
 
@@ -120,7 +126,10 @@ const nameError = computed(() =>
 const hasBinary = computed(() => {
   const family = detail.value?.firmware;
   if (!family || !detail.value?.artifacts) return false;
-  return detail.value.artifacts[family]?.has_bin === true;
+  // Either image is a build: an offset-less RP2040 Klipper build stages
+  // only a .uf2.
+  const staged = detail.value.artifacts[family];
+  return staged?.has_bin === true || staged?.has_uf2 === true;
 });
 
 // Staleness compares the source commit and a hash of the .config - neither
@@ -199,6 +208,7 @@ async function submit(): Promise<void> {
       ),
       katapultInstalled: katapultInstalled.value,
       serial: props.serial ?? undefined,
+      canbusUuid: props.canbusUuid ?? undefined,
     };
     result = await addType(draft);
   }
@@ -321,6 +331,10 @@ async function submit(): Promise<void> {
 
       <p v-if="serial" class="alert alert--info">
         Will also track {{ serial }} under this type once it's created.
+      </p>
+      <p v-if="canbusUuid" class="alert alert--info">
+        Will also track CAN uuid {{ canbusUuid }} under this type once it's
+        created.
       </p>
     </template>
 

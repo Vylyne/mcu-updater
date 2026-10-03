@@ -1,0 +1,43 @@
+{
+  "_comment": "The INFO reader's forward compatibility. A board built after the digest revision must still parse, and a malformed known field must still be refused - the two halves are easy to trade against each other, and getting the trade wrong either drops every new board from discovery or accepts a garbage digest.",
+  "file": "scripts/roadrunner_usb.py",
+  "command": [
+    "python",
+    "-m",
+    "pytest",
+    "tests/test_roadrunner_usb.py",
+    "-q"
+  ],
+  "mutations": [
+    {
+      "name": "the flash UID needs eight bytes to be there",
+      "find": "    if at + 8 > len(payload):\n        raise ProtocolError(\"INFO is missing the flash UID\")",
+      "replace": "    if False:\n        raise ProtocolError(\"INFO is missing the flash UID\")"
+    },
+    {
+      "name": "absent digest fields are absent, not a reported algorithm of 0",
+      "find": "    if at >= len(payload):\n        return {}",
+      "replace": "    if at >= len(payload):\n        return {\"digest_algorithm\": DIGEST_NONE}"
+    },
+    {
+      "name": "the digest image range must be present",
+      "find": "    if at + 8 > len(payload):\n        raise ProtocolError(\"INFO is missing the digest image range\")",
+      "replace": "    if False:\n        raise ProtocolError(\"INFO is missing the digest image range\")"
+    },
+    {
+      "name": "no algorithm means no digest bytes",
+      "find": "    if algorithm == DIGEST_NONE and digest:",
+      "replace": "    if False:"
+    },
+    {
+      "name": "the digest is little-endian",
+      "find": "        \"digest\": int.from_bytes(digest, \"little\") if digest else None,",
+      "replace": "        \"digest\": int.from_bytes(digest, \"big\") if digest else None,"
+    },
+    {
+      "name": "the image range is little-endian",
+      "find": "        \"image_start\": int.from_bytes(payload[at : at + 4], \"little\"),",
+      "replace": "        \"image_start\": int.from_bytes(payload[at : at + 4], \"big\"),"
+    }
+  ]
+}

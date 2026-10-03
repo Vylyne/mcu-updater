@@ -7,7 +7,7 @@ describe("cancelIsImmediate", () => {
     expect(cancelIsImmediate("build_all")).toBe(true);
   });
 
-  it("is deferred for anything that writes to a board or screen", () => {
+  it("is deferred for anything that writes to a device", () => {
     // docs/agent-api.md's "Cancellation is not uniform": interrupting a
     // flashtool write leaves a board half-written, so these only honour a
     // cancel between devices.

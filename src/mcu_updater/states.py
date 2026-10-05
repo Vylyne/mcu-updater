@@ -267,8 +267,7 @@ class DeviceStatus:
     def __post_init__(self) -> None:
         if self.reason not in _NEEDS_FLASH:
             raise ValueError(
-                f"unknown device reason {self.reason!r}; "
-                f"expected None or one of {', '.join(DEVICE_REASONS)}"
+                f"unknown device reason {self.reason!r}; expected None or one of {', '.join(DEVICE_REASONS)}"
             )
 
     @property

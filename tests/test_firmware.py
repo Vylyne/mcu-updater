@@ -71,9 +71,7 @@ def test_a_declared_family_with_no_source_builds_from_home(paths):
     family = firmware.resolve(paths, "klipper")
     assert family.source_dir(paths) == os.path.join(paths.home, "klipper")
     assert family.built_artifact(paths) == os.path.join(paths.home, "klipper", "out", "klipper.bin")
-    assert family.built_artifact(paths, "uf2") == os.path.join(
-        paths.home, "klipper", "out", "klipper.uf2"
-    )
+    assert family.built_artifact(paths, "uf2") == os.path.join(paths.home, "klipper", "out", "klipper.uf2")
 
 
 def test_the_artifact_defaults_to_the_family_name(paths):
@@ -171,9 +169,7 @@ def test_a_family_can_declare_itself_a_bootloader(paths, fake_root):
     assert firmware.resolve(paths, "second_stage").bootloader is True
 
 
-def test_overriding_one_key_on_katapult_does_not_turn_off_its_bootloader_status(
-    paths, fake_root
-):
+def test_overriding_one_key_on_katapult_does_not_turn_off_its_bootloader_status(paths, fake_root):
     """Every key here is independently optional. A section that only relocates
     the source tree must not silently flip a fact as load-bearing as whether
     this family is a bootloader - the offset checks and the on-demand build
@@ -230,9 +226,7 @@ def test_the_parsed_sections_can_be_passed_in_to_avoid_rereading(paths, fake_roo
     per firmware is two file reads per board."""
     _write_firmware(paths, "klipper", source=str(fake_root / "elsewhere"))
     families = firmware.load(paths)
-    assert firmware.resolve(paths, "klipper", families).source_dir(paths) == str(
-        fake_root / "elsewhere"
-    )
+    assert firmware.resolve(paths, "klipper", families).source_dir(paths) == str(fake_root / "elsewhere")
 
 
 # --------------------------------------------------------------------------
@@ -254,9 +248,7 @@ def _write_saved_config(paths, mcu_type="board", fw="klipper"):
         fh.write("CONFIG_MACH_STM32=y\n")
 
 
-def test_build_looks_in_the_configured_tree_not_the_conventional_one(
-    paths, settings, fake_root
-):
+def test_build_looks_in_the_configured_tree_not_the_conventional_one(paths, settings, fake_root):
     """The wiring test. ~/klipper exists and the configured tree does not, so
     the error naming the *configured* path is proof the override was honoured
     rather than silently ignored."""

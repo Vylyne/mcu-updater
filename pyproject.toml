@@ -37,6 +37,9 @@ line-length = 110
 # which would defeat the point of testing against the real library.
 extend-exclude = ["tests/fixtures/kconfiglib"]
 
+[tool.ruff.format]
+line-ending = "lf"
+
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "B"]
 ignore = [

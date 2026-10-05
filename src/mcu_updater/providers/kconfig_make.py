@@ -73,10 +73,7 @@ class KconfigMake:
         """
         fw = self._family(target)
         if not os.path.exists(install.paths.config_file(target.name, fw)):
-            return (
-                f"'{target.name}' has no saved {fw} configuration yet - "
-                f"run menuconfig for it once first."
-            )
+            return f"'{target.name}' has no saved {fw} configuration yet - run menuconfig for it once first."
         return None
 
     def artifact_status(self, install: Install, target: BuildTarget) -> ArtifactStatus:

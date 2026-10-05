@@ -39,9 +39,7 @@ class Extra:
         if self.seam not in SEAMS:
             raise ValueError(f"unknown seam {self.seam!r}; expected one of {SEAMS}")
         if self.value is not None and not isinstance(self.value, (str, int, float, bool)):
-            raise TypeError(
-                f"an extra's value must be a JSON scalar, not {type(self.value).__name__}"
-            )
+            raise TypeError(f"an extra's value must be a JSON scalar, not {type(self.value).__name__}")
 
     def to_json(self) -> dict[str, Any]:
         return {

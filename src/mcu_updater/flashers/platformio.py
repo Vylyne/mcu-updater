@@ -121,20 +121,13 @@ class PlatformIO:
         for target in targets:
             env = target.detail["env"]
             by_type[env.name] = (env, target.detail["identifier"])
-        yield {
-            name: _identify(bench, env, identifier, ctx)
-            for name, (env, identifier) in by_type.items()
-        }
+        yield {name: _identify(bench, env, identifier, ctx) for name, (env, identifier) in by_type.items()}
 
-    def write(
-        self, bench: Bench, session: Any, target: FlashTarget, ctx: Any
-    ) -> dict[str, Any]:
+    def write(self, bench: Bench, session: Any, target: FlashTarget, ctx: Any) -> dict[str, Any]:
         from ..providers import pio as pio_mod
 
         env = target.detail["env"]
-        port, confidence, problem = port_for(
-            target.detail, (session or {}).get(env.name) or {}, ctx
-        )
+        port, confidence, problem = port_for(target.detail, (session or {}).get(env.name) or {}, ctx)
         if problem is not None:
             # Raised rather than collected, because a batch records a failure by
             # catching one. The check itself is unchanged: a device that stayed
@@ -143,9 +136,7 @@ class PlatformIO:
             # now.
             raise FlashError(problem, type=env.name, port=port)
 
-        result = pio_mod.upload(
-            bench.paths, bench.settings, env, port, reporter=ctx.reporter
-        )
+        result = pio_mod.upload(bench.paths, bench.settings, env, port, reporter=ctx.reporter)
 
         return {
             "name": target.detail["name"],
@@ -191,9 +182,7 @@ class PlatformIO:
         against."""
 
 
-def _identify(
-    bench: Bench, env: PioType, identifier: Identifier | None, ctx: Any
-) -> dict[str, Any]:
+def _identify(bench: Bench, env: PioType, identifier: Identifier | None, ctx: Any) -> dict[str, Any]:
     """One type's answer, or `{}` - never an exception.
 
     A host that cannot ask was writing to configured ports perfectly well
@@ -211,9 +200,7 @@ def _identify(
         )
         return {}
     try:
-        return identifier.identify(
-            bench.paths, bench.settings, env, ask=True, reporter=ctx.reporter
-        )
+        return identifier.identify(bench.paths, bench.settings, env, ask=True, reporter=ctx.reporter)
     except UpdaterError as exc:
         ctx.reporter(
             "warn",

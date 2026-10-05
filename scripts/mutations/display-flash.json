@@ -32,20 +32,20 @@
     {
       "name": "displays are projected into targets too",
       "file": "src/mcu_updater/agent/methods/status.py",
-      "find": "            self._platformio_target(payload, allowed) for payload in platformio",
-      "replace": ""
+      "find": "            + [self._platformio_target(payload, allowed) for payload in platformio]",
+      "replace": "            + []"
     },
     {
       "name": "identity is verified once the ports are free",
       "file": "src/mcu_updater/flashers/platformio.py",
-      "find": "        return identifier.identify(\n            bench.paths, bench.settings, env, ask=True, reporter=ctx.reporter\n        )",
-      "replace": "        return {}"
+      "find": "    try:\n        return identifier.identify(bench.paths, bench.settings, env, ask=True, reporter=ctx.reporter)",
+      "replace": "    try:\n        return {}"
     },
     {
       "name": "the write asks with the ports free rather than reading the map",
       "file": "src/mcu_updater/flashers/platformio.py",
-      "find": "            bench.paths, bench.settings, env, ask=True, reporter=ctx.reporter",
-      "replace": "            bench.paths, bench.settings, env, ask=False, reporter=ctx.reporter"
+      "find": "        return identifier.identify(bench.paths, bench.settings, env, ask=True, reporter=ctx.reporter)",
+      "replace": "        return identifier.identify(bench.paths, bench.settings, env, ask=False, reporter=ctx.reporter)"
     },
     {
       "name": "an identifier that cannot answer is never fatal",
@@ -116,7 +116,7 @@
     {
       "name": "a record the screen disagrees with is discarded",
       "file": "src/mcu_updater/agent/methods/status.py",
-      "find": "        record = flashlog.entry_for(\n            hardware_id_key(ident), reader.running_sha(device.version)\n        )",
+      "find": "        record = flashlog.entry_for(hardware_id_key(ident), reader.running_sha(device.version))",
       "replace": "        record = flashlog.entry_for(hardware_id_key(ident), None)"
     },
     {

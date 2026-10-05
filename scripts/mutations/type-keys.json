@@ -58,8 +58,8 @@
     },
     {
       "name": "a builder no provider implements is refused",
-      "find": "        if family.builder not in firmware.BUILDERS\n",
-      "replace": "        if False\n"
+      "find": "    unknown_builders = {\n        name: family.builder for name, family in families.items() if family.builder not in firmware.BUILDERS\n    }\n",
+      "replace": "    unknown_builders = {name: family.builder for name, family in families.items() if False}\n"
     }
   ]
 }

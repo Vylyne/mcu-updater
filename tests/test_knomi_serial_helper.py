@@ -60,9 +60,7 @@ def test_a_device_id_section_is_addressed_by_its_id_once_discovery_finds_it(fake
     port = fake_root / "ttyUSB3"
     port.write_text("", encoding="utf-8")
 
-    device = KNOMI.device_from_klipper(
-        "knomi_serial t0", {"device_id": "19aa44", "port": str(port)}
-    )
+    device = KNOMI.device_from_klipper("knomi_serial t0", {"device_id": "19aa44", "port": str(port)})
 
     assert device.id == "19aa44"
     assert device.configured_path == str(port)
@@ -72,9 +70,7 @@ def test_a_device_id_section_is_addressed_by_its_id_once_discovery_finds_it(fake
 def test_a_missing_symlink_is_listed_as_not_present(fake_root):
     """The case the klippy module swallows: Klipper starts happily with a blank
     screen and no error anywhere."""
-    device = KNOMI.device_from_klipper(
-        "knomi_serial t0", {"port": str(fake_root / "not-there")}
-    )
+    device = KNOMI.device_from_klipper("knomi_serial t0", {"port": str(fake_root / "not-there")})
     assert device.present is False
     assert device.resolved_path is None
 
@@ -170,7 +166,7 @@ def test_no_module_version_means_no_extra():
 
 
 def test_the_notes_tell_unreachable_apart_from_none_configured():
-    """"No screens configured" and "we could not ask Klipper" must not look alike."""
+    """ "No screens configured" and "we could not ask Klipper" must not look alike."""
     assert KNOMI.devices_note(reachable=False) == "Could not reach Klipper to check for screens."
     assert KNOMI.devices_note(reachable=True) == "No screens found under [knomi_serial ...]."
 

@@ -255,9 +255,7 @@ class Flasher(Protocol):
         `accepts`."""
         ...
 
-    def prepared(
-        self, bench: Bench, targets: list[FlashTarget], ctx: Any
-    ) -> AbstractContextManager[Any]:
+    def prepared(self, bench: Bench, targets: list[FlashTarget], ctx: Any) -> AbstractContextManager[Any]:
         """Set up once for the whole batch, and tear down after it.
 
         Entered *inside* the Klipper stop when this flasher needs one, so
@@ -270,9 +268,7 @@ class Flasher(Protocol):
         """
         ...
 
-    def write(
-        self, bench: Bench, session: Any, target: FlashTarget, ctx: Any
-    ) -> dict[str, Any]:
+    def write(self, bench: Bench, session: Any, target: FlashTarget, ctx: Any) -> dict[str, Any]:
         """Put the image on the device. Raises `UpdaterError` on failure.
 
         Never cancellable. Interrupting a write leaves half an image on a
@@ -393,9 +389,7 @@ class CandidateScanner(Protocol):
     ) -> CandidateScan: ...
 
 
-def name_tracked(
-    devices: list[dict[str, Any]], owners: dict[str, list[tuple[str, str]]], field: str
-) -> None:
+def name_tracked(devices: list[dict[str, Any]], owners: dict[str, list[tuple[str, str]]], field: str) -> None:
     """Set each device's `tracked_by`/`known_serial` from `owners`, keyed on
     `device[field]`.
 

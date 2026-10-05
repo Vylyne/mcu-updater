@@ -50,11 +50,17 @@ KLIPPER_NAMES = ("klipper",)
 # (docs/decisions.md): any non-bootloader firmware name reads as "an
 # application is running," not as a vendor list to maintain.
 KNOWN_SERIAL_BRIDGE_NAMES = (
-    "1a86", "ch340", "ch341",      # WCH - vendor-ID hex and chip-name forms
-    "10c4", "cp210",               # Silicon Labs
-    "0403", "ft232", "ftdi",       # FTDI
-    "067b", "pl2303",              # Prolific
-    "usb_serial",                  # generic "USB Serial"/"USB2.0-Serial" iProduct text
+    "1a86",
+    "ch340",
+    "ch341",  # WCH - vendor-ID hex and chip-name forms
+    "10c4",
+    "cp210",  # Silicon Labs
+    "0403",
+    "ft232",
+    "ftdi",  # FTDI
+    "067b",
+    "pl2303",  # Prolific
+    "usb_serial",  # generic "USB Serial"/"USB2.0-Serial" iProduct text
 )
 
 #: For showing only. Never use these to build a path you then test for existence.
@@ -229,9 +235,7 @@ def scan(paths: Paths) -> list[BusDevice]:
     return out
 
 
-def port_of(
-    paths: Paths, dev: BusDevice, inventory: list[usb.UsbDevice] | None = None
-) -> str | None:
+def port_of(paths: Paths, dev: BusDevice, inventory: list[usb.UsbDevice] | None = None) -> str | None:
     """The USB port (`usb.UsbDevice.name`, e.g. "1-1.2") a by-id device hangs
     off, or None when sysfs cannot say.
 

@@ -105,9 +105,7 @@ def test_a_build_records_its_stamped_version(paths, settings):
     without a Kconfig parse."""
     settings.dry_run = True
     reg = _registry(paths)
-    _write_config(
-        paths, body='CONFIG_MACH_STM32=y\nCONFIG_VERSION="CARTOGRAPHER 6.2.0"\n'
-    )
+    _write_config(paths, body='CONFIG_MACH_STM32=y\nCONFIG_VERSION="CARTOGRAPHER 6.2.0"\n')
 
     result = build(paths, reg, settings, "board", "klipper")
 
@@ -237,9 +235,7 @@ def test_an_extra_repo_absent_from_the_sidecar_does_not_false_flag(paths, settin
     _write_config(paths)
     build(paths, reg, settings, "board", "klipper")
 
-    status = artifact_status(
-        paths, "board", "klipper", extra_repos=[os.path.join(paths.home, "klipper")]
-    )
+    status = artifact_status(paths, "board", "klipper", extra_repos=[os.path.join(paths.home, "klipper")])
     assert status.is_current
 
 
@@ -282,9 +278,7 @@ def test_extra_args_are_split_shell_style(paths, settings):
         "klipper",
         reporter=lambda s, line: cmds.append(line) if s == "cmd" else None,
     )
-    make_cmd = next(
-        c for c in cmds if "KCONFIG_CONFIG" in c and "clean" not in cmd_tokens(c)
-    )
+    make_cmd = next(c for c in cmds if "KCONFIG_CONFIG" in c and "clean" not in cmd_tokens(c))
     assert "FOO=bar" in make_cmd
     assert "a b" in make_cmd
 
@@ -327,9 +321,7 @@ def test_no_jobs_by_default_matching_the_original(paths, settings):
     assert not any(t.startswith("-j") for t in flags)
 
 
-def test_successful_build_cleans_source_artifacts_after_staging(
-    paths, settings, fake_root, monkeypatch
-):
+def test_successful_build_cleans_source_artifacts_after_staging(paths, settings, fake_root, monkeypatch):
     reg = _registry(paths)
     _write_config(paths)
     compiled = fake_root / "klipper" / "out" / "klipper.bin"
@@ -378,9 +370,7 @@ def test_failed_build_still_cleans_source_artifacts(paths, settings, monkeypatch
     assert calls[-1][-1] == "clean"
 
 
-def test_cancelled_build_still_cleans_without_using_cancel_token(
-    paths, settings, monkeypatch
-):
+def test_cancelled_build_still_cleans_without_using_cancel_token(paths, settings, monkeypatch):
     reg = _registry(paths)
     _write_config(paths)
     calls: list[tuple[list[str], object]] = []
@@ -400,9 +390,7 @@ def test_cancelled_build_still_cleans_without_using_cancel_token(
     assert calls[-1][1] is None
 
 
-def test_cleanup_failure_fails_an_otherwise_successful_build(
-    paths, settings, fake_root, monkeypatch
-):
+def test_cleanup_failure_fails_an_otherwise_successful_build(paths, settings, fake_root, monkeypatch):
     reg = _registry(paths)
     _write_config(paths)
     compiled = fake_root / "klipper" / "out" / "klipper.bin"
@@ -465,9 +453,7 @@ def test_a_build_records_the_binary_hash(paths, live_registry_text):
     from mcu_updater.config import Registry
     from mcu_updater.settings import Settings
 
-    dry = dataclasses.replace(
-        Settings(), dry_run=True, service_backend="null", clean_before_build=False
-    )
+    dry = dataclasses.replace(Settings(), dry_run=True, service_backend="null", clean_before_build=False)
     _stage_registry(paths, live_registry_text)
     _stage_config(paths, "bttebb36", "klipper")
     build(paths, Registry.load(paths), dry, "bttebb36", "klipper")
@@ -551,6 +537,7 @@ def test_no_temp_file_is_left_behind(paths):
     log = FlashLog(paths)
     log.record("A", mcu_type="t", fw="klipper", bin_sha256="aa", fw_sha="1")
     assert not os.path.exists(paths.flashlog_file + ".tmp")
+
 
 def _stage_registry(paths, text: str) -> None:
     import os

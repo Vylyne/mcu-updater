@@ -142,9 +142,7 @@ class MoonrakerPeer:
 
         self._stop.clear()
         self._closed.clear()
-        self._pool = ThreadPoolExecutor(
-            max_workers=self._max_workers, thread_name_prefix="rpc-dispatch"
-        )
+        self._pool = ThreadPoolExecutor(max_workers=self._max_workers, thread_name_prefix="rpc-dispatch")
         self._reader = threading.Thread(target=self._read_loop, name="rpc-reader", daemon=True)
         self._reader.start()
 

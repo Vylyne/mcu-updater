@@ -93,9 +93,7 @@ def test_the_families_submodules_key_reaches_the_type(paths, tmp_path):
     `cmake_args:` takes, and for the same reason."""
     write_config(
         paths,
-        ROADRUNNER_CFG.format(source=tmp_path).replace(
-            "builder: cmake", "builder: cmake\nsubmodules: yes"
-        ),
+        ROADRUNNER_CFG.format(source=tmp_path).replace("builder: cmake", "builder: cmake\nsubmodules: yes"),
     )
     assert cmake.load(paths)["roadrunner"].submodules is True
 
@@ -254,9 +252,7 @@ def test_args_are_split_as_a_shell_would(repo):
 
 
 def _cmake_type(source, target="roadrunner_v1_i2c_rgb"):
-    return cmake.CmakeType(
-        name="roadrunner", cmake_target=target, source=str(source), firmware="roadrunner"
-    )
+    return cmake.CmakeType(name="roadrunner", cmake_target=target, source=str(source), firmware="roadrunner")
 
 
 def test_no_source_names_the_missing_key(tmp_path):
@@ -316,9 +312,7 @@ def test_a_tree_that_syncs_its_own_submodules_is_not_blocked_by_an_empty_one(tmp
 
 def test_a_populated_submodule_is_not_a_problem(tmp_path):
     (tmp_path / "CMakeLists.txt").write_text("project(rr)\n", encoding="utf-8")
-    (tmp_path / ".gitmodules").write_text(
-        '[submodule "pico-sdk"]\n\tpath = pico-sdk\n', encoding="utf-8"
-    )
+    (tmp_path / ".gitmodules").write_text('[submodule "pico-sdk"]\n\tpath = pico-sdk\n', encoding="utf-8")
     (tmp_path / "pico-sdk").mkdir()
     (tmp_path / "pico-sdk" / "pico_sdk_init.cmake").write_text("", encoding="utf-8")
     assert cmake.source_problem(_cmake_type(tmp_path)) is None
@@ -334,9 +328,7 @@ def test_target_list_is_unknown_before_a_configure(tmp_path):
 
 def test_a_mistyped_target_is_blocked_once_the_list_is_known(tmp_path, monkeypatch):
     (tmp_path / "CMakeLists.txt").write_text("project(rr)\n", encoding="utf-8")
-    monkeypatch.setattr(
-        cmake, "declared_targets", lambda source: {"roadrunner_v1_i2c_rgb", "clean"}
-    )
+    monkeypatch.setattr(cmake, "declared_targets", lambda source: {"roadrunner_v1_i2c_rgb", "clean"})
     problem = cmake.source_problem(_cmake_type(tmp_path, target="roadrunner_v1_i2c_rbg"))
     assert problem is not None
     assert "roadrunner_v1_i2c_rbg" in problem
@@ -495,12 +487,8 @@ def test_a_stale_image_from_a_target_this_tree_no_longer_declares_is_refused(
     source = repo / "rp2040"
     (source / "build").mkdir()
     (source / "build" / "roadrunner_v1_i2c_rgb.uf2").write_bytes(b"DAY-ONE-IMAGE")
-    monkeypatch.setattr(
-        cmake.build_mod, "run_streamed", _leaves(source, "roadrunner_v2_i2c_rgb")
-    )
-    monkeypatch.setattr(
-        cmake, "declared_targets", lambda source: {"all", "roadrunner_v2_i2c_rgb"}
-    )
+    monkeypatch.setattr(cmake.build_mod, "run_streamed", _leaves(source, "roadrunner_v2_i2c_rgb"))
+    monkeypatch.setattr(cmake, "declared_targets", lambda source: {"all", "roadrunner_v2_i2c_rgb"})
 
     target = _cmake_type(source)
     with pytest.raises(BuildError) as exc:
@@ -519,20 +507,14 @@ def test_a_declared_target_is_still_staged(paths, settings, repo, monkeypatch):
     the check refuses everything."""
     source = repo / "rp2040"
     (source / "build").mkdir()
-    monkeypatch.setattr(
-        cmake.build_mod, "run_streamed", _leaves(source, "roadrunner_v1_i2c_rgb")
-    )
-    monkeypatch.setattr(
-        cmake, "declared_targets", lambda source: {"all", "roadrunner_v1_i2c_rgb"}
-    )
+    monkeypatch.setattr(cmake.build_mod, "run_streamed", _leaves(source, "roadrunner_v1_i2c_rgb"))
+    monkeypatch.setattr(cmake, "declared_targets", lambda source: {"all", "roadrunner_v1_i2c_rgb"})
 
     staged = cmake.build(paths, settings, _cmake_type(source))
     assert open(staged, "rb").read() == b"roadrunner_v1_i2c_rgb"
 
 
-def test_the_target_list_is_read_after_make_not_after_configure(
-    paths, settings, repo, monkeypatch
-):
+def test_the_target_list_is_read_after_make_not_after_configure(paths, settings, repo, monkeypatch):
     """Where the check sits, pinned.
 
     The configure step in `build()` is conditional: a tree with no
@@ -581,16 +563,12 @@ def test_the_target_list_is_read_after_make_not_after_configure(
     assert cmake.read_sidecar(paths, target) is None
 
 
-def test_an_unaskable_target_list_does_not_block_the_build(
-    paths, settings, repo, monkeypatch
-):
+def test_an_unaskable_target_list_does_not_block_the_build(paths, settings, repo, monkeypatch):
     """None means "could not be asked", not "declares nothing" - a tree cmake
     cannot answer about must still build, exactly as it did before the check."""
     source = repo / "rp2040"
     (source / "build").mkdir()
-    monkeypatch.setattr(
-        cmake.build_mod, "run_streamed", _leaves(source, "roadrunner_v1_i2c_rgb")
-    )
+    monkeypatch.setattr(cmake.build_mod, "run_streamed", _leaves(source, "roadrunner_v1_i2c_rgb"))
     monkeypatch.setattr(cmake, "declared_targets", lambda source: None)
 
     staged = cmake.build(paths, settings, _cmake_type(source))
@@ -623,9 +601,7 @@ def test_the_sidecar_records_the_subtree_commit_and_the_bytes(paths, settings, r
     # test_a_build_from_a_dirty_subtree_is_built_dirty below.
 
 
-def test_an_edit_landing_during_the_build_is_recorded_dirty(
-    paths, settings, repo, monkeypatch
-):
+def test_an_edit_landing_during_the_build_is_recorded_dirty(paths, settings, repo, monkeypatch):
     """Provenance is read after `make`, not before it. An uncommitted edit that
     lands mid-compile is in the image, and a record sampled at t0 would call
     those bytes a clean build of the pre-edit commit - permanently current,
@@ -648,9 +624,7 @@ def test_an_edit_landing_during_the_build_is_recorded_dirty(
     assert cmake.artifact_status(paths, target, state).reason == BUILT_DIRTY
 
 
-def test_a_commit_landing_during_the_build_is_recorded_dirty_too(
-    paths, settings, repo, monkeypatch
-):
+def test_a_commit_landing_during_the_build_is_recorded_dirty_too(paths, settings, repo, monkeypatch):
     """The half of B2 that re-sampling alone does not close. A `git pull` or a
     commit mid-compile leaves the subtree clean at a *new* sha, so a plain
     post-build sample would record a clean build of a commit that did not
@@ -678,9 +652,7 @@ def test_a_commit_landing_during_the_build_is_recorded_dirty_too(
     assert cmake.artifact_status(paths, target, after).reason == BUILT_DIRTY
 
 
-def test_an_edit_discarded_during_the_build_is_still_recorded_dirty(
-    paths, settings, repo, monkeypatch
-):
+def test_an_edit_discarded_during_the_build_is_still_recorded_dirty(paths, settings, repo, monkeypatch):
     """The third leg. An edit present when `make` started is compiled into the
     image; discarding it mid-compile (a stash, a checkout, an editor undo)
     leaves the subtree clean at the *same* sha it began on, so neither the
@@ -711,9 +683,7 @@ def test_an_edit_discarded_during_the_build_is_still_recorded_dirty(
     assert cmake.artifact_status(paths, target, after).reason == BUILT_DIRTY
 
 
-def test_a_tree_that_asks_for_submodules_syncs_before_it_configures(
-    paths, settings, repo, monkeypatch
-):
+def test_a_tree_that_asks_for_submodules_syncs_before_it_configures(paths, settings, repo, monkeypatch):
     """Order is the whole point. A submodule at a commit other than the
     recorded one is a modified gitlink in the parent, so a sync landing after
     the provenance sample would record a tree that no longer exists."""
@@ -736,9 +706,7 @@ def test_a_tree_that_asks_for_submodules_syncs_before_it_configures(
     assert [c[0] for c in seen[1:]] == ["cmake", "make"]
 
 
-def test_a_tree_that_does_not_ask_for_submodules_never_runs_git(
-    paths, settings, repo, monkeypatch
-):
+def test_a_tree_that_does_not_ask_for_submodules_never_runs_git(paths, settings, repo, monkeypatch):
     """Opt-in. Syncing unasked would reset a submodule somebody deliberately
     checked out elsewhere, and silently make that dirty tree clean."""
     source = repo / "rp2040"
@@ -756,9 +724,7 @@ def test_a_tree_that_does_not_ask_for_submodules_never_runs_git(
     assert [c[0] for c in seen] == ["cmake", "make"]
 
 
-def test_a_failed_submodule_sync_refuses_before_anything_is_built(
-    paths, settings, repo, monkeypatch
-):
+def test_a_failed_submodule_sync_refuses_before_anything_is_built(paths, settings, repo, monkeypatch):
     """Fail closed. A sync that could not complete leaves a tree that is
     part one revision and part another - building it would stage an image no
     commit describes."""
@@ -780,9 +746,7 @@ def test_a_failed_submodule_sync_refuses_before_anything_is_built(
     assert cmake.read_sidecar(paths, target) is None
 
 
-def test_the_recorded_version_is_the_one_compiled_in(
-    paths, settings, repo, monkeypatch
-):
+def test_the_recorded_version_is_the_one_compiled_in(paths, settings, repo, monkeypatch):
     """The other half of the split: `version` is *not* re-sampled. It is the
     string substituted into `cmake_args:` and compiled into the binary through
     `-D`, so it must stay the pre-build value or the sidecar disagrees with
@@ -866,9 +830,7 @@ def test_a_second_build_with_cmake_args_still_reconfigures(paths, settings, repo
     monkeypatch.setattr(
         cmake.build_mod,
         "run_streamed",
-        lambda cmd, **kw: (seen.append(list(cmd)), _fake_configure_and_build(source)(cmd, **kw))[
-            1
-        ],
+        lambda cmd, **kw: (seen.append(list(cmd)), _fake_configure_and_build(source)(cmd, **kw))[1],
     )
     cmake.build(paths, settings, target)
 
@@ -891,9 +853,7 @@ def test_a_second_build_without_cmake_args_still_skips_reconfigure(paths, settin
     monkeypatch.setattr(
         cmake.build_mod,
         "run_streamed",
-        lambda cmd, **kw: (seen.append(list(cmd)), _fake_configure_and_build(source)(cmd, **kw))[
-            1
-        ],
+        lambda cmd, **kw: (seen.append(list(cmd)), _fake_configure_and_build(source)(cmd, **kw))[1],
     )
     cmake.build(paths, settings, target)
 
@@ -1005,12 +965,8 @@ def test_changing_the_configured_target_makes_the_staged_image_stale(paths, repo
     _staged(paths)
     cmake.record_build(paths, built_target, state)
 
-    configured_target = dataclasses.replace(
-        built_target, cmake_target="roadrunner_v1_i2c_grb"
-    )
-    assert (
-        cmake.artifact_status(paths, configured_target, state).reason == CONFIG_CHANGED
-    )
+    configured_target = dataclasses.replace(built_target, cmake_target="roadrunner_v1_i2c_grb")
+    assert cmake.artifact_status(paths, configured_target, state).reason == CONFIG_CHANGED
 
 
 def test_a_build_from_a_dirty_subtree_is_built_dirty(paths, repo):
@@ -1066,9 +1022,7 @@ def test_the_provider_enumerates_its_types(paths, settings, tmp_path):
     write_config(paths, ROADRUNNER_CFG.format(source=tmp_path))
     install = Install.load(paths, settings)
     targets = Cmake().targets(install)
-    assert [(t.provider, t.name, t.fw) for t in targets] == [
-        ("cmake", "roadrunner", "roadrunner")
-    ]
+    assert [(t.provider, t.name, t.fw) for t in targets] == [("cmake", "roadrunner", "roadrunner")]
 
 
 def test_the_provider_is_never_swept_on_demand(paths, settings, tmp_path):
@@ -1098,9 +1052,7 @@ def test_describe_names_the_type(paths, settings, tmp_path):
     assert Cmake().describe(Cmake().targets(install)[0]) == "roadrunner"
 
 
-def test_the_provider_build_delegates_to_the_module_function(
-    paths, settings, tmp_path, capture_reporter
-):
+def test_the_provider_build_delegates_to_the_module_function(paths, settings, tmp_path, capture_reporter):
     """`Cmake.build` shares a name with the module-level `build` it calls -
     close the hole directly rather than trusting that mypy would have caught a
     bad bind. Asserting on the reported commands (rather than only "nothing
@@ -1121,9 +1073,7 @@ def test_the_provider_build_delegates_to_the_module_function(
     assert not os.path.exists(paths.uf2_file("roadrunner", "roadrunner"))
 
 
-def test_the_provider_artifact_status_delegates_to_the_module_function(
-    paths, settings, tmp_path
-):
+def test_the_provider_artifact_status_delegates_to_the_module_function(paths, settings, tmp_path):
     """Same shadowing hole as `build`, for `artifact_status`."""
     write_config(paths, ROADRUNNER_CFG.format(source=tmp_path))
     install = Install.load(paths, settings)

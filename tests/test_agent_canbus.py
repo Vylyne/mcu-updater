@@ -105,9 +105,7 @@ def test_an_unclaimed_board_is_reported_untracked(api, fake_root, monkeypatch):
     assert device["ignored"] is False
 
 
-def test_a_second_can_scan_is_refused_while_one_is_running(
-    api, fake_root, monkeypatch
-):
+def test_a_second_can_scan_is_refused_while_one_is_running(api, fake_root, monkeypatch):
     net_root = _make_can_interface(fake_root, "can0")
     api.paths = dataclasses.replace(api.paths, can_sysfs_net=net_root)
     _make_flashtool(api.paths)
@@ -123,9 +121,7 @@ def test_a_second_can_scan_is_refused_while_one_is_running(
 
     monkeypatch.setattr(canbus_mod, "run_streamed", blocking_run_streamed)
     first_result: list[dict] = []
-    first = threading.Thread(
-        target=lambda: first_result.append(api.dispatch("fw.canbus.scan"))
-    )
+    first = threading.Thread(target=lambda: first_result.append(api.dispatch("fw.canbus.scan")))
     first.start()
     assert entered.wait(5)
 
@@ -159,16 +155,12 @@ def test_canbus_scan_marks_a_foreign_provider_identity(paths, fake_root, monkeyp
     assert device["tracked_by"] == "roadrunner"
 
 
-def test_canbus_ignore_marks_every_sighting_but_keeps_it_listed(
-    api, fake_root, monkeypatch
-):
+def test_canbus_ignore_marks_every_sighting_but_keeps_it_listed(api, fake_root, monkeypatch):
     net_root = _make_can_interface(fake_root, "can0")
     _make_can_interface(fake_root, "can1")
     api.paths = dataclasses.replace(api.paths, can_sysfs_net=net_root)
     _make_flashtool(api.paths)
-    monkeypatch.setattr(
-        canbus_mod, "run_streamed", _fake_query_answering("bcb5346fc731")
-    )
+    monkeypatch.setattr(canbus_mod, "run_streamed", _fake_query_answering("bcb5346fc731"))
 
     first = api.dispatch("fw.canbus.ignore", {"uuid": "bcb5346fc731"})
     second = api.dispatch("fw.canbus.ignore", {"uuid": "bcb5346fc731"})
@@ -222,12 +214,8 @@ def test_scan_serializes_usb_adapter_identity(api, fake_root, monkeypatch):
     (adapter / "serial").write_text("ADAPTER-SERIAL\n", encoding="utf-8")
     interface = usb_root / "1-2:1.0"
     interface.mkdir()
-    (fake_root / "sys_class_net" / "can7" / "device").symlink_to(
-        interface, target_is_directory=True
-    )
-    api.paths = dataclasses.replace(
-        api.paths, can_sysfs_net=net_root, usb_sysfs=str(usb_root)
-    )
+    (fake_root / "sys_class_net" / "can7" / "device").symlink_to(interface, target_is_directory=True)
+    api.paths = dataclasses.replace(api.paths, can_sysfs_net=net_root, usb_sysfs=str(usb_root))
     _make_flashtool(api.paths)
     monkeypatch.setattr(canbus_mod, "run_streamed", _fake_query_answering("bcb5346fc731"))
 
@@ -268,9 +256,7 @@ def test_an_undeclared_katapult_is_reported_not_raised(paths, fake_root):
     with open(paths.registry_file, "w", encoding="utf-8") as fh:
         fh.write("[firmware klipper]\nsource: ~/klipper\nflashers: flashtool\n")
     api = Api(paths)
-    api.paths = dataclasses.replace(
-        api.paths, can_sysfs_net=_make_can_interface(fake_root, "can0")
-    )
+    api.paths = dataclasses.replace(api.paths, can_sysfs_net=_make_can_interface(fake_root, "can0"))
 
     res = api.dispatch("fw.canbus.scan")
     assert res["devices"] == []
@@ -404,13 +390,9 @@ def test_canbus_methods_require_both_arguments(api, method, args):
 
 def test_canbus_remove_reports_whether_it_acted(api):
     api.dispatch("fw.canbus.add", {"name": "hexadistrofusion", "uuid": "bcb5346fc731"})
-    first = api.dispatch(
-        "fw.canbus.remove", {"name": "hexadistrofusion", "uuid": "bcb5346fc731"}
-    )
+    first = api.dispatch("fw.canbus.remove", {"name": "hexadistrofusion", "uuid": "bcb5346fc731"})
     assert first["removed"] is True
-    again = api.dispatch(
-        "fw.canbus.remove", {"name": "hexadistrofusion", "uuid": "bcb5346fc731"}
-    )
+    again = api.dispatch("fw.canbus.remove", {"name": "hexadistrofusion", "uuid": "bcb5346fc731"})
     assert again["removed"] is False
 
 

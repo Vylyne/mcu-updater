@@ -32,18 +32,13 @@ APP = 0x10004000
 
 
 def _block(target, payload, *, flags=FAMILY_FLAG, family=RP2040_FAMILY, no=0, count=1):
-    header = struct.pack(
-        "<8I", MAGIC0, MAGIC1, flags, target, len(payload), no, count, family
-    )
+    header = struct.pack("<8I", MAGIC0, MAGIC1, flags, target, len(payload), no, count, family)
     data = payload + b"\0" * (476 - len(payload))
     return header + data + struct.pack("<I", MAGIC_END)
 
 
 def _image(targets, fill=b"\xaa"):
-    return b"".join(
-        _block(t, fill * PAGE_SIZE, no=i, count=len(targets))
-        for i, t in enumerate(targets)
-    )
+    return b"".join(_block(t, fill * PAGE_SIZE, no=i, count=len(targets)) for i, t in enumerate(targets))
 
 
 def _fields(uf2):
@@ -71,9 +66,7 @@ def test_the_application_sector_is_written_as_erased_pages():
     out = _fields(with_erased_sector(_image(katapult), APP))
 
     erased = [b for b in out if b["target"] >= APP]
-    assert [b["target"] for b in erased] == [
-        APP + i * PAGE_SIZE for i in range(SECTOR_SIZE // PAGE_SIZE)
-    ]
+    assert [b["target"] for b in erased] == [APP + i * PAGE_SIZE for i in range(SECTOR_SIZE // PAGE_SIZE)]
     assert all(b["payload"] == b"\xff" * PAGE_SIZE for b in erased)
     assert all(b["size"] == PAGE_SIZE for b in erased)
 

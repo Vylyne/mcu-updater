@@ -80,9 +80,7 @@ class SystemdService(ServiceController):
 
     def is_active(self) -> bool:
         try:
-            res = subprocess.run(
-                ["systemctl", "is-active", "--quiet", self.name], timeout=20
-            )
+            res = subprocess.run(["systemctl", "is-active", "--quiet", self.name], timeout=20)
         except (OSError, subprocess.SubprocessError):
             return False
         return res.returncode == 0
@@ -304,9 +302,7 @@ STOP_VERIFY_TIMEOUT = 20.0
 
 
 @contextlib.contextmanager
-def paused(
-    svc: ServiceController | None, *, reporter: Reporter = null_reporter
-) -> Iterator[None]:
+def paused(svc: ServiceController | None, *, reporter: Reporter = null_reporter) -> Iterator[None]:
     """Stop a *secondary* service for the duration of the block. Best effort.
 
     For things that merely contend for a port rather than making the operation

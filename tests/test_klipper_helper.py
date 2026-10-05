@@ -83,7 +83,9 @@ CHIP_ID = 'CONFIG_USB_SERIAL_NUMBER_CHIPID=y\nCONFIG_USB_SERIAL_NUMBER="12345"\n
 # --- request_bootsel ---------------------------------------------------------
 
 
-def test_a_running_board_is_asked_into_bootsel_through_flashtool(bench, ctx, requested, flashtool, monkeypatch):
+def test_a_running_board_is_asked_into_bootsel_through_flashtool(
+    bench, ctx, requested, flashtool, monkeypatch
+):
     monkeypatch.setattr(klipper.bootsel, "mounts_on", lambda paths, topology: ["/media/pi/RPI-RP2"])
 
     handoff = KlipperHelper().request_bootsel(bench, serial=SERIAL, chipset="rp2040", ctx=ctx)
@@ -98,9 +100,7 @@ def test_a_board_that_lands_in_katapult_is_refused_and_nothing_is_written(
     """A board with Katapult answers Klipper's bootloader request with
     Katapult, not BOOTSEL. Waiting for a volume that is not coming would time
     out with the wrong reason; copying anywhere would be worse."""
-    bench = dataclasses.replace(
-        bench, paths=dataclasses.replace(paths, bootsel_root=str(tmp_path / "empty"))
-    )
+    bench = dataclasses.replace(bench, paths=dataclasses.replace(paths, bootsel_root=str(tmp_path / "empty")))
     monkeypatch.setattr(klipper.bootsel, "mounts_on", lambda paths, topology: [])
     monkeypatch.setattr(klipper.byid, "scan", lambda paths: [IN_KATAPULT])
     copied: list[str] = []
@@ -170,7 +170,9 @@ def test_wait_ready_follows_a_hardcoded_serial(bench, ctx, reported, paths, wait
     waiting for the old serial would time out on a board that came back fine."""
     _config(paths, HARDCODED)
 
-    KlipperHelper().wait_ready(bench, serial=SERIAL, chipset="rp2040", ctx=ctx, type_name="pico", fw="klipper")
+    KlipperHelper().wait_ready(
+        bench, serial=SERIAL, chipset="rp2040", ctx=ctx, type_name="pico", fw="klipper"
+    )
 
     assert waited == [("rp2040", "12345-if00", "Klipper")]
     assert any(stream == "warn" and "12345-if00" in line for stream, line in reported)
@@ -179,7 +181,9 @@ def test_wait_ready_follows_a_hardcoded_serial(bench, ctx, reported, paths, wait
 def test_wait_ready_keeps_a_chip_id_serial(bench, ctx, reported, paths, waited):
     _config(paths, CHIP_ID)
 
-    KlipperHelper().wait_ready(bench, serial=SERIAL, chipset="rp2040", ctx=ctx, type_name="pico", fw="klipper")
+    KlipperHelper().wait_ready(
+        bench, serial=SERIAL, chipset="rp2040", ctx=ctx, type_name="pico", fw="klipper"
+    )
 
     assert waited == [("rp2040", SERIAL, "Klipper")]
     assert not [line for stream, line in reported if stream == "warn"]
@@ -251,9 +255,7 @@ def test_wait_ready_does_not_accept_a_serial_collision_from_another_port(
     this one was asked on may settle the wait, whatever serial it turns out
     to have."""
     _config(paths, HARDCODED)
-    decoy = BusDevice(
-        "Klipper", "rp2040", "12345-if00", "/dev/serial/by-id/usb-Klipper_rp2040_12345-if00"
-    )
+    decoy = BusDevice("Klipper", "rp2040", "12345-if00", "/dev/serial/by-id/usb-Klipper_rp2040_12345-if00")
     real = BusDevice(
         "Klipper", "rp2040", "reallive-if00", "/dev/serial/by-id/usb-Klipper_rp2040_reallive-if00"
     )
@@ -275,9 +277,7 @@ def test_wait_ready_does_not_repeat_the_early_notice_when_the_board_found_matche
     """The literal-serial early notice already named `12345-if00`; the board
     found by topology answering to exactly that serial is not news twice."""
     _config(paths, HARDCODED)
-    found = BusDevice(
-        "Klipper", "rp2040", "12345-if00", "/dev/serial/by-id/usb-Klipper_rp2040_12345-if00"
-    )
+    found = BusDevice("Klipper", "rp2040", "12345-if00", "/dev/serial/by-id/usb-Klipper_rp2040_12345-if00")
     _by_topology(monkeypatch, [found], {found.path: TOPOLOGY})
 
     KlipperHelper().wait_ready(
@@ -450,9 +450,7 @@ def test_an_offset_image_is_refused_on_the_helper_path_before_any_request(
     A tmp `bootsel_root`, so a weakened refusal falls through to a mount scan
     of a fake root rather than the real host's `/media` (M-5's own fix,
     applied here defensively too)."""
-    bench = dataclasses.replace(
-        bench, paths=dataclasses.replace(paths, bootsel_root=str(tmp_path / "empty"))
-    )
+    bench = dataclasses.replace(bench, paths=dataclasses.replace(paths, bootsel_root=str(tmp_path / "empty")))
     target = _helper_target(tmp_path, 0x10004000)
     copied = []
     monkeypatch.setattr(bootsel_flasher, "copy_uf2", lambda *a, **k: copied.append((a, k)))
@@ -489,9 +487,7 @@ def _garbage_uf2(tmp_path) -> str:
 
 
 def test_a_corrupt_image_is_refused_by_name_on_the_helper_path(bench, ctx, requested, paths, tmp_path):
-    bench = dataclasses.replace(
-        bench, paths=dataclasses.replace(paths, bootsel_root=str(tmp_path / "empty"))
-    )
+    bench = dataclasses.replace(bench, paths=dataclasses.replace(paths, bootsel_root=str(tmp_path / "empty")))
     garbage = _garbage_uf2(tmp_path)
     target = bootsel_flasher.target_for(
         Artifact(KIND_UF2, garbage),
@@ -512,9 +508,7 @@ def test_a_corrupt_image_is_refused_by_name_on_the_no_helper_path(bench, ctx, pa
     """Tmp-rooted like its three siblings above (M-5): if the `Uf2Error`
     refusal ever regresses, the write must not fall through to a glob of the
     real host's `/media/*`."""
-    bench = dataclasses.replace(
-        bench, paths=dataclasses.replace(paths, bootsel_root=str(tmp_path / "empty"))
-    )
+    bench = dataclasses.replace(bench, paths=dataclasses.replace(paths, bootsel_root=str(tmp_path / "empty")))
     garbage = _garbage_uf2(tmp_path)
     target = bootsel_flasher.target_for(garbage, chipset="rp2040")
 

@@ -104,9 +104,7 @@ def test_an_absolute_map_path_is_used_as_given(paths, tmp_path):
     elsewhere = tmp_path / "elsewhere.json"
     with open(elsewhere, "w", encoding="utf-8") as fh:
         _json.dump(GOOD_MAP, fh)
-    display = pio_mod.PioType(
-        name="x", env="x", source="/nowhere", device_map=str(elsewhere)
-    )
+    display = pio_mod.PioType(name="x", env="x", source="/nowhere", device_map=str(elsewhere))
     assert watcher.read_device_map(paths, display)["19aa44"].port == "/dev/ttyUSB0"
 
 

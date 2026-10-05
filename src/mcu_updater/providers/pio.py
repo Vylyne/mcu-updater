@@ -152,9 +152,7 @@ def load(paths: Paths) -> dict[str, PioType]:
             firmware=first_fw,
             klipper_section=device_info.reader_for(family).klipper_prefix,
             stop_services=stop_services,
-            device_map=(
-                "knomi/devices.json" if device_map is None else device_map
-            ).strip(),
+            device_map=("knomi/devices.json" if device_map is None else device_map).strip(),
         )
     return out
 
@@ -168,8 +166,7 @@ def find_pio(settings: Settings) -> str:
         if found and os.path.exists(found):
             return found
     raise ToolMissingError(
-        "PlatformIO not found. Install it, or symlink its launcher onto PATH: "
-        "~/.platformio/penv/bin/pio",
+        "PlatformIO not found. Install it, or symlink its launcher onto PATH: ~/.platformio/penv/bin/pio",
         tool="pio",
     )
 
@@ -213,9 +210,7 @@ def _git(directory: str, *args: str) -> str | None:
     import subprocess
 
     try:
-        out = subprocess.check_output(
-            ("git",) + args, cwd=directory, stderr=subprocess.DEVNULL, timeout=10
-        )
+        out = subprocess.check_output(("git",) + args, cwd=directory, stderr=subprocess.DEVNULL, timeout=10)
     except Exception:  # noqa: BLE001 - not a git checkout, no git, or a timeout
         return None
     return out.decode("utf-8", "replace").strip()
@@ -272,6 +267,7 @@ def is_dirty(running: str | None) -> bool:
 # rebuilds whatever is stale before it writes, so the record is taken after a
 # build *and* after an upload - whichever last left an image on disk.
 # --------------------------------------------------------------------------
+
 
 def record_build(paths: Paths, entry: PioType, state: SourceState) -> None:
     """Note which commit produced the image now sitting in .pio/build.
@@ -435,9 +431,7 @@ def resolve_port(port: str) -> str:
 
 def firmware_bin(entry: PioType) -> str:
     """Where PlatformIO leaves the image for this env."""
-    return os.path.join(
-        os.path.expanduser(entry.source), ".pio", "build", entry.env, "firmware.bin"
-    )
+    return os.path.join(os.path.expanduser(entry.source), ".pio", "build", entry.env, "firmware.bin")
 
 
 def staged(paths: Paths, type_name: str, family: firmware.FirmwareFamily) -> Staged:

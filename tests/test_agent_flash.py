@@ -136,9 +136,9 @@ def cmake_flash_factory(paths, fake_root, tmp_path):
             make_device(fake_root / "bus", "Vylyne", "Roadrunner", serial)
         runner = JobRunner(
             paths,
-            lambda: __import__(
-                "mcu_updater.settings", fromlist=["load_settings"]
-            ).load_settings(paths.settings_file),
+            lambda: __import__("mcu_updater.settings", fromlist=["load_settings"]).load_settings(
+                paths.settings_file
+            ),
         )
         runners.append(runner)
         api = Api(paths, runner=runner, call=_moonraker())
@@ -307,9 +307,7 @@ def test_a_helper_backed_cmake_uf2_routes_through_a_normal_flash_job(
 ):
     api = cmake_flash_factory()
 
-    response = api.dispatch(
-        "fw.flash", {"name": "roadrunner", "id": ROADRUNNER_SERIAL}
-    )
+    response = api.dispatch("fw.flash", {"name": "roadrunner", "id": ROADRUNNER_SERIAL})
 
     assert response["job"]["kind"] == "flash"
     assert api.runner.wait(timeout=30)
@@ -329,9 +327,7 @@ def test_a_cmake_type_without_a_helper_names_its_flashers(
     api = cmake_flash_factory(helper=None)
 
     with pytest.raises(RpcError) as exc:
-        api.dispatch(
-            "fw.flash", {"name": "roadrunner", "serial": ROADRUNNER_SERIAL}
-        )
+        api.dispatch("fw.flash", {"name": "roadrunner", "serial": ROADRUNNER_SERIAL})
 
     assert exc.value.data["code"] == "no_flasher"
     assert "flashers: bootsel" in str(exc.value)
@@ -342,9 +338,7 @@ def test_an_unknown_cmake_helper_is_a_config_error(cmake_flash_factory):
     api = cmake_flash_factory(helper="not-registered")
 
     with pytest.raises(RpcError) as exc:
-        api.dispatch(
-            "fw.flash", {"name": "roadrunner", "serial": ROADRUNNER_SERIAL}
-        )
+        api.dispatch("fw.flash", {"name": "roadrunner", "serial": ROADRUNNER_SERIAL})
 
     assert exc.value.data["code"] == "config_corrupt"
     assert api.runner.current() is None
@@ -354,9 +348,7 @@ def test_a_cmake_flash_requires_its_staged_uf2(cmake_flash_factory):
     api = cmake_flash_factory(staged=False)
 
     with pytest.raises(RpcError) as exc:
-        api.dispatch(
-            "fw.flash", {"name": "roadrunner", "serial": ROADRUNNER_SERIAL}
-        )
+        api.dispatch("fw.flash", {"name": "roadrunner", "serial": ROADRUNNER_SERIAL})
 
     assert exc.value.data["code"] == "no_artifact"
     assert api.runner.current() is None
@@ -366,9 +358,7 @@ def test_a_detached_cmake_serial_is_refused_before_a_job(cmake_flash_factory):
     api = cmake_flash_factory(attached=False)
 
     with pytest.raises(RpcError) as exc:
-        api.dispatch(
-            "fw.flash", {"name": "roadrunner", "serial": ROADRUNNER_SERIAL}
-        )
+        api.dispatch("fw.flash", {"name": "roadrunner", "serial": ROADRUNNER_SERIAL})
 
     assert exc.value.data["code"] == "device_not_found"
     assert api.runner.current() is None
@@ -379,18 +369,12 @@ def test_a_cmake_flash_refuses_a_serial_tracked_under_another_type(
 ):
     api = cmake_flash_factory(
         extra_types=(
-            "\n[type other]\n"
-            "chipset: stm32g0b1xx\n"
-            "firmware: klipper\n"
-            "serials:\n"
-            f"    {TRACKED_SERIAL}\n"
+            f"\n[type other]\nchipset: stm32g0b1xx\nfirmware: klipper\nserials:\n    {TRACKED_SERIAL}\n"
         )
     )
 
     with pytest.raises(RpcError) as exc:
-        api.dispatch(
-            "fw.flash", {"name": "roadrunner", "serial": TRACKED_SERIAL}
-        )
+        api.dispatch("fw.flash", {"name": "roadrunner", "serial": TRACKED_SERIAL})
 
     assert exc.value.data["code"] == "serial_tracked_elsewhere"
     assert api.runner.current() is None
@@ -401,17 +385,13 @@ def test_a_busy_printer_blocks_a_cmake_flash(cmake_flash_factory):
     api._call = _moonraker(idle_state="Printing")
 
     with pytest.raises(RpcError) as exc:
-        api.dispatch(
-            "fw.flash", {"name": "roadrunner", "serial": ROADRUNNER_SERIAL}
-        )
+        api.dispatch("fw.flash", {"name": "roadrunner", "serial": ROADRUNNER_SERIAL})
 
     assert exc.value.data["code"] == "print_in_progress"
     assert api.runner.current() is None
 
 
-def test_a_single_cmake_batch_failure_fails_the_flash_job(
-    cmake_flash_factory, monkeypatch
-):
+def test_a_single_cmake_batch_failure_fails_the_flash_job(cmake_flash_factory, monkeypatch):
     api = cmake_flash_factory()
 
     monkeypatch.setattr(
@@ -427,9 +407,7 @@ def test_a_single_cmake_batch_failure_fails_the_flash_job(
         },
     )
 
-    response = api.dispatch(
-        "fw.flash", {"name": "roadrunner", "serial": ROADRUNNER_SERIAL}
-    )
+    response = api.dispatch("fw.flash", {"name": "roadrunner", "serial": ROADRUNNER_SERIAL})
     assert api.runner.wait(timeout=30)
     job = api.runner.get(response["job_id"])
     assert job.state == "failed"
@@ -437,9 +415,7 @@ def test_a_single_cmake_batch_failure_fails_the_flash_job(
     assert "vanished" in job.error["message"]
 
 
-def test_a_successful_cmake_write_records_build_sidecar_provenance(
-    cmake_flash_factory, monkeypatch
-):
+def test_a_successful_cmake_write_records_build_sidecar_provenance(cmake_flash_factory, monkeypatch):
     """The ledger is `write_all`'s now (Ruling 12), so a faked batch writes
     none - see `test_flashlog_loop.py`."""
     api = cmake_flash_factory(dry_run="false")
@@ -471,22 +447,16 @@ def test_a_successful_cmake_write_records_build_sidecar_provenance(
 
     monkeypatch.setattr("mcu_updater.flashers.write_all", succeed)
 
-    response = api.dispatch(
-        "fw.flash", {"name": "roadrunner", "serial": ROADRUNNER_SERIAL}
-    )
+    response = api.dispatch("fw.flash", {"name": "roadrunner", "serial": ROADRUNNER_SERIAL})
     assert api.runner.wait(timeout=30)
     job = api.runner.get(response["job_id"])
     assert job.state == "succeeded", job.error
     assert captured["target"].flasher == "bootsel"
 
 
-def test_a_cmake_family_that_cannot_write_the_board_refuses_before_a_job(
-    cmake_flash_factory, monkeypatch
-):
+def test_a_cmake_family_that_cannot_write_the_board_refuses_before_a_job(cmake_flash_factory, monkeypatch):
     api = cmake_flash_factory(dry_run="false")
-    monkeypatch.setattr(
-        "mcu_updater.flashers.registry.resolve", lambda family, device, helper, staged: None
-    )
+    monkeypatch.setattr("mcu_updater.flashers.registry.resolve", lambda family, device, helper, staged: None)
 
     with pytest.raises(RpcError) as exc:
         api.dispatch("fw.flash", {"name": "roadrunner", "serial": ROADRUNNER_SERIAL})

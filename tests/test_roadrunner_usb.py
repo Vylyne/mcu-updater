@@ -68,9 +68,7 @@ def _install_serial(monkeypatch: pytest.MonkeyPatch, port: _Port) -> list[_Port]
     monkeypatch.setitem(
         sys.modules,
         "serial",
-        types.SimpleNamespace(
-            Serial=lambda *_args, **_kwargs: opened.append(port) or port
-        ),
+        types.SimpleNamespace(Serial=lambda *_args, **_kwargs: opened.append(port) or port),
     )
     return opened
 
@@ -89,9 +87,7 @@ def test_bridge_confirms_info_and_reboots_on_the_same_open_endpoint(monkeypatch)
 
     monkeypatch.setattr(bridge, "request", request)
 
-    result = bridge.run(
-        argparse.Namespace(operation="bootsel", port="/dev/ttyACM0", uuid=PROVISIONED)
-    )
+    result = bridge.run(argparse.Namespace(operation="bootsel", port="/dev/ttyACM0", uuid=PROVISIONED))
 
     assert result == {"bootsel": True}
     assert opened == [port]
@@ -113,11 +109,7 @@ def test_bridge_does_not_reboot_a_replacement_endpoint(monkeypatch):
     monkeypatch.setattr(bridge, "request", request)
 
     with pytest.raises(bridge.ProtocolError, match="did not confirm"):
-        bridge.run(
-            argparse.Namespace(
-                operation="bootsel", port="/dev/ttyACM0", uuid=PROVISIONED
-            )
-        )
+        bridge.run(argparse.Namespace(operation="bootsel", port="/dev/ttyACM0", uuid=PROVISIONED))
 
     assert opcodes == [0x01]
 
@@ -141,11 +133,7 @@ def test_bridge_refuses_nonzero_bootsel_status(monkeypatch):
     monkeypatch.setattr(bridge, "request", lambda *_args, **_kwargs: next(responses))
 
     with pytest.raises(bridge.ProtocolError, match="status 7"):
-        bridge.run(
-            argparse.Namespace(
-                operation="bootsel", port="/dev/ttyACM0", uuid=PROVISIONED
-            )
-        )
+        bridge.run(argparse.Namespace(operation="bootsel", port="/dev/ttyACM0", uuid=PROVISIONED))
 
 
 def test_bridge_refuses_bootsel_success_with_payload(monkeypatch):
@@ -156,11 +144,7 @@ def test_bridge_refuses_bootsel_success_with_payload(monkeypatch):
     monkeypatch.setattr(bridge, "request", lambda *_args, **_kwargs: next(responses))
 
     with pytest.raises(bridge.ProtocolError, match="unexpected payload"):
-        bridge.run(
-            argparse.Namespace(
-                operation="bootsel", port="/dev/ttyACM0", uuid=PROVISIONED
-            )
-        )
+        bridge.run(argparse.Namespace(operation="bootsel", port="/dev/ttyACM0", uuid=PROVISIONED))
 
 
 def _digest_fields(
@@ -171,12 +155,7 @@ def _digest_fields(
 ) -> bytes:
     """The INFO fields a board built after the digest revision appends."""
     value = b"" if digest is None else digest.to_bytes(4, "little")
-    return (
-        bytes((algorithm, len(value)))
-        + value
-        + start.to_bytes(4, "little")
-        + length.to_bytes(4, "little")
-    )
+    return bytes((algorithm, len(value))) + value + start.to_bytes(4, "little") + length.to_bytes(4, "little")
 
 
 def test_info_from_a_board_predating_the_digest_fields_still_parses():
@@ -220,9 +199,7 @@ def test_info_carrying_the_digest_fields_is_not_refused():
 def test_a_board_that_could_not_compute_a_digest_still_reports_its_range():
     bridge = _load_bridge()
 
-    info = bridge.parse_info(
-        0, _info_payload() + _digest_fields(algorithm=0, digest=None)
-    )
+    info = bridge.parse_info(0, _info_payload() + _digest_fields(algorithm=0, digest=None))
 
     assert info["digest_algorithm"] == bridge.DIGEST_NONE
     assert info["digest"] is None

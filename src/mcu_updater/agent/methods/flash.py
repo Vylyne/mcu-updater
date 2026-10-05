@@ -118,8 +118,7 @@ class FlashMixin(_Base):
         present = find_device(self.paths, mcu.chipset, serial)
         if present is None:
             raise RpcError(
-                f"{serial} is not attached (looked for chipset {mcu.chipset}). "
-                f"Is it plugged in and powered?",
+                f"{serial} is not attached (looked for chipset {mcu.chipset}). Is it plugged in and powered?",
                 data={
                     "code": "device_not_found",
                     "message": "board is not on the bus",
@@ -272,14 +271,10 @@ class FlashMixin(_Base):
                 state_holder["klippy_state"] = self._await_klippy_ready(reporter)
 
             settings_now = self.settings()
-            result = flashers.write_all(
-                self._bench(settings_now), [target], ctx, on_ready=on_ready
-            )
+            result = flashers.write_all(self._bench(settings_now), [target], ctx, on_ready=on_ready)
 
             if result["failures"]:
-                raise FlashError(
-                    result["failures"][0]["error"], type=mcu_type, serial=serial
-                )
+                raise FlashError(result["failures"][0]["error"], type=mcu_type, serial=serial)
 
             return {
                 "type": mcu_type,
@@ -291,9 +286,7 @@ class FlashMixin(_Base):
         job = runner.submit("flash", {"name": mcu_type, "serial": serial}, run)
         return {"job_id": job.id, "job": job.to_dict()}
 
-    def _flash_can(
-        self, args: dict, uuid: str, name: Any, runner: Any, settings: Settings
-    ) -> dict[str, Any]:
+    def _flash_can(self, args: dict, uuid: str, name: Any, runner: Any, settings: Settings) -> dict[str, Any]:
         """`fw.flash {uuid}` - the CAN identity form.
 
         Same refusal ordering as the serial path above, up to where a uuid's
@@ -371,11 +364,7 @@ class FlashMixin(_Base):
                 type=mcu_type,
                 id=uuid,
                 chipset=mcu.chipset,
-                state=(
-                    "klipper"
-                    if cross is not None and cross.get("version") is not None
-                    else "unknown"
-                ),
+                state=("klipper" if cross is not None and cross.get("version") is not None else "unknown"),
                 fw=application,
                 kind=flashers.KIND_CANBUS,
                 detail=board,
@@ -399,16 +388,12 @@ class FlashMixin(_Base):
             def on_ready(reporter: Any) -> None:
                 state_holder["klippy_state"] = self._await_klippy_ready(reporter)
 
-            result = flashers.write_all(
-                self._bench(self.settings()), [target], ctx, on_ready=on_ready
-            )
+            result = flashers.write_all(self._bench(self.settings()), [target], ctx, on_ready=on_ready)
             if result["failures"]:
                 # A batch reports failures rather than raising per-device -
                 # right for a fleet sweep, wrong for a job that promised its
                 # caller a single board's own success or failure.
-                raise FlashError(
-                    result["failures"][0]["error"], type=mcu_type, uuid=uuid
-                )
+                raise FlashError(result["failures"][0]["error"], type=mcu_type, uuid=uuid)
             return {
                 "type": mcu_type,
                 "uuid": uuid,
@@ -448,8 +433,11 @@ class FlashMixin(_Base):
         if name not in types:
             raise RpcError(
                 f"no PlatformIO type '{name}' is configured.",
-                data={"code": "unknown_type", "message": "no such type",
-                      "data": {"name": name, "known": sorted(types)}},
+                data={
+                    "code": "unknown_type",
+                    "message": "no such type",
+                    "data": {"name": name, "known": sorted(types)},
+                },
             )
         entry = types[name]
 
@@ -746,9 +734,7 @@ class FlashMixin(_Base):
         entries = {e.name: e for e in typelist.load(self.paths)}
         entry = entries.get(name)
         if entry is None:
-            raise UnknownTypeError(
-                f"MCU type '{name}' does not exist.", type=name, known=sorted(entries)
-            )
+            raise UnknownTypeError(f"MCU type '{name}' does not exist.", type=name, known=sorted(entries))
         families = firmware.load(self.paths)
         choice = flashers.first_install(entry, families)
         if choice.flasher is None:
@@ -761,9 +747,7 @@ class FlashMixin(_Base):
                         "type": name,
                         "chipset": entry.chipset,
                         "fw": choice.fw or None,
-                        "flashers": (
-                            list(families[choice.fw].flashers) if choice.fw in families else []
-                        ),
+                        "flashers": (list(families[choice.fw].flashers) if choice.fw in families else []),
                     },
                 },
             )
@@ -807,10 +791,7 @@ class FlashMixin(_Base):
                     f"{install} for {name} once."
                 )
             elif family.bootloader:
-                advice = (
-                    "Build it first - this flow installs the bootloader, so the "
-                    "bootloader has to exist."
-                )
+                advice = "Build it first - this flow installs the bootloader, so the bootloader has to exist."
             elif kconfig and kind == KIND_UF2 and any(a.kind == KIND_BIN for a in staged.artifacts):
                 # An RP2040 Klipper build makes a .bin only for an offset, so
                 # building again as configured makes the same .bin again.
@@ -928,9 +909,7 @@ class FlashMixin(_Base):
             if scan_result.ready and scan_result.message:
                 # A ready scan's message is a warning it could not settle.
                 ctx.reporter("warn", scan_result.message)
-            ctx.step(
-                f"Flashing {install} onto the {choice.state.upper()} board for {name}", 0, 2
-            )
+            ctx.step(f"Flashing {install} onto the {choice.state.upper()} board for {name}", 0, 2)
             flash_initial_bootloader(
                 self.paths,
                 self.settings(),
@@ -992,8 +971,7 @@ class FlashMixin(_Base):
             for device in already:
                 ctx.reporter(
                     "info",
-                    f"{device.serial} is back {where} and already tracked - "
-                    f"nothing to adopt.{then}",
+                    f"{device.serial} is back {where} and already tracked - nothing to adopt.{then}",
                 )
             if not appeared:
                 # Not raised: the write may well have succeeded and the board may
@@ -1016,15 +994,11 @@ class FlashMixin(_Base):
                 "port": port,
                 "dfu_serial": dfu_serial,
                 "bootsel_id": bootsel_id,
-                "candidates": [
-                    {"serial": d.serial, "path": d.path, "state": d.state} for d in candidates
-                ],
+                "candidates": [{"serial": d.serial, "path": d.path, "state": d.state} for d in candidates],
                 # Appeared, but the type list already tracks it - the
                 # re-bootloader case. Distinct from an empty result, which
                 # means nothing came back at all.
-                "already_tracked": [
-                    {"serial": d.serial, "path": d.path, "state": d.state} for d in already
-                ],
+                "already_tracked": [{"serial": d.serial, "path": d.path, "state": d.state} for d in already],
             }
 
         job = runner.submit(
@@ -1057,11 +1031,7 @@ class FlashMixin(_Base):
                 known=sorted(e.name for e in entries),
             )
         choice = flashers.first_install(entry, families)
-        scanner = (
-            flashers.candidate_scanner(flashers.by_name(choice.flasher))
-            if choice.flasher
-            else None
-        )
+        scanner = flashers.candidate_scanner(flashers.by_name(choice.flasher)) if choice.flasher else None
         if scanner is None:
             return {
                 "devices": [],

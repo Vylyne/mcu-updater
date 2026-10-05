@@ -67,9 +67,7 @@ class DfuUtil:
     def supports(self, device: Device, helper: Helper | None) -> bool:
         """A bare STM32 holding BOOT0."""
         return (
-            device.kind == KIND_BARE
-            and device.state in self.states
-            and chipset_matches(self, device.chipset)
+            device.kind == KIND_BARE and device.state in self.states and chipset_matches(self, device.chipset)
         )
 
     def target(
@@ -84,15 +82,11 @@ class DfuUtil:
         return target_for(artifact, chipset=device.chipset, dfu_serial=device.id or None)
 
     @contextlib.contextmanager
-    def prepared(
-        self, bench: Bench, targets: list[FlashTarget], ctx: Any
-    ) -> Iterator[None]:
+    def prepared(self, bench: Bench, targets: list[FlashTarget], ctx: Any) -> Iterator[None]:
         """Nothing to set up. The board is already where it needs to be."""
         yield None
 
-    def write(
-        self, bench: Bench, session: Any, target: FlashTarget, ctx: Any
-    ) -> dict[str, Any]:
+    def write(self, bench: Bench, session: Any, target: FlashTarget, ctx: Any) -> dict[str, Any]:
         from .flash import flash_dfu_stm32
 
         flash_dfu_stm32(
@@ -198,8 +192,7 @@ class DfuUtil:
             return CandidateScan(
                 False,
                 SCAN_NONE,
-                "No board is in DFU mode. Fit the boot jumper (or hold BOOT0) and "
-                "replug the board.",
+                "No board is in DFU mode. Fit the boot jumper (or hold BOOT0) and replug the board.",
                 devices,
                 extra,
             )
@@ -215,9 +208,7 @@ class DfuUtil:
         return CandidateScan(True, None, None, devices, extra)
 
 
-def target_for(
-    fw_bin: str | Artifact, *, chipset: str, dfu_serial: str | None = None
-) -> FlashTarget:
+def target_for(fw_bin: str | Artifact, *, chipset: str, dfu_serial: str | None = None) -> FlashTarget:
     """A bare board, as a target.
 
     `id` is the DFU serial when one was named. Without it there is genuinely no

@@ -168,9 +168,5 @@ class Watcher:
         out: list[Sighting] = []
         for display in load_pio_types(bench.paths).values():
             found = read_device_map(bench.paths, display)
-            out.extend(
-                _as_sighting(display, device)
-                for device in found.values()
-                if device.present
-            )
+            out.extend(_as_sighting(display, device) for device in found.values() if device.present)
         return out

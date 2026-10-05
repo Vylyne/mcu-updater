@@ -40,9 +40,7 @@ class KlipperHelper:
 
     name: str = "klipper"
 
-    def request_bootsel(
-        self, bench: Bench, *, serial: str, chipset: str, ctx: Any
-    ) -> BootselHandoff:
+    def request_bootsel(self, bench: Bench, *, serial: str, chipset: str, ctx: Any) -> BootselHandoff:
         paths = bench.paths
         if not chipset.startswith("rp2040"):
             raise FlashError(
@@ -53,8 +51,7 @@ class KlipperHelper:
         device = byid.find_device(paths, chipset, serial)
         if device is None:
             raise DeviceNotFoundError(
-                f"{chipset} {serial} is not on USB. It has to be running Klipper to "
-                f"be asked for BOOTSEL.",
+                f"{chipset} {serial} is not on USB. It has to be running Klipper to be asked for BOOTSEL.",
                 chipset=chipset,
                 serial=serial,
             )
@@ -86,8 +83,7 @@ class KlipperHelper:
         )
         if rc != 0:
             raise FlashError(
-                f"flashtool.py -r exited {rc} asking {serial} for BOOTSEL. Nothing "
-                f"was written.",
+                f"flashtool.py -r exited {rc} asking {serial} for BOOTSEL. Nothing was written.",
                 serial=serial,
                 returncode=rc,
             )

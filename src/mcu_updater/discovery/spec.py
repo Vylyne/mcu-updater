@@ -180,8 +180,7 @@ class Confidence:
     def __post_init__(self) -> None:
         if self.reason not in _REASONS:
             raise ValueError(
-                f"unknown confidence reason {self.reason!r}; "
-                f"expected one of {', '.join(_REASONS)}"
+                f"unknown confidence reason {self.reason!r}; expected one of {', '.join(_REASONS)}"
             )
 
     @property

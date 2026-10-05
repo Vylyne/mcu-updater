@@ -18,8 +18,8 @@
     {
       "name": "a display's fw is its declared firmware family, not its own name",
       "file": "src/mcu_updater/providers/platformio.py",
-      "find": "            BuildTarget(self.name, name, entry.firmware)",
-      "replace": "            BuildTarget(self.name, name, name)"
+      "find": "        return [BuildTarget(self.name, name, entry.firmware) for name, entry in install.platformio.items()]",
+      "replace": "        return [BuildTarget(self.name, name, name) for name, entry in install.platformio.items()]"
     }
   ]
 }

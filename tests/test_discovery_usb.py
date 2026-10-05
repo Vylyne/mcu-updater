@@ -49,9 +49,7 @@ def test_collect_uses_raw_usb_serial_and_skips_interface_entries(paths, tmp_path
     root = tmp_path / "usb"
     _usb_device(root, "1-2", serial="RAW-USB-SERIAL", product="CAN adapter")
     real_listdir = usb.os.listdir
-    monkeypatch.setattr(
-        usb.os, "listdir", lambda path: [*real_listdir(path), "1-2:1.0"]
-    )
+    monkeypatch.setattr(usb.os, "listdir", lambda path: [*real_listdir(path), "1-2:1.0"])
     found = usb.collect(dataclasses.replace(paths, usb_sysfs=str(root)))
 
     assert [(device.name, device.serial, device.vendor_id, device.product_id) for device in found] == [
@@ -70,9 +68,7 @@ def test_collect_treats_a_malformed_port_count_as_unknown(paths, tmp_path):
 
 
 def test_collect_strictly_reports_an_unreadable_inventory(paths, monkeypatch):
-    monkeypatch.setattr(
-        usb.os, "listdir", lambda _path: (_ for _ in ()).throw(OSError("unreadable"))
-    )
+    monkeypatch.setattr(usb.os, "listdir", lambda _path: (_ for _ in ()).throw(OSError("unreadable")))
 
     assert usb.collect(paths) == []
     with pytest.raises(OSError, match="unreadable"):

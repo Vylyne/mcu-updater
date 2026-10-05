@@ -151,9 +151,7 @@ def _unstaged(
     whose kind was not staged.
     """
     return [
-        (name, by_name(name).accepts)
-        for name in family.flashers
-        if by_name(name).supports(device, helper)
+        (name, by_name(name).accepts) for name in family.flashers if by_name(name).supports(device, helper)
     ]
 
 
@@ -279,9 +277,7 @@ def select(
         staged = providers.staged(paths, device.type, family)
     choice = resolve(family, device, helper, staged)
     if choice is None:
-        raise _refusal_error(
-            family, device, _unstaged(family, device, helper), staged, helper
-        )
+        raise _refusal_error(family, device, _unstaged(family, device, helper), staged, helper)
     flasher, artifact = choice
     return flasher.target(paths, device, helper, artifact, stop_services=stop_services)
 
@@ -354,9 +350,7 @@ class _Declared(Protocol):
 
 
 def _bare(entry: _Declared, fw: str, state: str) -> Device:
-    return Device(
-        type=entry.name, id="", chipset=entry.chipset, state=state, fw=fw, kind=KIND_BARE
-    )
+    return Device(type=entry.name, id="", chipset=entry.chipset, state=state, fw=fw, kind=KIND_BARE)
 
 
 def first_install(entry: _Declared, families: dict[str, FirmwareFamily]) -> FirstInstall:
@@ -402,9 +396,7 @@ def first_install(entry: _Declared, families: dict[str, FirmwareFamily]) -> Firs
             continue
         for state in flasher.states:
             if flasher.supports(_bare(entry, fw, state), None):
-                return FirstInstall(
-                    fw, None, "", _no_first_install_writer(family, entry.chipset, state)
-                )
+                return FirstInstall(fw, None, "", _no_first_install_writer(family, entry.chipset, state))
     if scanners:
         return FirstInstall(
             fw,
@@ -439,9 +431,7 @@ def select_each(
     refused: list[dict[str, Any]] = []
     for device, units in requests:
         try:
-            targets.append(
-                select_device(paths, families, device, stop_services=units)
-            )
+            targets.append(select_device(paths, families, device, stop_services=units))
         except NoFlasherError as exc:
             refused.append(refusal(device, exc))
     return targets, refused

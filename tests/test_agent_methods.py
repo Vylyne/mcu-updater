@@ -588,9 +588,7 @@ def test_serial_add_reports_the_serial_it_actually_tracked(api, monkeypatch):
         ),
     )
 
-    result = api.dispatch(
-        "fw.serial.add", {"name": "roadrunner", "serial": "RR-UNPROVISIONED-0"}
-    )
+    result = api.dispatch("fw.serial.add", {"name": "roadrunner", "serial": "RR-UNPROVISIONED-0"})
 
     assert result["serial"] == "RR-NEW"
     assert result["prior_serial"] == "RR-UNPROVISIONED-0"
@@ -710,9 +708,7 @@ def test_serial_adoption_supports_a_declared_cmake_type(paths, live_registry_tex
             + "\n[type roadrunner]\nchipset: rp2040\nfirmware: roadrunner\n"
             + "cmake_target: roadrunner_v1_i2c_rgb\nserials:\n"
         )
-    result = Api(paths).dispatch(
-        "fw.serial.add", {"name": "roadrunner", "serial": "RR-NEW"}
-    )
+    result = Api(paths).dispatch("fw.serial.add", {"name": "roadrunner", "serial": "RR-NEW"})
     assert result == {
         "name": "roadrunner",
         "serial": "RR-NEW",
@@ -733,9 +729,7 @@ def test_serial_adoption_refuses_foreign_to_owned_duplicate(paths, live_registry
             + "    RR-SHARED\n"
         )
     with pytest.raises(RpcError) as exc:
-        Api(paths).dispatch(
-            "fw.serial.add", {"name": "bttebb36", "serial": "RR-SHARED"}
-        )
+        Api(paths).dispatch("fw.serial.add", {"name": "bttebb36", "serial": "RR-SHARED"})
     assert exc.value.data["code"] == "serial_tracked_elsewhere"
     assert exc.value.data["data"]["tracked_under"] == ["roadrunner"]
 
@@ -750,9 +744,7 @@ def test_serial_adoption_refuses_foreign_to_foreign_duplicate(paths, live_regist
             + "\n[type roadrunner-b]\nchipset: rp2040\nfirmware: roadrunner\nserials:\n"
         )
     with pytest.raises(RpcError) as exc:
-        Api(paths).dispatch(
-            "fw.serial.add", {"name": "roadrunner-b", "serial": "RR-SHARED"}
-        )
+        Api(paths).dispatch("fw.serial.add", {"name": "roadrunner-b", "serial": "RR-SHARED"})
     assert exc.value.data["code"] == "serial_tracked_elsewhere"
     assert exc.value.data["data"]["tracked_under"] == ["roadrunner-a"]
 
@@ -789,9 +781,7 @@ def test_canbus_adoption_and_removal_support_a_declared_cmake_type(paths, live_r
     api = Api(paths)
     added = api.dispatch("fw.canbus.add", {"name": "roadrunner", "uuid": "abcdef012345"})
     assert added["chipset"] == "rp2040"
-    assert api.dispatch(
-        "fw.canbus.remove", {"name": "roadrunner", "uuid": "abcdef012345"}
-    )["removed"] is True
+    assert api.dispatch("fw.canbus.remove", {"name": "roadrunner", "uuid": "abcdef012345"})["removed"] is True
     text = open(paths.registry_file, encoding="utf-8").read()
     assert "cmake_target: roadrunner_v1_i2c_rgb" in text
     assert CfgDocument(text).get("type roadrunner", "canbus_uuids") is None
@@ -1120,9 +1110,7 @@ def test_settings_set_reports_nothing_changed_when_the_value_matches(api):
     assert again["changed"] == []
 
 
-def test_an_ignore_that_lands_while_settings_set_waits_for_the_lock_survives(
-    api, paths, monkeypatch
-):
+def test_an_ignore_that_lands_while_settings_set_waits_for_the_lock_survives(api, paths, monkeypatch):
     """Two panel tabs: one sets make_jobs, the other ignores a serial, and the
     ignore finishes first. `fw.settings.set` writes every [updater] field, so it
     must load them under the lock - settings read before the ignore would
@@ -1370,9 +1358,7 @@ def test_open_reports_no_seeding_once_a_config_is_saved(kapi, paths, live_regist
     first = open_session(kapi2)
     kapi2.dispatch("fw.kconfig.save", {"session": first["session"]})
 
-    second = kapi2.dispatch(
-        "fw.kconfig.open", {"name": "bttebb36", "fw": "klipper", "force": True}
-    )
+    second = kapi2.dispatch("fw.kconfig.open", {"name": "bttebb36", "fw": "klipper", "force": True})
     assert second["seeded"] == []
     assert second["dirty"] is False
 
@@ -1793,7 +1779,9 @@ def test_the_same_commit_with_a_different_binary_is_artifact_changed(api, paths)
     log = FlashLog(paths)
     log.record("A", mcu_type="t", fw="klipper", bin_sha256="old" + "0" * 61, fw_sha=HEAD)
 
-    state = api.flash_state("A", CURRENT, HEAD, state="klipper", artifact_shas=frozenset({"new" + "0" * 61}), flashlog=log)
+    state = api.flash_state(
+        "A", CURRENT, HEAD, state="klipper", artifact_shas=frozenset({"new" + "0" * 61}), flashlog=log
+    )
     assert state["needs_flash"] is True
     assert state["reason"] == "artifact_changed"
 
@@ -1804,7 +1792,9 @@ def test_the_same_binary_is_up_to_date(api, paths):
     log = FlashLog(paths)
     log.record("A", mcu_type="t", fw="klipper", bin_sha256="aa" * 32, fw_sha=HEAD)
 
-    state = api.flash_state("A", CURRENT, HEAD, state="klipper", artifact_shas=frozenset({"aa" * 32}), flashlog=log)
+    state = api.flash_state(
+        "A", CURRENT, HEAD, state="klipper", artifact_shas=frozenset({"aa" * 32}), flashlog=log
+    )
     assert state["needs_flash"] is False
     assert state["reason"] is None
 
@@ -1817,7 +1807,9 @@ def test_a_record_contradicted_by_the_board_is_ignored(api, paths):
     log = FlashLog(paths)
     log.record("A", mcu_type="t", fw="klipper", bin_sha256="old" + "0" * 61, fw_sha="ffffffff")
 
-    state = api.flash_state("A", CURRENT, HEAD, state="klipper", artifact_shas=frozenset({"new" + "0" * 61}), flashlog=log)
+    state = api.flash_state(
+        "A", CURRENT, HEAD, state="klipper", artifact_shas=frozenset({"new" + "0" * 61}), flashlog=log
+    )
     assert state["needs_flash"] is False, "a disbelieved record must not invent a mismatch"
 
 

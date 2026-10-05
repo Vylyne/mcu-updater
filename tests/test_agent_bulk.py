@@ -180,16 +180,10 @@ def _declare_cmake(
     with open(paths.main_config, "a", encoding="utf-8") as fh:
         fh.write(
             f"\n[firmware roadrunner]\nsource: {tree}\nbuilder: cmake\n"
-            f"flashers: bootsel\n"
-            + ("helper: roadrunner\n" if helper else "")
-            + "\n"
+            f"flashers: bootsel\n" + ("helper: roadrunner\n" if helper else "") + "\n"
             f"[type {name}]\nchipset: rp2040\nfirmware: roadrunner\n"
             f"cmake_target: roadrunner_v1_i2c_rgb\n"
-            + (
-                "serials:\n" + "".join(f"    {serial}\n" for serial in serials)
-                if serials
-                else ""
-            )
+            + ("serials:\n" + "".join(f"    {serial}\n" for serial in serials) if serials else "")
         )
     if staged:
         os.makedirs(paths.artifact_dir(name), exist_ok=True)
@@ -525,9 +519,7 @@ def test_only_boards_that_need_it_are_selected(paths, live_registry_text, fake_r
     assert boards[0]["reason"] == "source_changed"
 
 
-def test_a_board_flashed_from_a_non_primary_kind_is_not_picked_as_stale(
-    paths, live_registry_text, fake_root
-):
+def test_a_board_flashed_from_a_non_primary_kind_is_not_picked_as_stale(paths, live_registry_text, fake_root):
     """I-1: the sidecar's build staged a .bin and a .uf2. The flash log holds
     the .uf2 hash under the legacy `bin_sha256` key - a BOOTSEL write, say -
     and that must still read as the current build, not a stale one."""
@@ -548,9 +540,7 @@ def test_a_board_flashed_from_a_non_primary_kind_is_not_picked_as_stale(
             },
             fh,
         )
-    FlashLog(paths).record(
-        EBB_A, mcu_type=EBB, fw="klipper", bin_sha256=uf2_hash, fw_sha=HEAD
-    )
+    FlashLog(paths).record(EBB_A, mcu_type=EBB, fw="klipper", bin_sha256=uf2_hash, fw_sha=HEAD)
     make_device(fake_root / "bus", "Klipper", EBB_CHIPSET, EBB_A)
 
     api = Api(paths, call=_moonraker({EBB_A: CURRENT_VERSION}))
@@ -606,9 +596,7 @@ def test_a_type_with_no_built_firmware_is_skipped(paths, live_registry_text, fak
     assert api._boards_to_flash(Registry.load(paths), "all") == []
 
 
-def test_a_type_that_staged_only_a_uf2_is_not_skipped_as_unbuilt(
-    paths, live_registry_text, fake_root
-):
+def test_a_type_that_staged_only_a_uf2_is_not_skipped_as_unbuilt(paths, live_registry_text, fake_root):
     """An offset-less RP2040 Klipper build stages a `.uf2` and no `.bin`. It
     was built; which flasher takes its file is selection's call, not this
     pass's."""
@@ -638,9 +626,7 @@ def test_a_board_in_its_bootloader_is_selected(paths, live_registry_text, fake_r
     assert [b["reason"] for b in boards] == ["in_bootloader"]
 
 
-def test_a_sha_less_board_uses_the_built_stamp_during_fleet_selection(
-    paths, live_registry_text, fake_root
-):
+def test_a_sha_less_board_uses_the_built_stamp_during_fleet_selection(paths, live_registry_text, fake_root):
     """Omitting built_version made bulk disagree with the panel and skip it."""
     with open(paths.registry_file, "w", encoding="utf-8") as fh:
         fh.write(live_registry_text)
@@ -796,9 +782,7 @@ def _set_klipper_flashers(paths, value: str) -> None:
         fh.write(text.replace(block, block.replace("flashtool", value)))
 
 
-def test_a_board_its_family_cannot_write_is_a_failure_not_an_abort(
-    bulk, paths, fake_root, monkeypatch
-):
+def test_a_board_its_family_cannot_write_is_a_failure_not_an_abort(bulk, paths, fake_root, monkeypatch):
     """Spec §8 step 1. Selection goes through the family's `flashers:`. A board
     that nothing in the list can write shows up in the job's `failures[]` with
     no flasher. It is not dropped, and Klipper is not stopped for it."""
@@ -897,9 +881,7 @@ def test_a_build_job_uses_the_configuration_snapshot_that_selected_its_targets(
 
     result = runner.fn(_ctx())
     assert built_targets == ["roadrunner_v1_i2c_rgb"]
-    assert result["built"] == [
-        {"type": RR, "fw": "roadrunner", "provider": "cmake"}
-    ]
+    assert result["built"] == [{"type": RR, "fw": "roadrunner", "provider": "cmake"}]
 
 
 def test_update_all_builds_before_it_chooses_what_to_flash(bulk, paths, fake_root):
@@ -922,9 +904,7 @@ def test_update_all_builds_before_it_chooses_what_to_flash(bulk, paths, fake_roo
     assert [f["serial"] for f in job.result["flash"]["flashed"]] == [EBB_A]
 
 
-def test_update_all_does_not_call_an_absent_fleet_current(
-    bulk, paths, fake_root, monkeypatch
-):
+def test_update_all_does_not_call_an_absent_fleet_current(bulk, paths, fake_root, monkeypatch):
     with open(paths.main_config, "w", encoding="utf-8") as fh:
         fh.write("")
     write_settings(paths, dry_run="true", service_backend="null", enable_flashing="true")
@@ -1191,9 +1171,7 @@ def test_an_unknown_type_still_reports_unknown_type(bulk):
 # --------------------------------------------------------------------------
 
 
-def test_a_genuinely_stale_cmake_board_joins_the_flash_selection(
-    bulk, paths, fake_root, monkeypatch
-):
+def test_a_genuinely_stale_cmake_board_joins_the_flash_selection(bulk, paths, fake_root, monkeypatch):
     """A reported digest mismatch is selected by the same verdict the row shows."""
     _declare_cmake(
         paths,
@@ -1225,27 +1203,19 @@ def test_a_genuinely_stale_cmake_board_joins_the_flash_selection(
     )
 
     boards = bulk._cmake_boards_to_flash("stale")
-    panel = next(
-        target
-        for target in bulk.dispatch("fw.status")["targets"]
-        if target["name"] == RR
-    )
+    panel = next(target for target in bulk.dispatch("fw.status")["targets"] if target["name"] == RR)
 
     assert [board["serial"] for board in boards] == [RR_SERIAL]
     assert panel["devices"][0]["reason"] == boards[0]["reason"] == "unexpected_image"
 
 
-def test_a_no_provenance_cmake_board_is_only_selected_by_scope_all(
-    bulk, paths, fake_root
-):
+def test_a_no_provenance_cmake_board_is_only_selected_by_scope_all(bulk, paths, fake_root):
     """Unknown is not stale, but explicit operator intent still selects it."""
     _declare_cmake(paths, fake_root, serials=[RR_SERIAL], helper=True, staged=True)
     make_device(fake_root / "bus", "Klipper", RR_CHIPSET, RR_SERIAL)
 
     assert bulk._cmake_boards_to_flash("stale") == []
-    assert [
-        board["serial"] for board in bulk._cmake_boards_to_flash("all")
-    ] == [RR_SERIAL]
+    assert [board["serial"] for board in bulk._cmake_boards_to_flash("all")] == [RR_SERIAL]
 
 
 def test_a_cmake_board_is_handed_its_staged_uf2_by_selection(bulk, paths, fake_root):
@@ -1269,9 +1239,7 @@ def test_an_absent_cmake_board_is_never_selected(bulk, paths, fake_root):
     assert bulk._cmake_boards_to_flash("all") == []
 
 
-def test_a_cmake_type_with_nothing_staged_is_never_selected(
-    bulk, paths, fake_root
-):
+def test_a_cmake_type_with_nothing_staged_is_never_selected(bulk, paths, fake_root):
     _declare_cmake(paths, fake_root, serials=[RR_SERIAL], helper=True)
     make_device(fake_root / "bus", "Klipper", RR_CHIPSET, RR_SERIAL)
 
@@ -1302,9 +1270,7 @@ def test_a_cmake_selection_covers_every_declared_serial(bulk, paths, fake_root):
     assert cmake.load(paths)[RR].serials == [RR_SERIAL, RR_SERIAL_B]
     boards = bulk._cmake_boards_to_flash("all")
 
-    assert sorted(board["serial"] for board in boards) == sorted(
-        [RR_SERIAL, RR_SERIAL_B]
-    )
+    assert sorted(board["serial"] for board in boards) == sorted([RR_SERIAL, RR_SERIAL_B])
 
 
 def test_a_named_type_narrows_the_cmake_selection_too(bulk, paths, fake_root):
@@ -1347,6 +1313,4 @@ def test_update_all_covers_a_cmake_type_end_to_end(bulk, paths, fake_root):
     assert res["name"] == RR
     assert bulk.runner.wait(timeout=60)
     job = bulk.runner.get(res["job_id"])
-    assert [flashed["id"] for flashed in job.result["flash"]["flashed"]] == [
-        RR_SERIAL
-    ]
+    assert [flashed["id"] for flashed in job.result["flash"]["flashed"]] == [RR_SERIAL]

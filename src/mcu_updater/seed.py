@@ -131,9 +131,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     args = parser.parse_args(argv)
     paths = Paths.from_env()
     try:
-        added = seed_firmware_sections(
-            paths, {"klipper": args.klipper, "katapult": args.katapult}
-        )
+        added = seed_firmware_sections(paths, {"klipper": args.klipper, "katapult": args.katapult})
     except (UpdaterError, OSError) as exc:
         print(f"error: {exc}", file=sys.stderr)
         return 1

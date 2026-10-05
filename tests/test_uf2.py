@@ -37,9 +37,7 @@ def _block(
 ) -> bytes:
     body = payload + b"\x00" * (476 - len(payload))
     size = len(payload) if payload_size is None else payload_size
-    header = struct.pack(
-        "<8I", magic0, magic1, flags, addr, size, block_no, total, 0xE48BFF56
-    )
+    header = struct.pack("<8I", magic0, magic1, flags, addr, size, block_no, total, 0xE48BFF56)
     return header + body + struct.pack("<I", magic_end)
 
 
@@ -52,9 +50,7 @@ def _vector_uf2(**kwargs: object) -> bytes:
     """
     padded = IMAGE + b"\x00" * 168
     return b"".join(
-        _block(
-            VECTOR_START + n * 256, padded[n * 256 : (n + 1) * 256], block_no=n, **kwargs
-        )
+        _block(VECTOR_START + n * 256, padded[n * 256 : (n + 1) * 256], block_no=n, **kwargs)
         for n in range(3)
     )
 
@@ -105,12 +101,8 @@ def test_a_not_main_flash_block_inside_the_range_is_skipped() -> None:
     # Its target address lands *inside* the image, so the flag is the only
     # thing keeping its bytes out. Addressed outside, the range filter would
     # discard them anyway and this would prove nothing.
-    metadata = _block(
-        VECTOR_START + 300, b"\xa5" * 64, flags=0x2001, block_no=3, total=4
-    )
-    assert uf2.image_digest(
-        _vector_uf2() + metadata, VECTOR_START, VECTOR_LENGTH
-    ) == VECTOR_CRC
+    metadata = _block(VECTOR_START + 300, b"\xa5" * 64, flags=0x2001, block_no=3, total=4)
+    assert uf2.image_digest(_vector_uf2() + metadata, VECTOR_START, VECTOR_LENGTH) == VECTOR_CRC
 
 
 def test_a_hole_in_the_range_is_an_error_not_a_fill() -> None:
@@ -134,23 +126,17 @@ def test_a_payload_size_past_the_block_is_refused() -> None:
 
 def test_a_bad_first_magic_is_refused() -> None:
     with pytest.raises(uf2.Uf2Error, match="magic"):
-        uf2.extract_image(
-            _block(VECTOR_START, IMAGE[:256], magic0=0), VECTOR_START, 256
-        )
+        uf2.extract_image(_block(VECTOR_START, IMAGE[:256], magic0=0), VECTOR_START, 256)
 
 
 def test_a_bad_second_magic_is_refused() -> None:
     with pytest.raises(uf2.Uf2Error, match="magic"):
-        uf2.extract_image(
-            _block(VECTOR_START, IMAGE[:256], magic1=0), VECTOR_START, 256
-        )
+        uf2.extract_image(_block(VECTOR_START, IMAGE[:256], magic1=0), VECTOR_START, 256)
 
 
 def test_a_bad_trailing_magic_is_refused() -> None:
     with pytest.raises(uf2.Uf2Error, match="magic"):
-        uf2.extract_image(
-            _block(VECTOR_START, IMAGE[:256], magic_end=0), VECTOR_START, 256
-        )
+        uf2.extract_image(_block(VECTOR_START, IMAGE[:256], magic_end=0), VECTOR_START, 256)
 
 
 def test_a_file_that_is_not_a_block_multiple_is_refused() -> None:
@@ -165,9 +151,7 @@ def test_an_empty_range_is_refused() -> None:
 
 def test_an_unsupported_algorithm_is_refused() -> None:
     with pytest.raises(uf2.Uf2Error, match="algorithm"):
-        uf2.image_digest(
-            _vector_uf2(), VECTOR_START, VECTOR_LENGTH, algorithm=uf2.DIGEST_NONE
-        )
+        uf2.image_digest(_vector_uf2(), VECTOR_START, VECTOR_LENGTH, algorithm=uf2.DIGEST_NONE)
 
 
 def test_the_extent_is_what_the_container_actually_covers() -> None:

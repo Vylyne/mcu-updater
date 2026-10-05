@@ -106,9 +106,7 @@ def test_per_type_layout(tmp_path):
 
 
 def test_the_platformio_sidecar_lives_under_platformio(paths):
-    assert paths.platformio_sidecar("knomi") == os.path.join(
-        paths.data_dir, "platformio", "knomi.build.json"
-    )
+    assert paths.platformio_sidecar("knomi") == os.path.join(paths.data_dir, "platformio", "knomi.build.json")
 
 
 def test_a_record_left_in_the_old_folder_is_no_provenance_not_an_error(paths, tmp_path):

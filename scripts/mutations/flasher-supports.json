@@ -52,14 +52,14 @@
     {
       "name": "dfu_util writes bare boards only",
       "file": "src/mcu_updater/flashers/dfu_util.py",
-      "find": "            device.kind == KIND_BARE\n",
-      "replace": "            True\n"
+      "find": "        return (\n            device.kind == KIND_BARE and device.state in self.states and chipset_matches(self, device.chipset)\n        )\n",
+      "replace": "        return True and device.state in self.states and chipset_matches(self, device.chipset)\n"
     },
     {
       "name": "dfu_util writes a board in DFU only",
       "file": "src/mcu_updater/flashers/dfu_util.py",
-      "find": "            and device.state in self.states\n",
-      "replace": "\n"
+      "find": "        return (\n            device.kind == KIND_BARE and device.state in self.states and chipset_matches(self, device.chipset)\n        )\n",
+      "replace": "        return device.kind == KIND_BARE and chipset_matches(self, device.chipset)\n"
     },
     {
       "name": "a board in BOOTSEL still needs an rp2040 chipset",

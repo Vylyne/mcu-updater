@@ -97,8 +97,8 @@
     },
     {
       "name": "a display build is refused without a tree to build in",
-      "find": "                        if not problem",
-      "replace": "                        if True"
+      "find": "        if \"fw.build\" in allowed:\n            actions.append(\n                {\n                    \"id\": \"build\",\n                    \"label\": \"Build\",\n                    \"method\": \"fw.build\",\n                    \"params\": {\"name\": name},\n                    \"blocked\": (\n                        None if not problem else self._blocked(self.BLOCKED_NO_SOURCE, problem, name=name)\n                    ),",
+      "replace": "        if \"fw.build\" in allowed:\n            actions.append(\n                {\n                    \"id\": \"build\",\n                    \"label\": \"Build\",\n                    \"method\": \"fw.build\",\n                    \"params\": {\"name\": name},\n                    \"blocked\": (None if True else self._blocked(self.BLOCKED_NO_SOURCE, problem, name=name)),"
     },
     {
       "name": "the display block is the provider's, not a second opinion",

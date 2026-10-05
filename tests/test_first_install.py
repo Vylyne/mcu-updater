@@ -24,9 +24,7 @@ class Entry:
 
 
 def fam(name, flashers_, *, bootloader=False, builder="kconfig_make"):
-    return FirmwareFamily(
-        name=name, builder=builder, flashers=tuple(flashers_), bootloader=bootloader
-    )
+    return FirmwareFamily(name=name, builder=builder, flashers=tuple(flashers_), bootloader=bootloader)
 
 
 BASE = {
@@ -101,18 +99,14 @@ class _Stub:
         self.states = ("dfu",)
         if scans:
             self.candidate_prefix = name
-            self.scan_candidates = lambda paths, *, tracked, reporter: CandidateScan(
-                False, None, None, []
-            )
+            self.scan_candidates = lambda paths, *, tracked, reporter: CandidateScan(False, None, None, [])
 
     def supports(self, device, helper):
         return True
 
 
 def test_the_list_order_decides_between_two_scanners(monkeypatch):
-    monkeypatch.setattr(
-        registry, "_BY_NAME", {"b": _Stub("b", scans=True), "a": _Stub("a", scans=True)}
-    )
+    monkeypatch.setattr(registry, "_BY_NAME", {"b": _Stub("b", scans=True), "a": _Stub("a", scans=True)})
     got = flashers.first_install(Entry("t", "x", ("f",)), {"f": fam("f", ["b", "a"])})
     assert got.flasher == "b"
 
@@ -123,7 +117,5 @@ def test_a_flasher_that_cannot_scan_is_never_chosen(monkeypatch):
         "_BY_NAME",
         {"writer": _Stub("writer", scans=False), "scanner": _Stub("scanner", scans=True)},
     )
-    got = flashers.first_install(
-        Entry("t", "x", ("f",)), {"f": fam("f", ["writer", "scanner"])}
-    )
+    got = flashers.first_install(Entry("t", "x", ("f",)), {"f": fam("f", ["writer", "scanner"])})
     assert got.flasher == "scanner"

@@ -44,9 +44,7 @@ def _bootsel_boards_apply_instantly(monkeypatch: pytest.MonkeyPatch) -> None:
     """A fake BOOTSEL volume never goes away, so a copy onto one would sit out
     the whole apply wait. Real boards reset as the image lands; here they reset
     at once. Tests of the wait itself restore the real check."""
-    monkeypatch.setattr(
-        "mcu_updater.flashers.bootsel._volume_still_mounted", lambda mount: False
-    )
+    monkeypatch.setattr("mcu_updater.flashers.bootsel._volume_still_mounted", lambda mount: False)
 
 
 @pytest.fixture
@@ -288,8 +286,7 @@ def mountinfo(root: pathlib.Path, mounts: dict[pathlib.Path, str]) -> None:
         return "".join("\\" + format(ord(ch), "03o") if ch in " \t\n\\" else ch for ch in text)
 
     lines = [
-        f"{36 + i} 35 8:{i} / {escape(str(point))} rw,relatime shared:1 - vfat "
-        f"{escape(source)} rw"
+        f"{36 + i} 35 8:{i} / {escape(str(point))} rw,relatime shared:1 - vfat {escape(source)} rw"
         for i, (point, source) in enumerate(mounts.items())
     ]
     (root / "mountinfo").write_text("\n".join(lines) + "\n", encoding="utf-8")
@@ -331,9 +328,7 @@ def on_port(paths: Paths, root: pathlib.Path, port: str) -> Paths:
     block = root / "sys-dev" / port / "block"
     tty.mkdir(parents=True, exist_ok=True)
     block.mkdir(parents=True, exist_ok=True)
-    return dataclasses.replace(
-        paths, usb_sysfs=str(usb_root), tty_sysfs=str(tty), block_sysfs=str(block)
-    )
+    return dataclasses.replace(paths, usb_sysfs=str(usb_root), tty_sysfs=str(tty), block_sysfs=str(block))
 
 
 def display_objects(sections: dict, objects: dict = None) -> dict:

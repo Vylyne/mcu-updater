@@ -63,20 +63,20 @@
     {
       "name": "the ports are free by here, so an empty map asks the devices",
       "file": "src/mcu_updater/cli.py",
-      "find": "            c.paths, c.settings, entry, ask=True, reporter=stdout_reporter",
-      "replace": "            c.paths, c.settings, entry, ask=False, reporter=stdout_reporter"
+      "find": "        found = identify.identify(c.paths, c.settings, entry, ask=True, reporter=stdout_reporter)",
+      "replace": "        found = identify.identify(c.paths, c.settings, entry, ask=False, reporter=stdout_reporter)"
     },
     {
       "name": "the remembered answer is preferred to six seconds of held ports",
       "file": "src/mcu_updater/cli.py",
-      "find": "        c.paths, c.settings, entry, ask=False, reporter=stdout_reporter",
-      "replace": "        c.paths, c.settings, entry, ask=True, reporter=stdout_reporter"
+      "find": "    # because without an answer there is nothing to select.\n    found = identify.identify(c.paths, c.settings, entry, ask=False, reporter=stdout_reporter)",
+      "replace": "    # because without an answer there is nothing to select.\n    found = identify.identify(c.paths, c.settings, entry, ask=True, reporter=stdout_reporter)"
     },
     {
       "name": "the CLI matches a firmware-reported identity case-insensitively",
       "file": "src/mcu_updater/cli.py",
-      "find": "                or only_id.lower() == device.device_id.lower()",
-      "replace": "                or only_id == device.device_id"
+      "find": "            if device.present\n            and (only_id is None or only_id == device.port or only_id.lower() == device.device_id.lower())",
+      "replace": "            if device.present and (only_id is None or only_id == device.port or only_id == device.device_id)"
     },
     {
       "name": "a firmware that cannot identify its devices is refused",

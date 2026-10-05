@@ -14,7 +14,7 @@
   "mutations": [
     {
       "name": "the pre-write probe is wired into the write path",
-      "find": "        dev = _verify_offset_before_write(\n            paths, settings, flashtool, bench, dev, fw_bin, mcu_type, chipset,\n            fw, serial, side, reporter, force, timeout,\n        )",
+      "find": "        dev = _verify_offset_before_write(\n            paths,\n            settings,\n            flashtool,\n            bench,\n            dev,\n            fw_bin,\n            mcu_type,\n            chipset,\n            fw,\n            serial,\n            side,\n            reporter,\n            force,\n            timeout,\n        )",
       "replace": "        pass"
     },
     {
@@ -30,7 +30,7 @@
     },
     {
       "name": "an unreadable probe is refused too, before writing",
-      "find": "            raise OffsetMismatchError(\n                message + aftermath, type=mcu_type, serial=serial, fw=fw\n            )",
+      "find": "            raise OffsetMismatchError(message + aftermath, type=mcu_type, serial=serial, fw=fw)",
       "replace": "            pass"
     },
     {

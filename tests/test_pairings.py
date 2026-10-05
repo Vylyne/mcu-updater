@@ -331,7 +331,7 @@ def test_the_flash_records_the_pairing_before_waiting(paths, live_registry_text,
     recording after it would help in exactly the situations it does not."""
     from mcu_updater.jobs import JobRunner
 
-    from .conftest import write_settings
+    from .conftest import skip_the_reenumeration_pause, write_settings
     from .test_agent_dfu import ONE_BOARD, FakeRun
 
     # ONE_BOARD's DFU serial is fixed ("3941335F3434"), so the pairing this
@@ -357,11 +357,11 @@ def test_the_flash_records_the_pairing_before_waiting(paths, live_registry_text,
         ),
     )
     api = Api(paths, runner=runner)
-    api.ADD_MCU_REENUMERATE_TIMEOUT = 1.0
 
     import pytest as _pytest
 
     monkeypatch = _pytest.MonkeyPatch()
+    skip_the_reenumeration_pause(monkeypatch, api)
     monkeypatch.setattr("mcu_updater.devices.subprocess.run", FakeRun(stdout=ONE_BOARD))
     monkeypatch.setattr("mcu_updater.flashers.flash.flash_initial_bootloader", lambda *a, **k: None)
     try:

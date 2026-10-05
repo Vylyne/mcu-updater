@@ -28,6 +28,7 @@ from .conftest import (
     mounted_bootsel_volume,
     mountinfo,
     on_port,
+    skip_the_reenumeration_pause,
     stage_uf2_only,
     write_settings,
 )
@@ -65,7 +66,7 @@ def _stage_katapult_uf2(paths, mcu_type=PICO) -> str:
 
 
 @pytest.fixture
-def adder(paths, live_registry_text, fake_root):
+def adder(paths, live_registry_text, fake_root, monkeypatch):
     """An agent with a runner and flashing enabled."""
     with open(paths.registry_file, "w", encoding="utf-8") as fh:
         fh.write(live_registry_text)
@@ -76,9 +77,7 @@ def adder(paths, live_registry_text, fake_root):
     # the BOOTSEL volume's block device too - because the post-write wait is
     # keyed on the port the scan saw.
     api = Api(on_port(paths, fake_root, DFU_PORT), runner=runner)
-    # The "nothing appeared" cases otherwise wait out the full re-enumeration
-    # timeout, which dominated the run at 15s apiece.
-    api.ADD_MCU_REENUMERATE_TIMEOUT = 1.0
+    skip_the_reenumeration_pause(monkeypatch, api)
     yield api
     runner._cancel.set()
     runner.wait(timeout=20)

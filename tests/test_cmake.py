@@ -135,23 +135,37 @@ def _git(directory, *args) -> str:
     ).stdout.strip()
 
 
+@pytest.fixture(scope="module")
+def _committed_repo(tmp_path_factory):
+    """`repo`'s tree, committed once and copied per test.
+
+    Five git processes per test was about 0.2s of setup each on Windows, where
+    a spawn is slow - a third of this file's time. The copy is safe because the
+    provider asks `git status`, which refreshes the index a copied checkout
+    carries stale stat data in.
+    """
+    root = tmp_path_factory.mktemp("cmake-repo") / "roadrunner"
+    (root / "rp2040").mkdir(parents=True)
+    (root / "klippy").mkdir()
+    (root / "rp2040" / "CMakeLists.txt").write_text("project(rr)\n", encoding="utf-8")
+    (root / "klippy" / "extra.py").write_text("x = 1\n", encoding="utf-8")
+    _git(root, "init", "-q", "--template=")
+    _git(root, "config", "user.email", "t@example.com")
+    _git(root, "config", "user.name", "t")
+    _git(root, "add", "-A")
+    _git(root, "commit", "-qm", "initial")
+    return root
+
+
 @pytest.fixture
-def repo(tmp_path):
+def repo(tmp_path, _committed_repo):
     """A repo whose firmware source is a *subdirectory*, with a sibling.
 
     This is the Roadrunner's shape: rp2040/ beside klippy/, both edited
     independently. It is what makes repo-wide git wrong here.
     """
     root = tmp_path / "roadrunner"
-    (root / "rp2040").mkdir(parents=True)
-    (root / "klippy").mkdir()
-    (root / "rp2040" / "CMakeLists.txt").write_text("project(rr)\n", encoding="utf-8")
-    (root / "klippy" / "extra.py").write_text("x = 1\n", encoding="utf-8")
-    _git(root, "init", "-q")
-    _git(root, "config", "user.email", "t@example.com")
-    _git(root, "config", "user.name", "t")
-    _git(root, "add", "-A")
-    _git(root, "commit", "-qm", "initial")
+    shutil.copytree(_committed_repo, root)
     return root
 
 

@@ -116,9 +116,7 @@ def test_detail_labels_the_differences_in_the_trees_own_words(api):
 
 def test_your_own_profile_is_listed_with_the_vendors(api):
     apply(api, name="carto_v4", profile="config.TestBoardUSB")
-    profiles.capture_custom(
-        api.paths, "carto_v4", "klipper", answers=['CONFIG_VERSION="MINE 1.0"']
-    )
+    profiles.capture_custom(api.paths, "carto_v4", "klipper", answers=['CONFIG_VERSION="MINE 1.0"'])
 
     listed = api.dispatch("fw.profile.list", {"name": "carto_v4"})
     first = listed["available"][0]
@@ -204,9 +202,7 @@ def test_a_traversing_profile_name_is_refused(api):
     secret.write_text("CONFIG_MACH_STM32=y\n", encoding="utf-8")
 
     with pytest.raises(RpcError) as exc:
-        api.dispatch(
-            "fw.profile.apply", {"name": "carto_v4", "profile": "../secret.txt"}
-        )
+        api.dispatch("fw.profile.apply", {"name": "carto_v4", "profile": "../secret.txt"})
     assert exc.value.data["code"] == "profile"
 
 
@@ -224,9 +220,7 @@ def test_existing_answers_are_not_overwritten_without_force(api):
     target.write_text("CONFIG_MACH_STM32=y\n# mine\n", encoding="utf-8")
 
     with pytest.raises(RpcError) as exc:
-        api.dispatch(
-            "fw.profile.apply", {"name": "carto_v4", "profile": "config.TestBoardUSB"}
-        )
+        api.dispatch("fw.profile.apply", {"name": "carto_v4", "profile": "config.TestBoardUSB"})
     assert exc.value.data["code"] == "profile_customised"
     assert "# mine" in target.read_text(encoding="utf-8")
     assert api.runner.current() is None, "refused before a job was submitted"
@@ -266,9 +260,7 @@ def test_one_artifact_call_hashes_a_config_once(api, monkeypatch):
 
     seen: list[str] = []
     real = build_mod.sha256_file
-    monkeypatch.setattr(
-        build_mod, "sha256_file", lambda path: (seen.append(path), real(path))[1]
-    )
+    monkeypatch.setattr(build_mod, "sha256_file", lambda path: (seen.append(path), real(path))[1])
 
     apply(api, name="carto_v4", profile="config.TestBoardUSB")
     seen.clear()
@@ -364,9 +356,7 @@ def test_a_build_can_be_told_to_leave_it(building):
 
 
 def test_the_setting_turns_it_off_for_every_path(building):
-    write_settings(
-        building.paths, dry_run="true", service_backend="null", reseed_on_build="false"
-    )
+    write_settings(building.paths, dry_run="true", service_backend="null", reseed_on_build="false")
     apply(building, name="carto_v4", profile="config.TestBoardUSB")
     _bump(building)
 
@@ -431,9 +421,7 @@ def _log(job) -> list[str]:
 
 
 def _edit_and_save(api: Api, value: str) -> dict:
-    session = api.dispatch("fw.kconfig.open", {"name": "carto_v4", "fw": "klipper"})[
-        "session"
-    ]
+    session = api.dispatch("fw.kconfig.open", {"name": "carto_v4", "fw": "klipper"})["session"]
     api.dispatch("fw.kconfig.set", {"session": session, "id": "VERSION", "value": value})
     return api.dispatch("fw.kconfig.save", {"session": session})
 
@@ -448,9 +436,7 @@ def test_saving_over_a_profile_keeps_the_answers_as_your_own(api):
     assert saved["custom_profile"] == profiles.CUSTOM_PROFILE
     own = profiles.read_custom(api.paths, "carto_v4", "klipper")
     assert own is not None and own.parent == "config.TestBoardUSB"
-    assert [row["symbol"] for row in profiles.overrides(api.paths, "carto_v4", "klipper")] == [
-        "VERSION"
-    ]
+    assert [row["symbol"] for row in profiles.overrides(api.paths, "carto_v4", "klipper")] == ["VERSION"]
 
 
 def test_your_profile_survives_removing_and_readding_the_type(api):
@@ -474,9 +460,7 @@ def test_a_save_that_changed_nothing_keeps_no_second_copy(api):
     """A capture identical to the vendor's entry is a duplicate in the picker."""
     apply(api, name="carto_v4", profile="config.TestBoardUSB")
 
-    session = api.dispatch("fw.kconfig.open", {"name": "carto_v4", "fw": "klipper"})[
-        "session"
-    ]
+    session = api.dispatch("fw.kconfig.open", {"name": "carto_v4", "fw": "klipper"})["session"]
     saved = api.dispatch("fw.kconfig.save", {"session": session})
 
     assert saved["custom_profile"] is None
@@ -486,12 +470,8 @@ def test_a_save_that_changed_nothing_keeps_no_second_copy(api):
 def test_a_tree_that_ships_no_profiles_captures_nothing(api):
     """Katapult ships none, so there is no picker to offer this in and nothing
     to fork from - the .config is already the whole story."""
-    session = api.dispatch("fw.kconfig.open", {"name": "carto_v4", "fw": "katapult"})[
-        "session"
-    ]
-    api.dispatch(
-        "fw.kconfig.set", {"session": session, "id": "LOW_LEVEL_OPTIONS", "value": "y"}
-    )
+    session = api.dispatch("fw.kconfig.open", {"name": "carto_v4", "fw": "katapult"})["session"]
+    api.dispatch("fw.kconfig.set", {"session": session, "id": "LOW_LEVEL_OPTIONS", "value": "y"})
     saved = api.dispatch("fw.kconfig.save", {"session": session})
 
     assert saved["custom_profile"] is None
@@ -549,12 +529,8 @@ def test_seeding_a_cartographer_fork_through_the_agent(tmp_path):
 
     # The probe-specific answers stay in the application; the board answers
     # reach the bootloader.
-    app = pathlib.Path(paths.config_file("carto_v4", "cartographer")).read_text(
-        encoding="utf-8"
-    )
-    boot = pathlib.Path(paths.config_file("carto_v4", "katapult")).read_text(
-        encoding="utf-8"
-    )
+    app = pathlib.Path(paths.config_file("carto_v4", "cartographer")).read_text(encoding="utf-8")
+    boot = pathlib.Path(paths.config_file("carto_v4", "katapult")).read_text(encoding="utf-8")
     assert "CONFIG_CARTOGRAPHER_G431_ENABLE=y" in app
     assert "CARTOGRAPHER" not in boot
     assert "CONFIG_STM32_CANBUS_PA11_PA12=y" in boot

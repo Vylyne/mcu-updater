@@ -103,9 +103,7 @@ def test_the_remembered_map_answers_without_opening_a_port(paths, settings, monk
     )
     monkeypatch.setattr(handler, "discover", _never_asked)
 
-    found = KnomiSerialHelper().identify(
-        paths, settings, _pio_entry(), ask=False, reporter=null_reporter
-    )
+    found = KnomiSerialHelper().identify(paths, settings, _pio_entry(), ask=False, reporter=null_reporter)
     assert list(found) == ["aaa111"]
 
 
@@ -116,10 +114,7 @@ def test_nothing_remembered_and_no_permission_to_ask_is_empty(paths, settings, m
     monkeypatch.setattr(handler, "discover", _never_asked)
 
     assert (
-        KnomiSerialHelper().identify(
-            paths, settings, _pio_entry(), ask=False, reporter=null_reporter
-        )
-        == {}
+        KnomiSerialHelper().identify(paths, settings, _pio_entry(), ask=False, reporter=null_reporter) == {}
     )
 
 
@@ -140,9 +135,7 @@ def test_asking_listens_even_when_the_map_has_an_answer(paths, settings, monkeyp
         lambda p, s, e, **kw: {"aaa111": _device("aaa111", "/dev/ttyUSB3")},
     )
 
-    found = KnomiSerialHelper().identify(
-        paths, settings, _pio_entry(), ask=True, reporter=null_reporter
-    )
+    found = KnomiSerialHelper().identify(paths, settings, _pio_entry(), ask=True, reporter=null_reporter)
     assert found["aaa111"].port == "/dev/ttyUSB3"
     assert found["aaa111"].answered is True
 
@@ -159,12 +152,7 @@ def test_a_listen_that_hears_nothing_is_not_the_map(paths, settings, monkeypatch
     )
     monkeypatch.setattr(handler, "discover", lambda p, s, e, **kw: {})
 
-    assert (
-        KnomiSerialHelper().identify(
-            paths, settings, _pio_entry(), ask=True, reporter=null_reporter
-        )
-        == {}
-    )
+    assert KnomiSerialHelper().identify(paths, settings, _pio_entry(), ask=True, reporter=null_reporter) == {}
 
 
 def test_a_listen_that_cannot_run_falls_back_to_the_map(paths, settings, monkeypatch):
@@ -216,9 +204,7 @@ def test_a_stale_map_entry_is_not_a_fallback_answer(paths, settings, monkeypatch
     )
     monkeypatch.setattr(handler, "discover", boom)
 
-    found = KnomiSerialHelper().identify(
-        paths, settings, _pio_entry(), ask=True, reporter=null_reporter
-    )
+    found = KnomiSerialHelper().identify(paths, settings, _pio_entry(), ask=True, reporter=null_reporter)
 
     assert list(found) == ["aaa111"]
 
@@ -226,9 +212,7 @@ def test_a_stale_map_entry_is_not_a_fallback_answer(paths, settings, monkeypatch
 def test_how_a_device_was_found_stays_off_the_wire():
     """`answered` is a fact about one write-time listen, not a field of the
     device map, so `to_json` never carries it."""
-    device = WatcherDevice(
-        device_id="aaa111", port="/dev/ttyUSB0", present=True, answered=True
-    )
+    device = WatcherDevice(device_id="aaa111", port="/dev/ttyUSB0", present=True, answered=True)
     assert "answered" not in device.to_json()
 
 
@@ -245,9 +229,7 @@ def test_an_empty_map_asks_the_devices_themselves(paths, settings, monkeypatch):
         lambda p, s, e, **kw: {"bbb222": _device("bbb222", "/dev/ttyUSB1")},
     )
 
-    found = KnomiSerialHelper().identify(
-        paths, settings, _pio_entry(), ask=True, reporter=null_reporter
-    )
+    found = KnomiSerialHelper().identify(paths, settings, _pio_entry(), ask=True, reporter=null_reporter)
     assert list(found) == ["bbb222"]
     assert found["bbb222"].answered is True
 

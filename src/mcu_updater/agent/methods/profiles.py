@@ -41,17 +41,11 @@ class ProfilesMixin(_Base):
         families = firmware.load(self.paths)
         fw = str(args.get("fw") or mcu.application(families)).strip()
         if fw not in families:
-            raise RpcError(
-                f"'fw' must be one of {', '.join(self._fw_names())}", ERR_INVALID_PARAMS
-            )
+            raise RpcError(f"'fw' must be one of {', '.join(self._fw_names())}", ERR_INVALID_PARAMS)
 
         seeds = profiles.available(self.paths, fw, families, mcu_type=name)
         differences = profiles.distinguishing(seeds)
-        labels = (
-            self._prompt_labels(fw, families, differences)
-            if bool(args.get("detail"))
-            else {}
-        )
+        labels = self._prompt_labels(fw, families, differences) if bool(args.get("detail")) else {}
 
         return {
             "type": name,
@@ -68,10 +62,7 @@ class ProfilesMixin(_Base):
                 }
                 for seed in seeds
             ],
-            "state": {
-                f: profiles.status(self.paths, name, f, families).to_json()
-                for f in mcu.families()
-            },
+            "state": {f: profiles.status(self.paths, name, f, families).to_json() for f in mcu.families()},
         }
 
     def _prompt_labels(
@@ -130,9 +121,7 @@ class ProfilesMixin(_Base):
         families = firmware.load(self.paths)
         fw = str(args.get("fw") or mcu.application(families)).strip()
         if fw not in families:
-            raise RpcError(
-                f"'fw' must be one of {', '.join(self._fw_names())}", ERR_INVALID_PARAMS
-            )
+            raise RpcError(f"'fw' must be one of {', '.join(self._fw_names())}", ERR_INVALID_PARAMS)
 
         # The family this type actually carries a bootloader for, if any -
         # falling back to "katapult" only if derive is forced true on a type
@@ -154,9 +143,7 @@ class ProfilesMixin(_Base):
         def run(ctx) -> dict[str, Any]:
             steps = 2 if derive else 1
             ctx.step(f"Seeding {name} ({fw}) from {seed.name}", 0, steps)
-            applied = profiles.apply_seed(
-                self.paths, name, fw, seed.name, families=families, force=force
-            )
+            applied = profiles.apply_seed(self.paths, name, fw, seed.name, families=families, force=force)
             for line in applied.answers:
                 ctx.reporter("stdout", line)
             out: dict[str, Any] = {"applied": applied.to_json(), "derived": None}
@@ -185,9 +172,7 @@ class ProfilesMixin(_Base):
             self._changed()
             return out
 
-        job = runner.submit(
-            "profile_apply", {"name": name, "fw": fw, "profile": seed.name}, run
-        )
+        job = runner.submit("profile_apply", {"name": name, "fw": fw, "profile": seed.name}, run)
         return {"job_id": job.id, "job": job.to_dict(), "type": name, "fw": fw}
 
     def profile_forget(self, args: dict) -> dict[str, Any]:

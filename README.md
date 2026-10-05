@@ -838,6 +838,7 @@ every board as stale after you pull Klipper, and a stray `touch` doesn't lie.
 pip install -e ".[dev]"
 pytest -q
 ruff check src tests scripts
+ruff format --check src tests scripts
 ```
 
 ### The release gate

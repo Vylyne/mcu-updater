@@ -56,8 +56,8 @@
     {
       "name": "the CLI hands its refusals to the batch",
       "file": "src/mcu_updater/cli.py",
-      "find": "        _bench(c), targets, flashers.PlainContext(stdout_reporter), refused=refused",
-      "replace": "        _bench(c), targets, flashers.PlainContext(stdout_reporter)"
+      "find": "    result = flashers.write_all(_bench(c), targets, flashers.PlainContext(stdout_reporter), refused=refused)",
+      "replace": "    result = flashers.write_all(_bench(c), targets, flashers.PlainContext(stdout_reporter))"
     },
     {
       "name": "first install refuses what the install family's list cannot write",

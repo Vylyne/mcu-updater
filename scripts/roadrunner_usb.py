@@ -175,9 +175,7 @@ def run(args: argparse.Namespace) -> dict[str, object]:
                 or info.get("serial") != expected_serial
                 or info.get("provisioned") is not True
             ):
-                raise ProtocolError(
-                    "INFO did not confirm the expected provisioned Roadrunner"
-                )
+                raise ProtocolError("INFO did not confirm the expected provisioned Roadrunner")
             status, payload = request(port, REBOOT_BOOTSEL)
             if status:
                 raise ProtocolError(f"REBOOT_BOOTSEL refused with status {status}")

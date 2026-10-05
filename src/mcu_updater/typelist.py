@@ -81,8 +81,7 @@ RENAMED_KEYS: dict[str, str] = {
 #: Keys that are no longer read at all -> why.
 REMOVED_KEYS: dict[str, str] = {
     "klipper_section": (
-        "the Klipper object a firmware's klippy module registers is fixed by "
-        "that module, not by config"
+        "the Klipper object a firmware's klippy module registers is fixed by that module, not by config"
     ),
 }
 
@@ -105,8 +104,7 @@ def refuse_renamed_keys(entry: TypeEntry, *, path: str) -> None:
     for gone, why in REMOVED_KEYS.items():
         if entry.block.has(gone):
             raise ConfigCorruptError(
-                f"{path}: '{entry.name}' uses {gone}:, which is no longer read - "
-                f"{why}. Delete the line.",
+                f"{path}: '{entry.name}' uses {gone}:, which is no longer read - {why}. Delete the line.",
                 path=path,
                 type=entry.name,
                 value=gone,
@@ -224,12 +222,10 @@ def _refuse_family_keys(families: dict[str, firmware.FirmwareFamily], *, path: s
     if unknown_flashers:
         first = next(iter(unknown_flashers))
         listed = "\n".join(
-            f"  [firmware {name}] flashers: {', '.join(bad)}"
-            for name, bad in unknown_flashers.items()
+            f"  [firmware {name}] flashers: {', '.join(bad)}" for name, bad in unknown_flashers.items()
         )
         raise ConfigCorruptError(
-            f"{path}: a flasher that does not exist (known: {known_flashers}):\n"
-            f"{listed}\nFix the spelling.",
+            f"{path}: a flasher that does not exist (known: {known_flashers}):\n{listed}\nFix the spelling.",
             path=path,
             family=first,
             value=unknown_flashers[first][0],
@@ -241,9 +237,7 @@ def _refuse_family_keys(families: dict[str, firmware.FirmwareFamily], *, path: s
         if family.auto_provision and family.helper not in firmware.PROVISIONING_HELPERS
     ]
     if cannot_provision:
-        listed = "\n".join(
-            f"  [firmware {name}] auto_provision: true" for name in cannot_provision
-        )
+        listed = "\n".join(f"  [firmware {name}] auto_provision: true" for name in cannot_provision)
         raise ConfigCorruptError(
             f"{path}: auto_provision: on a family whose helper cannot auto-provision "
             f"(helpers that can: {', '.join(firmware.PROVISIONING_HELPERS)}):\n"
@@ -267,9 +261,7 @@ def validate(
     # Every family is checked, used by a type or not, and all are reported at
     # once.
     unknown_builders = {
-        name: family.builder
-        for name, family in families.items()
-        if family.builder not in firmware.BUILDERS
+        name: family.builder for name, family in families.items() if family.builder not in firmware.BUILDERS
     }
     if unknown_builders:
         first_family, first_builder = next(iter(unknown_builders.items()))

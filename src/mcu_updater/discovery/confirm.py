@@ -31,9 +31,7 @@ _CONFIDENCE_FOR_SOURCE: dict[str, str] = {
 }
 
 
-def confirm(
-    bench: Bench, *, sources: Sequence[Source]
-) -> dict[str, tuple[Sighting, Confidence]]:
+def confirm(bench: Bench, *, sources: Sequence[Source]) -> dict[str, tuple[Sighting, Confidence]]:
     """Ask every source, and keep the most-confident sighting per identity.
 
     Returns every identity any source reported, keyed by `Sighting.id`. A

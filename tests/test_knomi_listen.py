@@ -77,9 +77,7 @@ def test_every_display_that_answered_is_returned(paths, settings, display, monke
     assert found["19aa38"].present is True, "it spoke - that is not a guess from a stat"
 
 
-def test_noise_on_stdout_is_not_mistaken_for_the_answer(
-    paths, settings, display, monkeypatch, tmp_path
-):
+def test_noise_on_stdout_is_not_mistaken_for_the_answer(paths, settings, display, monkeypatch, tmp_path):
     """A deprecation warning or a udev grumble shares stdout with the result."""
     noisy = "DeprecationWarning: something\n" + REAL + "\nall done\n"
     calls, which, run = _fake_python(tmp_path, noisy)
@@ -89,9 +87,7 @@ def test_noise_on_stdout_is_not_mistaken_for_the_answer(
     assert sorted(discover(paths, settings, display)) == ["196c94", "19aa38"]
 
 
-def test_nothing_answering_is_an_empty_map_not_an_error(
-    paths, settings, display, monkeypatch, tmp_path
-):
+def test_nothing_answering_is_an_empty_map_not_an_error(paths, settings, display, monkeypatch, tmp_path):
     """Klipper still holding the ports looks exactly like this, and the caller's
     answer - flash nothing we cannot identify - is the same either way."""
     calls, which, run = _fake_python(tmp_path, MARKER + "{}")
@@ -117,12 +113,8 @@ def test_ids_are_lowered_so_they_compare(paths, settings, display, monkeypatch, 
     assert list(discover(paths, settings, display)) == ["19aa38"]
 
 
-def test_a_missing_pyserial_says_what_to_install(
-    paths, settings, display, monkeypatch, tmp_path
-):
-    calls, which, run = _fake_python(
-        tmp_path, "ModuleNotFoundError: No module named 'serial'", rc=1
-    )
+def test_a_missing_pyserial_says_what_to_install(paths, settings, display, monkeypatch, tmp_path):
+    calls, which, run = _fake_python(tmp_path, "ModuleNotFoundError: No module named 'serial'", rc=1)
     monkeypatch.setattr("mcu_updater.discovery.knomi_serial.listen.shutil.which", which)
     monkeypatch.setattr("mcu_updater.discovery.knomi_serial.listen.run_streamed", run)
 
@@ -132,9 +124,7 @@ def test_a_missing_pyserial_says_what_to_install(
     assert "python3-serial" in str(exc.value)
 
 
-def test_the_helper_runs_against_the_configured_source_tree(
-    paths, settings, display, monkeypatch, tmp_path
-):
+def test_the_helper_runs_against_the_configured_source_tree(paths, settings, display, monkeypatch, tmp_path):
     """knomi_serial is imported from the tree, so a relocated checkout has to
     be the one asked - otherwise discovery and the build disagree."""
     calls, which, run = _fake_python(tmp_path, MARKER + "{}")

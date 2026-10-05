@@ -93,9 +93,7 @@ def rr(paths, monkeypatch):
     return helper
 
 
-def test_tracking_an_unprovisioned_board_provisions_it_and_tracks_the_result(
-    paths, rr
-):
+def test_tracking_an_unprovisioned_board_provisions_it_and_tracks_the_result(paths, rr):
     tracked = tracking.add_serial(paths, "roadrunner", UNPROVISIONED)
 
     assert rr.calls == [UNPROVISIONED]
@@ -176,9 +174,7 @@ def test_a_firmware_without_the_capability_is_not_governed_by_other_identity_rul
     assert Registry.load(paths).declared_serials("knomi") == [UNPROVISIONED]
 
 
-def test_a_trackable_helper_with_no_provisioner_refuses_with_its_reason(
-    paths, rr, monkeypatch
-):
+def test_a_trackable_helper_with_no_provisioner_refuses_with_its_reason(paths, rr, monkeypatch):
     helper = _TrackableOnly()
     monkeypatch.setitem(helpers_registry._BY_NAME, "roadrunner", helper)
 
@@ -200,9 +196,7 @@ def test_an_unknown_trackability_remedy_is_a_refusal(paths, rr, monkeypatch):
     assert Registry.load(paths).declared_serials("roadrunner") == []
 
 
-def test_a_misconfigured_helper_name_refuses_loudly_rather_than_provisioning_nothing(
-    paths, rr, monkeypatch
-):
+def test_a_misconfigured_helper_name_refuses_loudly_rather_than_provisioning_nothing(paths, rr, monkeypatch):
     """Task 6 dispatch correction 1: on a write path, an unregistered
     `helper:` name must not be swallowed into "no provisioner" - it is
     refused by name, the same as any other write-path misconfiguration."""
@@ -271,9 +265,7 @@ def test_may_provision_true_is_the_default_and_still_provisions(paths, rr):
     assert tracked.serial == PROVISIONED
 
 
-def test_a_failure_after_provisioning_names_the_new_serial_and_keeps_its_type(
-    paths, rr
-):
+def test_a_failure_after_provisioning_names_the_new_serial_and_keeps_its_type(paths, rr):
     """Fix 4 / review I2: a provisioned board that then fails to record must
     not vanish silently - the error raised names the serial that is now
     sitting on the board, and is still the same exception type (so a caller

@@ -112,9 +112,7 @@ def test_can_interface_metadata_attaches_its_usb_adapter(paths, fake_root, monke
     (adapter / "idVendor").write_text("1d50\n", encoding="utf-8")
     (adapter / "idProduct").write_text("606f\n", encoding="utf-8")
     (adapter / "serial").write_text("ADAPTER-SERIAL\n", encoding="utf-8")
-    fake_paths = dataclasses.replace(
-        paths, can_sysfs_net=str(net_root), usb_sysfs=str(usb_root)
-    )
+    fake_paths = dataclasses.replace(paths, can_sysfs_net=str(net_root), usb_sysfs=str(usb_root))
     device_link = str(net_root / "can7" / "device")
     realpath = canbus.os.path.realpath
     monkeypatch.setattr(
@@ -143,9 +141,7 @@ def test_can_interface_metadata_follows_the_real_net_device_symlink(paths, fake_
     interface = usb_root / "1-2:1.0"
     interface.mkdir()
     (net_root / "can7" / "device").symlink_to(interface, target_is_directory=True)
-    fake_paths = dataclasses.replace(
-        paths, can_sysfs_net=str(net_root), usb_sysfs=str(usb_root)
-    )
+    fake_paths = dataclasses.replace(paths, can_sysfs_net=str(net_root), usb_sysfs=str(usb_root))
 
     found = canbus.list_can_interface_metadata(fake_paths)
 

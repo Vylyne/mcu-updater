@@ -15,7 +15,10 @@ requires-python = ">=3.11"
 dependencies = []
 
 [project.optional-dependencies]
-dev = ["pytest>=7", "pytest-timeout", "ruff", "mypy"]
+# ruff is held to one minor: its formatter's style only changes across minors,
+# and CI fails on `ruff format --check`, so an unpinned ruff would turn every
+# open PR red on the day of a release that nobody here made.
+dev = ["pytest>=7", "pytest-timeout", "ruff~=0.16.4", "mypy"]
 
 [project.scripts]
 updatefw = "mcu_updater.cli:main"
@@ -36,6 +39,9 @@ line-length = 110
 # problems that are not ours, and `--fix` would silently rewrite upstream source -
 # which would defeat the point of testing against the real library.
 extend-exclude = ["tests/fixtures/kconfiglib"]
+
+[tool.ruff.format]
+line-ending = "lf"
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "UP", "B"]

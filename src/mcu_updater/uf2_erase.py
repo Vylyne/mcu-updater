@@ -74,8 +74,7 @@ def with_erased_sector(uf2: bytes, address: int) -> bytes:
     """
     if address % SECTOR_SIZE:
         raise Uf2EraseError(
-            f"application address {address:#x} is not on a {SECTOR_SIZE}-byte "
-            f"sector boundary"
+            f"application address {address:#x} is not on a {SECTOR_SIZE}-byte sector boundary"
         )
 
     blocks = _blocks(uf2)
@@ -92,10 +91,7 @@ def with_erased_sector(uf2: bytes, address: int) -> bytes:
             )
 
     flags, _target, _payload, family = main[0]
-    erased = [
-        (flags, page, b"\xff" * PAGE_SIZE, family)
-        for page in range(address, end, PAGE_SIZE)
-    ]
+    erased = [(flags, page, b"\xff" * PAGE_SIZE, family) for page in range(address, end, PAGE_SIZE)]
     ordered = sorted(blocks + erased, key=lambda b: b[1])
 
     count = len(ordered)
@@ -120,20 +116,13 @@ def _blocks(uf2: bytes) -> list[tuple[int, int, bytes, int]]:
     """Every block as `(flags, target, payload, family)`, magic checked."""
     if not uf2 or len(uf2) % UF2_BLOCK_SIZE:
         raise Uf2EraseError(
-            f"not a UF2 container: {len(uf2)} bytes is not a positive multiple "
-            f"of {UF2_BLOCK_SIZE}"
+            f"not a UF2 container: {len(uf2)} bytes is not a positive multiple of {UF2_BLOCK_SIZE}"
         )
     out = []
     for offset in range(0, len(uf2), UF2_BLOCK_SIZE):
-        magic0, magic1, flags, target, size, _no, _count, family = _HEADER.unpack_from(
-            uf2, offset
-        )
+        magic0, magic1, flags, target, size, _no, _count, family = _HEADER.unpack_from(uf2, offset)
         (magic_end,) = _END.unpack_from(uf2, offset + UF2_BLOCK_SIZE - _END.size)
-        if (
-            magic0 != UF2_MAGIC_START0
-            or magic1 != UF2_MAGIC_START1
-            or magic_end != UF2_MAGIC_END
-        ):
+        if magic0 != UF2_MAGIC_START0 or magic1 != UF2_MAGIC_START1 or magic_end != UF2_MAGIC_END:
             raise Uf2EraseError(f"block at byte {offset} has bad magic")
         if size > UF2_MAX_PAYLOAD:
             raise Uf2EraseError(f"block at byte {offset} claims a {size}-byte payload")

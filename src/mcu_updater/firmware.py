@@ -283,9 +283,7 @@ def missing_section_message(fw: str) -> str:
     return f"{missing_section_snippet(fw)}\n{MISSING_SECTION_TRAILER}"
 
 
-def resolve(
-    paths: Paths, fw: str, families: dict[str, FirmwareFamily] | None = None
-) -> FirmwareFamily:
+def resolve(paths: Paths, fw: str, families: dict[str, FirmwareFamily] | None = None) -> FirmwareFamily:
     """The declared family for `fw`. Refuses a name with no ``[firmware <fw>]``
     section.
 

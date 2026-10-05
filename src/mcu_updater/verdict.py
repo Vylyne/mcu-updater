@@ -194,9 +194,7 @@ def decide(evidence: Evidence, expected: Expected) -> DeviceStatus:
     return _record_verdict(expected, absent_is=VERSION_ONLY)
 
 
-def _image_verdict(
-    info: DeviceInfo | None, expected: Mapping[str, Any] | None
-) -> DeviceStatus | None:
+def _image_verdict(info: DeviceInfo | None, expected: Mapping[str, Any] | None) -> DeviceStatus | None:
     """The measurement, when both sides have one. None means "no evidence".
 
     Decisive in both directions, which is the point of measuring. A match is

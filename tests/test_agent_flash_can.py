@@ -94,9 +94,12 @@ def can_flashable(paths, live_registry_text, fake_root):
 
     can_paths = _with_can_interface(paths, fake_root)
 
-    runner = JobRunner(paths, lambda: __import__(
-        "mcu_updater.settings", fromlist=["load_settings"]
-    ).load_settings(paths.settings_file))
+    runner = JobRunner(
+        paths,
+        lambda: __import__("mcu_updater.settings", fromlist=["load_settings"]).load_settings(
+            paths.settings_file
+        ),
+    )
     api = Api(can_paths, runner=runner, call=_moonraker())
     api.KLIPPY_READY_TIMEOUT = 2.0
     api.KLIPPY_RESTART_TIMEOUT = 2.0
@@ -144,9 +147,12 @@ def test_flashing_with_no_can_interface_is_refused_before_klipper_is_stopped(
     _make_flashtool(paths)
     _track_uuid(paths)  # no CAN interface faked at all
 
-    runner = JobRunner(paths, lambda: __import__(
-        "mcu_updater.settings", fromlist=["load_settings"]
-    ).load_settings(paths.settings_file))
+    runner = JobRunner(
+        paths,
+        lambda: __import__("mcu_updater.settings", fromlist=["load_settings"]).load_settings(
+            paths.settings_file
+        ),
+    )
     api = Api(paths, runner=runner, call=_moonraker())
     with pytest.raises(RpcError) as exc:
         api.dispatch("fw.flash", {"uuid": UUID})
@@ -254,9 +260,7 @@ def test_a_known_bridge_from_canbus_info_skips_the_probe(can_flashable, monkeypa
 # --------------------------------------------------------------------------
 
 
-def _moonraker_canbus(
-    mcu_object="mcu hexa", *, declared=True, version=None, bridge=False, interface=None
-):
+def _moonraker_canbus(mcu_object="mcu hexa", *, declared=True, version=None, bridge=False, interface=None):
     """`configfile.settings` cross-reference, faked. `declared=False` means the
     uuid never appears under any `[mcu ...]` section - the fallback tier's
     trigger. `version=None` with `declared=True` means it is declared but not
@@ -330,9 +334,7 @@ def test_cross_reference_hit_online_is_included_under_scope_all(paths, live_regi
     assert boards[0]["interface"] == "can0"
 
 
-def test_cross_reference_hit_with_no_live_version_falls_back_not_excludes(
-    paths, live_registry_text
-):
+def test_cross_reference_hit_with_no_live_version_falls_back_not_excludes(paths, live_registry_text):
     """Declared in printer.cfg, but the mcu object reports no live version -
     unlike a tracked serial's STATE_OFFLINE, this does NOT exclude the board.
     Absence of `mcu_version` here covers both "genuinely offline" and
@@ -372,9 +374,7 @@ def test_cross_reference_miss_falls_back_to_unconditional_inclusion(paths, live_
     assert boards[0]["state"] == "unknown"
 
 
-def test_a_can_type_that_staged_only_a_uf2_is_not_skipped_as_unbuilt(
-    paths, live_registry_text
-):
+def test_a_can_type_that_staged_only_a_uf2_is_not_skipped_as_unbuilt(paths, live_registry_text):
     """Built is "staged anything". Selection then refuses the uf2 for a CAN
     board by kind, with the fix named - not this pass, silently."""
     with open(paths.registry_file, "w", encoding="utf-8") as fh:
@@ -401,9 +401,7 @@ def test_flash_all_selection_includes_both_serial_and_canbus_boards(paths, live_
     from mcu_updater import firmware, flashers
     from mcu_updater.agent.methods.bulk import _board_request
 
-    targets, refused = flashers.select_each(
-        paths, firmware.load(paths), [_board_request(b) for b in boards]
-    )
+    targets, refused = flashers.select_each(paths, firmware.load(paths), [_board_request(b) for b in boards])
     assert refused == []
     by_flasher = {t.flasher for t in targets}
     assert by_flasher == {"flashtool"}

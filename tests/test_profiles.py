@@ -207,9 +207,7 @@ def test_seeding_recomputes_rather_than_copying(paths, registry):
     profiles.apply_seed(paths, "carto_v4", "klipper", "config.TestBoardUSB")
 
     assert "CONFIG_ADDED_LATER=y" in config_text(paths, "carto_v4", "klipper")
-    assert "ADDED_LATER" not in (PROFILE_TREE / "config.TestBoardUSB").read_text(
-        encoding="utf-8"
-    )
+    assert "ADDED_LATER" not in (PROFILE_TREE / "config.TestBoardUSB").read_text(encoding="utf-8")
 
 
 def test_seeding_records_what_it_did(paths, registry):
@@ -258,9 +256,7 @@ def test_force_replaces_it_but_keeps_a_backup(paths, registry):
     target.parent.mkdir(parents=True, exist_ok=True)
     target.write_text("CONFIG_MACH_STM32=y\n# hand-written\n", encoding="utf-8")
 
-    result = profiles.apply_seed(
-        paths, "carto_v4", "klipper", "config.TestBoardUSB", force=True
-    )
+    result = profiles.apply_seed(paths, "carto_v4", "klipper", "config.TestBoardUSB", force=True)
     assert result.backup is not None
     assert "# hand-written" in pathlib.Path(result.backup).read_text(encoding="utf-8")
     assert "CONFIG_CARTOGRAPHER_G431_ENABLE=y" in target.read_text(encoding="utf-8")
@@ -302,17 +298,13 @@ def test_forcing_over_an_edit_keeps_the_answers_as_your_own_profile(paths, regis
     """
     customise(paths, registry)
 
-    result = profiles.apply_seed(
-        paths, "carto_v4", "klipper", "config.TestBoardCAN", force=True
-    )
+    result = profiles.apply_seed(paths, "carto_v4", "klipper", "config.TestBoardCAN", force=True)
 
     assert result.kept == profiles.CUSTOM_PROFILE
     own = profiles.read_custom(paths, "carto_v4", "klipper")
     assert own is not None
     assert own.parent == "config.TestBoardUSB"
-    assert 'CONFIG_VERSION="MINE 1.0"' in pathlib.Path(own.path).read_text(
-        encoding="utf-8"
-    )
+    assert 'CONFIG_VERSION="MINE 1.0"' in pathlib.Path(own.path).read_text(encoding="utf-8")
     # And the vendor's answers really did land.
     assert "CONFIG_STM32_CANBUS_PA11_PA12=y" in config_text(paths, "carto_v4", "klipper")
 
@@ -328,9 +320,7 @@ def test_your_own_profile_is_offered_beside_the_vendors(paths, registry):
 
     # Without a type there is no custom slot to resolve - "what does this tree
     # ship" is still a question worth asking on its own.
-    assert profiles.CUSTOM_PROFILE not in [
-        s.name for s in profiles.available(paths, "klipper")
-    ]
+    assert profiles.CUSTOM_PROFILE not in [s.name for s in profiles.available(paths, "klipper")]
 
 
 def test_switching_back_and_forth_is_lossless(paths, registry):
@@ -351,7 +341,7 @@ def test_switching_back_and_forth_is_lossless(paths, registry):
 
 
 def test_going_back_to_your_own_answers_does_not_capture_over_them(paths, registry):
-    """"Discard my edits" must not first save the edits it is discarding.
+    """ "Discard my edits" must not first save the edits it is discarding.
 
     Capturing here would overwrite the file about to be read, making the revert
     a no-op that silently keeps exactly what the user asked to throw away.
@@ -361,9 +351,7 @@ def test_going_back_to_your_own_answers_does_not_capture_over_them(paths, regist
     profiles.apply_seed(paths, "carto_v4", "klipper", profiles.CUSTOM_PROFILE)
 
     edit(paths, "carto_v4", "klipper", '"MINE 1.0"', '"SCRATCH 9.9"')
-    result = profiles.apply_seed(
-        paths, "carto_v4", "klipper", profiles.CUSTOM_PROFILE, force=True
-    )
+    result = profiles.apply_seed(paths, "carto_v4", "klipper", profiles.CUSTOM_PROFILE, force=True)
 
     assert result.kept is None
     own = pathlib.Path(profiles.read_custom(paths, "carto_v4", "klipper").path)
@@ -385,9 +373,7 @@ def test_a_recapture_keeps_the_original_fork_point(paths, registry):
     profiles.apply_seed(paths, "carto_v4", "klipper", profiles.CUSTOM_PROFILE)
     edit(paths, "carto_v4", "klipper", '"MINE 1.0"', '"MINE 2.0"')
 
-    again = profiles.capture_custom(
-        paths, "carto_v4", "klipper", parent=profiles.CUSTOM_PROFILE
-    )
+    again = profiles.capture_custom(paths, "carto_v4", "klipper", parent=profiles.CUSTOM_PROFILE)
     assert again.parent == "config.TestBoardUSB"
     assert profiles.answer_map(again.base)["VERSION"] == '"TESTFW 6.2.0"'
     assert profiles.answer_map(profiles.answer_lines(again.path))["VERSION"] == '"MINE 2.0"'
@@ -524,9 +510,7 @@ def test_what_you_changed_survives_switching_away_and_back(paths, registry):
 
 def bump(paths: Paths, name: str = "config.TestBoardUSB") -> None:
     seed = pathlib.Path(os.path.join(paths.home, "klipper")) / name
-    seed.write_text(
-        seed.read_text(encoding="utf-8").replace("6.2.0", "6.3.0"), encoding="utf-8"
-    )
+    seed.write_text(seed.read_text(encoding="utf-8").replace("6.2.0", "6.3.0"), encoding="utf-8")
 
 
 def test_a_build_takes_the_bump_when_the_config_is_still_ours(paths, registry):
@@ -534,10 +518,7 @@ def test_a_build_takes_the_bump_when_the_config_is_still_ours(paths, registry):
     bump(paths)
 
     said: list[str] = []
-    assert (
-        profiles.reseed_if_moved(paths, "carto_v4", "klipper", log=said.append)
-        == "config.TestBoardUSB"
-    )
+    assert profiles.reseed_if_moved(paths, "carto_v4", "klipper", log=said.append) == "config.TestBoardUSB"
     assert "6.3.0" in config_text(paths, "carto_v4", "klipper")
     assert said and "config.TestBoardUSB" in said[0]
 
@@ -584,9 +565,7 @@ def test_the_cli_build_agrees_with_the_panel(paths, registry, trees, monkeypatch
     assert "config.TestBoardUSB" in capsys.readouterr().out
 
 
-def test_a_bumped_application_re_derives_the_bootloader_rather_than_seeding_it(
-    paths, registry
-):
+def test_a_bumped_application_re_derives_the_bootloader_rather_than_seeding_it(paths, registry):
     """Katapult has no seed file of its own. Its "seed" is the application's
     config, so taking the bump means deriving again - and deriving is what runs
     the offset check that keeps the pair bootable."""
@@ -595,9 +574,7 @@ def test_a_bumped_application_re_derives_the_bootloader_rather_than_seeding_it(
     bump(paths)
     profiles.reseed_if_moved(paths, "carto_v4", "klipper")
 
-    assert (
-        profiles.reseed_if_moved(paths, "carto_v4", "katapult") == "derived:klipper"
-    )
+    assert profiles.reseed_if_moved(paths, "carto_v4", "katapult") == "derived:klipper"
     assert profiles.status(paths, "carto_v4", "katapult").reason is None
 
 
@@ -626,9 +603,7 @@ def test_a_seeded_config_reads_as_clean(paths, registry):
 def test_editing_the_config_becomes_visible(paths, registry):
     profiles.apply_seed(paths, "carto_v4", "klipper", "config.TestBoardUSB")
     target = pathlib.Path(paths.config_file("carto_v4", "klipper"))
-    target.write_text(
-        target.read_text(encoding="utf-8") + "CONFIG_ADDED_BY_HAND=y\n", encoding="utf-8"
-    )
+    target.write_text(target.read_text(encoding="utf-8") + "CONFIG_ADDED_BY_HAND=y\n", encoding="utf-8")
 
     state = profiles.status(paths, "carto_v4", "klipper")
     assert state.reason == profiles.CUSTOMISED
@@ -640,9 +615,7 @@ def test_editing_the_config_becomes_visible(paths, registry):
 def test_a_vendor_bump_reads_as_a_moved_seed(paths, registry):
     profiles.apply_seed(paths, "carto_v4", "klipper", "config.TestBoardUSB")
     seed = pathlib.Path(os.path.join(paths.home, "klipper")) / "config.TestBoardUSB"
-    seed.write_text(
-        seed.read_text(encoding="utf-8").replace("6.2.0", "6.3.0"), encoding="utf-8"
-    )
+    seed.write_text(seed.read_text(encoding="utf-8").replace("6.2.0", "6.3.0"), encoding="utf-8")
 
     state = profiles.status(paths, "carto_v4", "klipper")
     assert state.reason == profiles.SEED_MOVED
@@ -654,22 +627,16 @@ def test_a_local_edit_outranks_a_vendor_bump(paths, registry):
     do is the local edit, because reseeding over it is what loses work."""
     profiles.apply_seed(paths, "carto_v4", "klipper", "config.TestBoardUSB")
     seed = pathlib.Path(os.path.join(paths.home, "klipper")) / "config.TestBoardUSB"
-    seed.write_text(
-        seed.read_text(encoding="utf-8").replace("6.2.0", "6.3.0"), encoding="utf-8"
-    )
+    seed.write_text(seed.read_text(encoding="utf-8").replace("6.2.0", "6.3.0"), encoding="utf-8")
     target = pathlib.Path(paths.config_file("carto_v4", "klipper"))
-    target.write_text(
-        target.read_text(encoding="utf-8") + "CONFIG_ADDED_BY_HAND=y\n", encoding="utf-8"
-    )
+    target.write_text(target.read_text(encoding="utf-8") + "CONFIG_ADDED_BY_HAND=y\n", encoding="utf-8")
 
     assert profiles.status(paths, "carto_v4", "klipper").reason == profiles.CUSTOMISED
 
 
 def test_a_lost_record_degrades_to_unmanaged(paths, registry):
     profiles.apply_seed(paths, "carto_v4", "klipper", "config.TestBoardUSB")
-    pathlib.Path(paths.profile_file("carto_v4", "klipper")).write_text(
-        "not json", encoding="utf-8"
-    )
+    pathlib.Path(paths.profile_file("carto_v4", "klipper")).write_text("not json", encoding="utf-8")
     assert profiles.status(paths, "carto_v4", "klipper").reason == profiles.UNMANAGED
 
 
@@ -687,9 +654,7 @@ def test_forget_detaches_without_touching_the_config(paths, registry):
 # --------------------------------------------------------------------------
 
 
-def test_deriving_carries_the_board_answers_and_drops_the_application_ones(
-    paths, registry
-):
+def test_deriving_carries_the_board_answers_and_drops_the_application_ones(paths, registry):
     profiles.apply_seed(paths, "carto_v4", "klipper", "config.TestBoardUSB")
     result = profiles.derive_bootloader(paths, "carto_v4", "klipper")
 
@@ -721,7 +686,7 @@ def test_the_can_interface_is_carried_too(paths, registry):
 
 
 def test_an_answer_the_target_tree_will_not_take_is_reported_as_dropped(paths, registry):
-    """"We wrote it into the file" is not "it took".
+    """ "We wrote it into the file" is not "it took".
 
     kconfiglib remembers a user value it cannot apply - here a CAN speed
     carried without the CAN interface it depends on - and goes on reporting the
@@ -810,7 +775,7 @@ def test_reseeding_the_application_makes_the_derived_config_stale(paths, registr
     ("line", "expected"),
     [
         ("CONFIG_MACH_STM32=y", ("MACH_STM32", "y")),
-        ("CONFIG_VERSION=\"CARTOGRAPHER 6.2.0\"", ("VERSION", '"CARTOGRAPHER 6.2.0"')),
+        ('CONFIG_VERSION="CARTOGRAPHER 6.2.0"', ("VERSION", '"CARTOGRAPHER 6.2.0"')),
         ("CONFIG_CANBUS_FREQUENCY=1000000", ("CANBUS_FREQUENCY", "1000000")),
         # The form a minimal config uses for a bool whose default is y. Treating
         # it as a comment would carry the symbol across at the wrong value.
@@ -831,10 +796,7 @@ def test_answer_lines_are_read_both_ways_round(line, expected):
 
 
 def test_stamped_version_reads_the_existing_fixture_seed():
-    assert (
-        profiles.stamped_version(str(PROFILE_TREE / "config.TestBoardUSB"))
-        == "TESTFW 6.2.0"
-    )
+    assert profiles.stamped_version(str(PROFILE_TREE / "config.TestBoardUSB")) == "TESTFW 6.2.0"
 
 
 def test_stamped_version_is_none_for_a_tree_that_defines_no_such_symbol(tmp_path):
@@ -901,16 +863,12 @@ def test_a_declared_family_seeds_from_its_own_tree(tmp_path, trees):
     assert mcu.profile == "config.TestBoardUSB"
 
     families = firmware.load(paths)
-    result = profiles.apply_seed(
-        paths, "carto_v4", "cartographer", mcu.profile, families=families
-    )
+    result = profiles.apply_seed(paths, "carto_v4", "cartographer", mcu.profile, families=families)
     assert "CONFIG_CARTOGRAPHER_G431_ENABLE=y" in result.answers
     assert result.config_path == paths.config_file("carto_v4", "cartographer")
 
     # And katapult is derived from it, across two differently-named trees.
-    derived = profiles.derive_bootloader(
-        paths, "carto_v4", "cartographer", families=families
-    )
+    derived = profiles.derive_bootloader(paths, "carto_v4", "cartographer", families=families)
     assert derived.app_address == 0x8002000
     assert "CONFIG_MACH_STM32G431=y" in config_text(paths, "carto_v4", "katapult")
 
@@ -928,8 +886,6 @@ def test_the_profile_key_round_trips_through_the_registry(paths, registry):
 
 def test_a_record_survives_a_round_trip_as_json(paths, registry):
     result = profiles.apply_seed(paths, "carto_v4", "klipper", "config.TestBoardUSB")
-    on_disk = json.loads(
-        pathlib.Path(paths.profile_file("carto_v4", "klipper")).read_text(encoding="utf-8")
-    )
+    on_disk = json.loads(pathlib.Path(paths.profile_file("carto_v4", "klipper")).read_text(encoding="utf-8"))
     assert on_disk["answers"] == result.answers
     assert on_disk["profile"] == result.profile

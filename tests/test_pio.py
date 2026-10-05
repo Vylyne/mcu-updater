@@ -195,9 +195,7 @@ def test_pio_type_sections_do_not_disturb_the_mcu_registry(paths, live_registry_
 
     with open(paths.registry_file, "w", encoding="utf-8") as fh:
         fh.write(
-            live_registry_text
-            + "\n"
-            + "[type knomi_toolchanger]\nchipset: esp32\nfirmware: knomi_serial\n"
+            live_registry_text + "\n" + "[type knomi_toolchanger]\nchipset: esp32\nfirmware: knomi_serial\n"
             "platformio_env: knomi_toolchanger\n"
         )
 
@@ -274,8 +272,7 @@ def test_an_upload_without_a_port_is_refused(paths, settings, display):
 
 def test_the_upload_command_always_pins_the_port(paths, settings, display, monkeypatch):
     commands = []
-    monkeypatch.setattr(pio, "run_streamed", lambda cmd, **kw: commands.append(cmd) or 0
-    )
+    monkeypatch.setattr(pio, "run_streamed", lambda cmd, **kw: commands.append(cmd) or 0)
     monkeypatch.setattr(pio, "find_pio", lambda s: "/usr/bin/pio")
     # Held steady so this stays about pinning: the suite runs on Windows, where
     # realpath turns a /dev path into C:\dev. Resolution has its own tests.
@@ -384,9 +381,7 @@ def test_the_chip_is_captured_from_a_real_transcript(paths, settings, display, m
     assert "mac" not in result
 
 
-def test_a_transcript_with_no_chip_reports_none_rather_than_guessing(
-    paths, settings, display, monkeypatch
-):
+def test_a_transcript_with_no_chip_reports_none_rather_than_guessing(paths, settings, display, monkeypatch):
     def fake(cmd, **kwargs):
         kwargs["reporter"]("stdout", "Uploading...")
         return 0
@@ -397,9 +392,7 @@ def test_a_transcript_with_no_chip_reports_none_rather_than_guessing(
     assert pio.upload(paths, settings, display, "/dev/x")["chip"] is None
 
 
-def test_a_failed_upload_raises_rather_than_returning_a_result(
-    paths, settings, display, monkeypatch
-):
+def test_a_failed_upload_raises_rather_than_returning_a_result(paths, settings, display, monkeypatch):
     """esptool refuses to write to anything that is not an ESP32, so a non-zero
     exit is the target check doing its job - it must not read as success."""
 
@@ -476,9 +469,7 @@ def test_a_symlinked_port_is_resolved_before_platformio_sees_it(
     commands = []
     monkeypatch.setattr(pio, "run_streamed", lambda cmd, **kw: commands.append(cmd) or 0)
     monkeypatch.setattr(pio, "find_pio", lambda s: "/usr/bin/pio")
-    monkeypatch.setattr(
-        pio.os.path, "realpath", lambda p: "/dev/ttyUSB0" if p == "/dev/knomi_t0" else p
-    )
+    monkeypatch.setattr(pio.os.path, "realpath", lambda p: "/dev/ttyUSB0" if p == "/dev/knomi_t0" else p)
 
     result = pio.upload(paths, settings, display, "/dev/knomi_t0")
 
@@ -489,35 +480,25 @@ def test_a_symlinked_port_is_resolved_before_platformio_sees_it(
     assert result["port"] == "/dev/knomi_t0"
 
 
-def test_the_resolution_is_reported_so_the_written_device_is_visible(
-    paths, settings, display, monkeypatch
-):
+def test_the_resolution_is_reported_so_the_written_device_is_visible(paths, settings, display, monkeypatch):
     lines = []
     monkeypatch.setattr(pio, "run_streamed", lambda cmd, **kw: 0)
     monkeypatch.setattr(pio, "find_pio", lambda s: "/usr/bin/pio")
-    monkeypatch.setattr(
-        pio.os.path, "realpath", lambda p: "/dev/ttyUSB0" if p == "/dev/knomi_t0" else p
-    )
+    monkeypatch.setattr(pio.os.path, "realpath", lambda p: "/dev/ttyUSB0" if p == "/dev/knomi_t0" else p)
 
-    pio.upload(
-        paths, settings, display, "/dev/knomi_t0", reporter=lambda s, t: lines.append(t)
-    )
+    pio.upload(paths, settings, display, "/dev/knomi_t0", reporter=lambda s, t: lines.append(t))
 
     assert any("/dev/knomi_t0 -> /dev/ttyUSB0" in line for line in lines)
 
 
-def test_a_port_that_is_not_a_symlink_is_passed_through_unchanged(
-    paths, settings, display, monkeypatch
-):
+def test_a_port_that_is_not_a_symlink_is_passed_through_unchanged(paths, settings, display, monkeypatch):
     commands = []
     monkeypatch.setattr(pio, "run_streamed", lambda cmd, **kw: commands.append(cmd) or 0)
     monkeypatch.setattr(pio, "find_pio", lambda s: "/usr/bin/pio")
     monkeypatch.setattr(pio.os.path, "realpath", lambda p: p)
 
     lines = []
-    pio.upload(
-        paths, settings, display, "/dev/ttyUSB1", reporter=lambda s, t: lines.append(t)
-    )
+    pio.upload(paths, settings, display, "/dev/ttyUSB1", reporter=lambda s, t: lines.append(t))
 
     cmd = commands[0]
     assert cmd[cmd.index("--upload-port") + 1] == "/dev/ttyUSB1"
@@ -525,9 +506,7 @@ def test_a_port_that_is_not_a_symlink_is_passed_through_unchanged(
     assert not any("->" in line for line in lines)
 
 
-def test_the_upload_command_carries_no_option_pio_run_does_not_have(
-    paths, settings, display, monkeypatch
-):
+def test_the_upload_command_carries_no_option_pio_run_does_not_have(paths, settings, display, monkeypatch):
     """`--project-option` belongs to `pio ci` and `pio project init`, not `pio run`.
 
     Passing it made pio exit 2 before touching the board - which costs a whole
@@ -557,8 +536,7 @@ def test_waiting_for_a_new_port_is_explained_rather_than_reported_as_exit_2(
     transcript = [
         "Forcing reset using 1200bps open/close on port /dev/ttyUSB0",
         "Waiting for the new upload port...",
-        "Error: Couldn't find a board on the selected port. Check that you have the "
-        "correct port selected.",
+        "Error: Couldn't find a board on the selected port. Check that you have the correct port selected.",
     ]
 
     def fake(cmd, **kwargs):
@@ -579,9 +557,7 @@ def test_waiting_for_a_new_port_is_explained_rather_than_reported_as_exit_2(
     assert exc.value.data["remedy"] == "board_upload.wait_for_upload_port = no"
 
 
-def test_an_ordinary_build_failure_keeps_the_plain_message(
-    paths, settings, display, monkeypatch
-):
+def test_an_ordinary_build_failure_keeps_the_plain_message(paths, settings, display, monkeypatch):
     """Only the wait-for-port signature gets the long explanation."""
 
     def fake(cmd, **kwargs):

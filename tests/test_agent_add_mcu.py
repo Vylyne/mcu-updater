@@ -525,9 +525,7 @@ def test_a_lone_bootsel_board_needs_no_choice(adder, paths, fake_root, monkeypat
     assert adder.runner.get(res["job_id"]).state == "succeeded"
 
 
-def test_two_bootsel_boards_one_mounted_is_not_paired_to_the_wrong_one(
-    adder, paths, fake_root, monkeypatch
-):
+def test_two_bootsel_boards_one_mounted_is_not_paired_to_the_wrong_one(adder, paths, fake_root, monkeypatch):
     """`Bootsel.scan_candidates` gates `ready` on the mount count, not the
     device count, so a second board sitting in BOOTSEL but not yet mounted
     still leaves the scan `ready`. `devices` sorts by by-id name, not by which
@@ -559,18 +557,14 @@ def test_two_bootsel_boards_one_mounted_is_not_paired_to_the_wrong_one(
     lines, _, _ = job.log_since(0)
     assert any("could not say which USB port" in line.text for line in lines)
     # And the job says why, before the write: two boards, one written.
-    assert any(
-        line.stream == "warn" and "2 RP2040s are in BOOTSEL" in line.text for line in lines
-    )
+    assert any(line.stream == "warn" and "2 RP2040s are in BOOTSEL" in line.text for line in lines)
     # No pairing recorded under either candidate's id - recording one against
     # the unmounted board's id would let `adopt_paired` later claim a board
     # that was never written.
     assert Pairings(adder.paths).all() == {}
 
 
-def test_the_mounted_board_of_two_is_the_one_paired_and_waited_on(
-    adder, paths, fake_root, monkeypatch
-):
+def test_the_mounted_board_of_two_is_the_one_paired_and_waited_on(adder, paths, fake_root, monkeypatch):
     """With the mount table saying which board is on the one mounted volume,
     the pick is that board - not `devices[0]`, which sorts the unmounted
     "AAAAAAAAAAAA" first - so its id is paired and its port waited on."""
@@ -703,17 +697,13 @@ def _klipper_flashers(paths, flashers: str) -> None:
     with open(paths.main_config, encoding="utf-8") as fh:
         text = fh.read()
     assert KLIPPER_SECTION in text
-    text = text.replace(
-        KLIPPER_SECTION, f"[firmware klipper]\nsource: ~/klipper\nflashers: {flashers}\n"
-    )
+    text = text.replace(KLIPPER_SECTION, f"[firmware klipper]\nsource: ~/klipper\nflashers: {flashers}\n")
     with open(paths.main_config, "w", encoding="utf-8", newline="\n") as fh:
         fh.write(text)
 
 
 def _no_katapult_type(adder, name: str, chipset: str) -> None:
-    adder.dispatch(
-        "fw.type.add", {"name": name, "chipset": chipset, "katapult_installed": False}
-    )
+    adder.dispatch("fw.type.add", {"name": name, "chipset": chipset, "katapult_installed": False})
     assert "katapult" not in Registry.load(adder.paths).get(name).firmwares
 
 
@@ -721,9 +711,7 @@ def _uf2_image(address: int, payload: bytes = b"\x5a" * 256) -> bytes:
     """One valid UF2 block of `payload` at `address`."""
     import struct
 
-    block = struct.pack(
-        "<8I", 0x0A324655, 0x9E5D5157, 0x2000, address, 256, 0, 1, 0xE48BFF56
-    )
+    block = struct.pack("<8I", 0x0A324655, 0x9E5D5157, 0x2000, address, 256, 0, 1, 0xE48BFF56)
     return block + payload.ljust(476, b"\0") + struct.pack("<I", 0x0AB16F30)
 
 
@@ -755,9 +743,7 @@ def _bare_pico(adder, paths, fake_root, *, address: int, flashers: str = "flasht
     return uf2, vol
 
 
-def test_a_type_with_no_katapult_writes_its_klipper_uf2_over_bootsel(
-    adder, paths, fake_root, monkeypatch
-):
+def test_a_type_with_no_katapult_writes_its_klipper_uf2_over_bootsel(adder, paths, fake_root, monkeypatch):
     """The bug: the flow always wrote Katapult. A type with none has its own
     application as its first image, and that image is what goes on the board -
     unmodified, since it starts at flash base and overwrites what boots.
@@ -854,9 +840,7 @@ def test_a_type_with_no_katapult_writes_its_klipper_bin_over_dfu(adder, paths, m
 
 
 @pytest.mark.parametrize("app_address", [0x08002000, None], ids=["offset", "unknown"])
-def test_a_klipper_bin_not_at_flash_base_is_refused_before_a_job(
-    adder, paths, monkeypatch, app_address
-):
+def test_a_klipper_bin_not_at_flash_base_is_refused_before_a_job(adder, paths, monkeypatch, app_address):
     """An address the sidecar cannot vouch for is refused too: it cannot be
     proven bootable, and DFU writes at 0x08000000 regardless."""
     _fw_bin, written = _bare_ebb(adder, paths, monkeypatch, app_address=app_address)
@@ -873,9 +857,7 @@ def test_a_klipper_bin_not_at_flash_base_is_refused_before_a_job(
 def test_no_dfu_util_on_klipper_names_the_line_to_add(adder, paths, monkeypatch):
     """Not "flash Katapult by hand": this type has no Katapult. The fix is the
     install family's own list."""
-    _fw_bin, written = _bare_ebb(
-        adder, paths, monkeypatch, app_address=0x08000000, flashers="flashtool"
-    )
+    _fw_bin, written = _bare_ebb(adder, paths, monkeypatch, app_address=0x08000000, flashers="flashtool")
 
     # Refused before a job exists: `first_install` answers it from the list.
     with pytest.raises(RpcError) as exc:
@@ -907,9 +889,7 @@ def test_a_type_with_no_katapult_and_nothing_built_names_klipper(adder, paths, m
     assert adder.runner.current() is None
 
 
-def test_a_bin_only_rp2040_klipper_build_is_told_to_drop_the_offset(
-    adder, paths, fake_root
-):
+def test_a_bin_only_rp2040_klipper_build_is_told_to_drop_the_offset(adder, paths, fake_root):
     """An RP2040 Klipper build makes a .bin only for a bootloader offset, so
     "build it first" would make the same .bin again. The advice names the
     setting instead."""
@@ -948,9 +928,7 @@ def _roadrunner(adder, paths, fake_root, tmp_path, *, chipset="rp2040"):
     adder.paths = dataclasses.replace(adder.paths, bootsel_root=str(root))
 
 
-def test_a_cmake_rp2040_is_installed_and_found_on_its_port(
-    adder, paths, fake_root, tmp_path, monkeypatch
-):
+def test_a_cmake_rp2040_is_installed_and_found_on_its_port(adder, paths, fake_root, tmp_path, monkeypatch):
     """The bug this feature exists for: a Roadrunner was unknown_type, and had
     it not been, the chipset-filtered wait would never have seen it come back
     as `usb-Vylyne_Roadrunner_...`."""
@@ -976,16 +954,12 @@ def test_a_cmake_rp2040_is_installed_and_found_on_its_port(
     assert job.result["port"] == DFU_PORT
 
 
-def test_a_board_on_another_port_is_not_the_new_board(
-    adder, paths, fake_root, tmp_path, monkeypatch
-):
+def test_a_board_on_another_port_is_not_the_new_board(adder, paths, fake_root, tmp_path, monkeypatch):
     _roadrunner(adder, paths, fake_root, tmp_path)
 
     def elsewhere(*args, **kwargs):
         # Every tty now resolves to another port; the volume stays on DFU_PORT.
-        adder.paths = dataclasses.replace(
-            adder.paths, tty_sysfs=str(fake_root / "sys-dev" / "9-9" / "tty")
-        )
+        adder.paths = dataclasses.replace(adder.paths, tty_sysfs=str(fake_root / "sys-dev" / "9-9" / "tty"))
         make_device(fake_root / "bus", "Vylyne", "Roadrunner", "RR-OTHER")
 
     monkeypatch.setattr("mcu_updater.flashers.flash.flash_initial_bootloader", elsewhere)
@@ -995,9 +969,7 @@ def test_a_board_on_another_port_is_not_the_new_board(
     assert adder.runner.get(res["job_id"]).result["candidates"] == []
 
 
-def test_no_port_falls_back_to_any_new_board_with_a_warning(
-    adder, paths, fake_root, tmp_path, monkeypatch
-):
+def test_no_port_falls_back_to_any_new_board_with_a_warning(adder, paths, fake_root, tmp_path, monkeypatch):
     _roadrunner(adder, paths, fake_root, tmp_path)
     # No block sysfs: the BOOTSEL volume cannot be traced to a port.
     adder.paths = dataclasses.replace(adder.paths, block_sysfs=str(fake_root / "nowhere"))
@@ -1016,9 +988,7 @@ def test_no_port_falls_back_to_any_new_board_with_a_warning(
     assert any("which USB port" in line.text for line in lines)
 
 
-def test_a_cmake_type_with_no_chipset_is_refused_naming_the_key(
-    adder, paths, fake_root, tmp_path
-):
+def test_a_cmake_type_with_no_chipset_is_refused_naming_the_key(adder, paths, fake_root, tmp_path):
     _roadrunner(adder, paths, fake_root, tmp_path, chipset="")
     with pytest.raises(RpcError) as exc:
         adder.dispatch("fw.add_mcu.start", {"name": RR})

@@ -277,9 +277,7 @@ def run_streamed(
         raise OperationCancelled("build cancelled")
     if timed_out:
         assert timeout is not None
-        raise BuildError(
-            f"'{cmd[0]}' timed out after {timeout:g}s", tool=cmd[0], timeout=timeout
-        )
+        raise BuildError(f"'{cmd[0]}' timed out after {timeout:g}s", tool=cmd[0], timeout=timeout)
     return rc
 
 
@@ -516,10 +514,7 @@ def artifact_status(
     """
     # Built means staged anything. An offset-less RP2040 Klipper build stages
     # only a `.uf2`, and is no less built for it.
-    if not (
-        os.path.exists(paths.bin_file(mcu_type, fw))
-        or os.path.exists(paths.uf2_file(mcu_type, fw))
-    ):
+    if not (os.path.exists(paths.bin_file(mcu_type, fw)) or os.path.exists(paths.uf2_file(mcu_type, fw))):
         return ArtifactStatus(NEVER_BUILT)
 
     side = read_sidecar(paths, mcu_type, fw)
@@ -545,9 +540,7 @@ def artifact_status(
     if recorded_uf2 and os.path.exists(uf2_path) and sha256_file(uf2_path) != recorded_uf2:
         return ArtifactStatus(FOREIGN_BUILD)
 
-    cfg_hash = config_sha if config_sha is not None else sha256_file(
-        paths.config_file(mcu_type, fw)
-    )
+    cfg_hash = config_sha if config_sha is not None else sha256_file(paths.config_file(mcu_type, fw))
     if cfg_hash and side.get("config_sha256") and cfg_hash != side["config_sha256"]:
         return ArtifactStatus(CONFIG_CHANGED)
 
@@ -589,12 +582,16 @@ def staged(paths: Paths, mcu_type: str, family: firmware.FirmwareFamily) -> Stag
     bin_path = paths.bin_file(mcu_type, fw)
     if os.path.exists(bin_path):
         found.append(
-            Artifact(KIND_BIN, bin_path, _verified(bin_path, recorded_sha256(side, KIND_BIN, primary=KIND_BIN)))
+            Artifact(
+                KIND_BIN, bin_path, _verified(bin_path, recorded_sha256(side, KIND_BIN, primary=KIND_BIN))
+            )
         )
     uf2_path = paths.uf2_file(mcu_type, fw)
     if KIND_UF2 in recorded_kinds(side) and os.path.exists(uf2_path):
         found.append(
-            Artifact(KIND_UF2, uf2_path, _verified(uf2_path, recorded_sha256(side, KIND_UF2, primary=KIND_BIN)))
+            Artifact(
+                KIND_UF2, uf2_path, _verified(uf2_path, recorded_sha256(side, KIND_UF2, primary=KIND_BIN))
+            )
         )
     return Staged(
         fw=fw,
@@ -629,9 +626,7 @@ def menuconfig_tty(paths: Paths, mcu_type: str, fw: str, *, pause: bool = True) 
 
     fw_dir = firmware.resolve(paths, fw).source_dir(paths)
     if not os.path.isdir(fw_dir):
-        raise SourceTreeMissingError(
-            f"source directory {fw_dir} not found.", fw=fw, path=fw_dir
-        )
+        raise SourceTreeMissingError(f"source directory {fw_dir} not found.", fw=fw, path=fw_dir)
 
     config_file = paths.config_file(mcu_type, fw)
     os.makedirs(os.path.dirname(config_file), exist_ok=True)
@@ -658,9 +653,7 @@ def _read_app_address(config_file: str) -> int | None:
     """
     from . import profiles
 
-    raw = profiles.answer_map(profiles.answer_lines(config_file)).get(
-        profiles.APP_ADDRESS_SYMBOL
-    )
+    raw = profiles.answer_map(profiles.answer_lines(config_file)).get(profiles.APP_ADDRESS_SYMBOL)
     if not raw:
         return None
     try:
@@ -714,8 +707,7 @@ def _clean_source_tree_after_build(
             )
             if rc != 0:
                 raise BuildError(
-                    f"firmware source cleanup failed for {mcu_type} ({fw}): "
-                    f"make clean exited {rc}.",
+                    f"firmware source cleanup failed for {mcu_type} ({fw}): make clean exited {rc}.",
                     type=mcu_type,
                     fw=fw,
                     returncode=rc,
@@ -782,9 +774,7 @@ def build(
 
     do_reseed = settings.reseed_on_build if reseed is None else reseed
     reseeded = (
-        profiles.reseed_if_moved(
-            paths, mcu_type, fw, log=lambda message: reporter("info", message)
-        )
+        profiles.reseed_if_moved(paths, mcu_type, fw, log=lambda message: reporter("info", message))
         if do_reseed
         else None
     )
@@ -805,9 +795,7 @@ def build(
     started = time.monotonic()
 
     reporter("info", f"Building {fw} for {mcu_type}...")
-    with _clean_source_tree_after_build(
-        fw_dir, kconfig_arg, mcu_type, fw, reporter, dry_run=dry_run
-    ):
+    with _clean_source_tree_after_build(fw_dir, kconfig_arg, mcu_type, fw, reporter, dry_run=dry_run):
         with makefile_patches(paths, mcu, fw, reporter, dry_run=dry_run):
             if do_clean:
                 run_streamed(
@@ -872,8 +860,7 @@ def build(
             made_uf2 = os.path.exists(compiled_uf2)
             if not (made_bin or made_uf2):
                 raise BuildError(
-                    f"make succeeded but neither {compiled} nor {compiled_uf2} "
-                    f"was produced.",
+                    f"make succeeded but neither {compiled} nor {compiled_uf2} was produced.",
                     type=mcu_type,
                     fw=fw,
                     expected=[compiled, compiled_uf2],

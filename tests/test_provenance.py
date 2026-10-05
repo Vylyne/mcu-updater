@@ -233,9 +233,7 @@ def test_only_the_fields_the_reporter_names_are_queried(api):
 
     api.reported_images(REPORTER, [SERIAL])
 
-    queries = [
-        params for params in api._call.queries if OBJECT in (params.get("objects") or {})
-    ]
+    queries = [params for params in api._call.queries if OBJECT in (params.get("objects") or {})]
     assert queries and queries[0]["objects"][OBJECT] == ["identity", "firmware_image"]
 
 
@@ -245,13 +243,15 @@ def test_the_roadrunner_wire_source_speaks_device_info(paths, monkeypatch):
     monkeypatch.setattr(
         roadrunner,
         "wire_provenance",
-        lambda _paths: lambda serial: {
-            "fw_version": "v1.2.0-3-gdeadbee",
-            "digest_algorithm": 1,
-            "digest": 0xBBE38AA9,
-            "image_start": 0x10000000,
-            "image_length": 600,
-        },
+        lambda _paths: (
+            lambda serial: {
+                "fw_version": "v1.2.0-3-gdeadbee",
+                "digest_algorithm": 1,
+                "digest": 0xBBE38AA9,
+                "image_start": 0x10000000,
+                "image_length": 600,
+            }
+        ),
     )
 
     assert REPORTER.wire_source(paths)(SERIAL) == WIRE_INFO

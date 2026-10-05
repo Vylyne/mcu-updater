@@ -105,8 +105,7 @@ def serial_topology_for(paths: Paths, port: str) -> str:
         )
     if len(topologies) > 1:
         raise FlashError(
-            f"serial by-path topology for {port} is ambiguous: "
-            f"{', '.join(topologies)}",
+            f"serial by-path topology for {port} is ambiguous: {', '.join(topologies)}",
             port=port,
             topologies=topologies,
         )
@@ -131,12 +130,7 @@ def _mount_matches_topology(mount: str, topology: str) -> bool:
     # The serial parent is followed by exactly one USB interface component
     # before the mass-storage SCSI suffix. Requiring that shape avoids treating
     # a deeper hub path that merely shares the same textual prefix as a match.
-    return (
-        re.fullmatch(
-            re.escape(prefix) + r"_[0-9]+_[0-9]+-scsi(?:[-_].*)?", tag
-        )
-        is not None
-    )
+    return re.fullmatch(re.escape(prefix) + r"_[0-9]+_[0-9]+-scsi(?:[-_].*)?", tag) is not None
 
 
 def _unmatchable(mounts: list[str]) -> tuple[list[str], list[str]]:
@@ -149,14 +143,8 @@ def _unmatchable(mounts: list[str]) -> tuple[list[str], list[str]]:
     board rebooted, mounted, and cannot be correlated - a very different fact
     from "nothing appeared", and the operator needs to be told which.
     """
-    legacy = [
-        mount for mount in mounts if os.path.basename(mount) == BOOTSEL_VOLUME_NAME
-    ]
-    unknown = [
-        mount
-        for mount in mounts
-        if os.path.basename(mount) == BOOTSEL_UNKNOWN_PATH_LEAF
-    ]
+    legacy = [mount for mount in mounts if os.path.basename(mount) == BOOTSEL_VOLUME_NAME]
+    unknown = [mount for mount in mounts if os.path.basename(mount) == BOOTSEL_UNKNOWN_PATH_LEAF]
     return legacy, unknown
 
 
@@ -205,15 +193,12 @@ def mount_for_topology(
     deadline = time.monotonic() + timeout
     while True:
         mounts = bootsel_scan(paths)
-        matches = [
-            mount for mount in mounts if _mount_matches_topology(mount, topology)
-        ]
+        matches = [mount for mount in mounts if _mount_matches_topology(mount, topology)]
         if len(matches) == 1:
             return matches[0]
         if len(matches) > 1:
             raise FlashError(
-                f"BOOTSEL topology {topology} is ambiguous: "
-                f"{len(matches)} matching volumes are mounted",
+                f"BOOTSEL topology {topology} is ambiguous: {len(matches)} matching volumes are mounted",
                 topology=topology,
                 mounts=matches,
             )

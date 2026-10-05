@@ -73,11 +73,7 @@ def test_a_name_this_document_has_never_seen_gets_a_fresh_section():
 
 def test_a_registry_round_trips_without_changing_the_file(paths):
     with open(paths.registry_file, "w", encoding="utf-8") as fh:
-        fh.write(
-            with_base_firmwares(
-                "[type board]\nchipset: stm32f072xb\nfirmware: klipper\nserials:\n"
-            )
-        )
+        fh.write(with_base_firmwares("[type board]\nchipset: stm32f072xb\nfirmware: klipper\nserials:\n"))
 
     reg = Registry.load(paths)
     assert "board" in reg.names()

@@ -143,9 +143,7 @@ def test_two_mounted_boards_is_ambiguous_with_no_way_to_choose(api, fake_root, m
     by_id.mkdir()
     for serial in ("AAAAAAAAAAAA", "BBBBBBBBBBBB"):
         (by_id / f"usb-RPI_RP2_{serial}-0-0-part1").write_text("", encoding="utf-8")
-    monkeypatch.setattr(
-        bootsel_discovery, "_BOOTSEL_DISK_BY_ID_GLOB", str(by_id / "usb-RPI_RP2_*-part1")
-    )
+    monkeypatch.setattr(bootsel_discovery, "_BOOTSEL_DISK_BY_ID_GLOB", str(by_id / "usb-RPI_RP2_*-part1"))
     api.paths = dataclasses.replace(api.paths, bootsel_root="")
 
     res = api.dispatch("fw.bootsel.scan")
@@ -168,7 +166,13 @@ def test_the_probe_never_raises(api, fake_root):
         api.paths = dataclasses.replace(api.paths, bootsel_root=str(root))
         res = api.dispatch("fw.bootsel.scan")
         assert set(res) >= {
-            "devices", "count", "mounts", "mount_count", "ready", "reason", "message",
+            "devices",
+            "count",
+            "mounts",
+            "mount_count",
+            "ready",
+            "reason",
+            "message",
         }
         assert isinstance(res["ready"], bool)
 

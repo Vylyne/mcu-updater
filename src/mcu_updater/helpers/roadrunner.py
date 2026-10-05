@@ -86,9 +86,7 @@ class RoadrunnerHelper:
 
         return source
 
-    def request_bootsel(
-        self, bench: Bench, *, serial: str, chipset: str, ctx: Any
-    ) -> BootselHandoff:
+    def request_bootsel(self, bench: Bench, *, serial: str, chipset: str, ctx: Any) -> BootselHandoff:
         device = roadrunner.find_provisioned(bench.paths, serial)
         topology = bootsel.serial_topology_for(bench.paths, device.port)
         roadrunner.Roadrunner().request_bootsel(bench.paths, device)
@@ -152,9 +150,7 @@ class RoadrunnerHelper:
         from ..discovery import roadrunner
 
         device = roadrunner.find_untracked(paths, serial)
-        return roadrunner.provision_roadrunner(
-            paths, device, secrets.token_bytes(16)
-        ).serial
+        return roadrunner.provision_roadrunner(paths, device, secrets.token_bytes(16)).serial
 
 
 __all__ = ["RoadrunnerHelper"]

@@ -80,9 +80,7 @@ def _size(path: str) -> int | None:
         return None
 
 
-def _source_json(
-    path: str | None, version: str | None, dirty: bool | None
-) -> dict[str, Any] | None:
+def _source_json(path: str | None, version: str | None, dirty: bool | None) -> dict[str, Any] | None:
     """A row's `source`: the tree its builder would build from right now.
 
     `version` is whatever string that builder's staleness check compares, so
@@ -321,9 +319,7 @@ class StatusMixin(_Base):
             # A third question, deliberately beside the other two rather than
             # folded into `reason`: a customised config is not a stale artifact
             # and does not want a rebuild, it wants somebody to know about it.
-            "profile": profiles.status(
-                self.paths, mcu_type, fw, config_sha=config_sha
-            ).to_json(),
+            "profile": profiles.status(self.paths, mcu_type, fw, config_sha=config_sha).to_json(),
         }
 
     def type_status(
@@ -438,9 +434,7 @@ class StatusMixin(_Base):
             # the artifact being stale: "needs rebuilding" and "needs flashing" are
             # different questions, and reporting only the first is what let a board
             # 90 commits behind show as up to date.
-            "needs_flash": any(
-                s.get("needs_flash") for s in serials + canbus_devices
-            ),
+            "needs_flash": any(s.get("needs_flash") for s in serials + canbus_devices),
         }
         for fw in mcu.fw_order():
             cfg = mcu.fw_get(fw)
@@ -454,9 +448,7 @@ class StatusMixin(_Base):
             out[fw] = block
         return out
 
-    def inventory(
-        self, canbus: dict[str, dict[str, Any]] | None = None
-    ) -> list[inventory_mod.Row]:
+    def inventory(self, canbus: dict[str, dict[str, Any]] | None = None) -> list[inventory_mod.Row]:
         """Every declared identity joined with one by-id sweep.
 
         Lenient about the type list: a config error is raised by the registry
@@ -474,9 +466,7 @@ class StatusMixin(_Base):
             if (owners := reg.find_declared_types_for_serial(device.serial))
         }
         ignored = set(self.settings().ignored_serials)
-        return [
-            serialize_device(d, owner.get(d.serial), ignored) for d in bus_devices
-        ]
+        return [serialize_device(d, owner.get(d.serial), ignored) for d in bus_devices]
 
     # -- methods -----------------------------------------------------------
 
@@ -641,8 +631,7 @@ class StatusMixin(_Base):
                     # the device declaring it cannot work with the host, or it
                     # running an older commit than the tree.
                     "needs_flash": any(
-                        d["compatible"] is False or d["reason"] == pio_mod.SOURCE_CHANGED
-                        for d in devices
+                        d["compatible"] is False or d["reason"] == pio_mod.SOURCE_CHANGED for d in devices
                     ),
                 }
             )
@@ -751,15 +740,11 @@ class StatusMixin(_Base):
         # every row's `first_install` is answered from.
         entries, families = typelist.read_config(self.paths)
         configurable = self.kconfig_available(families)
-        out = [
-            self._mcu_target(reg, payload, allowed, configurable, families)
-            for payload in types
-        ] + [
-            self._platformio_target(payload, allowed) for payload in platformio
-        ] + [
-            self._cmake_target(payload, allowed, families, rows)
-            for payload in self.cmake_status()
-        ]
+        out = (
+            [self._mcu_target(reg, payload, allowed, configurable, families) for payload in types]
+            + [self._platformio_target(payload, allowed) for payload in platformio]
+            + [self._cmake_target(payload, allowed, families, rows) for payload in self.cmake_status()]
+        )
         # One answer for every provider's rows, from the type list: whether a
         # bare board of this type can be set up, and by which flasher.
         by_name = {e.name: e for e in entries}
@@ -768,9 +753,7 @@ class StatusMixin(_Base):
         return out
 
     @staticmethod
-    def _first_install_json(
-        entry: Any, families: dict[str, firmware.FirmwareFamily]
-    ) -> dict[str, Any]:
+    def _first_install_json(entry: Any, families: dict[str, firmware.FirmwareFamily]) -> dict[str, Any]:
         from ... import flashers
 
         if entry is None:
@@ -914,8 +897,7 @@ class StatusMixin(_Base):
                         if seeds
                         else self._blocked(
                             self.BLOCKED_NO_CONFIG,
-                            f"'{name}' has no saved {fw} configuration yet. "
-                            "Run menuconfig for it first.",
+                            f"'{name}' has no saved {fw} configuration yet. Run menuconfig for it first.",
                             name=name,
                             fw=fw,
                         )
@@ -1081,22 +1063,17 @@ class StatusMixin(_Base):
                     # they came from.
                     "sidecar": (
                         {}
-                        if status.reason
-                        in (NEVER_BUILT, NO_PROVENANCE, FOREIGN_BUILD)
+                        if status.reason in (NEVER_BUILT, NO_PROVENANCE, FOREIGN_BUILD)
                         else cmake_mod.read_sidecar(self.paths, entry) or {}
                     ),
-                    "has_firmware": os.path.exists(
-                        self.paths.uf2_file(name, entry.firmware)
-                    ),
+                    "has_firmware": os.path.exists(self.paths.uf2_file(name, entry.firmware)),
                     "source_version": state.version,
                     "source_dirty": state.dirty,
                     # probe_targets=False: this is the poll path. See
                     # `source_problem`'s docstring - the target probe
                     # shells out to cmake with a 30s timeout, and a
                     # panel refresh must not pay that per type.
-                    "build_blocked": cmake_mod.source_problem(
-                        entry, probe_targets=False
-                    ),
+                    "build_blocked": cmake_mod.source_problem(entry, probe_targets=False),
                     "chipset": entry.chipset,
                     "serials": list(entry.serials),
                 }
@@ -1119,11 +1096,7 @@ class StatusMixin(_Base):
         sidecar = payload["sidecar"]
         reader = device_info.reader_for(family)
         reporter = helpers.image_reporter(helper)
-        reported = (
-            self.reported_images(reporter, payload["serials"])
-            if reporter is not None
-            else {}
-        )
+        reported = self.reported_images(reporter, payload["serials"]) if reporter is not None else {}
         expected = verdict.Expected(
             stamp=sidecar.get("version"),
             artifact_shas=recorded_hashes(sidecar),
@@ -1206,9 +1179,7 @@ class StatusMixin(_Base):
                     blocked=(
                         None
                         if helper_problem is None
-                        else self._blocked(
-                            self.BLOCKED_CONFIG_CORRUPT, helper_problem, name=name
-                        )
+                        else self._blocked(self.BLOCKED_CONFIG_CORRUPT, helper_problem, name=name)
                     ),
                     extra=(
                         [
@@ -1250,9 +1221,7 @@ class StatusMixin(_Base):
                     "method": "fw.build",
                     "params": {"name": name},
                     "blocked": (
-                        None
-                        if not problem
-                        else self._blocked(self.BLOCKED_NO_SOURCE, problem, name=name)
+                        None if not problem else self._blocked(self.BLOCKED_NO_SOURCE, problem, name=name)
                     ),
                 }
             )
@@ -1272,9 +1241,7 @@ class StatusMixin(_Base):
                     refusal=(
                         None
                         if helper_problem is None
-                        else self._blocked(
-                            self.BLOCKED_CONFIG_CORRUPT, helper_problem, name=name
-                        )
+                        else self._blocked(self.BLOCKED_CONFIG_CORRUPT, helper_problem, name=name)
                     ),
                 )
             )
@@ -1306,9 +1273,7 @@ class StatusMixin(_Base):
             "needs_flash": self._aggregate(devices),
             "devices": devices,
             "actions": actions,
-            "source": _source_json(
-                payload["source"], payload["source_version"], payload["source_dirty"]
-            ),
+            "source": _source_json(payload["source"], payload["source_version"], payload["source_dirty"]),
             # No cmake seam contributes any yet. `flashable` went with `extra`:
             # the flash actions, the row's and each device's, already say it,
             # blocked or not.
@@ -1316,9 +1281,7 @@ class StatusMixin(_Base):
             "devices_note": None if devices else NO_TRACKED_DEVICES,
         }
 
-    def _platformio_target(
-        self, payload: dict[str, Any], allowed: set[str]
-    ) -> dict[str, Any]:
+    def _platformio_target(self, payload: dict[str, Any], allowed: set[str]) -> dict[str, Any]:
         name = payload["name"]
         status = ArtifactStatus(payload["artifact_reason"])
 
@@ -1371,11 +1334,7 @@ class StatusMixin(_Base):
                     "method": "fw.build",
                     "params": {"name": name},
                     "blocked": (
-                        None
-                        if not problem
-                        else self._blocked(
-                            self.BLOCKED_NO_SOURCE, problem, name=name
-                        )
+                        None if not problem else self._blocked(self.BLOCKED_NO_SOURCE, problem, name=name)
                     ),
                 }
             )
@@ -1409,9 +1368,7 @@ class StatusMixin(_Base):
         }
 
     @staticmethod
-    def _platformio_confidence(
-        device: ListedDevice, flashlog: Any, reader: DeviceInfoReader
-    ) -> str | None:
+    def _platformio_confidence(device: ListedDevice, flashlog: Any, reader: DeviceInfoReader) -> str | None:
         """How this device's identity was confirmed when we last wrote to it.
 
         The counterpart of the lookup in `flash_state`, with the same care: our
@@ -1428,9 +1385,7 @@ class StatusMixin(_Base):
         ident = (device.configured_id or device.reported_id or "").lower()
         if not ident:
             return None
-        record = flashlog.entry_for(
-            hardware_id_key(ident), reader.running_sha(device.version)
-        )
+        record = flashlog.entry_for(hardware_id_key(ident), reader.running_sha(device.version))
         return (record or {}).get("confidence")
 
     @staticmethod
@@ -1684,9 +1639,7 @@ class StatusMixin(_Base):
             devices = [d for d in devices if d["chipset"] == chipset]
         return {
             "devices": devices,
-            "adoptable": [
-                d for d in devices if d["is_mcu"] and d["tracked_by"] is None
-            ],
+            "adoptable": [d for d in devices if d["is_mcu"] and d["tracked_by"] is None],
         }
 
     def _identity_claimant(self, serial: str, want: str) -> Provisioner:
@@ -1697,9 +1650,7 @@ class StatusMixin(_Base):
         helper that is unambiguously the owner, or nowhere.
         """
         provisioners = [
-            prov
-            for prov in (helpers.provisioner(h) for h in helpers.all_helpers())
-            if prov is not None
+            prov for prov in (helpers.provisioner(h) for h in helpers.all_helpers()) if prov is not None
         ]
         states = {prov.name: prov.identity_state(serial) for prov in provisioners}
         claimants = [prov for prov in provisioners if states[prov.name] == want]
@@ -2293,11 +2244,7 @@ class StatusMixin(_Base):
         an object by the name settings gave you returns nothing at all, silently,
         for anyone who capitalises.
         """
-        return [
-            name
-            for name in self._all_object_names()
-            if name == prefix or name.startswith(prefix + " ")
-        ]
+        return [name for name in self._all_object_names() if name == prefix or name.startswith(prefix + " ")]
 
     def reported_images(
         self,
@@ -2433,9 +2380,7 @@ class StatusMixin(_Base):
                 canbus[uuid] = {
                     "mcu": name,
                     "version": version if isinstance(version, str) and version else None,
-                    "bridge": (
-                        "CANBUS_BRIDGE" in constants if isinstance(constants, dict) else None
-                    ),
+                    "bridge": ("CANBUS_BRIDGE" in constants if isinstance(constants, dict) else None),
                     "interface": interface,
                 }
         self._latest_canbus_info = canbus
@@ -2486,7 +2431,8 @@ class StatusMixin(_Base):
             if isinstance(uuid, str) and uuid:
                 interface = (values or {}).get("canbus_interface")
                 uuid_by_section[section.lower()] = (
-                    uuid.lower(), interface if isinstance(interface, str) and interface else "can0"
+                    uuid.lower(),
+                    interface if isinstance(interface, str) and interface else "can0",
                 )
 
         out: dict[str, dict[str, Any]] = {}
@@ -2505,9 +2451,7 @@ class StatusMixin(_Base):
                 # for a bridge - per the user's own live test against the
                 # Fusion's `mcu hexa` object. Not `bool(constants.get(...))`:
                 # the key's mere presence is the signal, not its value.
-                "bridge": (
-                    "CANBUS_BRIDGE" in constants if isinstance(constants, dict) else None
-                ),
+                "bridge": ("CANBUS_BRIDGE" in constants if isinstance(constants, dict) else None),
                 "interface": interface,
             }
         return out
@@ -2545,11 +2489,7 @@ class StatusMixin(_Base):
         # record is governed by the same discard rule as its verdict: a
         # confidence read off a discarded record would be exactly as misleading
         # as a stale recorded hash.
-        record = (
-            flashlog.entry_for(serial, running, version=version)
-            if flashlog is not None
-            else None
-        )
+        record = flashlog.entry_for(serial, running, version=version) if flashlog is not None else None
         status = verdict.decide(
             verdict.Evidence(
                 state=state,

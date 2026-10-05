@@ -213,8 +213,6 @@ def test_a_red_baseline_refuses_to_report_anything(tmp_path, capsys):
 
 def test_the_script_runs_as_a_command():
     """It is invoked as ./scripts/mutation_test.py, so it has to work that way."""
-    proc = subprocess.run(
-        [sys.executable, str(SCRIPT), "--help"], capture_output=True, timeout=60
-    )
+    proc = subprocess.run([sys.executable, str(SCRIPT), "--help"], capture_output=True, timeout=60)
     assert proc.returncode == 0
     assert b"mutation" in proc.stdout.lower()

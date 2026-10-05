@@ -63,9 +63,7 @@ class BulkMixin(_Base):
     def _scope(self, args: dict) -> str:
         scope = str(args.get("scope") or "stale")
         if scope not in self.SCOPES:
-            raise RpcError(
-                f"'scope' must be one of {list(self.SCOPES)}", ERR_INVALID_PARAMS
-            )
+            raise RpcError(f"'scope' must be one of {list(self.SCOPES)}", ERR_INVALID_PARAMS)
         return scope
 
     def _install(self) -> providers.Install:
@@ -99,9 +97,7 @@ class BulkMixin(_Base):
         what each target already uses, never an instruction to build a family
         something does not run.
         """
-        return providers.select(
-            install, stale_only=(scope == "stale"), only=only, fw=fw
-        )
+        return providers.select(install, stale_only=(scope == "stale"), only=only, fw=fw)
 
     def _boards_to_flash(self, reg: Registry, scope: str, only: str | None = None) -> list[dict]:
         """Which boards a flash_all should write, with the reason for each.
@@ -172,9 +168,7 @@ class BulkMixin(_Base):
                     )
         return out
 
-    def _canbus_boards_to_flash(
-        self, reg: Registry, scope: str, only: str | None = None
-    ) -> list[dict]:
+    def _canbus_boards_to_flash(self, reg: Registry, scope: str, only: str | None = None) -> list[dict]:
         """The CAN counterpart to `_boards_to_flash`: which tracked
         `canbus_uuids:` a flash_all should write, with the reason for each.
 
@@ -284,9 +278,7 @@ class BulkMixin(_Base):
                 )
         return out
 
-    def _cmake_boards_to_flash(
-        self, scope: str, only: str | None = None
-    ) -> list[dict]:
+    def _cmake_boards_to_flash(self, scope: str, only: str | None = None) -> list[dict]:
         """Select present CMake serials with staged firmware for a fleet write."""
         from ...providers import cmake as cmake_mod
 
@@ -322,9 +314,7 @@ class BulkMixin(_Base):
                         "fw": payload["firmware"],
                         "stop_services": list(units),
                         "state": device["state"],
-                        "reason": (
-                            "forced" if scope == "all" else device["status"].reason
-                        ),
+                        "reason": ("forced" if scope == "all" else device["status"].reason),
                     }
                 )
         return out
@@ -444,9 +434,7 @@ class BulkMixin(_Base):
         def controller(name: str | None = None) -> ServiceController:
             return make_controller(settings, call=self._call_for_service, name=name)
 
-        return flashers.Bench(
-            paths=self.paths, settings=settings, controller=controller
-        )
+        return flashers.Bench(paths=self.paths, settings=settings, controller=controller)
 
     def _do_flash_all(
         self,
@@ -500,8 +488,7 @@ class BulkMixin(_Base):
             detail = f" running {fw}" if fw else ""
             hint = "" if scope == "all" else " Use scope 'all' to rebuild regardless."
             raise RpcError(
-                f"nothing to build: no target{detail} is both configured and in "
-                f"need of building.{hint}",
+                f"nothing to build: no target{detail} is both configured and in need of building.{hint}",
                 data={
                     "code": "nothing_to_do",
                     "message": "nothing needs building",
@@ -667,9 +654,7 @@ class BulkMixin(_Base):
 
         def run(ctx) -> dict[str, Any]:
             build_result = (
-                self._do_build_all(ctx, install, targets)
-                if targets
-                else {"built": [], "failures": []}
+                self._do_build_all(ctx, install, targets) if targets else {"built": [], "failures": []}
             )
             # Selected *after* building, because a build is what makes a device
             # stale: choosing up front would use provenance the build has just

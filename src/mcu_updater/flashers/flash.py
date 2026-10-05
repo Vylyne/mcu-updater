@@ -118,18 +118,26 @@ def device_for(
     sightings = confirm(bench, sources=sources)
     found = sightings.get(serial)
     if found is None:
-        return None, None, (
-            f"no device found for {serial} (looked for chipset {chipset} "
-            f"with that serial under any firmware name, e.g. "
-            f"{expected_path('*', chipset, serial)}). Is it plugged in?"
+        return (
+            None,
+            None,
+            (
+                f"no device found for {serial} (looked for chipset {chipset} "
+                f"with that serial under any firmware name, e.g. "
+                f"{expected_path('*', chipset, serial)}). Is it plugged in?"
+            ),
         )
     sighting, confidence = found
     seen_chipset = sighting.detail.get("chipset")
     if seen_chipset != chipset:
-        return None, None, (
-            f"a device answered as {serial} but reports chipset "
-            f"{seen_chipset!r}, not {chipset!r} - refusing to flash a "
-            f"mismatched board."
+        return (
+            None,
+            None,
+            (
+                f"a device answered as {serial} but reports chipset "
+                f"{seen_chipset!r}, not {chipset!r} - refusing to flash a "
+                f"mismatched board."
+            ),
         )
     dev = BusDevice(
         fw=str(sighting.detail.get("fw", "")),
@@ -213,8 +221,20 @@ def flash_katapult(
         # The probe can move the board: it returns the device to write to,
         # which is a *different* by-id path when it rebooted one into katapult.
         dev = _verify_offset_before_write(
-            paths, settings, flashtool, bench, dev, fw_bin, mcu_type, chipset,
-            fw, serial, side, reporter, force, timeout,
+            paths,
+            settings,
+            flashtool,
+            bench,
+            dev,
+            fw_bin,
+            mcu_type,
+            chipset,
+            fw,
+            serial,
+            side,
+            reporter,
+            force,
+            timeout,
         )
 
     # Captured as well as forwarded: used for the post-write check below, a
@@ -277,9 +297,7 @@ def _parse_application_start(transcript: list[str]) -> int | None:
         return None
 
 
-def _await_bootloader_device(
-    bench: Bench, chipset: str, serial: str, timeout: float
-) -> BusDevice | None:
+def _await_bootloader_device(bench: Bench, chipset: str, serial: str, timeout: float) -> BusDevice | None:
     """Re-resolve `serial` after a probe left it sitting in katapult.
 
     Polls `device_for` rather than taking one reading, and insists on katapult
@@ -401,9 +419,7 @@ def _verify_offset_before_write(
         if force:
             reporter("warn", f"{message} Proceeding anyway (forced).")
         else:
-            raise OffsetMismatchError(
-                message + aftermath, type=mcu_type, serial=serial, fw=fw
-            )
+            raise OffsetMismatchError(message + aftermath, type=mcu_type, serial=serial, fw=fw)
     elif app_address != board_address:
         message = (
             f"{serial} ({mcu_type}) is about to be flashed with {fw} linked to "
@@ -571,9 +587,7 @@ def flash_katapult_can(
             # has no finish step to jump it back. Only the *path* problem is
             # USB-only - `-i <iface> -u <uuid>` still addresses the board - but
             # a refusal here leaves a native node in katapult just the same.
-            can_moved = bool(
-                _BOOTLOADER_REQUEST_RE.search("\n".join(probe_transcript))
-            )
+            can_moved = bool(_BOOTLOADER_REQUEST_RE.search("\n".join(probe_transcript)))
             can_aftermath = (
                 f" Nothing was written, but asking cost a reboot: {uuid} is "
                 f"sitting in katapult now, not running {fw}. It will come back "
@@ -593,9 +607,7 @@ def flash_katapult_can(
                 if force:
                     reporter("warn", f"{message} Proceeding anyway (forced).")
                 else:
-                    raise OffsetMismatchError(
-                        message + can_aftermath, type=mcu_type, uuid=uuid, fw=fw
-                    )
+                    raise OffsetMismatchError(message + can_aftermath, type=mcu_type, uuid=uuid, fw=fw)
             elif app_address != board_address:
                 message = (
                     f"{uuid} ({mcu_type}) is about to be flashed with {fw} linked "
@@ -915,9 +927,7 @@ def install_family(firmwares: Sequence[str], families: dict[str, Any] | None = N
     return boot if boot is not None else mcu.application(families)
 
 
-def refuse_unbootable_first_image(
-    paths: Paths, mcu_type: str, fw: str, artifact: Artifact
-) -> None:
+def refuse_unbootable_first_image(paths: Paths, mcu_type: str, fw: str, artifact: Artifact) -> None:
     """Refuse an application image a board with no bootloader cannot boot.
 
     Only for a first image that is *not* a bootloader: nothing sits below it,
@@ -1037,8 +1047,7 @@ def flash_initial_bootloader(
         # The same reasoning for DFU: with no bin, selection would pass
         # dfu_util over and blame the chipset instead of the build.
         raise FlashError(
-            f"no .bin was built for {chipset}. DFU writes a .bin - build again "
-            f"once the tree produces one.",
+            f"no .bin was built for {chipset}. DFU writes a .bin - build again once the tree produces one.",
             chipset=chipset,
         )
     device = flashers.Device(
@@ -1119,9 +1128,7 @@ def _no_first_install_writer(family: FirmwareFamily, chipset: str, state: str) -
     )
 
 
-def _stage_erasing_uf2(
-    uf2_bin: str, katapult_config: str | None, staging: str, chipset: str
-) -> str:
+def _stage_erasing_uf2(uf2_bin: str, katapult_config: str | None, staging: str, chipset: str) -> str:
     """Katapult's `.uf2` with the application sector blanked, written under
     `staging` with the artifact's own file name. The artifact is not modified."""
     address = None if katapult_config is None else uf2_erase.launch_address(katapult_config)
@@ -1139,9 +1146,7 @@ def _stage_erasing_uf2(
         with open(uf2_bin, "rb") as fh:
             image = fh.read()
     except OSError as exc:
-        raise FlashError(
-            f"firmware image not found at {uf2_bin}: {exc}", path=uf2_bin
-        ) from exc
+        raise FlashError(f"firmware image not found at {uf2_bin}: {exc}", path=uf2_bin) from exc
     try:
         extended = uf2_erase.with_erased_sector(image, address)
     except uf2_erase.Uf2EraseError as exc:
@@ -1155,12 +1160,8 @@ def _stage_erasing_uf2(
     return staged
 
 
-
 def _no_services(name: str | None = None) -> Any:
-    raise AssertionError(
-        "the bootstrap flash path controls no services; "
-        f"something asked for {name!r}"
-    )
+    raise AssertionError(f"the bootstrap flash path controls no services; something asked for {name!r}")
 
 
 def adoptable_devices(

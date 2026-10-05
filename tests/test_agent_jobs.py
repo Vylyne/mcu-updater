@@ -254,9 +254,7 @@ def test_build_reaches_a_cmake_type_named_on_its_own(api, paths, tmp_path):
     assert job.result["uf2_path"] == paths.uf2_file("roadrunner", "roadrunner")
 
 
-def test_a_cmake_type_with_no_source_tree_is_refused_before_a_job_exists(
-    api, paths, tmp_path
-):
+def test_a_cmake_type_with_no_source_tree_is_refused_before_a_job_exists(api, paths, tmp_path):
     """The CLI's cmake branch refuses synchronously and the agent did not, so
     the same misconfiguration arrived as a failed job somebody had to open and
     read. `build()` still refuses on its own - that is what guarantees no wrong

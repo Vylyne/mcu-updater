@@ -166,9 +166,7 @@ def test_a_source_less_family_still_falls_back_to_its_own_name(paths, settings):
         )
 
     install = Install.load(paths, settings)
-    reasons = {
-        t.name: PlatformIO().blocked(install, t) for t in PlatformIO().targets(install)
-    }
+    reasons = {t.name: PlatformIO().blocked(install, t) for t in PlatformIO().targets(install)}
 
     assert "not found" in reasons["no_source"]
     assert os.path.join(paths.home, "no_source_fw") in reasons["no_source"]

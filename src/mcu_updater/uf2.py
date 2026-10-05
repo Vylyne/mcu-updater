@@ -92,26 +92,17 @@ def _blocks(uf2: bytes) -> list[tuple[int, int, int, int]]:
     """
     if len(uf2) % UF2_BLOCK_SIZE != 0 or not uf2:
         raise Uf2Error(
-            f"not a UF2 container: {len(uf2)} bytes is not a positive "
-            f"multiple of {UF2_BLOCK_SIZE}"
+            f"not a UF2 container: {len(uf2)} bytes is not a positive multiple of {UF2_BLOCK_SIZE}"
         )
 
     out = []
     for offset in range(0, len(uf2), UF2_BLOCK_SIZE):
-        magic0, magic1, flags, target, payload_size = struct.unpack_from(
-            "<5I", uf2, offset
-        )
+        magic0, magic1, flags, target, payload_size = struct.unpack_from("<5I", uf2, offset)
         (magic_end,) = struct.unpack_from("<I", uf2, offset + UF2_BLOCK_SIZE - 4)
-        if (
-            magic0 != UF2_MAGIC_START0
-            or magic1 != UF2_MAGIC_START1
-            or magic_end != UF2_MAGIC_END
-        ):
+        if magic0 != UF2_MAGIC_START0 or magic1 != UF2_MAGIC_START1 or magic_end != UF2_MAGIC_END:
             raise Uf2Error(f"block at byte {offset} has bad magic")
         if payload_size > UF2_MAX_PAYLOAD:
-            raise Uf2Error(
-                f"block at byte {offset} claims a {payload_size}-byte payload"
-            )
+            raise Uf2Error(f"block at byte {offset} claims a {payload_size}-byte payload")
         out.append((offset, flags, target, payload_size))
     return out
 
@@ -142,10 +133,7 @@ def extract_image(uf2: bytes, start: int, length: int) -> bytes:
 
     if not all(covered):
         missing = covered.index(0)
-        raise Uf2Error(
-            f"UF2 does not cover the whole image: no block supplies "
-            f"{start + missing:#010x}"
-        )
+        raise Uf2Error(f"UF2 does not cover the whole image: no block supplies {start + missing:#010x}")
     return bytes(image)
 
 
@@ -169,9 +157,7 @@ def image_extent(uf2: bytes) -> tuple[int, int]:
     return start, max(span[1] for span in spans) - start
 
 
-def image_digest(
-    uf2: bytes, start: int, length: int, algorithm: int = DIGEST_CRC32_ISO_HDLC
-) -> int:
+def image_digest(uf2: bytes, start: int, length: int, algorithm: int = DIGEST_CRC32_ISO_HDLC) -> int:
     """The digest a board running this UF2 over `[start, length)` reports."""
     if algorithm != DIGEST_CRC32_ISO_HDLC:
         raise Uf2Error(f"unsupported digest algorithm {algorithm}")

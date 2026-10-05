@@ -1,4 +1,4 @@
-﻿"""The MCU registry: ``~/printer_data/config/mcu-updater/mcu-updater.cfg``.
+"""The MCU registry: ``~/printer_data/config/mcu-updater/mcu-updater.cfg``.
 
 Klipper-style, because it lives next to ``printer.cfg`` and gets hand-edited::
 
@@ -74,6 +74,7 @@ from .paths import Paths
 #: `sections` just to name it in a docstring or a test.
 SECTION_PREFIX = "type"
 PATCH_SEPARATOR = "->"
+
 
 @dataclasses.dataclass
 class MakefilePatch:
@@ -275,9 +276,7 @@ def validate_type_name(name: str) -> str:
     if not stripped:
         raise InvalidTypeNameError("an MCU type name cannot be empty.", type=name)
     if stripped != name:
-        raise InvalidTypeNameError(
-            f"type name '{name}' has leading or trailing whitespace.", type=name
-        )
+        raise InvalidTypeNameError(f"type name '{name}' has leading or trailing whitespace.", type=name)
     if len(stripped) > TYPE_NAME_MAX:
         raise InvalidTypeNameError(
             f"type name is too long ({len(stripped)} characters, max {TYPE_NAME_MAX}).",
@@ -474,9 +473,7 @@ class Registry:
         # walk `Registry.load` uses, over the document as it now stands (every
         # `doc.set`/`remove_option` above has already run). Raising here means
         # nothing below this line executes: no tmp file, no replace.
-        typelist.validate(
-            typelist.read(doc, families_map), families_map, path=paths.registry_file
-        )
+        typelist.validate(typelist.read(doc, families_map), families_map, path=paths.registry_file)
 
         os.makedirs(os.path.dirname(paths.registry_file), exist_ok=True)
         tmp = paths.registry_file + ".tmp"
@@ -596,9 +593,7 @@ class Registry:
 
         matches = self.find_types_for_serial(serial)
         if not matches:
-            raise UnknownSerialError(
-                f"serial '{serial}' isn't tracked under any MCU type.", serial=serial
-            )
+            raise UnknownSerialError(f"serial '{serial}' isn't tracked under any MCU type.", serial=serial)
         if len(matches) > 1:
             raise AmbiguousSerialError(
                 f"serial '{serial}' is tracked under multiple types "
@@ -608,9 +603,7 @@ class Registry:
             )
         return matches[0]
 
-    def resolve_declared_serial(
-        self, serial: str, mcu_type: str | None = None
-    ) -> str:
+    def resolve_declared_serial(self, serial: str, mcu_type: str | None = None) -> str:
         """Resolve a serial across every declared type, regardless of builder.
 
         This is the identity counterpart to :meth:`resolve_serial`: provider
@@ -638,9 +631,7 @@ class Registry:
 
         matches = self.find_declared_types_for_serial(serial)
         if not matches:
-            raise UnknownSerialError(
-                f"serial '{serial}' isn't tracked under any MCU type.", serial=serial
-            )
+            raise UnknownSerialError(f"serial '{serial}' isn't tracked under any MCU type.", serial=serial)
         if len(matches) > 1:
             raise AmbiguousSerialError(
                 f"serial '{serial}' is tracked under multiple types "
@@ -683,9 +674,7 @@ class Registry:
 
         matches = self.find_types_for_uuid(uuid)
         if not matches:
-            raise UnknownUuidError(
-                f"CAN uuid '{uuid}' isn't tracked under any MCU type.", uuid=uuid
-            )
+            raise UnknownUuidError(f"CAN uuid '{uuid}' isn't tracked under any MCU type.", uuid=uuid)
         if len(matches) > 1:
             raise AmbiguousUuidError(
                 f"CAN uuid '{uuid}' is tracked under multiple types "

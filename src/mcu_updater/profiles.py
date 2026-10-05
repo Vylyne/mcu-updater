@@ -347,8 +347,7 @@ def capture_custom(
         config = paths.config_file(mcu_type, fw)
         if not os.path.isfile(config):
             raise ProfileError(
-                f"'{mcu_type}' has no saved {fw} config at {config}, so there are "
-                f"no answers to keep.",
+                f"'{mcu_type}' has no saved {fw} config at {config}, so there are no answers to keep.",
                 type=mcu_type,
                 fw=fw,
                 path=config,
@@ -558,9 +557,7 @@ def _keep_current_answers(
     state = status(paths, mcu_type, fw, families)
     if state.reason != CUSTOMISED:
         return None
-    return capture_custom(
-        paths, mcu_type, fw, parent=state.profile, families=families
-    )
+    return capture_custom(paths, mcu_type, fw, parent=state.profile, families=families)
 
 
 def derive_bootloader(
@@ -806,11 +803,7 @@ def distinguishing(seeds: Sequence[Seed]) -> dict[str, list[dict[str, str | None
         return {name: [] for name in parsed}
 
     symbols = {sym for answers in parsed.values() for sym in answers}
-    differing = {
-        sym
-        for sym in symbols
-        if len({a[sym] for a in parsed.values() if sym in a}) > 1
-    }
+    differing = {sym for sym in symbols if len({a[sym] for a in parsed.values() if sym in a}) > 1}
     return {
         name: [
             {
@@ -1132,14 +1125,8 @@ def status(
     name = record.get("profile")
     # One extra small read, and only for a type on its own profile: everywhere
     # else `profile` already names the thing the UI would call the parent.
-    parent = (
-        _read_header(paths.custom_profile_file(mcu_type, fw))[0]
-        if name == CUSTOM_PROFILE
-        else None
-    )
-    current = (
-        config_sha if config_sha is not None else _sha256(paths.config_file(mcu_type, fw))
-    )
+    parent = _read_header(paths.custom_profile_file(mcu_type, fw))[0] if name == CUSTOM_PROFILE else None
+    current = config_sha if config_sha is not None else _sha256(paths.config_file(mcu_type, fw))
     if current != record.get("config_sha256"):
         return ProfileStatus(CUSTOMISED, profile=name, parent=parent)
 

@@ -56,7 +56,7 @@
     {
       "name": "update-all sweeps every configured type",
       "file": "src/mcu_updater/cli.py",
-      "find": "            for name in sorted(\n                set(install.registry.names()) | set(install.platformio) | set(install.cmake)\n            ):",
+      "find": "            for name in sorted(set(install.registry.names()) | set(install.platformio) | set(install.cmake)):",
       "replace": "            for name in ():"
     },
     {

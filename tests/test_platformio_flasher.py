@@ -75,15 +75,11 @@ def _bench(paths, **settings):
 
 def _ctx():
     said: list[tuple[str, str]] = []
-    return types.SimpleNamespace(
-        reporter=lambda stream, line: said.append((stream, line)), said=said
-    )
+    return types.SimpleNamespace(reporter=lambda stream, line: said.append((stream, line)), said=said)
 
 
 def _target(paths, device, helper):
-    return PlatformIO().target(
-        paths, device, helper, Artifact(KIND_PIO_ENV, "/nowhere"), stop_services=()
-    )
+    return PlatformIO().target(paths, device, helper, Artifact(KIND_PIO_ENV, "/nowhere"), stop_services=())
 
 
 def _write_one(paths, target):
@@ -156,9 +152,7 @@ def test_an_identifier_that_fails_leaves_the_configured_port(paths, uploads):
     """Never fatal, whatever the identifier: a host that cannot ask was
     flashing by configured port before, and refusing would be a new way to
     fail."""
-    result, ctx = _write_one(
-        paths, _target(paths, _device(_env(), "/dev/ttyUSB0"), _Broken())
-    )
+    result, ctx = _write_one(paths, _target(paths, _device(_env(), "/dev/ttyUSB0"), _Broken()))
 
     assert uploads == ["/dev/ttyUSB0"]
     assert result["confidence"] is None
@@ -168,9 +162,7 @@ def test_an_identifier_that_fails_leaves_the_configured_port(paths, uploads):
 @pytest.mark.parametrize("answered, reason", [(True, "answered"), (False, "remembered")])
 def test_the_confidence_says_how_the_device_was_found(paths, uploads, answered, reason):
     env = _env()
-    found = WatcherDevice(
-        device_id="aaa111", port="/dev/ttyUSB0", present=True, answered=answered
-    )
+    found = WatcherDevice(device_id="aaa111", port="/dev/ttyUSB0", present=True, answered=answered)
     ident = _Identifier(**{env.name: {"aaa111": found}})
 
     result, _ = _write_one(paths, _target(paths, _device(env, "/dev/ttyUSB0"), ident))

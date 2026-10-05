@@ -174,8 +174,7 @@ def pick_mcu_type(
         return menu_add_mcu_type()
 
     options = [
-        f"{entry.name}  (chipset={entry.chipset or '?'}, {len(entry.serials)} serial(s))"
-        for entry in types
+        f"{entry.name}  (chipset={entry.chipset or '?'}, {len(entry.serials)} serial(s))" for entry in types
     ]
     if allow_new:
         options.append("+ Add a new MCU type")
@@ -349,26 +348,20 @@ def menu_remove_serial() -> None:
 
 
 def menu_add_mcu() -> None:
-    mcu_type = pick_mcu_type(
-        allow_new=True, accepts=kconfig_type, none_accepted=KCONFIG_ONLY_ADD_MCU
-    )
+    mcu_type = pick_mcu_type(allow_new=True, accepts=kconfig_type, none_accepted=KCONFIG_ONLY_ADD_MCU)
     if mcu_type is None:
         return
     call_action(cli.add_mcu, argparse.Namespace(type=mcu_type))
 
 
 def menu_menuconfig() -> None:
-    mcu_type = pick_mcu_type(
-        allow_new=True, accepts=kconfig_type, none_accepted=KCONFIG_ONLY_MENUCONFIG
-    )
+    mcu_type = pick_mcu_type(allow_new=True, accepts=kconfig_type, none_accepted=KCONFIG_ONLY_MENUCONFIG)
     if mcu_type is None:
         return
     fw = pick_fw_target()
     if fw is None:
         return
-    call_action(
-        cli.make_menuconfig_cmd, argparse.Namespace(type=mcu_type, fw=fw, no_pause=False)
-    )
+    call_action(cli.make_menuconfig_cmd, argparse.Namespace(type=mcu_type, fw=fw, no_pause=False))
 
 
 def menu_build() -> None:

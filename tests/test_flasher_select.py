@@ -220,7 +220,9 @@ def test_first_install_goes_through_the_katapult_list():
 
 def test_a_flasher_the_family_does_not_list_is_never_chosen():
     """flashtool could write this board; the family did not list it."""
-    assert flashers.resolve(_family("platformio"), _device(), None, _staged(bin="/x.bin", uf2="/x.uf2")) is None
+    assert (
+        flashers.resolve(_family("platformio"), _device(), None, _staged(bin="/x.bin", uf2="/x.uf2")) is None
+    )
 
 
 def test_a_family_with_no_list_resolves_nothing():
@@ -235,9 +237,7 @@ def test_nothing_supporting_the_device_is_refused_by_name(paths):
     device = _device(type="ebb36", id="usb-Klipper_stm32g0b1xx_1-if00")
 
     with pytest.raises(NoFlasherError) as exc:
-        flashers.select(
-            paths, family, device, None, stop_services=("klipper",), staged=_staged(bin="/x.bin")
-        )
+        flashers.select(paths, family, device, None, stop_services=("klipper",), staged=_staged(bin="/x.bin"))
 
     message = str(exc.value)
     assert "[firmware klipper]" in message
@@ -252,9 +252,7 @@ def test_nothing_supporting_the_device_is_refused_by_name(paths):
 
 def test_a_family_with_no_flashers_says_so(paths):
     with pytest.raises(NoFlasherError) as exc:
-        flashers.select(
-            paths, _family(), _device(), None, stop_services=(), staged=_staged(bin="/x.bin")
-        )
+        flashers.select(paths, _family(), _device(), None, stop_services=(), staged=_staged(bin="/x.bin"))
     assert "flashers: (none)" in str(exc.value)
 
 
@@ -413,9 +411,7 @@ def test_a_batch_refuses_one_device_without_dropping_the_rest(paths):
 
 def test_a_device_whose_family_is_undeclared_is_a_config_error(paths):
     with pytest.raises(ConfigCorruptError):
-        flashers.select_device(
-            paths, {}, _board_device(fw="nowhere"), stop_services=()
-        )
+        flashers.select_device(paths, {}, _board_device(fw="nowhere"), stop_services=())
 
 
 def _no_controller(name=None):
@@ -592,9 +588,7 @@ def test_no_bootsel_route_is_offered_where_none_would_work(paths, device, helper
             staged=_staged(fw="klipper", uf2="/p.uf2"),
         )
 
-    assert str(exc.value).endswith(
-        "Set the bootloader offset (16KiB for Katapult) and rebuild."
-    )
+    assert str(exc.value).endswith("Set the bootloader offset (16KiB for Katapult) and rebuild.")
 
 
 def test_nothing_staged_still_says_build_it_first(paths):
@@ -646,8 +640,12 @@ def test_an_unlisted_uf2_is_refused_as_missing(paths):
         fh.write('{"fw_sha": "abc", "bin_sha256": "legacy"}')
     families = {"klipper": _family("bootsel", name="klipper")}
     device = Device(
-        type="pico", id="usb-Klipper_rp2040_E66-if00", chipset="rp2040",
-        state=STATE_BOOTSEL, fw="klipper", kind=KIND_BARE,
+        type="pico",
+        id="usb-Klipper_rp2040_E66-if00",
+        chipset="rp2040",
+        state=STATE_BOOTSEL,
+        fw="klipper",
+        kind=KIND_BARE,
     )
 
     with pytest.raises(NoFlasherError) as exc:
@@ -698,9 +696,7 @@ def test_a_klipper_board_in_bootsel_goes_to_bootsel_with_its_uf2(paths):
 def test_a_cmake_family_listing_flashtool_gets_a_board_not_a_keyerror(paths):
     """Regression: the CMake callers built `detail={"uf2_file": ...}`, and
     flashtool's target read `detail["type"]` from it."""
-    device = Device(
-        type="roadrunner", id=RR_SERIAL, chipset="rp2040", state=STATE_KLIPPER, fw="roadrunner"
-    )
+    device = Device(type="roadrunner", id=RR_SERIAL, chipset="rp2040", state=STATE_KLIPPER, fw="roadrunner")
 
     target = flashers.select(
         paths,
@@ -721,9 +717,7 @@ def test_a_cmake_family_listing_flashtool_gets_a_board_not_a_keyerror(paths):
 
 
 def test_a_cmake_family_listing_flashtool_without_a_bin_is_refused(paths):
-    device = Device(
-        type="roadrunner", id=RR_SERIAL, chipset="rp2040", state=STATE_KLIPPER, fw="roadrunner"
-    )
+    device = Device(type="roadrunner", id=RR_SERIAL, chipset="rp2040", state=STATE_KLIPPER, fw="roadrunner")
 
     with pytest.raises(NoFlasherError) as exc:
         flashers.select(
@@ -810,9 +804,7 @@ def test_an_offset_less_klipper_build_is_written_through_bootsel(paths, fake_roo
     stages it, and `flashers: flashtool, bootsel` reaches bootsel with it."""
     family = _rp2040_build(paths, fake_root, monkeypatch, made=("uf2",))
 
-    target = flashers.select(
-        paths, family, _running_rp2040(), KlipperHelper(), stop_services=("klipper",)
-    )
+    target = flashers.select(paths, family, _running_rp2040(), KlipperHelper(), stop_services=("klipper",))
 
     assert target.flasher == "bootsel"
     assert target.artifact.kind == KIND_UF2
@@ -822,9 +814,7 @@ def test_an_offset_less_klipper_build_is_written_through_bootsel(paths, fake_roo
 def test_an_offset_klipper_build_is_written_through_flashtool(paths, fake_root, monkeypatch):
     family = _rp2040_build(paths, fake_root, monkeypatch, made=("bin",))
 
-    target = flashers.select(
-        paths, family, _running_rp2040(), KlipperHelper(), stop_services=("klipper",)
-    )
+    target = flashers.select(paths, family, _running_rp2040(), KlipperHelper(), stop_services=("klipper",))
 
     assert target.flasher == "flashtool"
     assert target.artifact.kind == KIND_BIN

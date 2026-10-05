@@ -258,9 +258,7 @@ def test_type_status_reads_each_board_through_its_familys_reader(
     assert by_serial["123456789012345678901"]["needs_flash"] is False
 
 
-def test_a_bulk_flash_selects_through_each_familys_reader(
-    paths, live_registry_text, fake_root, monkeypatch
-):
+def test_a_bulk_flash_selects_through_each_familys_reader(paths, live_registry_text, fake_root, monkeypatch):
     from .test_agent_bulk import _moonraker, _stage_artifact, monkey_head
 
     with open(paths.registry_file, "w", encoding="utf-8") as fh:

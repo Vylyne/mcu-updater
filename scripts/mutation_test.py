@@ -101,9 +101,7 @@ def mutated(path: str, find: str, replace: str) -> Iterator[None]:
 
     # A backup outside the tree, so even a crash between the write and the
     # restore leaves a recoverable copy that no editor or formatter will touch.
-    with tempfile.NamedTemporaryFile(
-        prefix="mutation-", suffix=".bak", delete=False
-    ) as backup:
+    with tempfile.NamedTemporaryFile(prefix="mutation-", suffix=".bak", delete=False) as backup:
         backup.write(original)
         backup_path = backup.name
 
@@ -169,12 +167,8 @@ def summarise(output: str) -> str:
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("spec", help="JSON file describing the file, command and mutations")
-    parser.add_argument(
-        "--cwd", default=None, help="working directory for the test command (default: here)"
-    )
-    parser.add_argument(
-        "-k", dest="only", default=None, help="run only mutations whose name contains this"
-    )
+    parser.add_argument("--cwd", default=None, help="working directory for the test command (default: here)")
+    parser.add_argument("-k", dest="only", default=None, help="run only mutations whose name contains this")
     args = parser.parse_args(argv)
 
     with open(args.spec, encoding="utf-8") as fh:

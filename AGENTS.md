@@ -46,9 +46,14 @@ Run before every commit:
 ```bash
 python -m pytest -q
 python -m ruff check src tests scripts
+python -m ruff format --check src tests scripts
 python -m mypy src
 python scripts/check_line_endings.py
 ```
+
+`ruff format --check` only reports; `python -m ruff format src tests scripts`
+fixes. Format before the mutation-spec grep, not after — a line the formatter
+rewraps is a rewritten line, and its anchor moves with it.
 
 `ruff` and `mypy` pin the floor from `pyproject.toml` (`target-version`,
 `python_version`), so those two are honest on any interpreter. **`pytest` is

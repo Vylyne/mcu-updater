@@ -173,43 +173,6 @@ into the bootloader. So a *refused* flash leaves that board sitting in katapult
 rather than running Klipper - the refusal says so. It comes back on the next
 flash or a power cycle; nothing was written to it.
 
-#### A new PlatformIO device
-
-"Add new board…" in the web panel sets one up; the CLI's `add-mcu` does not.
-There is no boot mode to put it in - the upload resets the chip into its ROM
-itself - so the question is only *which port*, and a bridge chip with no USB
-serial looks the same on every device. The scan answers it from the project:
-
-`platformio.ini` → the env's `board` → `boards/<board>.json` → `build.hwids`
-
-and lists the USB serial ports enumerating under one of those ids. The manifest
-is looked for where PlatformIO looks: the project's `boards/`, then the
-PlatformIO core's, then the installed platform's.
-
-```json
-"build": { "hwids": [["0x1A86", "0x7522"]] }
-```
-
-- **A port a `printer.cfg` section already names is listed, labelled, and never
-  chosen for you.** With exactly one port left over, that is the new device.
-  With several, or none, the panel asks - and a configured one can be picked on
-  purpose, to write it again as new.
-- **Wrong ids find nothing, by design.** A manifest copied from another board
-  carries that board's ids. The scan then says which ids it looked for rather
-  than falling back to every port; correct `build.hwids`.
-- **Ids that cannot be read list every USB serial port** and always ask: no
-  `pio`, a platform that has never been installed, or a manifest with no
-  `build.hwids`. The message says which.
-- **`chipset: esp32` is required** on the type, as above - it is what matches
-  the type to the `platformio` flasher.
-- **It is an ordinary write.** It stops the type's
-  [`stop_services`](#which-services-stop-before-a-write) - Klipper included, by
-  default - so it is refused during a print, and it builds first if nothing is
-  built. If Klipper is not reachable when the scan runs, configured ports
-  cannot be told from new ones and are listed unlabelled.
-- **Afterwards the job says what to put in `printer.cfg`:** the port, and the
-  id the device reported once it was asked. Nothing is adopted automatically.
-
 ## Web UI
 
 Everything above also works from a browser instead of SSH, via the standalone UI
@@ -709,6 +672,43 @@ A few things to know:
   when a port won't open, so Klipper starts happily with a blank display and no
   error. `present: false` on that device's row in `fw.status`'s `targets[]`
   (there is no separate listing call any more) is the only thing that says so.
+
+#### A new PlatformIO device
+
+"Add new board…" in the web panel sets one up; the CLI's `add-mcu` does not.
+There is no boot mode to put it in - the upload resets the chip into its ROM
+itself - so the question is only *which port*, and a bridge chip with no USB
+serial looks the same on every device. The scan answers it from the project:
+
+`platformio.ini` → the env's `board` → `boards/<board>.json` → `build.hwids`
+
+and lists the USB serial ports enumerating under one of those ids. The manifest
+is looked for where PlatformIO looks: the project's `boards/`, then the
+PlatformIO core's, then the installed platform's.
+
+```json
+"build": { "hwids": [["0x1A86", "0x7522"]] }
+```
+
+- **A port a `printer.cfg` section already names is listed, labelled, and never
+  chosen for you.** With exactly one port left over, that is the new device.
+  With several, or none, the panel asks - and a configured one can be picked on
+  purpose, to write it again as new.
+- **Wrong ids find nothing, by design.** A manifest copied from another board
+  carries that board's ids. The scan then says which ids it looked for rather
+  than falling back to every port; correct `build.hwids`.
+- **Ids that cannot be read list every USB serial port** and always ask: no
+  `pio`, a platform that has never been installed, or a manifest with no
+  `build.hwids`. The message says which.
+- **`chipset: esp32` is required** on the type, as above - it is what matches
+  the type to the `platformio` flasher.
+- **It is an ordinary write.** It stops the type's
+  [`stop_services`](#which-services-stop-before-a-write) - Klipper included, by
+  default - so it is refused during a print, and it builds first if nothing is
+  built. If Klipper is not reachable when the scan runs, configured ports
+  cannot be told from new ones and are listed unlabelled.
+- **Afterwards the job says what to put in `printer.cfg`:** the port, and the
+  id the device reported once it was asked. Nothing is adopted automatically.
 
 ### RP2040 cmake trees
 

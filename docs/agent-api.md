@@ -1644,6 +1644,26 @@ Refusals, all synchronous and before a job exists:
 | **BOOTSEL:** something is in BOOTSEL and mounted | `bootsel_none` / `bootsel_not_mounted` |
 | **BOOTSEL:** exactly one mounted | `bootsel_ambiguous` |
 
+**Several boards in DFU is a choice, not a dead end.** dfu-util takes `-S`, `-p`
+and `-n`, so passing `dfu_serial` targets one exactly. It is still refused by
+default: a USB serial like `3941335F3434` says nothing about which board on the
+bench it is, so choosing on the user's behalf risks writing a bootloader to the
+wrong one.
+
+The write is pinned to the chosen device even when only one is attached — between
+the scan and the command, a second board can be jumpered and plugged in.
+
+**BOOTSEL has no equivalent choice.** There is no `bootsel_id` argument to
+`fw.add_mcu.start` — each board mounts under its own USB topology path, and the
+mounts are distinguishable, but nothing upstream can yet say *which* port a write
+is for. The write (`_find_mount`) refuses outright on more than one mounted
+volume. Bench convention is one board at a time; this is a deliberate scope line
+until a port parameter is added.
+
+Finding no new board **warns rather than failing the job**: the write may have
+succeeded and the board simply be slow or on a marginal port, so the log says to
+check `/dev/serial/by-id` and adopt directly.
+
 #### A new PlatformIO device
 
 A PlatformIO type's first install is not a ROM write followed by an adoption.
@@ -1687,26 +1707,6 @@ Its refusals, in place of the DFU/BOOTSEL rows above:
 | the scan found a port to write, or `pick` names one | `platformio_none` / `platformio_ambiguous` / `platformio_all_tracked` / `platformio_unfiltered` |
 | `pick` matches exactly one scanned device; `data.{pick, key, devices}` | `device_not_found` |
 | printer idle | `print_in_progress` (bypass with `force: true`) |
-
-**Several boards in DFU is a choice, not a dead end.** dfu-util takes `-S`, `-p`
-and `-n`, so passing `dfu_serial` targets one exactly. It is still refused by
-default: a USB serial like `3941335F3434` says nothing about which board on the
-bench it is, so choosing on the user's behalf risks writing a bootloader to the
-wrong one.
-
-The write is pinned to the chosen device even when only one is attached — between
-the scan and the command, a second board can be jumpered and plugged in.
-
-**BOOTSEL has no equivalent choice.** There is no `bootsel_id` argument to
-`fw.add_mcu.start` — each board mounts under its own USB topology path, and the
-mounts are distinguishable, but nothing upstream can yet say *which* port a write
-is for. The write (`_find_mount`) refuses outright on more than one mounted
-volume. Bench convention is one board at a time; this is a deliberate scope line
-until a port parameter is added.
-
-Finding no new board **warns rather than failing the job**: the write may have
-succeeded and the board simply be slow or on a marginal port, so the log says to
-check `/dev/serial/by-id` and adopt directly.
 
 #### A board that turns up later is still adopted
 

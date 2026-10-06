@@ -32,6 +32,7 @@ import json
 import os
 import re
 import shutil
+import subprocess
 import threading
 import time
 
@@ -39,7 +40,7 @@ from .. import device_info, firmware, typelist
 from ..artifacts import KIND_PIO_ENV, Artifact, Staged, recorded_sha256, sidecar_field
 from ..build import Reporter, null_reporter, run_streamed, sha256_file
 from ..discovery.knomi_serial import source_dir as _source_dir
-from ..errors import BuildError, ConfigError, FlashError, ToolMissingError
+from ..errors import BuildError, ConfigError, FlashError, SourceTreeMissingError, ToolMissingError
 from ..paths import Paths
 from ..settings import Settings
 from ..states import (
@@ -427,6 +428,125 @@ def resolve_port(port: str) -> str:
         return os.path.realpath(port)
     except OSError:
         return port
+
+
+#: `pio project config` only parses - no build, no network - so anything past
+#: this is a hung launcher, not a slow one. Its startup alone is two seconds
+#: on a Pi.
+PROJECT_CONFIG_TIMEOUT = 60.0
+
+
+def project_config(settings: Settings, entry: PioType) -> dict[str, dict[str, object]]:
+    """This type's `platformio.ini`, as PlatformIO itself resolves it.
+
+    `pio project config --json-output`, keyed by section. PlatformIO does the
+    reading because the file is not an ini file in any useful sense: an env
+    inherits `[env]`, `extends` another env, and interpolates `${...}` - so
+    `[env:knomi_i2cscan]` has a `board` only by way of `extends = env:knomi`,
+    and `configparser` would say it has none.
+
+    A subprocess that costs seconds, so never from a status poll.
+    """
+    source = _source_dir(entry)
+    pio = find_pio(settings)
+    try:
+        done = subprocess.run(
+            [pio, "project", "config", "--json-output"],
+            cwd=source,
+            capture_output=True,
+            text=True,
+            timeout=PROJECT_CONFIG_TIMEOUT,
+            check=False,
+        )
+    except (OSError, subprocess.TimeoutExpired) as exc:
+        raise ConfigError(
+            f"could not ask PlatformIO for {source}'s project config: {exc}", type=entry.name
+        ) from exc
+    if done.returncode != 0:
+        detail = (done.stderr or done.stdout or "").strip().splitlines()
+        raise ConfigError(
+            f"PlatformIO could not read {os.path.join(source, 'platformio.ini')}: "
+            f"{detail[-1] if detail else f'pio exited {done.returncode}'}",
+            type=entry.name,
+        )
+    try:
+        return {str(section): dict(items) for section, items in json.loads(done.stdout)}
+    except (ValueError, TypeError) as exc:
+        raise ConfigError(
+            f"PlatformIO's project config for {source} is not the JSON expected: {exc}", type=entry.name
+        ) from exc
+
+
+def _board_manifest(
+    config: dict[str, dict[str, object]], source: str, board: str, platform: str
+) -> str | None:
+    """The board's JSON manifest, searched where PlatformIO searches: the
+    project's own `boards_dir`, the user's, then the installed platforms'.
+
+    The project's wins because that is what a project with a custom board
+    means by having one. Among platforms the env's own is tried first, since
+    several versions of one can be installed side by side (`espressif32`,
+    `espressif32@6.4.0`).
+    """
+    core = config.get("platformio", {})
+    core_dir = os.path.expanduser(
+        str(core.get("core_dir") or os.environ.get("PLATFORMIO_CORE_DIR") or "~/.platformio")
+    )
+    candidates = [
+        os.path.join(str(core.get("boards_dir") or os.path.join(source, "boards")), f"{board}.json"),
+        os.path.join(core_dir, "boards", f"{board}.json"),
+    ]
+    platforms_dir = str(core.get("platforms_dir") or os.path.join(core_dir, "platforms"))
+    try:
+        installed = sorted(os.listdir(platforms_dir))
+    except OSError:
+        installed = []
+    wanted = platform.split("@", 1)[0].strip()
+    # `sorted` is stable, so the env's own platform leads and the rest keep
+    # their order.
+    for name in sorted(installed, key=lambda name: name.split("@", 1)[0] != wanted):
+        candidates.append(os.path.join(platforms_dir, name, "boards", f"{board}.json"))
+    return next((path for path in candidates if os.path.isfile(path)), None)
+
+
+def board_hwids(settings: Settings, entry: PioType) -> tuple[frozenset[tuple[str, str]] | None, str | None]:
+    """The USB ids this env's board enumerates under: `(ids, None)`, or
+    `(None, why not)`. Never raises.
+
+    From `build.hwids` in the board's manifest - the list PlatformIO's own
+    port auto-detection filters on, and the only place a project says what
+    its board looks like on the bus. Each id is `(vendor, product)` as sysfs
+    spells them: four lowercase hex digits.
+
+    The failure is an answer rather than an error because every caller has
+    something to do without one: a board whose manifest says nothing is still
+    on some port, just one nothing can narrow the list down to. And a manifest
+    is only as good as whoever wrote it - one copied from another board
+    carries that board's ids - which is why a caller that finds no match says
+    which ids it looked for.
+    """
+    try:
+        config = project_config(settings, entry)
+    except (ConfigError, SourceTreeMissingError, ToolMissingError) as exc:
+        return None, str(exc)
+    env = config.get(f"env:{entry.env}")
+    if env is None:
+        return None, f"platformio.ini has no [env:{entry.env}]"
+    board = str(env.get("board") or "")
+    if not board:
+        return None, f"[env:{entry.env}] names no board"
+    path = _board_manifest(config, os.path.expanduser(entry.source), board, str(env.get("platform") or ""))
+    if path is None:
+        return None, f"no manifest for board '{board}' was found - its platform may not be installed yet"
+    try:
+        with open(path, encoding="utf-8") as fh:
+            declared = (json.load(fh).get("build") or {}).get("hwids") or []
+        ids = frozenset((f"{int(vid, 16):04x}", f"{int(pid, 16):04x}") for vid, pid in declared)
+    except (OSError, ValueError, TypeError, AttributeError) as exc:
+        return None, f"{path} could not be read for its USB ids: {exc}"
+    if not ids:
+        return None, f"{path} declares no USB ids (build.hwids)"
+    return ids, None
 
 
 def firmware_bin(entry: PioType) -> str:

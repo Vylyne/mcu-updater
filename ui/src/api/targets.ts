@@ -106,6 +106,9 @@ export interface FirstInstall {
   fw: string | null;
   flasher: string | null;
   reason: string | null;
+  /** What to do to a new board before scanning for it, in that flasher's
+   * own words. Absent from an agent older than the field. */
+  hint?: string | null;
 }
 
 /** One targets[] row - every builder's types in one shape. */

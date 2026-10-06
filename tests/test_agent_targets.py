@@ -1517,9 +1517,11 @@ def test_every_row_says_how_a_bare_board_of_it_is_set_up(api):
         "flasher": "dfu_util",
         "reason": None,
     }
-    knomi = targets["knomi"]["first_install"]
-    assert knomi["flasher"] is None
-    assert "can scan for a new board" in knomi["reason"]
+    assert targets["knomi"]["first_install"] == {
+        "fw": "knomi_serial",
+        "flasher": "platformio",
+        "reason": None,
+    }
     assert all("first_install" in t for t in targets.values())
 
 

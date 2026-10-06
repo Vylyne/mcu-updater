@@ -21,24 +21,50 @@ port, and following a udev symlink to the device PlatformIO can actually see.
 from __future__ import annotations
 
 import contextlib
-from collections.abc import Iterator, Mapping
+import os
+from collections.abc import Iterator, Mapping, Sequence
 from typing import TYPE_CHECKING, Any
 
 from .. import helpers
 from ..artifacts import KIND_PIO_ENV, Artifact
 from ..devices import STATE_ESP_ROM
 from ..errors import FlashError, UpdaterError
-from .spec import KIND_PORT, Bench, Device, FlashRecord, FlashTarget
+from .spec import (
+    KIND_BARE,
+    KIND_PORT,
+    Bench,
+    CandidateScan,
+    Device,
+    FlashRecord,
+    FlashTarget,
+    TrackedBoard,
+    chipset_matches,
+)
 
 if TYPE_CHECKING:
     # Annotation only. `discovery.spec` imports from this package, so a runtime
     # import here closes a cycle - and `from __future__ import annotations`
     # means nothing needs the symbol at run time. `port_for` imports the module
     # it builds one from lazily, for the same reason.
+    from ..build import Reporter
     from ..discovery.spec import Confidence
+    from ..discovery.usb import SerialPort
     from ..helpers.spec import Helper, Identifier
     from ..paths import Paths
     from ..providers.pio import PioType
+    from ..settings import Settings
+
+#: `scan_candidates` reasons - see its docstring for where each sends the user.
+SCAN_NO_TYPE = "no_type"
+SCAN_NONE = "none"
+SCAN_AMBIGUOUS = "ambiguous"
+SCAN_ALL_TRACKED = "all_tracked"
+SCAN_UNFILTERED = "unfiltered"
+
+#: The device key `fw.add_mcu.start` names one candidate by. The USB interface
+#: rather than the tty: `ttyUSB1` is whatever was plugged in second, and can be
+#: a different device by the time the write starts.
+PICK_KEY = "interface"
 
 
 class PlatformIO:
@@ -54,11 +80,22 @@ class PlatformIO:
     #: getting somewhere first.
     needs_services_stopped = True
     accepts: tuple[str, ...] = (KIND_PIO_ENV,)
+    #: A not-ready scan is refused as `platformio_<reason>`.
+    candidate_prefix = "platformio"
 
     def supports(self, device: Device, helper: Helper | None) -> bool:
         """A PlatformIO device reached through its configured port. Its
         identity, if its family has a way to know one, is confirmed at write
-        time, in `prepared`."""
+        time, in `prepared`.
+
+        And a bare one of a chipset it uploads to - which is not a second kind
+        of write. The upload tool resets the chip into its ROM by itself, so a
+        new device is written exactly as a configured one is, at a port
+        `scan_candidates` found instead of one a section names; `first_write`
+        turns the one into the other.
+        """
+        if device.kind == KIND_BARE:
+            return device.state in self.states and chipset_matches(self, device.chipset)
         return device.kind == KIND_PORT
 
     def target(
@@ -119,6 +156,11 @@ class PlatformIO:
             return
         by_type: dict[str, tuple[PioType, Identifier | None]] = {}
         for target in targets:
+            if target.detail.get("first_install"):
+                # Nothing to confirm before the write: a device being set up
+                # has no identity yet, and its port was chosen by the scan
+                # rather than remembered. It is asked afterwards - `write`.
+                continue
             env = target.detail["env"]
             by_type[env.name] = (env, target.detail["identifier"])
         yield {name: _identify(bench, env, identifier, ctx) for name, (env, identifier) in by_type.items()}
@@ -127,7 +169,13 @@ class PlatformIO:
         from ..providers import pio as pio_mod
 
         env = target.detail["env"]
-        port, confidence, problem = port_for(target.detail, (session or {}).get(env.name) or {}, ctx)
+        first = bool(target.detail.get("first_install"))
+        if first:
+            # The port the scan found, as chosen. `port_for` reconciles a
+            # remembered port with what answered; here nothing was remembered.
+            port, confidence, problem = target.detail["port"], None, None
+        else:
+            port, confidence, problem = port_for(target.detail, (session or {}).get(env.name) or {}, ctx)
         if problem is not None:
             # Raised rather than collected, because a batch records a failure by
             # catching one. The check itself is unchanged: a device that stayed
@@ -137,6 +185,19 @@ class PlatformIO:
             raise FlashError(problem, type=env.name, port=port)
 
         result = pio_mod.upload(bench.paths, bench.settings, env, port, reporter=ctx.reporter)
+
+        if first and not bench.settings.dry_run:
+            # Asked now, while the ports are still free: this is the first
+            # moment the device has anything to say, and once the services are
+            # back it is one more identical port. Its answer is what the user
+            # configures it by, and what the ledger files this write under.
+            from ..discovery import spec as discovery
+
+            reported = _announced(bench, env, target.detail["identifier"], port, ctx)
+            result = {**result, "reported_id": reported}
+            if reported is not None:
+                target.detail["device_id"] = reported
+                confidence = discovery.Confidence(discovery.ANSWERED)
 
         return {
             "name": target.detail["name"],
@@ -180,6 +241,191 @@ class PlatformIO:
         bus, so there is no device node whose absence would bring Klipper up
         in an error state - which is the only thing the MCU wait is protecting
         against."""
+
+    def scan_candidates(
+        self,
+        paths: Paths,
+        *,
+        tracked: Sequence[TrackedBoard],
+        reporter: Reporter,
+        type_name: str | None = None,
+    ) -> CandidateScan:
+        """Which serial port is the new device of this type on?
+
+        Reports rather than raises, like the ROM scanners. Unlike them there
+        is no boot mode to look for: an ESP32 behind a bridge chip looks the
+        same blank, running, or mid-crash, so what is listed is every USB
+        serial port whose ids are ones the type's board enumerates under
+        (`providers.pio.board_hwids`), read from sysfs because by-id shows
+        only one of several bridges that report no serial.
+
+        A port a configured device already sits on (`tracked` entries that
+        carry a `path`) is listed and labelled, and is never the one chosen
+        unasked; a port whose USB serial a tracked board answers to is that
+        board and is not listed at all.
+
+        ``no_type``
+            Asked without a type, or for one that is not a PlatformIO type.
+            Which ports to list is the type's project's to say.
+        ``none``
+            No port matches. Plug the device in - or, if it is plugged in,
+            the manifest's `build.hwids` do not describe it, and the message
+            names the ids that were looked for.
+        ``ambiguous``
+            Several unconfigured ports match and nothing can say which is the
+            new device. `pick` names the key to choose one by.
+        ``all_tracked``
+            Every matching port is a configured device. One can still be
+            picked, to write it again as new.
+        ``unfiltered``
+            The board's USB ids could not be read (`message` says why), so
+            every USB serial port is listed and one has to be picked. Never
+            ready: without the ids, a sole port is merely the only port.
+        """
+        from ..discovery import usb
+        from ..providers import pio as pio_mod
+        from ..settings import load_settings
+
+        shown: list[str] | None = None
+
+        def refuse(reason: str, message: str, devices: list[dict[str, Any]] | None = None) -> CandidateScan:
+            return CandidateScan(False, reason, message, devices or [], extra={"hwids": shown}, pick=PICK_KEY)
+
+        entry = None
+        if type_name is not None:
+            try:
+                entry = pio_mod.load(paths).get(type_name)
+            except UpdaterError as exc:
+                return refuse(SCAN_NO_TYPE, str(exc))
+        if entry is None:
+            return refuse(
+                SCAN_NO_TYPE,
+                "a PlatformIO device is found by the USB ids its type's board declares, "
+                "so this scan has to be asked about a PlatformIO type.",
+            )
+
+        hwids, problem = pio_mod.board_hwids(load_settings(paths.settings_file), entry)
+        shown = None if hwids is None else sorted(f"{vid}:{pid}" for vid, pid in hwids)
+
+        serials = {board.serial for board in tracked if board.serial and not board.path}
+        ports = [
+            port
+            for port in usb.serial_ports(paths)
+            if (hwids is None or port.vid_pid in hwids) and (port.device.serial or "") not in serials
+        ]
+        devices = [_candidate(port, tracked) for port in ports]
+        free = [index for index, device in enumerate(devices) if device["tracked_by"] is None]
+
+        if not devices:
+            if hwids is None:
+                return refuse(SCAN_NONE, f"No USB serial port is attached. ({problem}.)")
+            return refuse(
+                SCAN_NONE,
+                f"No serial port with a USB id {type_name}'s board declares ({', '.join(shown or [])}) "
+                f"is attached. Plug the device in; if it is, those ids are not the ones it "
+                f"enumerates under, and build.hwids in its board manifest needs correcting.",
+            )
+        if hwids is None:
+            return refuse(
+                SCAN_UNFILTERED,
+                f"{type_name}'s board could not be asked which USB ids it enumerates under "
+                f"({problem}), so every USB serial port is listed. Pick the one the device is on.",
+                devices,
+            )
+        if not free:
+            return refuse(
+                SCAN_ALL_TRACKED,
+                "Every matching port is a device that is already configured. Plug the new "
+                "one in, or pick one of these to write it again as new.",
+                devices,
+            )
+        if len(free) > 1:
+            return refuse(
+                SCAN_AMBIGUOUS,
+                f"{len(free)} unconfigured ports match and nothing can say which is the new "
+                f"device. Pick the one at the USB port it is plugged into.",
+                devices,
+            )
+        return CandidateScan(True, None, None, devices, extra={"hwids": shown}, target=free[0], pick=PICK_KEY)
+
+    def first_write(
+        self, paths: Paths, settings: Settings, type_name: str, fw: str, found: Mapping[str, Any]
+    ) -> tuple[Device, tuple[str, ...]]:
+        """The scan's device as the port device every other write here takes.
+
+        The type's own resolved stop list, unshortened. The unit that watches
+        for these devices has to be down for the upload to have the port; and
+        a picked port that *is* configured is held by Klipper outright.
+        """
+        from .. import stop_services
+        from ..providers import pio as pio_mod
+
+        entry = pio_mod.load(paths)[type_name]
+        tty = str(found["tty"])
+        device = Device(
+            type=type_name,
+            id=tty,
+            chipset="",
+            state=STATE_ESP_ROM,
+            fw=fw,
+            kind=KIND_PORT,
+            detail={
+                "env": entry,
+                "port": tty,
+                # None yet. `write` fills it in from the device's own answer.
+                "device_id": "",
+                "name": str(found.get("label") or type_name),
+                "section": "",
+                "first_install": True,
+            },
+        )
+        return device, stop_services.for_platformio(paths, entry, settings)
+
+
+def _candidate(port: SerialPort, tracked: Sequence[TrackedBoard]) -> dict[str, Any]:
+    """One port as a scan device. No `serial` key: that is what a DFU device
+    is named by, and a bridge chip's is not this device's."""
+    # Compared by tty name, the way `usb.device_for_block` compares a node: a
+    # tracked path is whatever a section says, usually a udev symlink.
+    owners = [
+        board
+        for board in tracked
+        if board.path and os.path.basename(os.path.realpath(board.path)) == port.tty
+    ]
+    # Two sections claiming one port: it is still not a free port, so the
+    # types are named, but neither section is - see `name_tracked`.
+    owner = owners[0] if len(owners) == 1 else None
+    vid, pid = port.vid_pid
+    return {
+        "tty": port.path,
+        "port": port.device.name,
+        PICK_KEY: port.interface,
+        "vid_pid": f"{vid}:{pid}",
+        "product": port.device.product,
+        "tracked_by": ", ".join(sorted({board.type for board in owners})) or None,
+        "known_serial": (owner.serial or None) if owner else None,
+        "label": (owner.label or None) if owner else None,
+    }
+
+
+def _announced(bench: Bench, env: PioType, identifier: Identifier | None, port: str, ctx: Any) -> str | None:
+    """The id the device just written at `port` says it has, or None.
+
+    Only an answer heard now counts. A remembered entry for this port
+    describes whatever sat on it before the write.
+    """
+    if identifier is None:
+        return None
+    try:
+        heard = identifier.identify(bench.paths, bench.settings, env, ask=True, reporter=ctx.reporter)
+    except UpdaterError as exc:
+        ctx.reporter("warn", f"could not ask the new '{env.name}' device which it is ({exc}).")
+        return None
+    real = os.path.realpath(port)
+    for ident, device in heard.items():
+        if device.answered and device.port and os.path.realpath(device.port) == real:
+            return ident
+    return None
 
 
 def _identify(bench: Bench, env: PioType, identifier: Identifier | None, ctx: Any) -> dict[str, Any]:

@@ -20,7 +20,7 @@ from .bootsel import Bootsel
 from .dfu_util import DfuUtil
 from .flashtool import Flashtool
 from .platformio import PlatformIO
-from .spec import KIND_BARE, KIND_SERIAL, CandidateScanner, Device, Flasher, FlashTarget
+from .spec import KIND_BARE, KIND_SERIAL, CandidateScanner, Device, FirstWriter, Flasher, FlashTarget
 
 if TYPE_CHECKING:
     from ..firmware import FirmwareFamily
@@ -51,6 +51,12 @@ def candidate_scanner(flasher: Flasher) -> CandidateScanner | None:
     """`flasher` as a `CandidateScanner`, or None when it cannot find a new
     board. The one place that asks - the way helper capabilities are reached."""
     return flasher if isinstance(flasher, CandidateScanner) else None
+
+
+def first_writer(flasher: Flasher) -> FirstWriter | None:
+    """`flasher` as a `FirstWriter`, or None when its first install is the
+    ROM write `flash.flash_initial_bootloader` does."""
+    return flasher if isinstance(flasher, FirstWriter) else None
 
 
 def needs_services_stopped(target: FlashTarget) -> bool:
@@ -329,7 +335,8 @@ class FirstInstall:
     fw: str
     #: None exactly when nothing on the family's list can do it.
     flasher: str | None
-    #: The ROM state that flasher writes ("dfu", "bootsel"); "" with no flasher.
+    #: The ROM state that flasher writes ("dfu", "bootsel", "esp_rom"); "" with
+    #: no flasher.
     state: str
     #: Set exactly when `flasher` is None, naming the line to change.
     reason: str | None
@@ -358,8 +365,8 @@ def first_install(entry: _Declared, families: dict[str, FirmwareFamily]) -> Firs
     bare board of it - the first, in list order, that is a `CandidateScanner`
     and whose `supports()` takes a bare device in one of its own states.
 
-    No builder and no flasher name is compared: `flashtool` and `platformio`
-    refuse `KIND_BARE` and cannot scan, so they are never chosen.
+    No builder and no flasher name is compared: `flashtool` refuses
+    `KIND_BARE` and cannot scan, so it is never chosen.
 
     Pure - no bus, no subprocess, no file read - because `fw.status` asks it
     for every row on every poll. Never raises: a row it cannot answer for
@@ -396,7 +403,9 @@ def first_install(entry: _Declared, families: dict[str, FirmwareFamily]) -> Firs
             continue
         for state in flasher.states:
             if flasher.supports(_bare(entry, fw, state), None):
-                return FirstInstall(fw, None, "", _no_first_install_writer(family, entry.chipset, state))
+                return FirstInstall(
+                    fw, None, "", _no_first_install_writer(family, entry.chipset, state, writer=flasher.name)
+                )
     if scanners:
         return FirstInstall(
             fw,

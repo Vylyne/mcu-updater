@@ -445,7 +445,12 @@ class Bootsel:
             ctx.reporter("warn", str(exc))
 
     def scan_candidates(
-        self, paths: Paths, *, tracked: Sequence[TrackedBoard], reporter: Reporter
+        self,
+        paths: Paths,
+        *,
+        tracked: Sequence[TrackedBoard],
+        reporter: Reporter,
+        type_name: str | None = None,
     ) -> CandidateScan:
         """What is sitting in BOOTSEL, and can this agent actually write it?
 

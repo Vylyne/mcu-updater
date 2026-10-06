@@ -114,7 +114,12 @@ class DfuUtil:
         """
 
     def scan_candidates(
-        self, paths: Paths, *, tracked: Sequence[TrackedBoard], reporter: Reporter
+        self,
+        paths: Paths,
+        *,
+        tracked: Sequence[TrackedBoard],
+        reporter: Reporter,
+        type_name: str | None = None,
     ) -> CandidateScan:
         """What is sitting in DFU mode, and can this agent actually open it?
 

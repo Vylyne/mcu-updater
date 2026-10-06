@@ -936,11 +936,18 @@ def refuse_unbootable_first_image(paths: Paths, mcu_type: str, fw: str, artifact
     `app_address` (`CONFIG_FLASH_APPLICATION_ADDRESS`) has to say so. An
     address that cannot be read is refused too - it cannot be proven
     bootable, and so is a corrupt `.uf2` - both as `offset_mismatch`.
+
+    Asked only of an image written as one piece. A PlatformIO env is not
+    one: its upload places a bootloader, a partition table and the
+    application where the project says each goes, so there is no single start
+    address to hold it to and nothing here that could judge it.
     """
-    from ..artifacts import KIND_UF2
+    from ..artifacts import KIND_BIN, KIND_UF2
     from ..build import read_sidecar
     from .bootsel import FLASH_BASE, _image_start
 
+    if artifact.kind not in (KIND_BIN, KIND_UF2):
+        return
     path = artifact.path
     start: int | None
     if artifact.kind == KIND_UF2:
@@ -1104,15 +1111,20 @@ def flash_initial_bootloader(
             flasher.settled(bench, target, PlainContext(reporter))
 
 
-def _no_first_install_writer(family: FirmwareFamily, chipset: str, state: str) -> str:
+def _no_first_install_writer(
+    family: FirmwareFamily, chipset: str, state: str, *, writer: str | None = None
+) -> str:
     """Why nothing on `family`'s list writes this bare board, and the line to add.
 
-    A bare board is in its ROM bootloader, which only `bootsel` (RP2040) or
-    `dfu_util` (STM32) writes. When the family lists that writer already, the
-    chipset is what it cannot write, and no list edit fixes that.
+    A bare board is in its ROM bootloader, which only the flasher for that
+    ROM writes - `bootsel` (RP2040), `dfu_util` (STM32), or the one
+    `first_install` found and names as `writer`. When the family lists that
+    writer already, the chipset is what it cannot write, and no list edit
+    fixes that.
     """
-    writer = "bootsel" if state == STATE_BOOTSEL else "dfu_util"
-    rom = "BOOTSEL" if state == STATE_BOOTSEL else "DFU"
+    if writer is None:
+        writer = "bootsel" if state == STATE_BOOTSEL else "dfu_util"
+    rom = {STATE_BOOTSEL: "BOOTSEL", STATE_DFU: "DFU"}.get(state, "its ROM bootloader")
     section = f"[firmware {family.name}]"
     if writer not in family.flashers:
         line = ", ".join((*family.flashers, writer))

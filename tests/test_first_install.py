@@ -55,11 +55,32 @@ def test_a_cmake_type_with_no_chipset_is_told_to_declare_one():
     assert "chipset:" in got.reason
 
 
-def test_a_pio_type_is_told_nothing_can_scan_for_it():
-    got = flashers.first_install(Entry("knomi", "esp32", ("knomi_serial",)), BASE)
+def test_a_pio_type_is_set_up_by_its_own_uploader():
+    """No ROM flasher is involved: the upload tool resets the chip into its
+    ROM by itself, so the family's one flasher both finds and writes it."""
+    got = flashers.first_install(Entry("knomi", "esp32s3", ("knomi_serial",)), BASE)
+    assert (got.fw, got.flasher, got.state, got.reason) == ("knomi_serial", "platformio", "esp_rom", None)
+
+
+def test_a_pio_type_with_no_chipset_is_told_to_declare_one():
+    """The uploader writes ESP32s, and a type that does not say it is one is
+    not assumed to be."""
+    got = flashers.first_install(Entry("knomi", "", ("knomi_serial",)), BASE)
+    assert got.flasher is None
+    assert "chipset:" in got.reason
+
+
+def test_a_pio_type_of_a_chip_the_uploader_does_not_reset_is_not_set_up_by_it():
+    got = flashers.first_install(Entry("pico_w", "rp2040", ("knomi_serial",)), BASE)
+    assert got.flasher is None
+    assert "flashers: platformio, bootsel" in got.reason
+
+
+def test_a_type_nothing_can_scan_for_is_told_so():
+    got = flashers.first_install(Entry("mega", "atmega2560", ("klipper",)), BASE)
     assert got.flasher is None
     assert "can scan for a new board" in got.reason
-    assert "[firmware knomi_serial]" in got.reason
+    assert "[firmware klipper]" in got.reason
 
 
 def test_a_list_without_a_bare_writer_names_the_line_to_add():
@@ -99,7 +120,9 @@ class _Stub:
         self.states = ("dfu",)
         if scans:
             self.candidate_prefix = name
-            self.scan_candidates = lambda paths, *, tracked, reporter: CandidateScan(False, None, None, [])
+            self.scan_candidates = lambda paths, *, tracked, reporter, type_name=None: CandidateScan(
+                False, None, None, []
+            )
 
     def supports(self, device, helper):
         return True

@@ -580,9 +580,33 @@ confirms it never consults it anywhere today.
 Setting up a bare board is a question for the install family's `flashers:`
 list, not for the builder or a chipset prefix: `flashers.first_install` walks
 that list and takes the first `CandidateScanner` whose `supports()` takes a
-bare device of the type's `chipset`. A new mechanism (a bare-device scanner
-for the `platformio` flasher, say) is one capability on its flasher module,
-with no change to the agent, the wire, or the wizard.
+bare device of the type's `chipset`. A new mechanism is one capability on
+its flasher module, and the callers ask for capabilities
+(`candidate_scanner`, `first_writer`) rather than naming a flasher.
+
+That it would need "no change to the agent, the wire, or the wizard" was the
+aim and did not survive the first mechanism that was not a boot ROM. The
+`platformio` flasher sets a new device up with the same upload that updates a
+configured one, and three things the ROM path takes for granted are false for
+it: Klipper has to stop, no board comes back under a serial to adopt, and its
+candidates are ports that configured devices also sit on. So there is a second
+capability, `FirstWriter`, and `fw.add_mcu.start` hands a flasher that has it
+to `_add_by_write` - an ordinary one-device `write_all` behind the print gate -
+instead of the ROM write and its wait. That is one branch on a capability, not
+on a builder, and it is the whole of the difference; do not fold the two paths
+together to remove it, and do not grow a third without a third capability.
+
+Configured ports are gathered from Klipper only for a `FirstWriter`'s scan
+(`_scan`). A ROM scan names its finds by serial and has no use for the list,
+and must not be made to wait on Klipper for it.
+
+A PlatformIO candidate is a USB serial port whose ids the type's board
+manifest declares (`build.hwids`), read through `pio project config` at scan
+time. Not cached, and never from `fw.status`: `first_install` runs on every
+poll and stays pure, so a row can say a type is scannable when its manifest
+declares nothing - the scan then says `unfiltered`, and an unfiltered scan is
+never ready. Declared ids that match nothing are `none`, not a fall back to
+every port: a manifest that is wrong should be corrected, not routed around.
 
 Identification lives in the scanner, not in a caller: it is handed the type
 list's tracked boards, because deriving a ROM id from a running serial is
@@ -599,9 +623,14 @@ reconcile: `fw.add_mcu.start` writes a build made earlier, so it reads
 just made, which is why `flash_initial_bootloader` rejects `providers.staged`.
 Neither is to be "fixed" to match the other.
 
-The wizard's DFU pick-a-serial is the one sanctioned flasher-specific branch in
-a caller. It exists because only DFU can target one of several boards sitting
-in front of it at once; nothing else needs to ask a human to disambiguate.
+Choosing one of several devices is the scan's to offer, not a caller's to
+know about: a scan that can be aimed names the device key to choose by
+(`CandidateScan.pick`), `fw.add_mcu.start` matches its `pick` argument against
+that key, and the wizard shows a chooser for any not-ready scan that declares
+one. The wizard's DFU pick-a-serial (`dfu_serial`, keyed on the flasher's
+name) predates this and is kept as it is - it is the one flasher-specific
+branch in a caller, it works, and moving it onto `pick` is a wire change with
+nothing to show for it.
 
 ### One selection per identity, every builder
 

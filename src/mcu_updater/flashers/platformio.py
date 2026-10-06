@@ -82,6 +82,9 @@ class PlatformIO:
     accepts: tuple[str, ...] = (KIND_PIO_ENV,)
     #: A not-ready scan is refused as `platformio_<reason>`.
     candidate_prefix = "platformio"
+    candidate_hint = (
+        "Plug the device in. Nothing has to be held or jumpered: the upload resets it into its ROM itself."
+    )
 
     def supports(self, device: Device, helper: Helper | None) -> bool:
         """A PlatformIO device reached through its configured port. Its

@@ -341,8 +341,20 @@ class FirstInstall:
     #: Set exactly when `flasher` is None, naming the line to change.
     reason: str | None
 
+    @property
+    def hint(self) -> str | None:
+        """What to do to a new board before scanning for it, in the chosen
+        flasher's own words. None with no flasher."""
+        scanner = candidate_scanner(_BY_NAME[self.flasher]) if self.flasher in _BY_NAME else None
+        return scanner.candidate_hint if scanner is not None else None
+
     def to_json(self) -> dict[str, Any]:
-        return {"fw": self.fw or None, "flasher": self.flasher, "reason": self.reason}
+        return {
+            "fw": self.fw or None,
+            "flasher": self.flasher,
+            "reason": self.reason,
+            "hint": self.hint,
+        }
 
 
 class _Declared(Protocol):

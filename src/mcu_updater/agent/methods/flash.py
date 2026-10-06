@@ -647,9 +647,9 @@ class FlashMixin(_Base):
         tracked by a printer.cfg section rather than a serial, each with the
         port it sits on: the only thing that tells a configured one from a new
         one when the bus shows no serial for either. Asked for only by a scan
-        about a type: they come from Klipper, and a scan that names none has
-        no use for the trip. An unreachable Klipper adds none, so its devices
-        then read as new.
+        about a type, and only for a flasher that reads them (`_scan`): they
+        come from Klipper, and no other scan has a use for the trip. An
+        unreachable Klipper adds none, so its devices then read as new.
 
         One board per port, and the scanned type's own before another's:
         every type of a family lists all of that family's sections, so a port
@@ -685,17 +685,29 @@ class FlashMixin(_Base):
                     )
         return boards
 
+    def _scan(
+        self, scanner: flashers.CandidateScanner, type_name: str | None = None
+    ) -> flashers.CandidateScan:
+        """One `CandidateScanner`'s scan, about `type_name` when there is one.
+
+        Configured ports are gathered only for a flasher that sets a device
+        up by writing a port (`FirstWriter`), because only its candidates are
+        ports a configured device also sits on. A ROM scan names its finds by
+        serial, and is not made to wait on Klipper for a list it never reads.
+        """
+        by_port = type_name is not None and isinstance(scanner, flashers.FirstWriter)
+        return scanner.scan_candidates(
+            self.paths,
+            tracked=self._tracked_boards(ports_for=type_name if by_port else None),
+            reporter=self._log_reporter,
+            type_name=type_name,
+        )
+
     def _candidate_report(
         self, scanner: flashers.CandidateScanner, type_name: str | None = None
     ) -> dict[str, Any]:
         """One `CandidateScanner`'s scan, as its wire result."""
-        scan = scanner.scan_candidates(
-            self.paths,
-            tracked=self._tracked_boards(ports_for=type_name),
-            reporter=self._log_reporter,
-            type_name=type_name,
-        )
-        return scan.to_json()
+        return self._scan(scanner, type_name).to_json()
 
     @staticmethod
     def _scanner_named(name: str) -> flashers.CandidateScanner:
@@ -898,12 +910,7 @@ class FlashMixin(_Base):
 
         # Which board, decided here rather than in the job, so an ambiguous bus is
         # a synchronous refusal the caller can act on instead of a job that dies.
-        scan_result = scanner.scan_candidates(
-            self.paths,
-            tracked=self._tracked_boards(ports_for=name),
-            reporter=self._log_reporter,
-            type_name=name,
-        )
+        scan_result = self._scan(scanner, name)
         scan = scan_result.to_json()
         target = args.get("dfu_serial")
         if target is not None:

@@ -690,3 +690,16 @@ def test_a_pick_means_nothing_to_a_scan_that_declares_no_key(api, paths, monkeyp
     assert _code(exc) == "device_not_found"
     assert exc.value.data["data"]["key"] is None
     assert api.runner.current() is None
+
+
+def test_a_rom_scan_does_not_ask_klipper_which_ports_are_configured(api, monkeypatch):
+    """It names its finds by serial and never reads the list, so it is not
+    made to wait on Klipper for one."""
+    patch_dfu(monkeypatch, stdout=ONE_BOARD)
+    monkeypatch.setattr(
+        api, "platformio_devices", lambda *a: pytest.fail("asked Klipper on behalf of a DFU scan")
+    )
+
+    out = api.dispatch("fw.add_mcu.scan", {"name": EBB})
+
+    assert (out["flasher"], out["ready"]) == ("dfu_util", True)

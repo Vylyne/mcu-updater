@@ -23,7 +23,7 @@ import time
 
 import pytest
 
-from mcu_updater import device_info, firmware, inventory, uf2
+from mcu_updater import device_info, firmware, flashers, inventory, uf2
 from mcu_updater.agent.methods import Api
 from mcu_updater.agent.rpc import RpcError
 from mcu_updater.build import FlashLog
@@ -1516,11 +1516,13 @@ def test_every_row_says_how_a_bare_board_of_it_is_set_up(api):
         "fw": "katapult",
         "flasher": "dfu_util",
         "reason": None,
+        "hint": flashers.by_name("dfu_util").candidate_hint,
     }
     assert targets["knomi"]["first_install"] == {
         "fw": "knomi_serial",
         "flasher": "platformio",
         "reason": None,
+        "hint": flashers.by_name("platformio").candidate_hint,
     }
     assert all("first_install" in t for t in targets.values())
 
@@ -1528,7 +1530,12 @@ def test_every_row_says_how_a_bare_board_of_it_is_set_up(api):
 def test_a_cmake_rp2040_row_is_set_up_over_bootsel(paths, tmp_path):
     _cmake_config(paths, tmp_path)
     row = {t["name"]: t for t in Api(paths).dispatch("fw.status")["targets"]}["roadrunner"]
-    assert row["first_install"] == {"fw": "roadrunner", "flasher": "bootsel", "reason": None}
+    assert row["first_install"] == {
+        "fw": "roadrunner",
+        "flasher": "bootsel",
+        "reason": None,
+        "hint": flashers.by_name("bootsel").candidate_hint,
+    }
 
 
 def test_a_row_first_install_cannot_answer_still_renders(paths, tmp_path):

@@ -393,6 +393,9 @@ class CandidateScanner(Protocol):
     it is what makes a flasher able to set up a new board - `first_install`
     asks nothing else. `candidate_prefix` spells the refusal code a not-ready
     scan becomes (`<prefix>_<reason>`), so no caller names a flasher.
+    `candidate_hint` is what to do to a new board before scanning for it, as
+    the one sentence the wizard shows first - the scan cannot say it, being
+    what the sentence comes before.
 
     `type_name` is the type being set up, for a flasher whose candidates
     depend on it (which USB ids a PlatformIO board enumerates under is its
@@ -403,6 +406,7 @@ class CandidateScanner(Protocol):
 
     name: str
     candidate_prefix: str
+    candidate_hint: str
 
     def scan_candidates(
         self,

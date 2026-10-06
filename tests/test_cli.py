@@ -1535,6 +1535,28 @@ def test_add_type_keeps_an_edit_made_while_the_overwrite_prompt_waited(c, fake_r
     assert "paneltype" in reloaded.names()
 
 
+def test_add_mcu_sends_a_platformio_type_to_the_panel(c, fake_root, monkeypatch, capsys):
+    """`first_install` answers for a PlatformIO type now - with a flasher
+    that sets a device up by an ordinary write, which this command's ROM
+    flow cannot run. It never gets that far: add-mcu builds through
+    menuconfig, and says where a type that does not is set up."""
+    with open(c.paths.main_config, "a", encoding="utf-8", newline="\n") as fh:
+        fh.write(
+            "\n[firmware knomi_serial]\nsource: ~/knomi_serial\nbuilder: platformio\n"
+            "flashers: platformio\n\n"
+            "[type knomi]\nchipset: esp32\nfirmware: knomi_serial\nplatformio_env: knomi\n"
+        )
+    monkeypatch.setattr(
+        cli, "flash_initial_bootloader", lambda *a, **k: pytest.fail("the ROM flow ran for a PlatformIO type")
+    )
+
+    code = _main(fake_root, monkeypatch, ["add-mcu", "-t", "knomi"])
+
+    err = capsys.readouterr().err
+    assert code == 1
+    assert "builds with platformio" in err and "Add new board" in err
+
+
 def test_add_mcu_offers_the_rest_after_refusing_one(c, fake_root, monkeypatch, capsys):
     """Every candidate was just flashed; one refusal must not leave the others
     unasked. The refusal still shows, in the message and the exit code."""

@@ -109,7 +109,25 @@ def test_first_install_never_raises_on_an_unknown_flasher_name():
 def test_first_install_never_raises_on_no_firmwares():
     got = flashers.first_install(Entry("t", "rp2040", ()), BASE)
     assert got.flasher is None and got.fw == ""
-    assert got.to_json() == {"fw": None, "flasher": None, "reason": got.reason}
+    assert got.to_json() == {"fw": None, "flasher": None, "reason": got.reason, "hint": None}
+
+
+def test_the_chosen_flasher_says_how_to_get_a_board_ready_for_it():
+    """Before the scan, so the scan cannot be what says it. Each flasher's
+    own sentence: holding BOOT is right for one and wrong for the next."""
+    dfu = flashers.first_install(Entry("t", "stm32g0b1xx", ("klipper", "katapult")), BASE)
+    pio = flashers.first_install(Entry("knomi", "esp32", ("knomi_serial",)), BASE)
+
+    assert "DFU" in dfu.to_json()["hint"]
+    assert "Nothing has to be held" in pio.to_json()["hint"]
+    assert dfu.hint != pio.hint
+
+
+def test_every_scanner_has_a_hint():
+    for flasher in flashers.FLASHERS:
+        scanner = flashers.candidate_scanner(flasher)
+        if scanner is not None:
+            assert scanner.candidate_hint.endswith("."), flasher.name
 
 
 class _Stub:
@@ -120,6 +138,7 @@ class _Stub:
         self.states = ("dfu",)
         if scans:
             self.candidate_prefix = name
+            self.candidate_hint = f"get it ready for {name}"
             self.scan_candidates = lambda paths, *, tracked, reporter, type_name=None: CandidateScan(
                 False, None, None, []
             )

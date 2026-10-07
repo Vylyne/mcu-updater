@@ -15,7 +15,8 @@ proposing anything it covers**, and before undoing something that looks
 half-finished. The ground-rules table below is what to check *before every
 commit*; that file is what to check *before starting work*.
 
-Open work is tracked in [GitHub issues](https://github.com/Vylyne/mcu-updater/issues)
+Open work is tracked in [GitHub issues](https://github.com/Vylyne/mcu-updater/issues),
+prioritised on the [mcu-updater project](https://github.com/users/Vylyne/projects/1)
 — README's `## TODO` only points there, and `docs/backlog.md` is gone. **Do not
 list or read issues unless I name one or ask.** They are deliberately outside
 default context; an issue is not live until it is picked up. A change that

@@ -54,7 +54,7 @@ _DEFAULT_SYS_CLASS_NET = "/sys/class/net"
 
 #: flashtool's own words. Matched loosely enough to survive incidental
 #: reformatting, tightly enough to not fire on unrelated output -
-#: `docs/backlog.md` already flags flashtool's output as human-readable only,
+#: issue #34 already flags flashtool's output as human-readable only,
 #: never machine-readable, so this is a defensive parse, not a trusted one.
 _QUERY_LINE_RE = re.compile(r"Detected UUID:\s*([0-9a-fA-F]+),\s*Application:\s*(Klipper|Katapult|Unknown)")
 

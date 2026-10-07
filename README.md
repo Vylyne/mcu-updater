@@ -83,19 +83,9 @@ Interfaces:
 
 ## TODO
 
-[docs/decisions.md](docs/decisions.md) for the standing decisions that came out
-of it. What is still open:
-
-- [x] ~~**NEXT** Remove the remaining screen/display vocabulary from the wire, left out of the `platformio` flasher rename because each is a wire change of its own: the `displays` keys (`fw.device.list`, `fw.flash`'s PlatformIO response, `fw.flash_all`), the status payload's `screens`, the `display_flash` job kind, and `pio_status`. Any wire rename bumps `API_VERSION`, so the UI release is promoted first - see AGENTS.md's release ordering.~~ Done in `api_version` 5: `targets[]` rows carry `source`/`extras`/`devices_note` uniformly, `fw.device.list` is gone, `fw.flash_all` and the PlatformIO `fw.flash` answer `{job_id, job}`, and job kinds are `flash`/`build` - see [docs/agent-api.md](docs/agent-api.md).
-- [ ] Deduplicate the device list across all types. Nothing notices when two entries are one physical device: two types whose helpers list the same Klipper prefix, a configured `/dev/ttyACM8` beside another device's by-id symlink that resolves to it, or a hand-made link or udev rule. `fw.flash_all` then writes that device once per entry and the last image wins. Scanners and listers should resolve to the real device path and carry it as a core property (`ListedDevice.resolved_path` already does), so the core can refuse a conflict before a write.
-- [ ] Dead code and stale docs already known, for the dead-code pass. Dead: `service.paused` has no caller since the watcher stop moved into the verified `stop_services` union, and its docstring still argues the old best-effort design. Stale: `build_all`'s docstring in `bulk.py` says a PlatformIO env has no family.
-- [ ] Per-device helper actions: a helper contributes a device's action rows (identity provision/clear today is chosen in `BusPanel.vue` by `isRoadrunnerDevice`) so the UI stops naming a firmware.
-- [x] ~~**NEEDS DESIGN** First-time flashing of a PlatformIO device that cannot answer the listen pass yet (a blank ESP32, or firmware that does not broadcast its id) while others of its type do.~~ Done: the `platformio` flasher scans for a new device by the USB ids its board manifest declares, and "Add new board…" writes it - see [A new PlatformIO device](#a-new-platformio-device).
-- [ ] Every config option in the web UI, so a new `[firmware ...]` family and a new `[type ...]` of any builder can be defined there without editing `mcu-updater.cfg`. Today the panel declares a kconfig type (`fw.type.add`) and edits `[updater]` settings; a family's `source`/`builder`/`helper`/`flashers`, and a cmake or PlatformIO type's own keys (`platformio_env`, `cmake_target`, `stop_services`), are file-only.
-- [ ] **TEST ERROR** Reproduce and fix the flaky teardown `RuntimeError` in `test_an_unknown_inbound_method_gets_an_error_not_silence`.
-- [ ] **NEEDS DESIGN** Run config migrations as the first step of agent startup, so that restarting the service migrates an existing install. First check the restrictions the service runs under.
-- [ ] **BUG** A Roadrunner flash reports `Could not confirm that the Roadrunner CDC device disappeared` on an otherwise successful write. `_await_disappearance` in [src/mcu_updater/discovery/roadrunner.py](src/mcu_updater/discovery/roadrunner.py) sets `unknown = True` when `_entry_candidates(paths, strict=True)` raises `OSError`, then treats "I could not look" as "the device is still there" and spins to `REENUMERATE_TIMEOUT`. The usual cause is `/dev/serial/by-id` disappearing entirely once the last CDC device leaves - which is evidence the board *did* go, not absence of evidence. Seen on the bench 2026-09-19; the flash itself succeeded.
-- [ ] Identify a tracked board sitting in BOOTSEL by its boot-ROM ID and hand it to flasher selection, so a helper flash that stopped after the reboot can be finished without a power-cycle. `Bootsel.scan_candidates` in [src/mcu_updater/flashers/bootsel.py](src/mcu_updater/flashers/bootsel.py) already maps boot-ROM IDs to tracked serials.
+Open work is tracked in [GitHub issues](https://github.com/Vylyne/mcu-updater/issues),
+not in this file. [docs/decisions.md](docs/decisions.md) holds the standing
+decisions - the things that look like a gap and are not.
 
 ## Requirements
 

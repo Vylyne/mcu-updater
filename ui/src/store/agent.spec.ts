@@ -871,6 +871,27 @@ describe("Phase 8: settings, bus adoption, add_mcu", () => {
     socket.message({ jsonrpc: "2.0", id: request.id, result: {} });
     expect(await call).toBe(true);
   });
+
+  it("startAddMcu names a picked device by `pick`, and sends no dfu_serial", async () => {
+    let socket!: FakeWebSocket;
+    connect("ws://test/websocket", () => {
+      socket = new FakeWebSocket();
+      return socket;
+    });
+    socket.open();
+    await drainHandshake(socket);
+
+    const before = socket.sent.length;
+    const call = startAddMcu("knomi", undefined, "3-1.6.7:1.0");
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    const request = JSON.parse(socket.sent[before]);
+    expect(request.params.arguments).toEqual({
+      name: "knomi",
+      pick: "3-1.6.7:1.0",
+    });
+    socket.message({ jsonrpc: "2.0", id: request.id, result: {} });
+    expect(await call).toBe(true);
+  });
 });
 
 describe("roadrunner", () => {

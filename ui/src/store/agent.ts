@@ -872,20 +872,25 @@ export function firstInstallAware(targets: Target[]): boolean {
   );
 }
 
-/** Write Katapult to a bare board over DFU/BOOTSEL. Returns immediately with
- * a job - the running/succeeded/failed state, including the eventual
- * `candidates`/`already_tracked` result, arrives the normal way through the
- * `job` notify_agent_event JobPanel already renders, since job submission
- * emits its own state (agent/jobs.py's `on_job_change`). */
+/** Write a new board's first image. Returns immediately with a job - the
+ * running/succeeded/failed state, including the eventual result, arrives the
+ * normal way through the `job` notify_agent_event JobPanel already renders,
+ * since job submission emits its own state (agent/jobs.py's
+ * `on_job_change`).
+ *
+ * `pick` names one scanned device by the key that scan declared (`pick` on
+ * its result); `dfuSerial` is the older, DFU-only spelling of the same. */
 export async function startAddMcu(
   name: string,
   dfuSerial?: string,
+  pick?: string,
 ): Promise<boolean> {
   if (client === null) return false;
   try {
     await callAgent(client, "fw.add_mcu.start", {
       name,
       ...(dfuSerial ? { dfu_serial: dfuSerial } : {}),
+      ...(pick ? { pick } : {}),
     });
     state.error = null;
     return true;

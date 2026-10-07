@@ -96,7 +96,7 @@ describe("AddMcuWizard", () => {
       .trigger("click");
     await flushPromises();
 
-    expect(start).toHaveBeenCalledWith("barepico", undefined);
+    expect(start).toHaveBeenCalledWith("barepico", undefined, undefined);
   });
 
   it("lists a cmake type and scans it through fw.add_mcu.scan", async () => {
@@ -131,7 +131,7 @@ describe("AddMcuWizard", () => {
 
     expect(scanNew).toHaveBeenCalledWith("roadrunner");
     expect(legacy).not.toHaveBeenCalled();
-    expect(start).toHaveBeenCalledWith("roadrunner", undefined);
+    expect(start).toHaveBeenCalledWith("roadrunner", undefined, undefined);
   });
 
   it("warns on a ready scan that found more boards than it can write", async () => {
@@ -223,6 +223,124 @@ describe("AddMcuWizard", () => {
     await flushPromises();
 
     expect(wrapper.findAll("select")).toHaveLength(2);
+  });
+
+  const knomi = row("platformio", "knomi", {
+    fw: "knomi_serial",
+    flasher: "platformio",
+    reason: null,
+    hint: "Plug the device in. Nothing has to be held or jumpered.",
+  });
+  const port = (n: number, socket: string, owner?: string) => ({
+    tty: `/dev/ttyUSB${n}`,
+    port: socket,
+    interface: `${socket}:1.0`,
+    tracked_by: owner ? "knomi" : null,
+    label: owner ?? null,
+  });
+
+  async function scanned(result: Record<string, unknown>) {
+    newAgent();
+    state.status = { targets: [knomi] } as never;
+    vi.spyOn(store, "scanNewBoard").mockResolvedValue(result);
+    const wrapper = mount(AddMcuWizard, { props: { open: true } });
+    await wrapper.get("select").setValue("knomi");
+    const before = wrapper.text();
+    await wrapper
+      .findAll("button")
+      .find((b) => b.text() === "Scan")!
+      .trigger("click");
+    await flushPromises();
+    return { wrapper, before };
+  }
+
+  it("says how to get the board ready in the flasher's own words", async () => {
+    const { before } = await scanned({ ready: true, pick: "interface" });
+
+    expect(before).toContain("Nothing has to be held or jumpered. Then scan.");
+    expect(before).not.toContain("boot jumper, or hold BOOT");
+  });
+
+  it("offers a pick by the key the scan declares, and sends it", async () => {
+    const start = vi.spyOn(store, "startAddMcu").mockResolvedValue(true);
+    const { wrapper } = await scanned({
+      ready: false,
+      reason: "ambiguous",
+      message: "2 unconfigured ports match.",
+      pick: "interface",
+      devices: [
+        port(0, "3-1.6.5", "t0_knomi"),
+        port(2, "3-1.6.7"),
+        port(3, "3-1.6.8"),
+      ],
+    });
+
+    const pick = wrapper.get("select.pick");
+    const options = pick.findAll("option").map((o) => o.text());
+    expect(options).toEqual([
+      "Choose a device…",
+      "/dev/ttyUSB0 · USB 3-1.6.5 - already configured (t0_knomi, knomi)",
+      "/dev/ttyUSB2 · USB 3-1.6.7",
+      "/dev/ttyUSB3 · USB 3-1.6.8",
+    ]);
+    const install = () =>
+      wrapper
+        .findAll("button")
+        .find((b) => b.text() === "Install knomi_serial")!;
+    // Nothing is preselected: a configured port must never be the default.
+    expect(install().attributes("disabled")).toBeDefined();
+
+    await pick.setValue("3-1.6.8:1.0");
+    expect(install().attributes("disabled")).toBeUndefined();
+    await install().trigger("click");
+    await flushPromises();
+
+    expect(start).toHaveBeenCalledWith("knomi", undefined, "3-1.6.8:1.0");
+  });
+
+  it.each(["all_tracked", "unfiltered"])(
+    "offers the pick for a %s scan too",
+    async (reason) => {
+      const { wrapper } = await scanned({
+        ready: false,
+        reason,
+        pick: "interface",
+        devices: [port(0, "3-1.6.5", "t0_knomi")],
+      });
+
+      expect(wrapper.find("select.pick").exists()).toBe(true);
+    },
+  );
+
+  it("offers no pick when the scan settled on one device", async () => {
+    const start = vi.spyOn(store, "startAddMcu").mockResolvedValue(true);
+    const { wrapper } = await scanned({
+      ready: true,
+      pick: "interface",
+      devices: [port(0, "3-1.6.5", "t0_knomi"), port(2, "3-1.6.7")],
+    });
+
+    expect(wrapper.find("select.pick").exists()).toBe(false);
+    await wrapper
+      .findAll("button")
+      .find((b) => b.text() === "Install knomi_serial")!
+      .trigger("click");
+    await flushPromises();
+    expect(start).toHaveBeenCalledWith("knomi", undefined, undefined);
+  });
+
+  it("offers no pick when there is nothing to pick from", async () => {
+    const { wrapper } = await scanned({
+      ready: false,
+      reason: "none",
+      message:
+        "No serial port with a USB id knomi's board declares is attached.",
+      pick: "interface",
+      devices: [],
+    });
+
+    expect(wrapper.find("select.pick").exists()).toBe(false);
+    expect(wrapper.text()).toContain("No serial port with a USB id");
   });
 
   it("falls back to the kconfig-only flow against an older agent", async () => {

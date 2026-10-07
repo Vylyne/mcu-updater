@@ -1021,8 +1021,10 @@ def test_add_mcu_scan_runs_the_scan_first_install_chose(adder, paths, fake_root,
     assert out["devices"][0]["port"] == DFU_PORT
 
 
-def test_add_mcu_scan_reports_a_type_with_no_scanner(adder):
-    out = adder.dispatch("fw.add_mcu.scan", {"name": "knomi"})
+def test_add_mcu_scan_reports_a_type_with_no_scanner(adder, paths):
+    with open(paths.main_config, "a", encoding="utf-8") as fh:
+        fh.write("\n[type mega]\nchipset: atmega2560\nfirmware: klipper\nserials:\n")
+    out = adder.dispatch("fw.add_mcu.scan", {"name": "mega"})
     assert out["ready"] is False
     assert out["reason"] == "no_scanner"
     assert out["flasher"] is None

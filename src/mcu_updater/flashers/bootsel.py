@@ -303,6 +303,7 @@ class Bootsel:
     name = "bootsel"
     label = "BOOTSEL (mass storage)"
     candidate_prefix = "bootsel"
+    candidate_hint = "Hold BOOT / BOOTSEL while plugging the board in, so it mounts as a drive."
     chipsets: tuple[str, ...] = ("rp2040",)
     states: tuple[str, ...] = (STATE_BOOTSEL,)
     #: False for a board already in BOOTSEL: nothing holds its port. A target
@@ -445,7 +446,12 @@ class Bootsel:
             ctx.reporter("warn", str(exc))
 
     def scan_candidates(
-        self, paths: Paths, *, tracked: Sequence[TrackedBoard], reporter: Reporter
+        self,
+        paths: Paths,
+        *,
+        tracked: Sequence[TrackedBoard],
+        reporter: Reporter,
+        type_name: str | None = None,
     ) -> CandidateScan:
         """What is sitting in BOOTSEL, and can this agent actually write it?
 

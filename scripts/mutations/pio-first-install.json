@@ -1,0 +1,156 @@
+{
+  "_comment": "A new PlatformIO device is found by the USB ids its board manifest declares and written like any other device of its type: only ports with a declared id are listed, a configured port is never the one chosen unasked, an unreadable manifest never yields a ready scan, a pick must name exactly one scanned device by the key the scan declares, the write sits behind the print gate with the type's full stop list, and only an answer heard after the write names the device.",
+  "file": "src/mcu_updater/flashers/platformio.py",
+  "command": [
+    "python",
+    "-m",
+    "pytest",
+    "tests/test_pio_board_hwids.py",
+    "tests/test_platformio_first_install.py",
+    "tests/test_first_install.py",
+    "tests/test_candidate_scan.py",
+    "tests/test_agent_add_mcu.py",
+    "-q"
+  ],
+  "mutations": [
+    {
+      "name": "usb ids are compared as sysfs spells them",
+      "file": "src/mcu_updater/providers/pio.py",
+      "find": "        ids = frozenset((f\"{int(vid, 16):04x}\", f\"{int(pid, 16):04x}\") for vid, pid in declared)",
+      "replace": "        ids = frozenset((vid, pid) for vid, pid in declared)"
+    },
+    {
+      "name": "a manifest with no ids is no filter, not an empty one",
+      "file": "src/mcu_updater/providers/pio.py",
+      "find": "    if not ids:\n        return None, f\"{path} declares no USB ids (build.hwids)\"",
+      "replace": "    if False:\n        return None, f\"{path} declares no USB ids (build.hwids)\""
+    },
+    {
+      "name": "the project's own board manifest wins",
+      "file": "src/mcu_updater/providers/pio.py",
+      "find": "    return next((path for path in candidates if os.path.isfile(path)), None)",
+      "replace": "    return next((path for path in reversed(candidates) if os.path.isfile(path)), None)"
+    },
+    {
+      "name": "the env's own platform is searched before another version of it",
+      "file": "src/mcu_updater/providers/pio.py",
+      "find": "    for name in sorted(installed, key=lambda name: name.split(\"@\", 1)[0] != wanted):",
+      "replace": "    for name in installed:"
+    },
+    {
+      "name": "only ports with a declared usb id are listed",
+      "find": "            if (hwids is None or port.vid_pid in hwids) and (port.device.serial or \"\") not in serials",
+      "replace": "            if (port.device.serial or \"\") not in serials"
+    },
+    {
+      "name": "a port a tracked board's serial answers to is not listed",
+      "find": "            if (hwids is None or port.vid_pid in hwids) and (port.device.serial or \"\") not in serials",
+      "replace": "            if (hwids is None or port.vid_pid in hwids)"
+    },
+    {
+      "name": "a scan that could not read the ids is never ready",
+      "find": "        if hwids is None:\n            return refuse(\n                SCAN_UNFILTERED,",
+      "replace": "        if False:\n            return refuse(\n                SCAN_UNFILTERED,"
+    },
+    {
+      "name": "a configured port is never the one chosen unasked",
+      "find": "        free = [index for index, device in enumerate(devices) if device[\"tracked_by\"] is None]",
+      "replace": "        free = list(range(len(devices)))"
+    },
+    {
+      "name": "several unconfigured ports are not guessed between",
+      "find": "        if len(free) > 1:",
+      "replace": "        if False:"
+    },
+    {
+      "name": "a bare device needs the flasher's state and chipset",
+      "find": "            return device.state in self.states and chipset_matches(self, device.chipset)",
+      "replace": "            return True"
+    },
+    {
+      "name": "a first install is not asked to confirm an identity it has not got",
+      "find": "            if target.detail.get(\"first_install\"):",
+      "replace": "            if False:"
+    },
+    {
+      "name": "a dry run does not ask the device which it is",
+      "find": "        if first and not bench.settings.dry_run:",
+      "replace": "        if first:"
+    },
+    {
+      "name": "only an answer heard now names the device",
+      "find": "        if device.answered and device.port and os.path.realpath(device.port) == real:",
+      "replace": "        if device.port and os.path.realpath(device.port) == real:"
+    },
+    {
+      "name": "the answer must come from the port that was written",
+      "find": "        if device.answered and device.port and os.path.realpath(device.port) == real:",
+      "replace": "        if device.answered:"
+    },
+    {
+      "name": "the first write stops everything the type's writes stop",
+      "find": "        return device, stop_services.for_platformio(paths, entry, settings)",
+      "replace": "        return device, ()"
+    },
+    {
+      "name": "a pio env is not held to one start address",
+      "file": "src/mcu_updater/flashers/flash.py",
+      "find": "    if artifact.kind not in (KIND_BIN, KIND_UF2):\n        return",
+      "replace": "    if False:\n        return"
+    },
+    {
+      "name": "a first writer is an isinstance check, not every flasher",
+      "file": "src/mcu_updater/flashers/registry.py",
+      "find": "    return flasher if isinstance(flasher, FirstWriter) else None",
+      "replace": "    return flasher"
+    },
+    {
+      "name": "a pick that names nothing scanned is refused",
+      "file": "src/mcu_updater/agent/methods/flash.py",
+      "find": "            if len(named) != 1:",
+      "replace": "            if False:"
+    },
+    {
+      "name": "a pick is matched on the key the scan declares",
+      "file": "src/mcu_updater/agent/methods/flash.py",
+      "find": "            named = [d for d in scan[\"devices\"] if key is not None and str(d.get(key) or \"\") == wanted]",
+      "replace": "            named = [d for d in scan[\"devices\"] if key is not None][:1]"
+    },
+    {
+      "name": "a new platformio device is not written mid-print",
+      "file": "src/mcu_updater/agent/methods/flash.py",
+      "find": "        target = flashers.select_device(self.paths, families, device, stop_services=units)\n        assert_printer_idle(",
+      "replace": "        target = flashers.select_device(self.paths, families, device, stop_services=units)\n        (lambda *a, **k: None)("
+    },
+    {
+      "name": "a failed first write fails the job",
+      "file": "src/mcu_updater/agent/methods/flash.py",
+      "find": "            if failed:\n                # One device, so its own error with its own code - not a",
+      "replace": "            if False:\n                # One device, so its own error with its own code - not a"
+    },
+    {
+      "name": "a dry run's note does not claim a write",
+      "file": "src/mcu_updater/agent/methods/flash.py",
+      "find": "            if self.settings().dry_run:\n                note = f\"[dry-run] would have written {install} to the device at {where}.\"",
+      "replace": "            if False:\n                note = f\"[dry-run] would have written {install} to the device at {where}.\""
+    },
+    {
+      "name": "klipper is asked for configured ports only for a flasher that writes one",
+      "file": "src/mcu_updater/agent/methods/flash.py",
+      "find": "        by_port = type_name is not None and isinstance(scanner, flashers.FirstWriter)",
+      "replace": "        by_port = type_name is not None"
+    },
+    {
+      "name": "a configured port has one owner however many types list it",
+      "file": "src/mcu_updater/agent/methods/flash.py",
+      "find": "                    if not device.resolved_path or where in seen:",
+      "replace": "                    if not device.resolved_path:"
+    },
+    {
+      "name": "the scanned type's own claim on a port comes first",
+      "file": "src/mcu_updater/agent/methods/flash.py",
+      "find": "            for name in sorted(listed, key=lambda name: name != ports_for):",
+      "replace": "            for name in sorted(listed, key=lambda name: name == ports_for):"
+    }
+  ]
+}

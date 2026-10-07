@@ -55,11 +55,32 @@ def test_a_cmake_type_with_no_chipset_is_told_to_declare_one():
     assert "chipset:" in got.reason
 
 
-def test_a_pio_type_is_told_nothing_can_scan_for_it():
-    got = flashers.first_install(Entry("knomi", "esp32", ("knomi_serial",)), BASE)
+def test_a_pio_type_is_set_up_by_its_own_uploader():
+    """No ROM flasher is involved: the upload tool resets the chip into its
+    ROM by itself, so the family's one flasher both finds and writes it."""
+    got = flashers.first_install(Entry("knomi", "esp32s3", ("knomi_serial",)), BASE)
+    assert (got.fw, got.flasher, got.state, got.reason) == ("knomi_serial", "platformio", "esp_rom", None)
+
+
+def test_a_pio_type_with_no_chipset_is_told_to_declare_one():
+    """The uploader writes ESP32s, and a type that does not say it is one is
+    not assumed to be."""
+    got = flashers.first_install(Entry("knomi", "", ("knomi_serial",)), BASE)
+    assert got.flasher is None
+    assert "chipset:" in got.reason
+
+
+def test_a_pio_type_of_a_chip_the_uploader_does_not_reset_is_not_set_up_by_it():
+    got = flashers.first_install(Entry("pico_w", "rp2040", ("knomi_serial",)), BASE)
+    assert got.flasher is None
+    assert "flashers: platformio, bootsel" in got.reason
+
+
+def test_a_type_nothing_can_scan_for_is_told_so():
+    got = flashers.first_install(Entry("mega", "atmega2560", ("klipper",)), BASE)
     assert got.flasher is None
     assert "can scan for a new board" in got.reason
-    assert "[firmware knomi_serial]" in got.reason
+    assert "[firmware klipper]" in got.reason
 
 
 def test_a_list_without_a_bare_writer_names_the_line_to_add():
@@ -88,7 +109,25 @@ def test_first_install_never_raises_on_an_unknown_flasher_name():
 def test_first_install_never_raises_on_no_firmwares():
     got = flashers.first_install(Entry("t", "rp2040", ()), BASE)
     assert got.flasher is None and got.fw == ""
-    assert got.to_json() == {"fw": None, "flasher": None, "reason": got.reason}
+    assert got.to_json() == {"fw": None, "flasher": None, "reason": got.reason, "hint": None}
+
+
+def test_the_chosen_flasher_says_how_to_get_a_board_ready_for_it():
+    """Before the scan, so the scan cannot be what says it. Each flasher's
+    own sentence: holding BOOT is right for one and wrong for the next."""
+    dfu = flashers.first_install(Entry("t", "stm32g0b1xx", ("klipper", "katapult")), BASE)
+    pio = flashers.first_install(Entry("knomi", "esp32", ("knomi_serial",)), BASE)
+
+    assert "DFU" in dfu.to_json()["hint"]
+    assert "Nothing has to be held" in pio.to_json()["hint"]
+    assert dfu.hint != pio.hint
+
+
+def test_every_scanner_has_a_hint():
+    for flasher in flashers.FLASHERS:
+        scanner = flashers.candidate_scanner(flasher)
+        if scanner is not None:
+            assert scanner.candidate_hint.endswith("."), flasher.name
 
 
 class _Stub:
@@ -99,7 +138,10 @@ class _Stub:
         self.states = ("dfu",)
         if scans:
             self.candidate_prefix = name
-            self.scan_candidates = lambda paths, *, tracked, reporter: CandidateScan(False, None, None, [])
+            self.candidate_hint = f"get it ready for {name}"
+            self.scan_candidates = lambda paths, *, tracked, reporter, type_name=None: CandidateScan(
+                False, None, None, []
+            )
 
     def supports(self, device, helper):
         return True

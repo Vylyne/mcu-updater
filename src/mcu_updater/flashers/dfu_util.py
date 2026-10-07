@@ -50,6 +50,7 @@ class DfuUtil:
     name = "dfu_util"
     label = "dfu-util"
     candidate_prefix = "dfu"
+    candidate_hint = "Put the board in DFU mode - fit its boot jumper, or hold BOOT - and plug it in."
     chipsets: tuple[str, ...] = ("stm32",)
     states: tuple[str, ...] = (STATE_DFU,)
     #: False, and this is the one worth watching.
@@ -114,7 +115,12 @@ class DfuUtil:
         """
 
     def scan_candidates(
-        self, paths: Paths, *, tracked: Sequence[TrackedBoard], reporter: Reporter
+        self,
+        paths: Paths,
+        *,
+        tracked: Sequence[TrackedBoard],
+        reporter: Reporter,
+        type_name: str | None = None,
     ) -> CandidateScan:
         """What is sitting in DFU mode, and can this agent actually open it?
 

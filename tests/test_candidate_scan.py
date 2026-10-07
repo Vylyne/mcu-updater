@@ -21,9 +21,16 @@ def _quiet(level, message):
     pass
 
 
-def test_dfu_util_and_bootsel_are_scanners_and_nothing_else_is():
+def test_the_flashers_that_can_find_a_new_board_and_no_others():
     scanners = {f.name for f in flashers.FLASHERS if flashers.candidate_scanner(f)}
-    assert scanners == {"dfu_util", "bootsel"}
+    assert scanners == {"dfu_util", "bootsel", "platformio"}
+
+
+def test_only_platformio_sets_a_device_up_with_a_write_of_its_own():
+    """The ROM flashers hand the agent a serial to wait for. `first_writer`
+    is what sends `fw.add_mcu.start` down the other path."""
+    writers = {f.name for f in flashers.FLASHERS if flashers.first_writer(f)}
+    assert writers == {"platformio"}
 
 
 def test_port_is_the_one_ready_devices_port():
@@ -43,6 +50,13 @@ def test_to_json_carries_count_and_extras():
         "message": "nothing",
         "vid_pid": "0483:df11",
     }
+
+
+def test_to_json_says_what_to_pick_by_only_when_the_scan_does():
+    """A scan that declares nothing keeps the shape it has always had; the
+    wizard reads `pick` as "these devices can be told apart by this key"."""
+    assert "pick" not in CandidateScan(False, "ambiguous", "two", []).to_json()
+    assert CandidateScan(False, "ambiguous", "two", [], pick="interface").to_json()["pick"] == "interface"
 
 
 def test_a_dfu_device_carries_its_port(paths, monkeypatch):

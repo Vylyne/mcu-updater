@@ -116,10 +116,13 @@ because that path raises `UnknownTypeError` directly, but `fw.target.get`
 pre-checks the name against both registries itself so it never does), the
 `dfu_<reason>` family (`dfu_none`, `dfu_no_tool`, `dfu_permission_denied`,
 `dfu_ambiguous`) `fw.add_mcu.start` derives from `fw.dfu.scan`'s own `reason`,
-and the `bootsel_<reason>` family (`bootsel_none`, `bootsel_not_mounted`,
-`bootsel_ambiguous`) it derives from `fw.bootsel.scan`'s the same way - whichever
-scan the type's install family chose (`fw.add_mcu.scan`) -
-documented where each is raised rather than repeated here.
+the `bootsel_<reason>` family (`bootsel_none`, `bootsel_not_mounted`,
+`bootsel_ambiguous`) it derives from `fw.bootsel.scan`'s the same way, and the
+`platformio_<reason>` family (`platformio_none`, `platformio_ambiguous`,
+`platformio_all_tracked`, `platformio_unfiltered`, `platformio_no_type`) from
+the PlatformIO flasher's port scan - whichever scan the type's install family
+chose (`fw.add_mcu.scan`) - documented where each is raised rather than
+repeated here.
 
 JSON-RPC codes: `-32601` unknown method, `-32602` bad params, `-32000`
 application error (see `data.code`), `-32603` internal.
@@ -143,8 +146,8 @@ application error (see `data.code`), `-32603` internal.
 | `fw.canbus.scan` | — | `{interfaces, devices, failures, count, message}` — read-only, run only when called |
 | `fw.canbus.ignore` | `uuid` (required) | `{uuid, ignored: true}` — hide every sighting of a CAN UUID from the "new board?" flow; idempotent, flag not filter; `busy` / `config` as for `fw.settings.set` |
 | `fw.canbus.unignore` | `uuid` (required) | `{uuid, ignored: false}` — reverse `fw.canbus.ignore`; idempotent; `busy` / `config` as for `fw.settings.set` |
-| `fw.add_mcu.scan` | `name` (required) | the scan `fw.add_mcu.start` would run for the type — `fw.dfu.scan`'s or `fw.bootsel.scan`'s keys, plus `flasher` — read-only |
-| `fw.add_mcu.start` | `name`, `dfu_serial?` (DFU only) | `{job_id, job, dfu_serial, bootsel_id}` — writes the type's first image (Katapult, or with none its application), any builder; **off by default** |
+| `fw.add_mcu.scan` | `name` (required) | the scan `fw.add_mcu.start` would run for the type — `fw.dfu.scan`'s or `fw.bootsel.scan`'s keys, or the PlatformIO port scan's, plus `flasher` — read-only |
+| `fw.add_mcu.start` | `name`, `pick?` (one scanned device, by the key the scan's `pick` names), `dfu_serial?` (DFU only), `force?` (PlatformIO only) | `{job_id, job, dfu_serial, bootsel_id}` — writes the type's first image (Katapult, or with none its application), any builder; **off by default** |
 | `fw.identity.provision` | `serial` (required) | `{serial, prior_serial, state: "provisioned"}` - give one confirmed, untracked board its durable identity, routed to the one helper that claims the serial — **off by default** |
 | `fw.identity.clear` | `serial` (required) | `{serial, prior_serial, state: "unprovisioned"}` - return one confirmed, untracked board to its unprovisioned identity, same routing — **off by default** |
 | `fw.artifacts` | `name` (required) | `{<fw>: Artifact, ...}`, one key per family the type declares |
@@ -710,21 +713,32 @@ least one. `firmware` names the PlatformIO
 type's declared `[firmware ...]` family - it is never `null` there, because
 `firmware:` is required for a PlatformIO type to load at all.
 
-Every row also carries `first_install`, `{fw, flasher, reason}` — whether a
-*bare* board of this type (nothing on it yet) could be found and written from
-here, and by what. `fw` is the install family: the bootloader if the type
-declares one, else the application. `flasher` is the name of the flasher on
-that family's list that can scan for and write a bare board, or `null` when
-none can. `reason` is set exactly when `flasher` is `null`, and names the line
-to change - a missing `chipset:`, a family whose flashers: list has no writer
-for this chipset's boot ROM, or nothing on the list that can scan for a new
-board at all. Additive; no `API_VERSION` bump. Two examples:
+Every row also carries `first_install`, `{fw, flasher, reason, hint}` —
+whether a *bare* board of this type (nothing on it yet) could be found and
+written from here, and by what. `fw` is the install family: the bootloader if
+the type declares one, else the application. `flasher` is the name of the
+flasher on that family's list that can scan for and write a bare board, or
+`null` when none can. `reason` is set exactly when `flasher` is `null`, and
+names the line to change - a missing `chipset:`, a family whose flashers: list
+has no writer for this chipset's boot ROM, or nothing on the list that can scan
+for a new board at all. `hint` is the chosen flasher's own sentence for what to
+do to a new board *before* scanning for it - hold BOOT for one, nothing at all
+for another - and `null` with no flasher; a client shows it rather than wording
+its own. Additive (`hint` came after the rest, so a client reads it as
+optional); no `API_VERSION` bump. Three examples:
 
 ```json
-{"fw": "katapult", "flasher": "dfu_util", "reason": null}
-{"fw": "knomi_serial", "flasher": null,
- "reason": "nothing on [firmware knomi_serial]'s flashers: (platformio) can scan for a new board, so this type cannot be set up from bare yet. Flash it by hand, then track it once it enumerates."}
+{"fw": "katapult", "flasher": "dfu_util", "reason": null,
+ "hint": "Put the board in DFU mode - fit its boot jumper, or hold BOOT - and plug it in."}
+{"fw": "knomi_serial", "flasher": "platformio", "reason": null,
+ "hint": "Plug the device in. Nothing has to be held or jumpered: the upload resets it into its ROM itself."}
+{"fw": "knomi_serial", "flasher": null, "hint": null,
+ "reason": "[type knomi] declares no chipset:, and a bare board has nothing else to say which boot ROM it speaks. Add chipset: to it."}
 ```
+
+This is computed on every `fw.status` and never runs a tool: it says a
+PlatformIO type *can* be scanned for, not that its board manifest declares the
+USB ids the scan filters on. That is read when `fw.add_mcu.scan` is called.
 
 ### Settings
 
@@ -1275,16 +1289,16 @@ A board with no bootloader on it is reached through its boot ROM — **DFU**
 builder, and never a chipset prefix: it is the install family's (below) first
 `flashers:` entry that can both scan for a bare board and write one of the
 type's `chipset` (`flashers.first_install`). What that resolves to today: a
-kconfig type over DFU (STM32) or BOOTSEL (RP2040), and a cmake type over
-BOOTSEL (RP2040). A PlatformIO type has no candidate scanner yet — detecting
-a bare device for the `platformio` flasher is deferred — so its
-`first_install` names no flasher. The whole
-flow is four calls of which only two are new:
+kconfig type over DFU (STM32) or BOOTSEL (RP2040), a cmake type over BOOTSEL
+(RP2040), and a PlatformIO type with `chipset: esp32` over its own upload - see
+[A new PlatformIO device](#a-new-platformio-device), which differs from the
+rest of this section in every paragraph that mentions a boot ROM, a serial, or
+Klipper staying up. The whole flow is four calls of which only two are new:
 
 | Step | Call | New? |
 | --- | --- | --- |
 | 1. What is waiting to be set up? | `fw.add_mcu.scan {name}` | **new**, read-only |
-| 2. Put the type's first image on it | `fw.add_mcu.start {name[, dfu_serial]}` | **new** |
+| 2. Put the type's first image on it | `fw.add_mcu.start {name[, pick][, dfu_serial]}` | **new** |
 | 3. Adopt what appeared | `fw.serial.add {name, serial}` | existing |
 | 4. Put Klipper on it, if step 2 wrote Katapult | `fw.flash {serial}` | existing |
 
@@ -1478,6 +1492,42 @@ button, and `fw.add_mcu.start` repeats it in the job log before the write. An
 unknown type is still `unknown_type`. Read-only, and advertised whether
 or not flashing is enabled.
 
+A scan whose devices can be told apart says so with `pick`: the name of the
+device key `fw.add_mcu.start`'s `pick` argument is matched against. It is
+absent when the flasher writes whatever is ready and cannot be aimed (BOOTSEL),
+and absent from the DFU scan, whose `dfu_serial` argument predates it. A client
+offers a choice whenever a scan is not `ready`, declares `pick`, and lists
+devices - without naming the flasher. The PlatformIO scan's report:
+
+```json
+{"devices": [
+   {"tty": "/dev/ttyUSB0", "port": "3-1.6.5", "interface": "3-1.6.5:1.0",
+    "vid_pid": "1a86:7522", "product": "USB Serial",
+    "tracked_by": "knomi", "known_serial": "a1b2c3", "label": "T0_knomi"},
+   {"tty": "/dev/ttyUSB2", "port": "3-1.6.7", "interface": "3-1.6.7:1.0",
+    "vid_pid": "1a86:7522", "product": "USB Serial",
+    "tracked_by": null, "known_serial": null, "label": null}],
+ "count": 2, "ready": true, "reason": null, "message": null,
+ "hwids": ["1a86:7522"], "pick": "interface", "flasher": "platformio"}
+```
+
+`hwids` is what the list was filtered on - the type's board manifest's
+`build.hwids`, as sysfs spells them - or `null` when they could not be read.
+`tracked_by` names the type(s) whose configured device already sits on that
+port (`label` its printer.cfg section, `known_serial` its id), and such a port
+is never the one a `ready` scan means. Its reasons:
+
+| `reason` | Meaning |
+| --- | --- |
+| `none` | No port matches. `message` names the ids looked for - if the device is plugged in, the manifest's `build.hwids` do not describe it |
+| `ambiguous` | Several unconfigured ports match. Pick one |
+| `all_tracked` | Every matching port is a configured device. One can be picked, to write it again as new |
+| `unfiltered` | The ids could not be read (`message` says why: PlatformIO missing, the platform not installed yet, a manifest with no `build.hwids`), so every USB serial port is listed. Never `ready`, however few there are |
+| `no_type` | Asked for a type that is not a PlatformIO type |
+
+The ids are read by running `pio project config`, which costs seconds: it
+happens here and in `fw.add_mcu.start`, never in `fw.status`.
+
 #### `fw.add_mcu.start`
 
 Writes the type's first image — Katapult, or with no bootloader its own
@@ -1572,9 +1622,10 @@ to adopt does not exist until the first image is on it either way. That is why t
 snapshots the bus first and diffs afterwards, on the scanned port, for both
 mechanisms.
 
-**Klipper is never stopped.** A board that is not in `printer.cfg` is not held by
-Klipper, so there is no port contention and no reason for an outage. The
-exclusive lock is still taken, so it cannot run beside a build or a flash.
+**Klipper is never stopped** on these two paths. A board that is not in
+`printer.cfg` is not held by Klipper, so there is no port contention and no
+reason for an outage. The exclusive lock is still taken, so it cannot run
+beside a build or a flash. (A new PlatformIO device is the exception - below.)
 
 Refusals, all synchronous and before a job exists:
 
@@ -1589,6 +1640,7 @@ Refusals, all synchronous and before a job exists:
 | **DFU:** something is in DFU | `dfu_none` / `dfu_permission_denied` / `dfu_no_tool` |
 | **DFU:** exactly one, or one named | `dfu_ambiguous` |
 | the named `dfu_serial` is present — on a type set up over anything but DFU there is no serial to match, so it is never present | `device_not_found` |
+| the named `pick` is one scanned device — against a scan that declares no `pick` key (BOOTSEL, DFU) nothing can match, so it is never present | `device_not_found` |
 | **BOOTSEL:** something is in BOOTSEL and mounted | `bootsel_none` / `bootsel_not_mounted` |
 | **BOOTSEL:** exactly one mounted | `bootsel_ambiguous` |
 
@@ -1611,6 +1663,50 @@ until a port parameter is added.
 Finding no new board **warns rather than failing the job**: the write may have
 succeeded and the board simply be slow or on a marginal port, so the log says to
 check `/dev/serial/by-id` and adopt directly.
+
+#### A new PlatformIO device
+
+A PlatformIO type's first install is not a ROM write followed by an adoption.
+The upload tool resets the chip into its ROM by itself, so a new device is
+written exactly as a configured one is (`fw.flash`), at a port the scan found
+instead of one a printer.cfg section names. What follows from that:
+
+- **Nothing is held or jumpered**, and nothing has to have been built: the
+  upload builds first, as every PlatformIO write does.
+- **It stops what the type's writes stop** - the type's resolved
+  `stop_services` list, so by default Klipper and the port watcher - and is
+  therefore **refused during a print** with `print_in_progress`, bypassed by
+  `force: true` exactly as for `fw.flash`. The ROM paths above stop nothing.
+- **`pick` chooses the device** when the scan is not `ready`: the `interface`
+  of one scanned device. A configured port can be picked, deliberately; it is
+  never chosen unasked.
+- **Nothing is waited for afterwards.** No board re-enumerates under a new
+  serial, so `candidates` and `already_tracked` are always `[]` and there is no
+  step 3. The device is asked which it is once the upload ends, while the
+  ports are still free, and the result carries the answer:
+
+```json
+{"type": "knomi", "chipset": "esp32", "fw": "knomi_serial",
+ "flasher": "platformio", "port": "3-1.6.7",
+ "dfu_serial": null, "bootsel_id": null,
+ "candidates": [], "already_tracked": [],
+ "written": {"path": "/dev/ttyUSB2", "reported_id": "d4e5f6", "chip": "esp32s3"},
+ "note": "knomi_serial is on the device at /dev/ttyUSB2, which reports id d4e5f6. Add a section for it to printer.cfg to start using it."}
+```
+
+`written.reported_id` is `null` when the family names no helper that can ask,
+or the device did not answer; `note` then says to configure it by its port. A
+client shows `note` when it is present rather than reading two empty lists as
+"nothing appeared". A failed upload fails the job with the write's own error
+code, as `fw.flash` does for one device.
+
+Its refusals, in place of the DFU/BOOTSEL rows above:
+
+| Check | Error code |
+| --- | --- |
+| the scan found a port to write, or `pick` names one | `platformio_none` / `platformio_ambiguous` / `platformio_all_tracked` / `platformio_unfiltered` |
+| `pick` matches exactly one scanned device; `data.{pick, key, devices}` | `device_not_found` |
+| printer idle | `print_in_progress` (bypass with `force: true`) |
 
 #### A board that turns up later is still adopted
 

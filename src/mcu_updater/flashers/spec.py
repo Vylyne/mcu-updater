@@ -317,6 +317,13 @@ class TrackedBoard:
     type: str
     serial: str
     chipset: str
+    #: Where a configured device is right now, for one the bus shows no serial
+    #: for: a device reached at a port is tracked by the section that names
+    #: it, and a scan can only tell it from a new one by where it sits. "" for
+    #: a board a scan names by `serial`.
+    path: str = ""
+    #: What that section calls it, to label the port with. "" otherwise.
+    label: str = ""
 
 
 @dataclasses.dataclass(frozen=True)
@@ -336,6 +343,11 @@ class CandidateScan:
     `target` is the index of the device a ready write reaches, for a flasher
     that can say so among several (BOOTSEL: the one whose volume is mounted).
     Left None, only a sole device is that device.
+
+    `pick` is the device key a caller may name one of several devices by,
+    for a flasher that can write the one named. Left None, a scan that is not
+    `ready` has nothing a caller can choose; set, it is emitted so no caller
+    has to know which flasher keys on what.
     """
 
     ready: bool
@@ -344,6 +356,7 @@ class CandidateScan:
     devices: list[dict[str, Any]]
     extra: dict[str, Any] = dataclasses.field(default_factory=dict)
     target: int | None = None
+    pick: str | None = None
 
     @property
     def chosen(self) -> dict[str, Any] | None:
@@ -367,6 +380,7 @@ class CandidateScan:
             "ready": self.ready,
             "reason": self.reason,
             "message": self.message,
+            **({} if self.pick is None else {"pick": self.pick}),
             **self.extra,
         }
 
@@ -379,14 +393,55 @@ class CandidateScanner(Protocol):
     it is what makes a flasher able to set up a new board - `first_install`
     asks nothing else. `candidate_prefix` spells the refusal code a not-ready
     scan becomes (`<prefix>_<reason>`), so no caller names a flasher.
+    `candidate_hint` is what to do to a new board before scanning for it, as
+    the one sentence the wizard shows first - the scan cannot say it, being
+    what the sentence comes before.
+
+    `type_name` is the type being set up, for a flasher whose candidates
+    depend on it (which USB ids a PlatformIO board enumerates under is its
+    project's to say). None from a scan that asks about no type in particular
+    - `fw.dfu.scan`, `fw.bootsel.scan` - and a flasher that needs one reports
+    that rather than raising.
     """
 
     name: str
     candidate_prefix: str
+    candidate_hint: str
 
     def scan_candidates(
-        self, paths: Paths, *, tracked: Sequence[TrackedBoard], reporter: Reporter
+        self,
+        paths: Paths,
+        *,
+        tracked: Sequence[TrackedBoard],
+        reporter: Reporter,
+        type_name: str | None = None,
     ) -> CandidateScan: ...
+
+
+@runtime_checkable
+class FirstWriter(Protocol):
+    """A flasher whose first install is an ordinary write of its own.
+
+    A ROM flasher (`dfu_util`, `bootsel`) writes a board no service holds and
+    then waits for it to come back as something else, which is what
+    `flash.flash_initial_bootloader` does. A flasher that reaches its devices
+    at a port writes a new one exactly as it writes a configured one - same
+    stop, same print gate, same batch - and the only difference is that
+    nothing configured names the port yet. `first_write` supplies it, from
+    the scan's own device.
+
+    Optional, and reached through `flashers.first_writer`.
+    """
+
+    name: str
+
+    def first_write(
+        self, paths: Paths, settings: Settings, type_name: str, fw: str, found: Mapping[str, Any]
+    ) -> tuple[Device, tuple[str, ...]]:
+        """The device an ordinary write of this flasher's takes for the
+        candidate `found` - one of its own scan's device dicts - and the units
+        to stop for it: one `select_each` request."""
+        ...
 
 
 def name_tracked(devices: list[dict[str, Any]], owners: dict[str, list[tuple[str, str]]], field: str) -> None:

@@ -269,9 +269,7 @@ class Paths:
         pdata = e.get("MCU_UPDATER_PRINTER_DATA") or os.path.join(resolved_home, "printer_data")
         pdata = os.path.abspath(pdata)
 
-        config = e.get("MCU_UPDATER_CONFIG_DIR") or os.path.join(
-            pdata, "config", "mcu-updater"
-        )
+        config = e.get("MCU_UPDATER_CONFIG_DIR") or os.path.join(pdata, "config", "mcu-updater")
         data = e.get("MCU_UPDATER_DATA_DIR") or os.path.join(pdata, "mcu-updater")
         bus = e.get("MCU_UPDATER_FAKE_BUS") or DEFAULT_SERIAL_BY_ID
         bootsel_root = e.get("MCU_UPDATER_FAKE_BOOTSEL") or ""

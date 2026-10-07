@@ -110,9 +110,7 @@ def wired(paths, live_registry_text):
     server = FakeMoonraker(server_sock)
 
     def factory(on_request, on_notify):
-        return MoonrakerPeer(
-            "unused", on_request=on_request, on_notify=on_notify, transport=agent_sock
-        )
+        return MoonrakerPeer("unused", on_request=on_request, on_notify=on_notify, transport=agent_sock)
 
     agent = Agent(paths, socket_path="unused", peer_factory=factory)
     # Idle poll only; the watcher isn't the subject of these tests.
@@ -162,8 +160,7 @@ def test_every_method_is_registered(wired):
         lambda: len(server.methods_called("connection.register_remote_method")) >= len(expected)
     )
     registered = {
-        r["params"]["method_name"]
-        for r in server.methods_called("connection.register_remote_method")
+        r["params"]["method_name"] for r in server.methods_called("connection.register_remote_method")
     }
     assert registered == expected
 
@@ -172,13 +169,9 @@ def test_identify_happens_before_any_registration(wired):
     """Moonraker only treats us as an agent once identified."""
     agent, server = wired
     _run(agent)
-    assert server.wait_for(
-        lambda: len(server.methods_called("connection.register_remote_method")) > 0
-    )
+    assert server.wait_for(lambda: len(server.methods_called("connection.register_remote_method")) > 0)
     order = [r["method"] for r in server.requests]
-    assert order.index("server.connection.identify") < order.index(
-        "connection.register_remote_method"
-    )
+    assert order.index("server.connection.identify") < order.index("connection.register_remote_method")
 
 
 def _events(server: FakeMoonraker, name: str) -> list[dict]:
@@ -238,8 +231,7 @@ def _state_events(server: FakeMoonraker) -> list[dict]:
     return [
         n
         for n in server.notifications
-        if n.get("method") == "connection.send_event"
-        and (n.get("params") or {}).get("event") == "state"
+        if n.get("method") == "connection.send_event" and (n.get("params") or {}).get("event") == "state"
     ]
 
 
@@ -281,9 +273,9 @@ def test_a_notification_never_blocks_the_reader_thread(wired):
     # this is not even read off the socket until that handler returns.
     server.send({"jsonrpc": "2.0", "method": "fw.does.not.exist", "id": 2001})
 
-    assert server.wait_for(
-        lambda: any(r["id"] == 2001 for r in server.responses), timeout=2.0
-    ), "the reader thread was blocked handling a notification"
+    assert server.wait_for(lambda: any(r["id"] == 2001 for r in server.responses), timeout=2.0), (
+        "the reader thread was blocked handling a notification"
+    )
 
 
 def test_run_once_returns_when_moonraker_disconnects(wired):
@@ -339,8 +331,7 @@ def test_registration_repeats_on_every_reconnect(paths, live_registry_text):
 
     def registered_on(server: FakeMoonraker) -> set:
         return {
-            r["params"]["method_name"]
-            for r in server.methods_called("connection.register_remote_method")
+            r["params"]["method_name"] for r in server.methods_called("connection.register_remote_method")
         }
 
     def session(index: int) -> threading.Thread:
@@ -425,8 +416,7 @@ def test_a_build_driven_over_the_wire_streams_job_and_log_events(wired, paths):
     agent.batcher.flush()
     assert server.wait_for(
         lambda: any(
-            e["data"]["job"]["state"] in ("succeeded", "failed", "cancelled")
-            for e in _events(server, "job")
+            e["data"]["job"]["state"] in ("succeeded", "failed", "cancelled") for e in _events(server, "job")
         ),
         timeout=15,
     )
@@ -478,9 +468,7 @@ def test_a_build_can_be_cancelled_over_the_wire(wired, paths, monkeypatch):
     assert server.wait_for(lambda: any(r["id"] == 600 for r in server.responses))
 
     job_id = reply_job_id(server, 600)
-    server.send(
-        {"jsonrpc": "2.0", "id": 601, "method": "fw.job.cancel", "params": {"job_id": job_id}}
-    )
+    server.send({"jsonrpc": "2.0", "id": 601, "method": "fw.job.cancel", "params": {"job_id": job_id}})
     assert server.wait_for(lambda: any(r["id"] == 601 for r in server.responses))
     cancel_reply = next(r for r in server.responses if r["id"] == 601)
     assert "error" not in cancel_reply, cancel_reply

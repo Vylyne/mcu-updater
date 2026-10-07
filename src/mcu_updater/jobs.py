@@ -148,9 +148,7 @@ class Job:
             "created": self.created,
             "started": self.started,
             "finished": self.finished,
-            "duration": (
-                (self.finished or time.time()) - self.started if self.started else None
-            ),
+            "duration": ((self.finished or time.time()) - self.started if self.started else None),
             "progress": self.progress.to_dict(),
             "result": self.result,
             "error": self.error,

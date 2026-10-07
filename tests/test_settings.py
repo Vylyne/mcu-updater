@@ -250,9 +250,7 @@ def test_saving_the_registry_keeps_the_settings(paths, live_registry_text):
     assert "NEWBOARD-if00" in Registry.load(paths).get("bttebb36").serials
 
 
-def test_a_settings_write_keeps_a_serial_tracked_while_settings_were_being_changed(
-    paths, live_registry_text
-):
+def test_a_settings_write_keeps_a_serial_tracked_while_settings_were_being_changed(paths, live_registry_text):
     """The write re-reads the document, so a CLI add-serial that landed before
     the settings change is not erased by it."""
     from mcu_updater import tracking
@@ -268,9 +266,7 @@ def test_a_settings_write_keeps_a_serial_tracked_while_settings_were_being_chang
     assert load_settings(paths.settings_file).ignored_serials == ["KNOMI-if00"]
 
 
-def test_a_settings_change_made_before_the_lock_was_taken_is_kept(
-    paths, live_registry_text, monkeypatch
-):
+def test_a_settings_change_made_before_the_lock_was_taken_is_kept(paths, live_registry_text, monkeypatch):
     """Lock, *then* read. Another writer that finishes in the moment before this
     one gets the lock must be read, not overwritten with what was on disk
     before it - the write rewrites every [updater] field from the object."""
@@ -361,9 +357,7 @@ def test_a_settings_write_takes_the_registry_lock(paths, live_registry_text, mon
     sys.platform == "win32",
     reason="flock is unavailable on Windows; the lock degrades to a no-op there",
 )
-def test_a_settings_write_is_refused_while_the_registry_lock_is_really_held(
-    paths, live_registry_text
-):
+def test_a_settings_write_is_refused_while_the_registry_lock_is_really_held(paths, live_registry_text):
     from mcu_updater.errors import BusyError
     from mcu_updater.lock import ExclusiveLock
 

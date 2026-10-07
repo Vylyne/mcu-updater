@@ -141,9 +141,7 @@ def _same_file(uf2: str, dest: str) -> bool:
         if os.path.exists(dest) and os.path.samefile(uf2, dest):
             return True
     with contextlib.suppress(OSError, ValueError):
-        return os.path.normcase(os.path.realpath(uf2)) == os.path.normcase(
-            os.path.realpath(dest)
-        )
+        return os.path.normcase(os.path.realpath(uf2)) == os.path.normcase(os.path.realpath(dest))
     return False
 
 
@@ -275,9 +273,7 @@ def copy_uf2(uf2: str, mount: str, ctx: Any) -> None:
         ) from exc
     if vanished is None:
         timeout = APPLY_TIMEOUT
-        ctx.reporter(
-            "info", "Copied. Waiting for the board to take the image and reset..."
-        )
+        ctx.reporter("info", "Copied. Waiting for the board to take the image and reset...")
     else:
         timeout = APPLY_TIMEOUT_AFTER_ERROR
         ctx.reporter(
@@ -307,6 +303,7 @@ class Bootsel:
     name = "bootsel"
     label = "BOOTSEL (mass storage)"
     candidate_prefix = "bootsel"
+    candidate_hint = "Hold BOOT / BOOTSEL while plugging the board in, so it mounts as a drive."
     chipsets: tuple[str, ...] = ("rp2040",)
     states: tuple[str, ...] = (STATE_BOOTSEL,)
     #: False for a board already in BOOTSEL: nothing holds its port. A target
@@ -350,15 +347,11 @@ class Bootsel:
         )
 
     @contextlib.contextmanager
-    def prepared(
-        self, bench: Bench, targets: list[FlashTarget], ctx: Any
-    ) -> Iterator[None]:
+    def prepared(self, bench: Bench, targets: list[FlashTarget], ctx: Any) -> Iterator[None]:
         """Nothing to set up for the batch."""
         yield None
 
-    def write(
-        self, bench: Bench, session: Any, target: FlashTarget, ctx: Any
-    ) -> dict[str, Any]:
+    def write(self, bench: Bench, session: Any, target: FlashTarget, ctx: Any) -> dict[str, Any]:
         uf2 = artifact_path(target)
         ensure_uf2(uf2)
         requester: BootselRequester | None = target.detail.get("helper")
@@ -384,9 +377,7 @@ class Bootsel:
 
         if bench.settings.dry_run:
             if requester is None:
-                ctx.reporter(
-                    "info", f"[dry-run] would copy {uf2} to the mounted RPI-RP2 volume"
-                )
+                ctx.reporter("info", f"[dry-run] would copy {uf2} to the mounted RPI-RP2 volume")
             else:
                 ctx.reporter(
                     "info",
@@ -455,7 +446,12 @@ class Bootsel:
             ctx.reporter("warn", str(exc))
 
     def scan_candidates(
-        self, paths: Paths, *, tracked: Sequence[TrackedBoard], reporter: Reporter
+        self,
+        paths: Paths,
+        *,
+        tracked: Sequence[TrackedBoard],
+        reporter: Reporter,
+        type_name: str | None = None,
     ) -> CandidateScan:
         """What is sitting in BOOTSEL, and can this agent actually write it?
 
@@ -528,9 +524,7 @@ class Bootsel:
         # for a board with none, and for every board when the table is
         # unreadable or names none of these nodes.
         sources = mount_sources(paths)
-        mounted_from = {
-            sources[os.path.realpath(m)]: m for m in mounts if os.path.realpath(m) in sources
-        }
+        mounted_from = {sources[os.path.realpath(m)]: m for m in mounts if os.path.realpath(m) in sources}
         for device in devices:
             device["mount"] = mounted_from.get(os.path.realpath(device["node"]))
         extra: dict[str, Any] = {"mounts": mounts, "mount_count": len(mounts)}
@@ -618,8 +612,7 @@ def _find_mount(paths: Any) -> str:
                 devices=present,
             )
         raise DeviceNotFoundError(
-            "no RP2040 in BOOTSEL is attached. Hold BOOTSEL and replug the "
-            "board, then try again."
+            "no RP2040 in BOOTSEL is attached. Hold BOOTSEL and replug the board, then try again."
         )
     if len(mounts) > 1:
         raise FlashError(

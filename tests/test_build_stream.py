@@ -14,24 +14,12 @@ from mcu_updater.errors import BuildError, OperationCancelled
 from .conftest import cmd_tokens
 
 CHILD_MANY = "for i in range(5000):\n    print(i)\n"
-CHILD_SLOW = (
-    "import time\n"
-    "print('first', flush=True)\n"
-    "time.sleep(1.0)\n"
-    "print('last', flush=True)\n"
-)
+CHILD_SLOW = "import time\nprint('first', flush=True)\ntime.sleep(1.0)\nprint('last', flush=True)\n"
 CHILD_FOREVER = (
-    "import time\n"
-    "i = 0\n"
-    "while True:\n"
-    "    print(i, flush=True)\n"
-    "    i += 1\n"
-    "    time.sleep(0.01)\n"
+    "import time\ni = 0\nwhile True:\n    print(i, flush=True)\n    i += 1\n    time.sleep(0.01)\n"
 )
 CHILD_BOTH_STREAMS = (
-    "import sys\n"
-    "print('to-stdout', flush=True)\n"
-    "print('to-stderr', file=sys.stderr, flush=True)\n"
+    "import sys\nprint('to-stdout', flush=True)\nprint('to-stderr', file=sys.stderr, flush=True)\n"
 )
 
 
@@ -209,10 +197,7 @@ def test_classifies_a_compiler_error_line():
 
 
 def test_classifies_a_compiler_warning_line():
-    assert (
-        classify_output("src/stepper.c:42:5: warning: unused variable 'x'")
-        == "stdout_warn"
-    )
+    assert classify_output("src/stepper.c:42:5: warning: unused variable 'x'") == "stdout_warn"
 
 
 def test_classifies_a_plain_build_line_as_stdout():
@@ -225,7 +210,7 @@ def test_werror_flag_does_not_false_positive_as_an_error():
 
 
 def test_summary_line_with_zero_counts_does_not_classify_as_an_error():
-    """"0 errors, 0 warnings generated" contains "errors"/"warnings" (plural),
+    """ "0 errors, 0 warnings generated" contains "errors"/"warnings" (plural),
     not the singular "error"/"warning" the regex looks for.
 
     `\\berror\\b` requires a boundary immediately *after* "error" too, and

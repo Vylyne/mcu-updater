@@ -76,9 +76,7 @@ def offenders(root: pathlib.Path) -> list[tuple[str, str]]:
             head, _, path = record.rpartition("\t")
             if not path:
                 continue
-            state = next(
-                (f[2:] for f in head.split() if f.startswith("w/")), "lf"
-            )
+            state = next((f[2:] for f in head.split() if f.startswith("w/")), "lf")
             if state in BAD:
                 found[path] = state
     return sorted(found.items())
@@ -114,9 +112,7 @@ def fix(root: pathlib.Path, paths: list[str]) -> list[str]:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    parser.add_argument(
-        "--fix", action="store_true", help="rewrite offending files as LF"
-    )
+    parser.add_argument("--fix", action="store_true", help="rewrite offending files as LF")
     args = parser.parse_args(argv)
 
     root = pathlib.Path(__file__).resolve().parents[1]

@@ -512,9 +512,7 @@ def test_serial_topology_for_deduplicates_usb_and_usbv2_aliases(paths, monkeypat
     monkeypatch.setattr(os, "listdir", lambda _directory: names)
     monkeypatch.setattr(os.path, "samefile", lambda _entry, _port: True)
 
-    assert serial_topology_for(paths, "/dev/ttyACM0") == (
-        "platform-fd880000.usb-usb-0:1.3"
-    )
+    assert serial_topology_for(paths, "/dev/ttyACM0") == ("platform-fd880000.usb-usb-0:1.3")
 
 
 def test_serial_topology_for_refuses_distinct_by_path_matches(paths, monkeypatch):
@@ -529,27 +527,17 @@ def test_serial_topology_for_refuses_distinct_by_path_matches(paths, monkeypatch
         serial_topology_for(paths, "/dev/ttyACM0")
 
 
-def test_mount_for_topology_selects_matching_volume_and_ignores_bystander(
-    paths, tmp_path
-):
+def test_mount_for_topology_selects_matching_volume_and_ignores_bystander(paths, tmp_path):
     root = tmp_path / "bootsel_root"
     by_path = root / "BOOTSEL" / "by-path"
-    matching = (
-        by_path
-        / "platform-fd880000_usb-usb-0_1_3_1_0-scsi-0_0_0_0"
-    )
-    bystander = (
-        by_path
-        / "platform-fd800000_usb-usb-0_1_6_3_1_1_1_0-scsi-0_0_0_0"
-    )
+    matching = by_path / "platform-fd880000_usb-usb-0_1_3_1_0-scsi-0_0_0_0"
+    bystander = by_path / "platform-fd800000_usb-usb-0_1_6_3_1_1_1_0-scsi-0_0_0_0"
     for mount in (matching, bystander):
         mount.mkdir(parents=True)
         (mount / "INFO_UF2.TXT").write_text("", encoding="utf-8")
     rp_paths = dataclasses.replace(paths, bootsel_root=str(root))
 
-    assert mount_for_topology(
-        rp_paths, "platform-fd880000.usb-usbv2-0:1.3:1.0", timeout=0
-    ) == str(matching)
+    assert mount_for_topology(rp_paths, "platform-fd880000.usb-usbv2-0:1.3:1.0", timeout=0) == str(matching)
 
 
 def test_mount_for_topology_preserves_the_complete_hub_port_path(paths, tmp_path):
@@ -562,13 +550,9 @@ def test_mount_for_topology_preserves_the_complete_hub_port_path(paths, tmp_path
         (mount / "INFO_UF2.TXT").write_text("", encoding="utf-8")
     rp_paths = dataclasses.replace(paths, bootsel_root=str(root))
 
-    assert mount_for_topology(
-        rp_paths, "platform-x.usb-usb-0:1.6.3.1.2:1.0", timeout=0
-    ) == str(exact_port)
+    assert mount_for_topology(rp_paths, "platform-x.usb-usb-0:1.6.3.1.2:1.0", timeout=0) == str(exact_port)
 
-    assert mount_for_topology(
-        rp_paths, "platform-x.usb-usb-0:1.6.3.1.2", timeout=0
-    ) == str(exact_port)
+    assert mount_for_topology(rp_paths, "platform-x.usb-usb-0:1.6.3.1.2", timeout=0) == str(exact_port)
 
 
 def test_mounts_on_returns_only_the_mount_that_matches(paths, tmp_path):
@@ -602,16 +586,9 @@ def test_mount_for_topology_refuses_two_normalized_matches(paths, tmp_path):
         mount_for_topology(rp_paths, "platform-x.usb-usb-0:1.3:1.0", timeout=0)
 
 
-def test_mount_for_topology_does_not_accept_a_matching_stale_directory(
-    paths, tmp_path
-):
+def test_mount_for_topology_does_not_accept_a_matching_stale_directory(paths, tmp_path):
     root = tmp_path / "bootsel_root"
-    stale = (
-        root
-        / "BOOTSEL"
-        / "by-path"
-        / "platform-x_usb-usb-0_1_3_1_0-scsi-0_0_0_0"
-    )
+    stale = root / "BOOTSEL" / "by-path" / "platform-x_usb-usb-0_1_3_1_0-scsi-0_0_0_0"
     stale.mkdir(parents=True)
     rp_paths = dataclasses.replace(paths, bootsel_root=str(root))
 
@@ -673,9 +650,7 @@ def test_an_unmatchable_mount_never_overrides_a_real_match(paths, tmp_path):
         (mount / "INFO_UF2.TXT").write_text("", encoding="utf-8")
     rp_paths = dataclasses.replace(paths, bootsel_root=str(root))
 
-    assert mount_for_topology(
-        rp_paths, "platform-x.usb-usb-0:1.3:1.0", timeout=0
-    ) == str(matching)
+    assert mount_for_topology(rp_paths, "platform-x.usb-usb-0:1.3:1.0", timeout=0) == str(matching)
 
 
 # --------------------------------------------------------------------------

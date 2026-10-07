@@ -20,7 +20,7 @@ from .bootsel import Bootsel
 from .dfu_util import DfuUtil
 from .flashtool import Flashtool
 from .platformio import PlatformIO
-from .spec import KIND_BARE, KIND_SERIAL, CandidateScanner, Device, Flasher, FlashTarget
+from .spec import KIND_BARE, KIND_SERIAL, CandidateScanner, Device, FirstWriter, Flasher, FlashTarget
 
 if TYPE_CHECKING:
     from ..firmware import FirmwareFamily
@@ -51,6 +51,12 @@ def candidate_scanner(flasher: Flasher) -> CandidateScanner | None:
     """`flasher` as a `CandidateScanner`, or None when it cannot find a new
     board. The one place that asks - the way helper capabilities are reached."""
     return flasher if isinstance(flasher, CandidateScanner) else None
+
+
+def first_writer(flasher: Flasher) -> FirstWriter | None:
+    """`flasher` as a `FirstWriter`, or None when its first install is the
+    ROM write `flash.flash_initial_bootloader` does."""
+    return flasher if isinstance(flasher, FirstWriter) else None
 
 
 def needs_services_stopped(target: FlashTarget) -> bool:
@@ -151,9 +157,7 @@ def _unstaged(
     whose kind was not staged.
     """
     return [
-        (name, by_name(name).accepts)
-        for name in family.flashers
-        if by_name(name).supports(device, helper)
+        (name, by_name(name).accepts) for name in family.flashers if by_name(name).supports(device, helper)
     ]
 
 
@@ -279,9 +283,7 @@ def select(
         staged = providers.staged(paths, device.type, family)
     choice = resolve(family, device, helper, staged)
     if choice is None:
-        raise _refusal_error(
-            family, device, _unstaged(family, device, helper), staged, helper
-        )
+        raise _refusal_error(family, device, _unstaged(family, device, helper), staged, helper)
     flasher, artifact = choice
     return flasher.target(paths, device, helper, artifact, stop_services=stop_services)
 
@@ -333,13 +335,26 @@ class FirstInstall:
     fw: str
     #: None exactly when nothing on the family's list can do it.
     flasher: str | None
-    #: The ROM state that flasher writes ("dfu", "bootsel"); "" with no flasher.
+    #: The ROM state that flasher writes ("dfu", "bootsel", "esp_rom"); "" with
+    #: no flasher.
     state: str
     #: Set exactly when `flasher` is None, naming the line to change.
     reason: str | None
 
+    @property
+    def hint(self) -> str | None:
+        """What to do to a new board before scanning for it, in the chosen
+        flasher's own words. None with no flasher."""
+        scanner = candidate_scanner(_BY_NAME[self.flasher]) if self.flasher in _BY_NAME else None
+        return scanner.candidate_hint if scanner is not None else None
+
     def to_json(self) -> dict[str, Any]:
-        return {"fw": self.fw or None, "flasher": self.flasher, "reason": self.reason}
+        return {
+            "fw": self.fw or None,
+            "flasher": self.flasher,
+            "reason": self.reason,
+            "hint": self.hint,
+        }
 
 
 class _Declared(Protocol):
@@ -354,9 +369,7 @@ class _Declared(Protocol):
 
 
 def _bare(entry: _Declared, fw: str, state: str) -> Device:
-    return Device(
-        type=entry.name, id="", chipset=entry.chipset, state=state, fw=fw, kind=KIND_BARE
-    )
+    return Device(type=entry.name, id="", chipset=entry.chipset, state=state, fw=fw, kind=KIND_BARE)
 
 
 def first_install(entry: _Declared, families: dict[str, FirmwareFamily]) -> FirstInstall:
@@ -364,8 +377,8 @@ def first_install(entry: _Declared, families: dict[str, FirmwareFamily]) -> Firs
     bare board of it - the first, in list order, that is a `CandidateScanner`
     and whose `supports()` takes a bare device in one of its own states.
 
-    No builder and no flasher name is compared: `flashtool` and `platformio`
-    refuse `KIND_BARE` and cannot scan, so they are never chosen.
+    No builder and no flasher name is compared: `flashtool` refuses
+    `KIND_BARE` and cannot scan, so it is never chosen.
 
     Pure - no bus, no subprocess, no file read - because `fw.status` asks it
     for every row on every poll. Never raises: a row it cannot answer for
@@ -403,7 +416,7 @@ def first_install(entry: _Declared, families: dict[str, FirmwareFamily]) -> Firs
         for state in flasher.states:
             if flasher.supports(_bare(entry, fw, state), None):
                 return FirstInstall(
-                    fw, None, "", _no_first_install_writer(family, entry.chipset, state)
+                    fw, None, "", _no_first_install_writer(family, entry.chipset, state, writer=flasher.name)
                 )
     if scanners:
         return FirstInstall(
@@ -439,9 +452,7 @@ def select_each(
     refused: list[dict[str, Any]] = []
     for device, units in requests:
         try:
-            targets.append(
-                select_device(paths, families, device, stop_services=units)
-            )
+            targets.append(select_device(paths, families, device, stop_services=units))
         except NoFlasherError as exc:
             refused.append(refusal(device, exc))
     return targets, refused

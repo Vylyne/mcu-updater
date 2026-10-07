@@ -72,8 +72,7 @@ def source_dir(display: PioType) -> str:
     path = os.path.expanduser(display.source)
     if not path:
         raise ConfigError(
-            f"'{display.name}' has no source tree configured. Set 'source:' on its "
-            f"firmware family.",
+            f"'{display.name}' has no source tree configured. Set 'source:' on its firmware family.",
             type=display.name,
         )
     if not os.path.isdir(path):

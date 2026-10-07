@@ -71,11 +71,11 @@ def test_read_never_refuses():
 
 
 REFUSALS = [
-    pytest.param(FAMILIES + "[type board]\nchipset: stm32f072xb\n", "declares no firmware: key", id="no-firmware"),
-    pytest.param(FAMILIES + "[type board]\nfirmware: klipperr\n", "not a known family", id="unknown"),
     pytest.param(
-        FAMILIES + "[type board]\nfirmware: klipper, roadrunner\n", "different tools", id="mixed"
+        FAMILIES + "[type board]\nchipset: stm32f072xb\n", "declares no firmware: key", id="no-firmware"
     ),
+    pytest.param(FAMILIES + "[type board]\nfirmware: klipperr\n", "not a known family", id="unknown"),
+    pytest.param(FAMILIES + "[type board]\nfirmware: klipper, roadrunner\n", "different tools", id="mixed"),
 ]
 
 
@@ -140,8 +140,7 @@ def test_an_old_key_spelling_is_refused_naming_the_new_one(paths, section, old, 
 
 
 KLIPPER_SECTION = (
-    FAMILIES
-    + "[type knomi]\nfirmware: knomi_serial\nplatformio_env: knomi\nklipper_section: knomi_serial\n"
+    FAMILIES + "[type knomi]\nfirmware: knomi_serial\nplatformio_env: knomi\nklipper_section: knomi_serial\n"
 )
 
 

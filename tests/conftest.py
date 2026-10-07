@@ -9,6 +9,7 @@ tmp_path stands in for a whole printer host - no mocks, no monkeypatching of
 from __future__ import annotations
 
 import dataclasses
+import functools
 import json
 import os
 import pathlib
@@ -43,9 +44,7 @@ def _bootsel_boards_apply_instantly(monkeypatch: pytest.MonkeyPatch) -> None:
     """A fake BOOTSEL volume never goes away, so a copy onto one would sit out
     the whole apply wait. Real boards reset as the image lands; here they reset
     at once. Tests of the wait itself restore the real check."""
-    monkeypatch.setattr(
-        "mcu_updater.flashers.bootsel._volume_still_mounted", lambda mount: False
-    )
+    monkeypatch.setattr("mcu_updater.flashers.bootsel._volume_still_mounted", lambda mount: False)
 
 
 @pytest.fixture
@@ -287,11 +286,27 @@ def mountinfo(root: pathlib.Path, mounts: dict[pathlib.Path, str]) -> None:
         return "".join("\\" + format(ord(ch), "03o") if ch in " \t\n\\" else ch for ch in text)
 
     lines = [
-        f"{36 + i} 35 8:{i} / {escape(str(point))} rw,relatime shared:1 - vfat "
-        f"{escape(source)} rw"
+        f"{36 + i} 35 8:{i} / {escape(str(point))} rw,relatime shared:1 - vfat {escape(source)} rw"
         for i, (point, source) in enumerate(mounts.items())
     ]
     (root / "mountinfo").write_text("\n".join(lines) + "\n", encoding="utf-8")
+
+
+def skip_the_reenumeration_pause(monkeypatch: pytest.MonkeyPatch, api) -> None:
+    """Run add-MCU's post-write wait without its real-time pauses.
+
+    The fake bus is static - a board is there on the first look or it never
+    arrives - so the 0.5s poll and 1s settle the wait ships with are a second of
+    dead time per test, whichever way it ends. The wait itself still runs.
+    """
+    import mcu_updater.devices as devices_mod
+
+    monkeypatch.setattr(
+        devices_mod,
+        "wait_for_new_device",
+        functools.partial(devices_mod.wait_for_new_device, poll=0.01, settle=0.0),
+    )
+    api.ADD_MCU_REENUMERATE_TIMEOUT = 0.05
 
 
 def on_port(paths: Paths, root: pathlib.Path, port: str) -> Paths:
@@ -313,9 +328,7 @@ def on_port(paths: Paths, root: pathlib.Path, port: str) -> Paths:
     block = root / "sys-dev" / port / "block"
     tty.mkdir(parents=True, exist_ok=True)
     block.mkdir(parents=True, exist_ok=True)
-    return dataclasses.replace(
-        paths, usb_sysfs=str(usb_root), tty_sysfs=str(tty), block_sysfs=str(block)
-    )
+    return dataclasses.replace(paths, usb_sysfs=str(usb_root), tty_sysfs=str(tty), block_sysfs=str(block))
 
 
 def display_objects(sections: dict, objects: dict = None) -> dict:

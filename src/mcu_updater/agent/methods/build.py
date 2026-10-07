@@ -174,9 +174,7 @@ class BuildMixin(_Base):
             from ...providers import pio as pio_mod
 
             ctx.step(f"Building {entry.env}", 0, 1)
-            path = pio_mod.build(
-                self.paths, self.settings(), entry, reporter=ctx.reporter, cancel=ctx.cancel
-            )
+            path = pio_mod.build(self.paths, self.settings(), entry, reporter=ctx.reporter, cancel=ctx.cancel)
             ctx.step(f"Built {entry.env}", 1, 1)
             return {"name": name, "env": entry.env, "firmware": path}
 
@@ -459,9 +457,7 @@ class BuildMixin(_Base):
             result["job_id"] = started.get("job_id")
         return result
 
-    def _capture_answers(
-        self, mcu_type: str, fw: str, answers: list[str]
-    ) -> str | None:
+    def _capture_answers(self, mcu_type: str, fw: str, answers: list[str]) -> str | None:
         """Keep a just-saved set of answers as this type's own profile.
 
         Skipped where it would only make noise: a tree that ships no profiles has
@@ -486,9 +482,7 @@ class BuildMixin(_Base):
             state = profiles.status(self.paths, mcu_type, fw, families)
             if state.managed and state.reason != profiles.CUSTOMISED:
                 return None
-            if not state.managed and not profiles.available(
-                self.paths, fw, families, mcu_type=mcu_type
-            ):
+            if not state.managed and not profiles.available(self.paths, fw, families, mcu_type=mcu_type):
                 return None
             kept = profiles.capture_custom(
                 self.paths,

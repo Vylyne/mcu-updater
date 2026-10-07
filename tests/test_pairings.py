@@ -146,9 +146,7 @@ def test_an_already_tracked_board_is_untouched(api, paths, fake_root):
     assert tracked in Registry.load(paths).get("bttebb36").serials
 
 
-def test_a_board_tracked_under_another_type_is_not_adopted_by_a_matching_pairing(
-    api, paths, fake_root
-):
+def test_a_board_tracked_under_another_type_is_not_adopted_by_a_matching_pairing(api, paths, fake_root):
     """The test above cannot reach the adoption at all: its serial has no DFU
     derivation, so no pairing key matches it. This one's does. `Registry.add_serial`
     does not refuse a serial tracked elsewhere, so the untracked filter is the only
@@ -168,9 +166,7 @@ def test_a_board_tracked_under_another_type_is_not_adopted_by_a_matching_pairing
     assert Pairings(paths).type_for(key) == "bttebb36"
 
 
-def test_a_board_already_tracked_under_the_paired_type_leaves_the_pairing_unconsumed(
-    api, paths, fake_root
-):
+def test_a_board_already_tracked_under_the_paired_type_leaves_the_pairing_unconsumed(api, paths, fake_root):
     """Consumed only by an adoption. A board already tracked under the type is
     filtered out before any key is matched, so its pairing is left to expire
     with its TTL rather than being spent on a board that needed nothing."""
@@ -331,7 +327,7 @@ def test_the_flash_records_the_pairing_before_waiting(paths, live_registry_text,
     recording after it would help in exactly the situations it does not."""
     from mcu_updater.jobs import JobRunner
 
-    from .conftest import write_settings
+    from .conftest import skip_the_reenumeration_pause, write_settings
     from .test_agent_dfu import ONE_BOARD, FakeRun
 
     # ONE_BOARD's DFU serial is fixed ("3941335F3434"), so the pairing this
@@ -357,11 +353,11 @@ def test_the_flash_records_the_pairing_before_waiting(paths, live_registry_text,
         ),
     )
     api = Api(paths, runner=runner)
-    api.ADD_MCU_REENUMERATE_TIMEOUT = 1.0
 
     import pytest as _pytest
 
     monkeypatch = _pytest.MonkeyPatch()
+    skip_the_reenumeration_pause(monkeypatch, api)
     monkeypatch.setattr("mcu_updater.devices.subprocess.run", FakeRun(stdout=ONE_BOARD))
     monkeypatch.setattr("mcu_updater.flashers.flash.flash_initial_bootloader", lambda *a, **k: None)
     try:
@@ -379,4 +375,3 @@ def test_the_flash_records_the_pairing_before_waiting(paths, live_registry_text,
         monkeypatch.undo()
         runner._cancel.set()
         runner.wait(timeout=20)
-

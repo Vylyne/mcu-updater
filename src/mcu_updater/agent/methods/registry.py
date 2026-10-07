@@ -31,9 +31,7 @@ def _parse_extra_repos(value: Any) -> list[str]:
 
 def _parse_makefile_patches(value: Any) -> list[MakefilePatch]:
     if not isinstance(value, list):
-        raise RpcError(
-            "makefile_patches must be a list of {file, line} objects", ERR_INVALID_PARAMS
-        )
+        raise RpcError("makefile_patches must be a list of {file, line} objects", ERR_INVALID_PARAMS)
     patches: list[MakefilePatch] = []
     for raw in value:
         entry = raw if isinstance(raw, dict) else {}

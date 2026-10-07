@@ -90,9 +90,7 @@ class Agent:
         )
         # Built last: it needs the Api to serialise with. Nothing above calls it
         # during construction - `emit_state` resolves this attribute at call time.
-        self.state = StateEmitter(
-            self.emitter, lambda: self.api.status({}), logger=self.log
-        )
+        self.state = StateEmitter(self.emitter, lambda: self.api.status({}), logger=self.log)
 
     # -- outbound calls used by the Api for enrichment ---------------------
 
@@ -187,8 +185,7 @@ class Agent:
             )
             if not self.runner.wait(timeout):
                 self.log.error(
-                    f"{job.kind} job {job.id} did not finish within {timeout:.0f}s; "
-                    f"shutting down anyway"
+                    f"{job.kind} job {job.id} did not finish within {timeout:.0f}s; shutting down anyway"
                 )
             else:
                 self.log.info(f"{job.kind} job finished; continuing shutdown")
@@ -295,9 +292,7 @@ class Agent:
                 self.run_once()
                 attempt = 0  # a successful session resets the backoff
             except FileNotFoundError:
-                self.log.warning(
-                    f"{self.socket_path} does not exist yet - is moonraker running?"
-                )
+                self.log.warning(f"{self.socket_path} does not exist yet - is moonraker running?")
             except Exception as exc:  # noqa: BLE001 - the loop must never die
                 self.log.warning(f"connection failed: {exc}")
 

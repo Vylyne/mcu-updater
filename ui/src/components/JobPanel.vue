@@ -118,11 +118,15 @@ const adopting = reactive<Record<string, boolean>>({});
 // add_mcu's own result - see flash.py's add_mcu_start. `candidates` are
 // boards that appeared and are not yet in the registry; `already_tracked`
 // appeared but the registry already knows them (a re-bootloadered board),
-// so there is nothing left to adopt for those.
+// so there is nothing left to adopt for those. `note` is set instead by a
+// flasher whose first install is an ordinary write: nothing re-enumerates
+// under a serial, so both lists are empty and the agent says what is left
+// to do.
 interface AddMcuResult {
   type: string;
   candidates: { serial: string; path: string; state: string }[];
   already_tracked: { serial: string; path: string; state: string }[];
+  note?: string | null;
 }
 
 const addMcuResult = computed<AddMcuResult | null>(() => {
@@ -255,6 +259,7 @@ async function onCancel(): Promise<void> {
           </li>
         </ul>
       </div>
+      <p v-else-if="addMcuResult?.note">{{ addMcuResult.note }}</p>
       <p
         v-else-if="addMcuResult && !addMcuResult.already_tracked.length"
         class="muted"

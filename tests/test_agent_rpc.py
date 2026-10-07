@@ -110,6 +110,7 @@ def test_the_harness_itself_does_not_drop_coalesced_messages():
     when the kernel happened to coalesce the writes. Driven by pre-filling the
     buffer so it fails deterministically rather than by luck.
     """
+
     class _StubSocket:
         """Only settimeout is reached; recv would mean the queue logic failed."""
 

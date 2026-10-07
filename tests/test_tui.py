@@ -24,9 +24,7 @@ RR_SERIAL = "RR-ONE"
 def c(paths, monkeypatch):
     """A kconfig type `board` and a cmake type `roadrunner`, no real services."""
     seed_base_firmwares(paths)
-    context = cli.Context(
-        paths=paths, settings=Settings(service_backend="null", clean_before_build=False)
-    )
+    context = cli.Context(paths=paths, settings=Settings(service_backend="null", clean_before_build=False))
     monkeypatch.setattr(cli, "_ctx", context)
 
     reg = Registry.load(paths)
@@ -65,9 +63,7 @@ def _menu_lines(out: str, title: str) -> list[str]:
     return [line.strip() for line in block.splitlines() if line.startswith("  ")]
 
 
-def test_the_type_picker_lists_a_non_kconfig_type_alongside_a_kconfig_one(
-    c, monkeypatch, capsys
-):
+def test_the_type_picker_lists_a_non_kconfig_type_alongside_a_kconfig_one(c, monkeypatch, capsys):
     answers(monkeypatch, "0")
     assert tui.pick_mcu_type(allow_new=False) is None
     options = _menu_lines(capsys.readouterr().out, "Select MCU type")
@@ -105,9 +101,7 @@ def _roadrunner_on_bus(fake_root, serial: str) -> None:
     (fake_root / "bus" / f"usb-Vylyne_Roadrunner_{serial}-if00").write_text("", encoding="utf-8")
 
 
-def test_add_serial_on_a_non_kconfig_type_tracks_a_detected_board(
-    c, fake_root, monkeypatch, capsys
-):
+def test_add_serial_on_a_non_kconfig_type_tracks_a_detected_board(c, fake_root, monkeypatch, capsys):
     _roadrunner_on_bus(fake_root, "RR-NEW")
     # A board already tracked under a type is never offered.
     _roadrunner_on_bus(fake_root, RR_SERIAL)
@@ -125,9 +119,7 @@ def test_add_serial_on_a_non_kconfig_type_tracks_a_detected_board(
         assert "RR-NEW" in fh.read()
 
 
-def test_add_serial_on_a_kconfig_type_still_filters_by_chipset(
-    c, fake_root, monkeypatch, capsys
-):
+def test_add_serial_on_a_kconfig_type_still_filters_by_chipset(c, fake_root, monkeypatch, capsys):
     make_device(fake_root / "bus", "katapult", "stm32f072xb", "BBBB")
     make_device(fake_root / "bus", "katapult", "rp2040", "CCCC")
     _roadrunner_on_bus(fake_root, "RR-NEW")
@@ -189,9 +181,7 @@ def test_flash_single_device_passes_every_key_the_handler_reads(c, monkeypatch):
     monkeypatch.setattr(cli, "flash_fw_cmd", called.append)
     answers(monkeypatch, "1", "2", "1")  # board, one device, its tracked serial
     tui.menu_flash()
-    assert called == [
-        argparse.Namespace(type="board", serial="AAAA-if00", yes=False, force=False)
-    ]
+    assert called == [argparse.Namespace(type="board", serial="AAAA-if00", yes=False, force=False)]
 
 
 def test_build_never_asks_a_cmake_type_for_a_firmware_target(c, monkeypatch):
@@ -223,9 +213,7 @@ def test_build_still_asks_a_kconfig_type_for_a_firmware_target(c, monkeypatch, c
     assert called == [argparse.Namespace(type="board", fw=first, jobs=None)]
 
 
-def test_flash_offers_a_platformio_type_whole_type_scope_only(
-    c, fake_root, monkeypatch, capsys
-):
+def test_flash_offers_a_platformio_type_whole_type_scope_only(c, fake_root, monkeypatch, capsys):
     """`flash -t knomi -s X` matches X against a port or device_id, never a
     by-id serial - so a tracked serial is no single-device target for it."""
     _declare_platformio(c.paths, fake_root, "serials: KNOMI-1\n")
@@ -235,9 +223,7 @@ def test_flash_offers_a_platformio_type_whole_type_scope_only(
     assert scopes == ["1. Flash every board of this type", "0. Cancel"]
 
 
-def test_flash_does_not_offer_a_cmake_type_an_untracked_board(
-    c, fake_root, monkeypatch, capsys
-):
+def test_flash_does_not_offer_a_cmake_type_an_untracked_board(c, fake_root, monkeypatch, capsys):
     _roadrunner_on_bus(fake_root, "RR-NEW")
     answers(monkeypatch, "2", "1", "0")  # roadrunner, one device, cancel
     tui.menu_flash()
@@ -245,9 +231,7 @@ def test_flash_does_not_offer_a_cmake_type_an_untracked_board(
     assert options == [f"1. {RR_SERIAL} (tracked)", "0. Cancel"]
 
 
-def test_flash_still_offers_a_kconfig_type_untracked_boards(
-    c, fake_root, monkeypatch, capsys
-):
+def test_flash_still_offers_a_kconfig_type_untracked_boards(c, fake_root, monkeypatch, capsys):
     make_device(fake_root / "bus", "katapult", "stm32f072xb", "BBBB")
     answers(monkeypatch, "1", "2", "0")  # board, one device, cancel
     tui.menu_flash()
@@ -260,9 +244,7 @@ def test_flash_still_offers_a_kconfig_type_untracked_boards(
     ]
 
 
-def test_menuconfig_with_only_a_cmake_type_says_why_none_is_offered(
-    paths, monkeypatch, capsys
-):
+def test_menuconfig_with_only_a_cmake_type_says_why_none_is_offered(paths, monkeypatch, capsys):
     seed_base_firmwares(paths)
     monkeypatch.setattr(
         cli,

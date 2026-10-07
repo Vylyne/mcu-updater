@@ -24,7 +24,11 @@ if TYPE_CHECKING:
 UNPROVISIONED_RE = re.compile(r"^RR-UNPROVISIONED-[0-9A-F]{16}$")
 PROVISIONED_RE = re.compile(r"^RR-[0-9A-HJKMNP-TV-Z]{26}$")
 _ENTRY_RE = re.compile(r"^usb-Vylyne_Roadrunner_(RR-[A-Z0-9-]+)-if00$")
-_HELPER = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))), "scripts", "roadrunner_usb.py")
+_HELPER = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(__file__)))),
+    "scripts",
+    "roadrunner_usb.py",
+)
 REENUMERATE_TIMEOUT = 15.0
 
 
@@ -77,9 +81,7 @@ def _helper(paths: Paths, operation: str, port: str, argument: str | None = None
     return data
 
 
-def _entry_candidates(
-    paths: Paths, *, strict: bool = False
-) -> list[tuple[str, str, usb.UsbDevice]]:
+def _entry_candidates(paths: Paths, *, strict: bool = False) -> list[tuple[str, str, usb.UsbDevice]]:
     try:
         names = sorted(os.listdir(paths.serial_by_id))
     except OSError:
@@ -97,9 +99,7 @@ def _entry_candidates(
         topology = usb.device_for_tty(inventory, paths, os.path.basename(port))
         if topology is None or topology.manufacturer != "Vylyne" or topology.product != "Roadrunner":
             if strict:
-                raise OSError(
-                    f"could not confirm USB topology for Roadrunner candidate {name}"
-                )
+                raise OSError(f"could not confirm USB topology for Roadrunner candidate {name}")
             continue
         candidates.append((match.group(1), port, topology))
     return candidates
@@ -188,13 +188,19 @@ def find_untracked(paths: Paths, serial: str) -> RoadrunnerDevice:
         raise _error("identity_unconfirmed", "Roadrunner serial is not an unprovisioned canonical serial")
     candidates = [item for item in _entry_candidates(paths) if item[0] == serial]
     if not candidates:
-        raise _error("device_not_found", "No confirmed unprovisioned Roadrunner matched that serial", serial=serial)
+        raise _error(
+            "device_not_found", "No confirmed unprovisioned Roadrunner matched that serial", serial=serial
+        )
     if len(candidates) != 1:
         raise _error("device_ambiguous", "More than one Roadrunner matched that serial", serial=serial)
     candidate_serial, port, topology = candidates[0]
     info = _helper(paths, "info", port)
     if not _valid_info(info, serial, provisioned=False):
-        raise _error("identity_unconfirmed", "Roadrunner INFO did not confirm the unprovisioned descriptor", serial=serial)
+        raise _error(
+            "identity_unconfirmed",
+            "Roadrunner INFO did not confirm the unprovisioned descriptor",
+            serial=serial,
+        )
     return RoadrunnerDevice(candidate_serial, port, topology, **provenance(info))
 
 
@@ -204,13 +210,19 @@ def find_provisioned(paths: Paths, serial: str) -> RoadrunnerDevice:
         raise _error("identity_unconfirmed", "Roadrunner serial is not a provisioned canonical serial")
     candidates = [item for item in _entry_candidates(paths) if item[0] == serial]
     if not candidates:
-        raise _error("device_not_found", "No confirmed provisioned Roadrunner matched that serial", serial=serial)
+        raise _error(
+            "device_not_found", "No confirmed provisioned Roadrunner matched that serial", serial=serial
+        )
     if len(candidates) != 1:
         raise _error("device_ambiguous", "More than one Roadrunner matched that serial", serial=serial)
     candidate_serial, port, topology = candidates[0]
     info = _helper(paths, "info", port)
     if not _valid_info(info, serial, provisioned=True):
-        raise _error("identity_unconfirmed", "Roadrunner INFO did not confirm the provisioned descriptor", serial=serial)
+        raise _error(
+            "identity_unconfirmed",
+            "Roadrunner INFO did not confirm the provisioned descriptor",
+            serial=serial,
+        )
     return RoadrunnerDevice(candidate_serial, port, topology, **provenance(info))
 
 
@@ -222,9 +234,7 @@ def find_provisioned(paths: Paths, serial: str) -> RoadrunnerDevice:
 #: for a board that is about to be perfectly fine. Ambiguity is deliberately
 #: not here: two devices answering to one serial is a real condition that
 #: waiting cannot resolve.
-_TRANSIENT_READINESS_CODES = frozenset(
-    {"device_not_found", "helper_failed", "identity_unconfirmed"}
-)
+_TRANSIENT_READINESS_CODES = frozenset({"device_not_found", "helper_failed", "identity_unconfirmed"})
 
 
 def wait_for_provisioned(paths: Paths, serial: str) -> RoadrunnerDevice:
@@ -283,7 +293,9 @@ def _await_reenumeration(
                 info = _helper(paths, "info", port)
             except RoadrunnerError:
                 continue
-            if matches_serial(candidate_serial) and _valid_info(info, candidate_serial, provisioned=provisioned):
+            if matches_serial(candidate_serial) and _valid_info(
+                info, candidate_serial, provisioned=provisioned
+            ):
                 return RoadrunnerDevice(candidate_serial, port, candidate_topology, **provenance(info))
             # Prefer what the wire protocol itself reported: the descriptor's
             # serial can already equal what was wanted (matches_serial passed)
@@ -333,8 +345,7 @@ def _await_disappearance(paths: Paths, device: RoadrunnerDevice) -> usb.UsbDevic
             unknown = True
             candidates = []
         if not unknown and not any(
-            topology.name == device.topology.name
-            for _serial, _port, topology in candidates
+            topology.name == device.topology.name for _serial, _port, topology in candidates
         ):
             return device.topology
         if time.monotonic() >= deadline:
@@ -388,9 +399,7 @@ class Roadrunner:
     #: `Byid`'s or `Watcher`'s, which only read state nobody else is holding.
     needs_ports_free: bool = True
 
-    def request_bootsel(
-        self, paths: Paths, device: RoadrunnerDevice
-    ) -> usb.UsbDevice:
+    def request_bootsel(self, paths: Paths, device: RoadrunnerDevice) -> usb.UsbDevice:
         """Request BOOTSEL and return topology only after the old CDC is gone."""
         _helper(paths, "bootsel", device.port, device.serial)
         return _await_disappearance(paths, device)

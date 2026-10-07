@@ -1,4 +1,4 @@
-""""display" and "screen" name a device only in a display firmware's own code.
+""" "display" and "screen" name a device only in a display firmware's own code.
 
 The core, the generic seams, the wire and the UI say "device" and "PlatformIO
 type". A KNOMI is a screen; that fact lives in `helpers/knomi_serial.py` and
@@ -34,21 +34,77 @@ _WORD = re.compile(r"[A-Z]?[a-z]+|[A-Z]+(?![a-z])")
 
 #: (path, the line stripped, why the word is not a device there).
 ALLOWED = {
-    ("src/mcu_updater/providers/kconfig.py", "the choice, not the option), so the screen was three padlocked toggles and", "menuconfig screen"),
-    ("src/mcu_updater/providers/kconfig.py", "is enabled reads as indented under it, not as a separate screen.", "menuconfig screen"),
-    ("src/mcu_updater/providers/kconfig.py", "# menuconfig is its own screen, reached by `enterable`.", "menuconfig screen"),
-    ("src/mcu_updater/providers/kconfig.py", "# are their own screens; a choice is represented by its", "menuconfig screen"),
-    ("src/mcu_updater/providers/kconfig.py", '"""The current screen: where we are, and what is on it."""', "menuconfig screen"),
-    ("src/mcu_updater/providers/kconfig.py", "beats rendering an empty screen with no way out of it.", "menuconfig screen"),
-    ("src/mcu_updater/states.py", "#: understood. A chip, an icon and a screen reader all need the `label`; the", "screen reader"),
-    ("src/mcu_updater/__init__.py", "# 2: fields were *removed*. `screens[].mac`/`flashed_at`/`moved_from`/`moved_at`", "API history"),
-    ("src/mcu_updater/__init__.py", "# 3: `fw.display.list` and `fw.display.build` are gone (use `fw.device.list`", "API history"),
-    ("src/mcu_updater/sections.py", "``[mcu carto_v4]`` and ``[display knomi_toolchanger]`` were two spellings of one", "config history"),
-    ("src/mcu_updater/agent/events.py", "tab, a phone, KlipperScreen - which is enough to make the UI stutter on a Pi.", "product name"),
+    (
+        "src/mcu_updater/providers/kconfig.py",
+        "the choice, not the option), so the screen was three padlocked toggles and",
+        "menuconfig screen",
+    ),
+    (
+        "src/mcu_updater/providers/kconfig.py",
+        "is enabled reads as indented under it, not as a separate screen.",
+        "menuconfig screen",
+    ),
+    (
+        "src/mcu_updater/providers/kconfig.py",
+        "# menuconfig is its own screen, reached by `enterable`.",
+        "menuconfig screen",
+    ),
+    (
+        "src/mcu_updater/providers/kconfig.py",
+        "# are their own screens; a choice is represented by its",
+        "menuconfig screen",
+    ),
+    (
+        "src/mcu_updater/providers/kconfig.py",
+        '"""The current screen: where we are, and what is on it."""',
+        "menuconfig screen",
+    ),
+    (
+        "src/mcu_updater/providers/kconfig.py",
+        "beats rendering an empty screen with no way out of it.",
+        "menuconfig screen",
+    ),
+    (
+        "src/mcu_updater/states.py",
+        "#: understood. A chip, an icon and a screen reader all need the `label`; the",
+        "screen reader",
+    ),
+    (
+        "src/mcu_updater/__init__.py",
+        "# 2: fields were *removed*. `screens[].mac`/`flashed_at`/`moved_from`/`moved_at`",
+        "API history",
+    ),
+    (
+        "src/mcu_updater/__init__.py",
+        "# 3: `fw.display.list` and `fw.display.build` are gone (use `fw.device.list`",
+        "API history",
+    ),
+    (
+        "src/mcu_updater/sections.py",
+        "``[mcu carto_v4]`` and ``[display knomi_toolchanger]`` were two spellings of one",
+        "config history",
+    ),
+    (
+        "src/mcu_updater/agent/events.py",
+        "tab, a phone, KlipperScreen - which is enough to make the UI stutter on a Pi.",
+        "product name",
+    ),
     ("ui/src/api/kconfig.ts", "* current screen. */", "menuconfig screen"),
-    ("ui/src/store/agent.ts", "// but Vi wants the finished job (and its log) to stay on screen rather", "on screen"),
-    ("ui/src/store/agent.ts", "// A menu-changing reply (open/enter/up/set/reset) replaces the screen", "menuconfig screen"),
-    ("ui/src/store/agent.ts", "* assignment can rewrite the screen - picking a different architecture", "menuconfig screen"),
+    (
+        "ui/src/store/agent.ts",
+        "// but Vi wants the finished job (and its log) to stay on screen rather",
+        "on screen",
+    ),
+    (
+        "ui/src/store/agent.ts",
+        "// A menu-changing reply (open/enter/up/set/reset) replaces the screen",
+        "menuconfig screen",
+    ),
+    (
+        "ui/src/store/agent.ts",
+        "* assignment can rewrite the screen - picking a different architecture",
+        "menuconfig screen",
+    ),
 }
 
 

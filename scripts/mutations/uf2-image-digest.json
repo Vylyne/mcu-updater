@@ -37,13 +37,13 @@
     },
     {
       "name": "the trailing magic is one of the three checked",
-      "find": "            or magic_end != UF2_MAGIC_END",
-      "replace": "            or False"
+      "find": "        if magic0 != UF2_MAGIC_START0 or magic1 != UF2_MAGIC_START1 or magic_end != UF2_MAGIC_END:",
+      "replace": "        if magic0 != UF2_MAGIC_START0 or magic1 != UF2_MAGIC_START1 or False:"
     },
     {
       "name": "the first magic is one of the three checked",
-      "find": "            magic0 != UF2_MAGIC_START0",
-      "replace": "            False"
+      "find": "        if magic0 != UF2_MAGIC_START0 or magic1 != UF2_MAGIC_START1 or magic_end != UF2_MAGIC_END:",
+      "replace": "        if False or magic1 != UF2_MAGIC_START1 or magic_end != UF2_MAGIC_END:"
     },
     {
       "name": "a file that is not a whole number of blocks is refused",

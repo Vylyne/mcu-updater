@@ -502,9 +502,7 @@ def test_a_change_that_hides_the_current_menu_falls_back_to_an_ancestor(session)
     out of it would be worse."""
     choice_id = choice_row(session)["id"]
     session.set_value(choice_id, "MACH_RP2040")
-    rp2040_menu = next(
-        n["id"] for n in session.menu()["nodes"] if n["prompt"] == "RP2040 specifics"
-    )
+    rp2040_menu = next(n["id"] for n in session.menu()["nodes"] if n["prompt"] == "RP2040 specifics")
     session.enter(rp2040_menu)
     assert len(session.menu()["breadcrumb"]) == 2
 
@@ -518,9 +516,7 @@ def test_a_change_that_hides_the_current_menu_falls_back_to_an_ancestor(session)
 
 def test_a_change_that_leaves_the_menu_alone_does_not_move_you(session):
     """The other half: reanchoring must only fire when it has to."""
-    menu_id = next(
-        n["id"] for n in session.menu()["nodes"] if n["prompt"] == "Communication interface"
-    )
+    menu_id = next(n["id"] for n in session.menu()["nodes"] if n["prompt"] == "Communication interface")
     session.enter(menu_id)
     session.set_value("USB_VENDOR_ID", "0x2e8a")
     assert len(session.menu()["breadcrumb"]) == 2

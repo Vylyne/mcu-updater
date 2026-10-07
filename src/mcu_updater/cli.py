@@ -125,10 +125,7 @@ def add_mcu_type(args: argparse.Namespace) -> None:
     reg = c.registry()
 
     if args.type in reg and not args.force:
-        print(
-            f"MCU Type '{args.type}' already exists:\n"
-            f"{json.dumps(reg.get(args.type).to_json(), indent=2)}"
-        )
+        print(f"MCU Type '{args.type}' already exists:\n{json.dumps(reg.get(args.type).to_json(), indent=2)}")
         if not _confirm("Overwrite?"):
             print("Aborting add.")
             return
@@ -185,11 +182,7 @@ def list_profiles(args: argparse.Namespace) -> None:
             mark = "*" if seed.name == current else " "
             note = ""
             if seed.origin == profiles.ORIGIN_CUSTOM:
-                note = (
-                    f"  (yours, forked from {seed.parent})"
-                    if seed.parent
-                    else "  (yours)"
-                )
+                note = f"  (yours, forked from {seed.parent})" if seed.parent else "  (yours)"
             print(f"   {mark} {seed.name}{note}")
             # The one or two answers that tell this apart from its neighbours.
             # Printing all seven under each of eight entries hides them.
@@ -214,9 +207,7 @@ def apply_profile(args: argparse.Namespace) -> None:
     fw = args.fw or mcu.application(families)
     boot_fw = mcu.bootloader(families)
 
-    applied = profiles.apply_seed(
-        c.paths, args.type, fw, args.profile, families=families, force=args.force
-    )
+    applied = profiles.apply_seed(c.paths, args.type, fw, args.profile, families=families, force=args.force)
     print(f"Seeded {args.type} ({fw}) from {applied.profile}:")
     for line in applied.answers:
         print(f"    {line}")
@@ -239,10 +230,7 @@ def apply_profile(args: argparse.Namespace) -> None:
             for line in derived.dropped:
                 print(f"    {line}")
         if derived.app_address is not None:
-            print(
-                f"  Verified: {boot_fw} jumps to "
-                f"{derived.app_address:#x}, where {fw} is linked to run."
-            )
+            print(f"  Verified: {boot_fw} jumps to {derived.app_address:#x}, where {fw} is linked to run.")
 
     if fw == mcu.application(families):
         with Registry.mutate(c.paths, f"profile for {args.type}") as writable:
@@ -412,15 +400,27 @@ def _build_interactive(
     reg = c.registry()
     try:
         return build(
-            c.paths, reg, c.settings, mcu_type, fw,
-            reporter=stdout_reporter, jobs=jobs, reseed=reseed,
+            c.paths,
+            reg,
+            c.settings,
+            mcu_type,
+            fw,
+            reporter=stdout_reporter,
+            jobs=jobs,
+            reseed=reseed,
         )
     except ConfigNotFoundError:
         print(f"Configuration file not found for {mcu_type} ({fw}). Launching menuconfig...")
         menuconfig_tty(c.paths, mcu_type, fw)
         return build(
-            c.paths, reg, c.settings, mcu_type, fw,
-            reporter=stdout_reporter, jobs=jobs, reseed=reseed,
+            c.paths,
+            reg,
+            c.settings,
+            mcu_type,
+            fw,
+            reporter=stdout_reporter,
+            jobs=jobs,
+            reseed=reseed,
         )
 
 
@@ -433,9 +433,7 @@ def build_fw_cmd(args: argparse.Namespace) -> None:
     # and there is no menuconfig to fall back to.
     if args.type in install.platformio:
         pio_type = install.platformio[args.type]
-        target = providers.BuildTarget(
-            providers.PlatformIO.name, args.type, pio_type.firmware
-        )
+        target = providers.BuildTarget(providers.PlatformIO.name, args.type, pio_type.firmware)
         provider = providers.by_name(providers.PlatformIO.name)
         blocked = provider.blocked(install, target)
         if blocked:
@@ -452,9 +450,7 @@ def build_fw_cmd(args: argparse.Namespace) -> None:
     # here either, and there is no menuconfig behind it to offer.
     if args.type in install.cmake:
         entry = install.cmake[args.type]
-        target = providers.BuildTarget(
-            providers.Cmake.name, args.type, entry.firmware
-        )
+        target = providers.BuildTarget(providers.Cmake.name, args.type, entry.firmware)
         provider = providers.by_name(providers.Cmake.name)
         blocked = provider.blocked(install, target)
         if blocked:
@@ -477,9 +473,7 @@ def build_fw_cmd(args: argparse.Namespace) -> None:
         )
 
 
-def _target_for(
-    install: providers.Install, name: str
-) -> providers.BuildTarget | None:
+def _target_for(install: providers.Install, name: str) -> providers.BuildTarget | None:
     """The one target this type names, whichever provider owns it.
 
     The three lookups `build_fw_cmd` does inline, in one place and in the same
@@ -523,10 +517,7 @@ def clean_fw_cmd(args: argparse.Namespace) -> None:
         removed = provider.clean(install, target)
 
     if removed is None:
-        print(
-            f"Nothing to clean for '{args.type}': {provider.label} keeps no "
-            f"build directory of its own."
-        )
+        print(f"Nothing to clean for '{args.type}': {provider.label} keeps no build directory of its own.")
         return
     print(f"Removed {removed}")
     print("The next build reconfigures from scratch.")
@@ -549,6 +540,7 @@ def _bench(c: Context) -> flashers.Bench:
     its own port watcher, and a batch spanning two needs two. Sharing the
     factory is what keeps a dry run from stopping a real service.
     """
+
     def controller(name: str | None = None) -> ServiceController:
         return make_controller(c.settings, name=name)
 
@@ -735,13 +727,9 @@ def _pio_targets(
     # asks again inside its own stop. Listening here as well would hold the
     # ports twice for one flash. Only an empty map is worth the six seconds,
     # because without an answer there is nothing to select.
-    found = identify.identify(
-        c.paths, c.settings, entry, ask=False, reporter=stdout_reporter
-    )
+    found = identify.identify(c.paths, c.settings, entry, ask=False, reporter=stdout_reporter)
     if not found:
-        found = identify.identify(
-            c.paths, c.settings, entry, ask=True, reporter=stdout_reporter
-        )
+        found = identify.identify(c.paths, c.settings, entry, ask=True, reporter=stdout_reporter)
     units = stop_services.for_platformio(c.paths, entry, c.settings)
     if not found:
         where = identify.remembered_at(c.paths, entry) or "(nothing remembered)"
@@ -777,11 +765,7 @@ def _pio_targets(
             )
             for device in sorted(found.values(), key=lambda d: d.port)
             if device.present
-            and (
-                only_id is None
-                or only_id == device.port
-                or only_id.lower() == device.device_id.lower()
-            )
+            and (only_id is None or only_id == device.port or only_id.lower() == device.device_id.lower())
         ],
     )
 
@@ -926,9 +910,7 @@ def _run_batch(c: Context, targets: list, label: str, refused: list | tuple = ()
     `refused` is what selection could not give a flasher. The batch reports
     each as a failure.
     """
-    result = flashers.write_all(
-        _bench(c), targets, flashers.PlainContext(stdout_reporter), refused=refused
-    )
+    result = flashers.write_all(_bench(c), targets, flashers.PlainContext(stdout_reporter), refused=refused)
     for failure in result["failures"]:
         print(f"ERROR: {failure['id']}: {failure['error']}", file=sys.stderr)
     if result["failures"]:
@@ -964,9 +946,7 @@ def _run_type_flash(
     with exclusive(c.paths, f"flash {name}" + (f"/{serial}" if serial else "")):
         with ports:
             targets, refused = source.select(c, name, serial, force)
-            if not targets and not refused and (
-                serial is None or source.empty_single_is_error
-            ):
+            if not targets and not refused and (serial is None or source.empty_single_is_error):
                 print(source.empty_message.format(name=name), file=sys.stderr)
                 return 1
             if serial is not None and refused and source.refuse_single_before_batch:
@@ -983,8 +963,7 @@ def flash_fw_cmd(args: argparse.Namespace) -> None:
         sys.exit(1)
 
     if not args.yes and not _confirm(
-        "Flashing requires stopping the affected service(s) "
-        "(aborts any active print!). Continue?"
+        "Flashing requires stopping the affected service(s) (aborts any active print!). Continue?"
     ):
         print("Aborted.")
         return
@@ -1009,9 +988,7 @@ def flash_fw_cmd(args: argparse.Namespace) -> None:
         except UnknownSerialError:
             # Untracked under this type, and not tracked elsewhere (that case
             # raises SerialTrackedElsewhereError and is refused outright).
-            if not _confirm(
-                f"Serial '{args.serial}' isn't tracked under '{args.type}' yet. Add it now?"
-            ):
+            if not _confirm(f"Serial '{args.serial}' isn't tracked under '{args.type}' yet. Add it now?"):
                 print("Aborted.")
                 sys.exit(1)
             # Asked above, written here: the prompt holds no lock. `add-serial`'s
@@ -1100,9 +1077,7 @@ def update_all(args: argparse.Namespace) -> None:
             # Every configured name from the snapshot this command already
             # holds, so a file saved mid-sweep belongs to the next run rather
             # than to half of this one.
-            for name in sorted(
-                set(install.registry.names()) | set(install.platformio) | set(install.cmake)
-            ):
+            for name in sorted(set(install.registry.names()) | set(install.platformio) | set(install.cmake)):
                 try:
                     source = _type_flash_source(c, name)
                     selected, rejected = source.select(c, name, None, False, install)
@@ -1134,18 +1109,12 @@ def update_all(args: argparse.Namespace) -> None:
                 for failure in result["failures"]:
                     print(f"ERROR: {failure['id']}: {failure['error']}", file=sys.stderr)
                     failures.append((failure["type"], failure["id"]))
-                print(
-                    f"\nWrote {len(result['flashed'])} of "
-                    f"{len(targets) + len(refused)} device(s)."
-                )
+                print(f"\nWrote {len(result['flashed'])} of {len(targets) + len(refused)} device(s).")
 
     if failures:
         print("\nCompleted with failures:")
         for failed_type, failed_id in failures:
-            print(
-                f"  - {failed_type}"
-                + (f" / {failed_id}" if failed_id else " (build failed)")
-            )
+            print(f"  - {failed_type}" + (f" / {failed_id}" if failed_id else " (build failed)"))
         sys.exit(1)
     print(f"\nBuilt {len(built)} type(s) and flashed everything tracked.")
 
@@ -1157,16 +1126,10 @@ def _scan_bare_board(c: Context, choice: FirstInstall) -> CandidateScan:
     scanner = flashers.candidate_scanner(flashers.by_name(choice.flasher or ""))
     if scanner is None:  # first_install only ever names a scanner
         raise FlashError(f"{choice.flasher} cannot scan for a new board.")
-    tracked = [
-        flashers.TrackedBoard(e.name, s, e.chipset)
-        for e in typelist.load(c.paths)
-        for s in e.serials
-    ]
+    tracked = [flashers.TrackedBoard(e.name, s, e.chipset) for e in typelist.load(c.paths) for s in e.serials]
     scan = scanner.scan_candidates(c.paths, tracked=tracked, reporter=stdout_reporter)
     if not scan.ready:
-        raise FlashError(
-            scan.message or f"no board is ready for {choice.flasher}.", reason=scan.reason
-        )
+        raise FlashError(scan.message or f"no board is ready for {choice.flasher}.", reason=scan.reason)
     if scan.message:
         stdout_reporter("warn", scan.message)
     return scan
@@ -1203,9 +1166,7 @@ def add_mcu(args: argparse.Namespace) -> None:
         result = _build_interactive(c, args.type, install)
         scan = _scan_bare_board(c, choice)
 
-        before = set(reg.all_serials()) | {
-            d.serial for d in find_untracked(c.paths, reg.all_serials())
-        }
+        before = set(reg.all_serials()) | {d.serial for d in find_untracked(c.paths, reg.all_serials())}
         flash_initial_bootloader(
             c.paths,
             c.settings,
@@ -1217,9 +1178,7 @@ def add_mcu(args: argparse.Namespace) -> None:
             uf2_bin=result.uf2_path,
             # Where BOOTSEL erases the old application under a bootloader. An
             # application image replaces what boots, so it has none.
-            katapult_config=(
-                c.paths.config_file(args.type, install) if family.bootloader else None
-            ),
+            katapult_config=(c.paths.config_file(args.type, install) if family.bootloader else None),
             reporter=stdout_reporter,
         )
 
@@ -1242,8 +1201,7 @@ def add_mcu(args: argparse.Namespace) -> None:
     refused = False
     for dev in candidates:
         if _confirm(
-            f"Found unassigned {install} device: {dev.serial} ({dev.path}). "
-            f"Add it to '{args.type}'?"
+            f"Found unassigned {install} device: {dev.serial} ({dev.path}). Add it to '{args.type}'?"
         ):
             # One refused board (tracked under another type, an unprovisioned
             # identity, the registry busy) says why and moves on: the rest were
@@ -1277,9 +1235,7 @@ def build_parser(fw_choices: Sequence[str] | None = None) -> argparse.ArgumentPa
     with the section to add.
     """
     choices = list(fw_choices) if fw_choices else None
-    parser = argparse.ArgumentParser(
-        description="Klipper/Katapult Firmware Management Utility"
-    )
+    parser = argparse.ArgumentParser(description="Klipper/Katapult Firmware Management Utility")
     parser.add_argument("--version", action="version", version=f"mcu-updater {__version__}")
     parser.add_argument(
         "--dry-run",
@@ -1302,9 +1258,7 @@ def build_parser(fw_choices: Sequence[str] | None = None) -> argparse.ArgumentPa
     p.add_argument("-s", "--serial", required=True, help="The device serial string")
     p.set_defaults(func=add_serial)
 
-    p = subparsers.add_parser(
-        "remove-type", help="Remove an MCU type configuration and its tracked serials"
-    )
+    p = subparsers.add_parser("remove-type", help="Remove an MCU type configuration and its tracked serials")
     p.add_argument("-t", "--type", required=True, help="MCU Type Name")
     p.add_argument("--force", action="store_true", help="Skip the confirmation prompt")
     p.set_defaults(func=remove_mcu_type)
@@ -1318,23 +1272,20 @@ def build_parser(fw_choices: Sequence[str] | None = None) -> argparse.ArgumentPa
     p.add_argument("--can", action="store_true", help="Also scan CAN interfaces (may take a few seconds)")
     p.set_defaults(func=status_cmd)
 
-    p = subparsers.add_parser(
-        "profiles", help="List the vendor answer files this type's firmware tree ships"
-    )
+    p = subparsers.add_parser("profiles", help="List the vendor answer files this type's firmware tree ships")
     p.add_argument("-t", "--type", required=True, help="MCU Type Name")
     p.set_defaults(func=list_profiles)
 
     p = subparsers.add_parser(
         "apply-profile",
-        help="Seed a type's menuconfig answers from its firmware tree, "
-        "deriving katapult's to match",
+        help="Seed a type's menuconfig answers from its firmware tree, deriving katapult's to match",
     )
     p.add_argument("-t", "--type", required=True, help="MCU Type Name")
+    p.add_argument("-p", "--profile", required=True, help="Seed file name, e.g. config.CartoV4USB")
     p.add_argument(
-        "-p", "--profile", required=True, help="Seed file name, e.g. config.CartoV4USB"
-    )
-    p.add_argument(
-        "-f", "--fw", default=None,
+        "-f",
+        "--fw",
+        default=None,
         help="Firmware target (default: whichever family the type declares it runs)",
     )
     p.add_argument(
@@ -1363,30 +1314,29 @@ def build_parser(fw_choices: Sequence[str] | None = None) -> argparse.ArgumentPa
     p.add_argument(
         "--no-reseed",
         action="store_true",
-        help="Build the saved config as it stands, even if the profile it came "
-        "from has been updated since",
+        help="Build the saved config as it stands, even if the profile it came from has been updated since",
     )
     p.set_defaults(func=build_fw_cmd)
 
     p = subparsers.add_parser(
         "clean",
-        help="Delete a target's generated build directory, for build systems "
-        "that keep one",
+        help="Delete a target's generated build directory, for build systems that keep one",
     )
     p.add_argument("-t", "--type", required=True, help="MCU Type Name")
     p.set_defaults(func=clean_fw_cmd)
 
-    p = subparsers.add_parser(
-        "flash", help="Flash a single tracked device with its built klipper.bin"
-    )
+    p = subparsers.add_parser("flash", help="Flash a single tracked device with its built klipper.bin")
     p.add_argument(
-        "-t", "--type", default=None,
+        "-t",
+        "--type",
+        default=None,
         help="MCU Type Name (optional - inferred from the serial if omitted)",
     )
     p.add_argument("-s", "--serial", default=None, help="Device serial (must already be tracked)")
     p.add_argument("-y", "--yes", action="store_true", help="Skip the confirmation prompt")
     p.add_argument(
-        "--force", action="store_true",
+        "--force",
+        action="store_true",
         help="Override a refused bootloader offset check. Single device only - "
         "never applies when flashing a whole type",
     )
@@ -1394,16 +1344,13 @@ def build_parser(fw_choices: Sequence[str] | None = None) -> argparse.ArgumentPa
 
     p = subparsers.add_parser(
         "update-all",
-        help="Build + flash klipper for every tracked MCU type/device, "
-        "stopping/restarting klipper around it",
+        help="Build + flash klipper for every tracked MCU type/device, stopping/restarting klipper around it",
     )
     p.add_argument("-y", "--yes", action="store_true", help="Skip the confirmation prompt")
     p.add_argument("-j", "--jobs", type=int, default=None, help="Parallel make jobs")
     p.set_defaults(func=update_all)
 
-    p = subparsers.add_parser(
-        "add-mcu", help="Interactive routine to setup, build, and flash a new MCU"
-    )
+    p = subparsers.add_parser("add-mcu", help="Interactive routine to setup, build, and flash a new MCU")
     p.add_argument("-t", "--type", required=True, help="MCU Type Name")
     p.set_defaults(func=add_mcu)
 

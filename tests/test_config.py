@@ -837,9 +837,7 @@ def _cfg_with_a_cmake_type() -> str:
     )
 
 
-def test_a_loaded_type_carries_slots_only_for_the_families_it_declares(
-    paths, live_registry_text
-):
+def test_a_loaded_type_carries_slots_only_for_the_families_it_declares(paths, live_registry_text):
     """Keys for a family the type does not declare - a cartographer type's
     leftover `klipper_extra_args` - are not read into a slot. This is why
     `fw_order()` and `families()` agree for every loaded type, and why
@@ -944,16 +942,8 @@ def test_resolve_declared_serial_includes_foreign_provider_types(paths):
     _write(paths, _cfg_with_a_cmake_type())
     registry = Registry.load(paths)
 
-    assert (
-        registry.resolve_declared_serial("RR-ABCDEFGHIJKLMNOPQRSTUVWXYZ")
-        == "roadrunner"
-    )
-    assert (
-        registry.resolve_declared_serial(
-            "RR-ABCDEFGHIJKLMNOPQRSTUVWXYZ", "roadrunner"
-        )
-        == "roadrunner"
-    )
+    assert registry.resolve_declared_serial("RR-ABCDEFGHIJKLMNOPQRSTUVWXYZ") == "roadrunner"
+    assert registry.resolve_declared_serial("RR-ABCDEFGHIJKLMNOPQRSTUVWXYZ", "roadrunner") == "roadrunner"
     assert "roadrunner" not in registry.types
 
 
@@ -961,9 +951,7 @@ def test_resolve_declared_serial_refuses_a_cross_type_pairing(paths):
     _write(paths, _cfg_with_a_cmake_type())
 
     with pytest.raises(SerialTrackedElsewhereError) as exc:
-        Registry.load(paths).resolve_declared_serial(
-            "912345678901234567890", "roadrunner"
-        )
+        Registry.load(paths).resolve_declared_serial("912345678901234567890", "roadrunner")
 
     assert exc.value.data["tracked_under"] == ["bttebb36"]
 

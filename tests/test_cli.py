@@ -44,9 +44,7 @@ ENV = "knomi_toolchanger"
 def c(paths, fake_root, monkeypatch):
     """A CLI context pinned to the test tree, with no real services."""
     seed_base_firmwares(paths)
-    context = cli.Context(
-        paths=paths, settings=Settings(service_backend="null", clean_before_build=False)
-    )
+    context = cli.Context(paths=paths, settings=Settings(service_backend="null", clean_before_build=False))
     monkeypatch.setattr(cli, "_ctx", context)
 
     reg = Registry.load(paths)
@@ -123,7 +121,9 @@ def test_status_can_flag_prints_interfaces_sightings_and_partial_failures(c, cap
 
 
 def test_status_without_can_does_not_scan_can(c, monkeypatch):
-    monkeypatch.setattr(canbus, "scan_all_result", lambda *args, **kwargs: pytest.fail("CAN scan was not requested"))
+    monkeypatch.setattr(
+        canbus, "scan_all_result", lambda *args, **kwargs: pytest.fail("CAN scan was not requested")
+    )
     args = cli.build_parser().parse_args(["status"])
     cli.status_cmd(args)
 
@@ -158,9 +158,7 @@ def _device_map(paths, tree, **devices) -> None:
         json.dumps(
             {
                 "version": 1,
-                "devices": {
-                    ident: {"port": port} for ident, port in devices.items()
-                },
+                "devices": {ident: {"port": port} for ident, port in devices.items()},
             }
         ),
         encoding="utf-8",
@@ -194,9 +192,7 @@ def test_update_all_builds_every_provider_not_just_the_registry(
     assert sorted(built) == sorted(["board", ENV]), capsys.readouterr().out
 
 
-def test_update_all_names_what_it_skipped_rather_than_dropping_it(
-    c, captured, capsys, monkeypatch
-):
+def test_update_all_names_what_it_skipped_rather_than_dropping_it(c, captured, capsys, monkeypatch):
     """A type silently passed over is the failure the Provider seam was written
     for: the fleet reports success and a board sits a month behind."""
     with open(c.paths.main_config, "a", encoding="utf-8") as fh:
@@ -263,9 +259,7 @@ def test_a_single_device_flash_can_be_forced(c, paths, captured, monkeypatch):
     monkeypatch.setattr(cli, "_confirm", lambda prompt: True)
 
     with pytest.raises(SystemExit):
-        cli.flash_fw_cmd(
-            argparse.Namespace(type=None, serial="AAAA-if00", yes=True, force=True)
-        )
+        cli.flash_fw_cmd(argparse.Namespace(type=None, serial="AAAA-if00", yes=True, force=True))
 
     assert len(captured) == 1
     assert captured[0][0].detail["force"] is True
@@ -276,9 +270,7 @@ def test_a_single_device_flash_defaults_to_not_forced(c, paths, captured, monkey
     monkeypatch.setattr(cli, "_confirm", lambda prompt: True)
 
     with pytest.raises(SystemExit):
-        cli.flash_fw_cmd(
-            argparse.Namespace(type=None, serial="AAAA-if00", yes=True, force=False)
-        )
+        cli.flash_fw_cmd(argparse.Namespace(type=None, serial="AAAA-if00", yes=True, force=False))
 
     assert len(captured) == 1
     assert captured[0][0].detail["force"] is False
@@ -312,9 +304,7 @@ def test_a_board_its_family_cannot_write_is_reported_not_written(c, monkeypatch)
     assert "[firmware klipper]" in refusals[0]["error"]
 
 
-def test_flashing_a_platformio_type_uses_the_watcher_map(
-    c, pio_type, captured, fake_root, monkeypatch
-):
+def test_flashing_a_platformio_type_uses_the_watcher_map(c, pio_type, captured, fake_root, monkeypatch):
     """The CLI has no Moonraker, so it cannot ask Klipper which devices exist.
     The watcher's map is the source written for exactly this moment."""
     _device_map(c.paths, pio_type, aaa111=str(fake_root / "ttyUSB0"))
@@ -337,14 +327,10 @@ def test_flashing_a_platformio_screen_matches_its_id_case_insensitively(
         cli.flash_fw_cmd(argparse.Namespace(type=ENV, serial="AAA111", yes=True))
 
     assert len(captured) == 1
-    assert [target.detail["device_id"] for target in captured[0]] == [
-        "aaa111"
-    ]
+    assert [target.detail["device_id"] for target in captured[0]] == ["aaa111"]
 
 
-def test_a_populated_map_selects_without_opening_a_port(
-    c, pio_type, captured, fake_root, monkeypatch
-):
+def test_a_populated_map_selects_without_opening_a_port(c, pio_type, captured, fake_root, monkeypatch):
     """Choosing what to flash is not the write. The map answers instantly, so
     the six-second listen is kept for the one place that needs it - inside the
     write, once the ports are free - and is not paid twice for one flash."""
@@ -352,9 +338,7 @@ def test_a_populated_map_selects_without_opening_a_port(
 
     _device_map(c.paths, pio_type, aaa111=str(fake_root / "ttyUSB0"))
     asked: list[str] = []
-    monkeypatch.setattr(
-        handler, "discover", lambda p, s, d, **k: asked.append(d.name) or {}
-    )
+    monkeypatch.setattr(handler, "discover", lambda p, s, d, **k: asked.append(d.name) or {})
     monkeypatch.setattr(cli, "_confirm", lambda prompt: True)
 
     with pytest.raises(SystemExit):
@@ -380,9 +364,7 @@ def test_a_platformio_type_with_no_watcher_map_says_so(c, pio_type, monkeypatch)
 # --------------------------------------------------------------------------
 
 
-def test_building_a_platformio_type_needs_no_firmware_family(
-    c, pio_type, monkeypatch
-):
+def test_building_a_platformio_type_needs_no_firmware_family(c, pio_type, monkeypatch):
     """Its env already names the board, the partitions and the flags, so `-f` is
     not merely optional there - it is meaningless, and unused regardless of
     which family the type declares."""
@@ -397,9 +379,7 @@ def test_building_a_platformio_type_needs_no_firmware_family(
     assert built == [ENV]
 
 
-def test_building_a_platformio_type_with_no_tree_refuses_before_the_lock(
-    c, monkeypatch, capsys
-):
+def test_building_a_platformio_type_with_no_tree_refuses_before_the_lock(c, monkeypatch, capsys):
     """`source:` lives on the `[firmware ...]` section now. Naming no `source:`
     at all falls back to the `~/<family name>` convention, same as klipper and
     katapult - so an unconfigured tree reads as "not found" at that path,
@@ -412,9 +392,7 @@ def test_building_a_platformio_type_with_no_tree_refuses_before_the_lock(
         )
 
     with pytest.raises(SystemExit) as exc:
-        cli.build_fw_cmd(
-            argparse.Namespace(type="no_tree", fw=None, jobs=None, no_reseed=False)
-        )
+        cli.build_fw_cmd(argparse.Namespace(type="no_tree", fw=None, jobs=None, no_reseed=False))
 
     assert exc.value.code == 1
     err = capsys.readouterr().err
@@ -442,9 +420,7 @@ def cmake_type(c, fake_root):
     return tree
 
 
-def test_building_a_cmake_type_stages_exactly_the_named_image(
-    c, cmake_type, monkeypatch
-):
+def test_building_a_cmake_type_stages_exactly_the_named_image(c, cmake_type, monkeypatch):
     """`build -t roadrunner` was "MCU type 'roadrunner' does not exist".
 
     A cmake type is in neither the registry nor the display map, so the only
@@ -464,9 +440,7 @@ def test_building_a_cmake_type_stages_exactly_the_named_image(
 
     monkeypatch.setattr(cmake_mod.build_mod, "run_streamed", fake_run)
 
-    cli.build_fw_cmd(
-        argparse.Namespace(type="roadrunner", fw=None, jobs=None, no_reseed=False)
-    )
+    cli.build_fw_cmd(argparse.Namespace(type="roadrunner", fw=None, jobs=None, no_reseed=False))
 
     staged = pathlib.Path(c.paths.uf2_file("roadrunner", "roadrunner"))
     assert staged.read_bytes() == b"roadrunner_v1_i2c_rgb"
@@ -522,9 +496,7 @@ def test_cleaning_an_unknown_type_refuses(c, capsys):
     assert "does not exist" in capsys.readouterr().err
 
 
-def test_building_a_cmake_type_with_no_tree_refuses_before_the_lock(
-    c, capsys, fake_root
-):
+def test_building_a_cmake_type_with_no_tree_refuses_before_the_lock(c, capsys, fake_root):
     """The same shape as the PlatformIO refusal above, and for the same reason:
     a missing tree is setup that has to happen outside this tool, so it is said
     plainly rather than discovered as a cmake traceback."""
@@ -536,17 +508,13 @@ def test_building_a_cmake_type_with_no_tree_refuses_before_the_lock(
         )
 
     with pytest.raises(SystemExit) as exc:
-        cli.build_fw_cmd(
-            argparse.Namespace(type="rr_no_tree", fw=None, jobs=None, no_reseed=False)
-        )
+        cli.build_fw_cmd(argparse.Namespace(type="rr_no_tree", fw=None, jobs=None, no_reseed=False))
 
     assert exc.value.code == 1
     assert "not found" in capsys.readouterr().err
 
 
-def test_an_empty_device_map_falls_back_to_asking_the_devices(
-    c, pio_type, captured, fake_root, monkeypatch
-):
+def test_an_empty_device_map_falls_back_to_asking_the_devices(c, pio_type, captured, fake_root, monkeypatch):
     """The map is a remembered path; discovery is the authority. knomi_serial's
     own docs put identity at flash time for exactly this reason, and the ports
     are free by the time this runs - which is the only moment it is possible.
@@ -560,9 +528,7 @@ def test_an_empty_device_map_falls_back_to_asking_the_devices(
 
     def fake_discover(paths, settings, display, **kwargs):
         asked.append(display.name)
-        return {
-            "aaa111": WatcherDevice(device_id="aaa111", port=str(port), present=True)
-        }
+        return {"aaa111": WatcherDevice(device_id="aaa111", port=str(port), present=True)}
 
     monkeypatch.setattr(handler, "discover", fake_discover)
     monkeypatch.setattr(cli, "_confirm", lambda prompt: True)
@@ -604,9 +570,7 @@ def test_the_refusal_names_the_file_it_read(c, pio_type, monkeypatch):
     assert "devices.json" in str(exc.value)
 
 
-def test_a_type_whose_firmware_cannot_identify_devices_is_refused(
-    c, pio_type, monkeypatch
-):
+def test_a_type_whose_firmware_cannot_identify_devices_is_refused(c, pio_type, monkeypatch):
     """The handler-absent refusal, in the same shape a missing flasher gets:
     say so, rather than flash whatever happens to be on a remembered path."""
     monkeypatch.setattr(cli.helpers, "identifier", lambda helper: None)
@@ -659,11 +623,7 @@ def _cmake_flashable(
             f"flashers: {flashers}\n"
             f"\n[type roadrunner]\nchipset: rp2040\nfirmware: roadrunner\n"
             "cmake_target: roadrunner_v1_i2c_rgb\n"
-            + (
-                "serials:\n" + "".join(f"    {serial}\n" for serial in serials)
-                if serials
-                else ""
-            )
+            + ("serials:\n" + "".join(f"    {serial}\n" for serial in serials) if serials else "")
         )
     if staged:
         os.makedirs(c.paths.artifact_dir("roadrunner"), exist_ok=True)
@@ -676,17 +636,13 @@ def cmake_flashable(c, fake_root):
     return _cmake_flashable(c, fake_root)
 
 
-def test_flashing_a_cmake_serial_alone_routes_to_the_helper(
-    c, cmake_flashable, captured, monkeypatch
-):
+def test_flashing_a_cmake_serial_alone_routes_to_the_helper(c, cmake_flashable, captured, monkeypatch):
     """`resolve_serial` only ever saw the kconfig registry, so a serial tracked
     under a `[type roadrunner]` section was reported as tracked nowhere."""
     monkeypatch.setattr(cli, "_confirm", lambda prompt: True)
 
     with pytest.raises(SystemExit) as exc:
-        cli.flash_fw_cmd(
-            argparse.Namespace(type=None, serial=RR_SERIAL, yes=True, force=False)
-        )
+        cli.flash_fw_cmd(argparse.Namespace(type=None, serial=RR_SERIAL, yes=True, force=False))
 
     assert exc.value.code == 0
     assert len(captured) == 1
@@ -695,19 +651,13 @@ def test_flashing_a_cmake_serial_alone_routes_to_the_helper(
     assert captured[0][0].type == "roadrunner"
 
 
-def test_flashing_a_cmake_serial_with_its_type_routes_the_same_way(
-    c, cmake_flashable, captured, monkeypatch
-):
+def test_flashing_a_cmake_serial_with_its_type_routes_the_same_way(c, cmake_flashable, captured, monkeypatch):
     """The printer's failing command, verbatim. `-t` named the type correctly;
     the CLI took "not in the registry" to mean the PlatformIO branch."""
     monkeypatch.setattr(cli, "_confirm", lambda prompt: True)
 
     with pytest.raises(SystemExit) as exc:
-        cli.flash_fw_cmd(
-            argparse.Namespace(
-                type="roadrunner", serial=RR_SERIAL, yes=True, force=False
-            )
-        )
+        cli.flash_fw_cmd(argparse.Namespace(type="roadrunner", serial=RR_SERIAL, yes=True, force=False))
 
     assert exc.value.code == 0
     assert [t.flasher for t in captured[0]] == ["bootsel"]
@@ -721,9 +671,7 @@ def test_the_cmake_target_carries_the_staged_uf2_and_its_stop_services(
     monkeypatch.setattr(cli, "_confirm", lambda prompt: True)
 
     with pytest.raises(SystemExit):
-        cli.flash_fw_cmd(
-            argparse.Namespace(type=None, serial=RR_SERIAL, yes=True, force=False)
-        )
+        cli.flash_fw_cmd(argparse.Namespace(type=None, serial=RR_SERIAL, yes=True, force=False))
 
     target = captured[0][0]
     assert target.artifact is not None
@@ -758,9 +706,7 @@ def test_a_forced_cmake_flash_through_flashtool_says_force_has_no_effect(
     monkeypatch.setattr(cli, "_confirm", lambda prompt: True)
 
     with pytest.raises(SystemExit):
-        cli.flash_fw_cmd(
-            argparse.Namespace(type="roadrunner", serial=RR_SERIAL, yes=True, force=True)
-        )
+        cli.flash_fw_cmd(argparse.Namespace(type="roadrunner", serial=RR_SERIAL, yes=True, force=True))
 
     out = capsys.readouterr().out
     assert "--force has no effect on a CMake flash" in out
@@ -769,40 +715,30 @@ def test_a_forced_cmake_flash_through_flashtool_says_force_has_no_effect(
     assert "force" not in target.detail
 
 
-def test_flashing_a_cmake_type_by_name_alone_writes_its_boards(
-    c, cmake_flashable, captured, monkeypatch
-):
+def test_flashing_a_cmake_type_by_name_alone_writes_its_boards(c, cmake_flashable, captured, monkeypatch):
     """A named CMake type writes every serial its own section declares."""
     monkeypatch.setattr(cli, "_confirm", lambda prompt: True)
 
     with pytest.raises(SystemExit) as exc:
-        cli.flash_fw_cmd(
-            argparse.Namespace(type="roadrunner", serial=None, yes=True, force=False)
-        )
+        cli.flash_fw_cmd(argparse.Namespace(type="roadrunner", serial=None, yes=True, force=False))
 
     assert exc.value.code == 0
     assert [target.id for target in captured[0]] == [RR_SERIAL]
     assert [target.flasher for target in captured[0]] == ["bootsel"]
 
 
-def test_flashing_a_cmake_type_covers_every_serial_it_declares(
-    c, fake_root, captured, monkeypatch
-):
+def test_flashing_a_cmake_type_covers_every_serial_it_declares(c, fake_root, captured, monkeypatch):
     _cmake_flashable(c, fake_root, serials=(RR_SERIAL, RR_SERIAL_B))
     monkeypatch.setattr(cli, "_confirm", lambda prompt: True)
 
     with pytest.raises(SystemExit) as exc:
-        cli.flash_fw_cmd(
-            argparse.Namespace(type="roadrunner", serial=None, yes=True, force=False)
-        )
+        cli.flash_fw_cmd(argparse.Namespace(type="roadrunner", serial=None, yes=True, force=False))
 
     assert exc.value.code == 0
     assert [target.id for target in captured[0]] == [RR_SERIAL, RR_SERIAL_B]
 
 
-def test_flashing_a_cmake_type_writes_supported_serials_and_names_refusals(
-    c, fake_root, capsys, monkeypatch
-):
+def test_flashing_a_cmake_type_writes_supported_serials_and_names_refusals(c, fake_root, capsys, monkeypatch):
     _cmake_flashable(c, fake_root, serials=(RR_SERIAL, RR_SERIAL_B))
     monkeypatch.setattr(cli, "_confirm", lambda prompt: True)
     monkeypatch.setattr(
@@ -822,34 +758,26 @@ def test_flashing_a_cmake_type_writes_supported_serials_and_names_refusals(
     monkeypatch.setattr(flashers, "write_all", write_selected)
 
     with pytest.raises(SystemExit) as exc:
-        cli.flash_fw_cmd(
-            argparse.Namespace(type="roadrunner", serial=None, yes=True, force=False)
-        )
+        cli.flash_fw_cmd(argparse.Namespace(type="roadrunner", serial=None, yes=True, force=False))
 
     assert exc.value.code == 1
     assert [target.id for target in written] == [RR_SERIAL]
     assert RR_SERIAL_B in capsys.readouterr().err
 
 
-def test_flashing_a_cmake_type_that_tracks_nothing_says_so(
-    c, fake_root, captured, capsys, monkeypatch
-):
+def test_flashing_a_cmake_type_that_tracks_nothing_says_so(c, fake_root, captured, capsys, monkeypatch):
     _cmake_flashable(c, fake_root, serials=())
     monkeypatch.setattr(cli, "_confirm", lambda prompt: True)
 
     with pytest.raises(SystemExit) as exc:
-        cli.flash_fw_cmd(
-            argparse.Namespace(type="roadrunner", serial=None, yes=True, force=False)
-        )
+        cli.flash_fw_cmd(argparse.Namespace(type="roadrunner", serial=None, yes=True, force=False))
 
     assert exc.value.code == 1
     assert "No serials tracked" in capsys.readouterr().err
     assert captured == []
 
 
-def test_update_all_flashes_cmake_boards_too(
-    c, fake_root, captured, capsys, monkeypatch
-):
+def test_update_all_flashes_cmake_boards_too(c, fake_root, captured, capsys, monkeypatch):
     _cmake_flashable(c, fake_root)
     built: list[str] = []
     monkeypatch.setattr(
@@ -867,9 +795,7 @@ def test_update_all_flashes_cmake_boards_too(
     assert RR_SERIAL in [target.id for target in captured[0]]
 
 
-def test_update_all_names_a_cmake_type_it_could_not_write(
-    c, fake_root, captured, capsys, monkeypatch
-):
+def test_update_all_names_a_cmake_type_it_could_not_write(c, fake_root, captured, capsys, monkeypatch):
     _cmake_flashable(c, fake_root, helper=False)
     monkeypatch.setattr(
         "mcu_updater.providers.cmake.Cmake.build",
@@ -920,42 +846,32 @@ def test_a_cmake_type_with_no_helper_names_its_flashers(c, fake_root, captured, 
     monkeypatch.setattr(cli, "_confirm", lambda prompt: True)
 
     with pytest.raises(NoFlasherError) as exc:
-        cli.flash_fw_cmd(
-            argparse.Namespace(type=None, serial=RR_SERIAL, yes=True, force=False)
-        )
+        cli.flash_fw_cmd(argparse.Namespace(type=None, serial=RR_SERIAL, yes=True, force=False))
 
     assert "[firmware roadrunner]" in str(exc.value)
     assert "flashers: bootsel" in str(exc.value)
     assert captured == []
 
 
-def test_a_cmake_type_with_nothing_built_says_to_build_it(
-    c, fake_root, captured, monkeypatch
-):
+def test_a_cmake_type_with_nothing_built_says_to_build_it(c, fake_root, captured, monkeypatch):
     monkeypatch.setattr(cli, "_confirm", lambda prompt: True)
     _cmake_flashable(c, fake_root, staged=False)
 
     with pytest.raises(UpdaterError) as exc:
-        cli.flash_fw_cmd(
-            argparse.Namespace(type=None, serial=RR_SERIAL, yes=True, force=False)
-        )
+        cli.flash_fw_cmd(argparse.Namespace(type=None, serial=RR_SERIAL, yes=True, force=False))
 
     assert "Build it first" in str(exc.value)
     assert captured == []
 
 
-def test_an_untracked_serial_can_be_added_to_a_cmake_type(
-    c, fake_root, captured, monkeypatch
-):
+def test_an_untracked_serial_can_be_added_to_a_cmake_type(c, fake_root, captured, monkeypatch):
     """The add-prompt writes through the declared-section writer, so a CMake
     type gains an identity without the kconfig registry claiming its build."""
     _cmake_flashable(c, fake_root)
     monkeypatch.setattr(cli, "_confirm", lambda prompt: True)
 
     with pytest.raises(SystemExit) as exc:
-        cli.flash_fw_cmd(
-            argparse.Namespace(type="roadrunner", serial="RR-NEW", yes=True, force=False)
-        )
+        cli.flash_fw_cmd(argparse.Namespace(type="roadrunner", serial="RR-NEW", yes=True, force=False))
 
     assert exc.value.code == 0
     assert [t.id for t in captured[0]] == ["RR-NEW"]
@@ -981,9 +897,7 @@ def test_no_cmake_argument_combination_raises_keyerror(
     monkeypatch.setattr(cli, "_confirm", lambda prompt: True)
 
     with pytest.raises((SystemExit, UpdaterError)):
-        cli.flash_fw_cmd(
-            argparse.Namespace(type=type_name, serial=serial, yes=True, force=False)
-        )
+        cli.flash_fw_cmd(argparse.Namespace(type=type_name, serial=serial, yes=True, force=False))
 
 
 def test_an_unknown_type_is_named_rather_than_indexed(c, monkeypatch):
@@ -994,9 +908,7 @@ def test_an_unknown_type_is_named_rather_than_indexed(c, monkeypatch):
     monkeypatch.setattr(cli, "_confirm", lambda prompt: True)
 
     with pytest.raises(UnknownTypeError) as exc:
-        cli.flash_fw_cmd(
-            argparse.Namespace(type="nosuchtype", serial=None, yes=True, force=False)
-        )
+        cli.flash_fw_cmd(argparse.Namespace(type="nosuchtype", serial=None, yes=True, force=False))
 
     assert exc.value.data["type"] == "nosuchtype"
 
@@ -1013,9 +925,7 @@ def test_a_serial_tracked_under_another_provider_is_refused_with_its_name(
     monkeypatch.setattr(cli, "_confirm", lambda prompt: True)
 
     with pytest.raises(SerialTrackedElsewhereError) as exc:
-        cli.flash_fw_cmd(
-            argparse.Namespace(type="board", serial=RR_SERIAL, yes=True, force=False)
-        )
+        cli.flash_fw_cmd(argparse.Namespace(type="board", serial=RR_SERIAL, yes=True, force=False))
 
     assert "Did you mean -t roadrunner?" in str(exc.value)
     assert exc.value.data["tracked_under"] == ["roadrunner"]
@@ -1033,9 +943,7 @@ def test_an_ambiguous_serial_still_asks_for_a_type(c, cmake_flashable, monkeypat
     monkeypatch.setattr(cli, "_confirm", lambda prompt: True)
 
     with pytest.raises(AmbiguousSerialError) as exc:
-        cli.flash_fw_cmd(
-            argparse.Namespace(type=None, serial=RR_SERIAL, yes=True, force=False)
-        )
+        cli.flash_fw_cmd(argparse.Namespace(type=None, serial=RR_SERIAL, yes=True, force=False))
 
     assert sorted(exc.value.data["tracked_under"]) == ["board", "roadrunner"]
 
@@ -1131,9 +1039,7 @@ def test_add_serial_refuses_a_board_tracked_under_another_type(c):
         cli.add_serial(argparse.Namespace(type="roadrunner", serial="AAAA-if00"))
 
 
-def test_add_serial_provisions_an_unprovisioned_roadrunner_then_tracks_it(
-    c, monkeypatch, capsys
-):
+def test_add_serial_provisions_an_unprovisioned_roadrunner_then_tracks_it(c, monkeypatch, capsys):
     """What used to be a refusal. The CLI reaches cmake types, and the family's
     helper can provision, so the operator is not sent to the web UI and back."""
     _declare_roadrunner(c.paths, "RR-ONE")
@@ -1145,18 +1051,14 @@ def test_add_serial_provisions_an_unprovisioned_roadrunner_then_tracks_it(
         ),
     )
 
-    cli.add_serial(
-        argparse.Namespace(type="roadrunner", serial="RR-UNPROVISIONED-50543165187A4D1C")
-    )
+    cli.add_serial(argparse.Namespace(type="roadrunner", serial="RR-UNPROVISIONED-50543165187A4D1C"))
 
     out = capsys.readouterr().out
     assert "Provisioned RR-UNPROVISIONED-50543165187A4D1C as RR-NEW" in out
     assert "Added serial RR-NEW to roadrunner" in out
 
 
-def test_add_serial_refuses_when_the_trackable_helper_has_no_provisioner(
-    c, monkeypatch
-):
+def test_add_serial_refuses_when_the_trackable_helper_has_no_provisioner(c, monkeypatch):
     """A helper's durability refusal stands even when it cannot fix the serial."""
     from mcu_updater.helpers import registry as helpers_registry
 
@@ -1164,9 +1066,7 @@ def test_add_serial_refuses_when_the_trackable_helper_has_no_provisioner(
     _declare_roadrunner(c.paths, "RR-ONE", helper=True)
 
     with pytest.raises(UnprovisionedSerialError):
-        cli.add_serial(
-            argparse.Namespace(type="roadrunner", serial="RR-UNPROVISIONED-50543165187A4D1C")
-        )
+        cli.add_serial(argparse.Namespace(type="roadrunner", serial="RR-UNPROVISIONED-50543165187A4D1C"))
 
     assert Registry.load(c.paths).declared_serials("roadrunner") == ["RR-ONE"]
 
@@ -1208,9 +1108,7 @@ def _main(fake_root, monkeypatch, argv: list[str]) -> int:
     return 0
 
 
-def test_the_flash_prompt_tracks_a_new_serial_through_tracking(
-    c, fake_root, captured, monkeypatch
-):
+def test_the_flash_prompt_tracks_a_new_serial_through_tracking(c, fake_root, captured, monkeypatch):
     """The add-prompt used to write with no lock, onto a registry read before
     the prompt - so an edit the panel made while the prompt waited was erased
     by the save."""
@@ -1267,9 +1165,7 @@ def test_flash_refuses_a_serial_tracked_elsewhere_with_a_message(
     assert captured == []
 
 
-def test_a_malformed_cmake_section_does_not_break_a_kconfig_flash(
-    c, paths, fake_root, captured, monkeypatch
-):
+def test_a_malformed_cmake_section_does_not_break_a_kconfig_flash(c, paths, fake_root, captured, monkeypatch):
     """Flashing one type reads that type's config, not every provider's
     validating load - so a CMake section with no `cmake_target:` stays that
     section's problem, the blast radius `providers.selection` refuses too."""
@@ -1284,9 +1180,7 @@ def test_a_malformed_cmake_section_does_not_break_a_kconfig_flash(
         )
 
     with pytest.raises(SystemExit):
-        cli.flash_fw_cmd(
-            argparse.Namespace(type="board", serial=None, yes=True, force=False)
-        )
+        cli.flash_fw_cmd(argparse.Namespace(type="board", serial=None, yes=True, force=False))
 
     assert [t.id for t in captured[0]] == ["AAAA-if00"]
 
@@ -1305,9 +1199,7 @@ def test_the_flash_prompt_refuses_an_unprovisioned_roadrunner_serial(
     _cmake_flashable(c, fake_root, helper=True)
     monkeypatch.setattr(cli, "_confirm", lambda prompt: True)
 
-    code = _main(
-        fake_root, monkeypatch, ["flash", "-t", "roadrunner", "-s", UNPROVISIONED, "-y"]
-    )
+    code = _main(fake_root, monkeypatch, ["flash", "-t", "roadrunner", "-s", UNPROVISIONED, "-y"])
 
     err = capsys.readouterr().err
     assert code == 1
@@ -1372,9 +1264,7 @@ def test_the_flash_prompt_provisions_an_unprovisioned_roadrunner_then_flashes_it
 
     monkeypatch.setattr(cli, "_cmake_targets", spy_cmake_targets)
 
-    code = _main(
-        fake_root, monkeypatch, ["flash", "-t", "roadrunner", "-s", UNPROVISIONED, "-y"]
-    )
+    code = _main(fake_root, monkeypatch, ["flash", "-t", "roadrunner", "-s", UNPROVISIONED, "-y"])
 
     captured_io = capsys.readouterr()
     assert helper.calls == [UNPROVISIONED]
@@ -1438,9 +1328,7 @@ def test_add_mcu_adopts_a_new_board_through_tracking(c, fake_root, monkeypatch):
     assert Registry.load(c.paths).declared_serials("board") == ["AAAA-if00", "CCCC-if00"]
 
 
-@pytest.mark.parametrize(
-    ("katapult_installed", "install"), [(True, "katapult"), (False, "klipper")]
-)
+@pytest.mark.parametrize(("katapult_installed", "install"), [(True, "katapult"), (False, "klipper")])
 def test_add_mcu_builds_and_writes_the_types_first_image(
     c, fake_root, monkeypatch, capsys, katapult_installed, install
 ):
@@ -1468,8 +1356,7 @@ def test_add_mcu_builds_and_writes_the_types_first_image(
     monkeypatch.setattr(
         cli,
         "_build_interactive",
-        lambda c, t, fw: built.append(fw)
-        or types.SimpleNamespace(bin_path=None, uf2_path=f"{fw}.uf2"),
+        lambda c, t, fw: built.append(fw) or types.SimpleNamespace(bin_path=None, uf2_path=f"{fw}.uf2"),
     )
     monkeypatch.setattr(
         cli,
@@ -1488,9 +1375,7 @@ def test_add_mcu_builds_and_writes_the_types_first_image(
     out = capsys.readouterr().out
     assert code == 0
     assert built == [install]
-    assert [(w["fw"], w["mcu_type"], w["uf2_bin"]) for w in written] == [
-        (install, "bare", f"{install}.uf2")
-    ]
+    assert [(w["fw"], w["mcu_type"], w["uf2_bin"]) for w in written] == [(install, "bare", f"{install}.uf2")]
     expected_config = c.paths.config_file("bare", "katapult") if katapult_installed else None
     assert written[0]["katapult_config"] == expected_config
     assert f"enumerate as {install}" in out
@@ -1502,21 +1387,18 @@ def test_add_mcu_scans_after_the_build_and_waits_on_that_port(c, monkeypatch):
 
     order: list[str] = []
     seen: dict = {}
-    monkeypatch.setattr(
-        cli, "_build_interactive", lambda *a, **k: order.append("build") or _built()
-    )
+    monkeypatch.setattr(cli, "_build_interactive", lambda *a, **k: order.append("build") or _built())
     monkeypatch.setattr(
         cli,
         "_scan_bare_board",
-        lambda c_, choice: order.append("scan")
-        or CandidateScan(True, None, None, [{"serial": "S", "port": "1-1.2"}]),
+        lambda c_, choice: (
+            order.append("scan") or CandidateScan(True, None, None, [{"serial": "S", "port": "1-1.2"}])
+        ),
     )
     monkeypatch.setattr(
         cli, "flash_initial_bootloader", lambda *a, **k: order.append("write") or seen.update(k)
     )
-    monkeypatch.setattr(
-        cli, "adoptable_devices", lambda paths, before, **k: seen.update(wait=k) or []
-    )
+    monkeypatch.setattr(cli, "adoptable_devices", lambda paths, before, **k: seen.update(wait=k) or [])
 
     cli.add_mcu(argparse.Namespace(type="board"))
 
@@ -1548,9 +1430,7 @@ def test_add_mcu_refuses_a_type_no_flasher_can_set_up_before_the_build(c, monkey
     from mcu_updater.errors import UnsupportedChipsetError
 
     _klipper_only(c)  # see Step 1b
-    monkeypatch.setattr(
-        cli, "_build_interactive", lambda *a, **k: pytest.fail("built before refusing")
-    )
+    monkeypatch.setattr(cli, "_build_interactive", lambda *a, **k: pytest.fail("built before refusing"))
     with pytest.raises(UnsupportedChipsetError, match="dfu_util"):
         cli.add_mcu(argparse.Namespace(type="board"))
 
@@ -1561,9 +1441,7 @@ def test_add_mcu_refuses_a_non_kconfig_type_by_name(c, monkeypatch, tmp_path):
         cli.add_mcu(argparse.Namespace(type="roadrunner"))
 
 
-def test_add_mcu_refuses_to_adopt_a_board_tracked_under_another_type(
-    c, fake_root, monkeypatch, capsys
-):
+def test_add_mcu_refuses_to_adopt_a_board_tracked_under_another_type(c, fake_root, monkeypatch, capsys):
     """Adoption wrote with `reg.add_serial`, which looks only at the type it
     adds to - a board another type already tracked became tracked twice."""
     _declare_roadrunner(c.paths, "RR-ONE")
@@ -1605,9 +1483,7 @@ def test_add_type_writes_under_the_registry_lock(c, fake_root, monkeypatch, caps
     sys.platform == "win32",
     reason="flock is unavailable on Windows; the lock degrades to a no-op there",
 )
-def test_add_type_is_refused_while_the_registry_lock_is_really_held(
-    c, fake_root, monkeypatch, capsys
-):
+def test_add_type_is_refused_while_the_registry_lock_is_really_held(c, fake_root, monkeypatch, capsys):
     with ExclusiveLock(c.paths, path=c.paths.registry_lock_file).acquire("the panel"):
         code = _main(fake_root, monkeypatch, ["add-type", "-t", "newboard", "-c", "rp2040"])
 
@@ -1623,9 +1499,7 @@ def test_add_type_writes_when_the_lock_is_free(c, fake_root, monkeypatch):
     assert Registry.load(c.paths).get("newboard").chipset == "rp2040"
 
 
-def test_add_type_refuses_the_name_of_a_type_another_builder_declares(
-    c, fake_root, monkeypatch, capsys
-):
+def test_add_type_refuses_the_name_of_a_type_another_builder_declares(c, fake_root, monkeypatch, capsys):
     """The prompt's pre-check sees only kconfig types, so no prompt appears -
     and the write passes `overwrite=True`. The refusal has to come from
     `add_type` under the lock, or the cmake section is rewritten as a kconfig
@@ -1641,9 +1515,7 @@ def test_add_type_refuses_the_name_of_a_type_another_builder_declares(
     assert open(c.paths.main_config, encoding="utf-8").read() == before
 
 
-def test_add_type_keeps_an_edit_made_while_the_overwrite_prompt_waited(
-    c, fake_root, monkeypatch
-):
+def test_add_type_keeps_an_edit_made_while_the_overwrite_prompt_waited(c, fake_root, monkeypatch):
     """The overwrite prompt reads the registry without the lock. Saving that
     read would erase whatever was written while the prompt waited; the write
     re-reads under the lock instead."""
@@ -1661,6 +1533,28 @@ def test_add_type_keeps_an_edit_made_while_the_overwrite_prompt_waited(
     reloaded = Registry.load(c.paths)
     assert reloaded.get("board").chipset == "stm32g0b1xx"
     assert "paneltype" in reloaded.names()
+
+
+def test_add_mcu_sends_a_platformio_type_to_the_panel(c, fake_root, monkeypatch, capsys):
+    """`first_install` answers for a PlatformIO type now - with a flasher
+    that sets a device up by an ordinary write, which this command's ROM
+    flow cannot run. It never gets that far: add-mcu builds through
+    menuconfig, and says where a type that does not is set up."""
+    with open(c.paths.main_config, "a", encoding="utf-8", newline="\n") as fh:
+        fh.write(
+            "\n[firmware knomi_serial]\nsource: ~/knomi_serial\nbuilder: platformio\n"
+            "flashers: platformio\n\n"
+            "[type knomi]\nchipset: esp32\nfirmware: knomi_serial\nplatformio_env: knomi\n"
+        )
+    monkeypatch.setattr(
+        cli, "flash_initial_bootloader", lambda *a, **k: pytest.fail("the ROM flow ran for a PlatformIO type")
+    )
+
+    code = _main(fake_root, monkeypatch, ["add-mcu", "-t", "knomi"])
+
+    err = capsys.readouterr().err
+    assert code == 1
+    assert "builds with platformio" in err and "Add new board" in err
 
 
 def test_add_mcu_offers_the_rest_after_refusing_one(c, fake_root, monkeypatch, capsys):

@@ -78,7 +78,7 @@ Interfaces:
 - [x] CLI and interactive TUI
 - [x] Moonraker agent (JSON-RPC over the unix socket)
 - [x] Bulk build / flash / update-all, covering every provider - kconfig, PlatformIO and cmake alike
-- [x] Guided first-time setup for any type whose firmware's flashers can find and write a bare board - STM32 over DFU and RP2040 over BOOTSEL, for kconfig and cmake builds alike
+- [x] Guided first-time setup for any type whose firmware's flashers can find and write a bare board - STM32 over DFU and RP2040 over BOOTSEL, for kconfig and cmake builds alike, and a new PlatformIO device at the serial port its board's USB ids pick out
 - [x] Standalone embeddable UI, with single-flight refreshes and retained job-log restoration after reload
 
 ## TODO
@@ -90,7 +90,8 @@ of it. What is still open:
 - [ ] Deduplicate the device list across all types. Nothing notices when two entries are one physical device: two types whose helpers list the same Klipper prefix, a configured `/dev/ttyACM8` beside another device's by-id symlink that resolves to it, or a hand-made link or udev rule. `fw.flash_all` then writes that device once per entry and the last image wins. Scanners and listers should resolve to the real device path and carry it as a core property (`ListedDevice.resolved_path` already does), so the core can refuse a conflict before a write.
 - [ ] Dead code and stale docs already known, for the dead-code pass. Dead: `service.paused` has no caller since the watcher stop moved into the verified `stop_services` union, and its docstring still argues the old best-effort design. Stale: `build_all`'s docstring in `bulk.py` says a PlatformIO env has no family.
 - [ ] Per-device helper actions: a helper contributes a device's action rows (identity provision/clear today is chosen in `BusPanel.vue` by `isRoadrunnerDevice`) so the UI stops naming a firmware.
-- [ ] **NEEDS DESIGN** First-time flashing of a PlatformIO device that cannot answer the listen pass yet (a blank ESP32, or firmware that does not broadcast its id) while others of its type do. The `platformio` flasher refuses it at write time; the fix belongs in first install, where a PlatformIO type has no candidate scanner yet. The same scanner is what adopting a `/dev/serial/by-id` device into a PlatformIO type needs: the flasher already resolves a symlink at write time (`pio.resolve_port`), but a type's device list comes only from its family's lister, so a family without one lists nothing.
+- [x] ~~**NEEDS DESIGN** First-time flashing of a PlatformIO device that cannot answer the listen pass yet (a blank ESP32, or firmware that does not broadcast its id) while others of its type do.~~ Done: the `platformio` flasher scans for a new device by the USB ids its board manifest declares, and "Add new board…" writes it - see [A new PlatformIO device](#a-new-platformio-device).
+- [ ] Every config option in the web UI, so a new `[firmware ...]` family and a new `[type ...]` of any builder can be defined there without editing `mcu-updater.cfg`. Today the panel declares a kconfig type (`fw.type.add`) and edits `[updater]` settings; a family's `source`/`builder`/`helper`/`flashers`, and a cmake or PlatformIO type's own keys (`platformio_env`, `cmake_target`, `stop_services`), are file-only.
 - [ ] **TEST ERROR** Reproduce and fix the flaky teardown `RuntimeError` in `test_an_unknown_inbound_method_gets_an_error_not_silence`.
 - [ ] **NEEDS DESIGN** Run config migrations as the first step of agent startup, so that restarting the service migrates an existing install. First check the restrictions the service runs under.
 - [ ] **BUG** A Roadrunner flash reports `Could not confirm that the Roadrunner CDC device disappeared` on an otherwise successful write. `_await_disappearance` in [src/mcu_updater/discovery/roadrunner.py](src/mcu_updater/discovery/roadrunner.py) sets `unknown = True` when `_entry_candidates(paths, strict=True)` raises `OSError`, then treats "I could not look" as "the device is still there" and spins to `REENUMERATE_TIMEOUT`. The usual cause is `/dev/serial/by-id` disappearing entirely once the last CDC device leaves - which is evidence the board *did* go, not absence of evidence. Seen on the bench 2026-09-19; the flash itself succeeded.
@@ -143,7 +144,8 @@ this release - see AGENTS.md's "one ordering rule". Any caller of
 
 `add-mcu` builds and writes the type's first image. It sets up kconfig types
 only - it builds through menuconfig, so a cmake or PlatformIO type is refused
-by name; add it from the web panel's "Add new board…" instead. A type with
+by name; add it from the web panel's "Add new board…" instead (which, for a
+PlatformIO type, is [a different kind of install](#a-new-platformio-device)). A type with
 `katapult_installed: false` gets its Klipper build written directly, so build it
 with no bootloader offset (`Bootloader offset: No bootloader`) - one built for an
 offset is refused with nothing written - and list `bootsel` (RP2040) or
@@ -671,6 +673,43 @@ A few things to know:
   error. `present: false` on that device's row in `fw.status`'s `targets[]`
   (there is no separate listing call any more) is the only thing that says so.
 
+#### A new PlatformIO device
+
+"Add new board…" in the web panel sets one up; the CLI's `add-mcu` does not.
+There is no boot mode to put it in - the upload resets the chip into its ROM
+itself - so the question is only *which port*, and a bridge chip with no USB
+serial looks the same on every device. The scan answers it from the project:
+
+`platformio.ini` → the env's `board` → `boards/<board>.json` → `build.hwids`
+
+and lists the USB serial ports enumerating under one of those ids. The manifest
+is looked for where PlatformIO looks: the project's `boards/`, then the
+PlatformIO core's, then the installed platform's.
+
+```json
+"build": { "hwids": [["0x1A86", "0x7522"]] }
+```
+
+- **A port a `printer.cfg` section already names is listed, labelled, and never
+  chosen for you.** With exactly one port left over, that is the new device.
+  With several, or none, the panel asks - and a configured one can be picked on
+  purpose, to write it again as new.
+- **Wrong ids find nothing, by design.** A manifest copied from another board
+  carries that board's ids. The scan then says which ids it looked for rather
+  than falling back to every port; correct `build.hwids`.
+- **Ids that cannot be read list every USB serial port** and always ask: no
+  `pio`, a platform that has never been installed, or a manifest with no
+  `build.hwids`. The message says which.
+- **`chipset: esp32` is required** on the type, as above - it is what matches
+  the type to the `platformio` flasher.
+- **It is an ordinary write.** It stops the type's
+  [`stop_services`](#which-services-stop-before-a-write) - Klipper included, by
+  default - so it is refused during a print, and it builds first if nothing is
+  built. If Klipper is not reachable when the scan runs, configured ports
+  cannot be told from new ones and are listed unlabelled.
+- **Afterwards the job says what to put in `printer.cfg`:** the port, and the
+  id the device reported once it was asked. Nothing is adopted automatically.
+
 ### RP2040 cmake trees
 
 One `CMakeLists.txt` commonly declares several executables at once -
@@ -838,6 +877,7 @@ every board as stale after you pull Klipper, and a stray `touch` doesn't lie.
 pip install -e ".[dev]"
 pytest -q
 ruff check src tests scripts
+ruff format --check src tests scripts
 ```
 
 ### The release gate

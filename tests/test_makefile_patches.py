@@ -161,9 +161,7 @@ def test_patches_are_reverted_when_make_blows_up(paths, settings, fake_root, mon
 
     reg = Registry.load(paths)
     mcu = reg.add_type("board", "stm32f072xb")
-    mcu.fw("klipper").makefile_patches = [
-        MakefilePatch(file="src/Makefile", line="src-y += buffer.c")
-    ]
+    mcu.fw("klipper").makefile_patches = [MakefilePatch(file="src/Makefile", line="src-y += buffer.c")]
     save_registry(reg, paths)
 
     os.makedirs(paths.type_dir("board"), exist_ok=True)

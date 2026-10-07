@@ -58,9 +58,7 @@ def _helper_for(paths: Paths, name: str) -> Helper | None:
     return helpers.for_name(family.helper, family=family.name)
 
 
-def _elsewhere_error(
-    reg: Registry, serial: str, name: str
-) -> SerialTrackedElsewhereError | None:
+def _elsewhere_error(reg: Registry, serial: str, name: str) -> SerialTrackedElsewhereError | None:
     """`SerialTrackedElsewhereError` if `serial` is declared under a type other than `name`."""
     elsewhere = [t for t in reg.find_declared_types_for_serial(serial) if t != name]
     if not elsewhere:
@@ -82,9 +80,7 @@ def _untrackable_error(serial: str, reason: str | None) -> UnprovisionedSerialEr
     )
 
 
-def add_serial(
-    paths: Paths, name: str, serial: str, *, may_provision: bool = True
-) -> Tracked:
+def add_serial(paths: Paths, name: str, serial: str, *, may_provision: bool = True) -> Tracked:
     """Track `serial` under type `name`, provisioning it first if it needs it.
 
     Spec section 11. A helper may reject a serial as non-durable and name a
@@ -118,11 +114,7 @@ def add_serial(
 
     helper = _helper_for(paths, name)
     judge = helpers.trackable(helper)
-    verdict = (
-        judge.is_trackable(serial)
-        if judge is not None
-        else helpers.TrackVerdict(ok=True)
-    )
+    verdict = judge.is_trackable(serial) if judge is not None else helpers.TrackVerdict(ok=True)
     if not verdict.ok:
         prov = helpers.provisioner(helper)
         if verdict.remedy != "provision" or prov is None or not may_provision:
@@ -144,8 +136,7 @@ def add_serial(
         if provisioned_from is not None:
             exc.data["provisioned_serial"] = serial
             exc.message = (
-                f"provisioned {provisioned_from} as '{serial}', but failed to "
-                f"track it: {exc.message}"
+                f"provisioned {provisioned_from} as '{serial}', but failed to track it: {exc.message}"
             )
             exc.args = (exc.message,)
         raise

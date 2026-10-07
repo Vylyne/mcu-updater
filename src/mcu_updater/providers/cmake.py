@@ -179,9 +179,7 @@ def _git(directory: str, *args: str) -> str | None:
     here: we cannot vouch for this tree. Mirrors `pio._git`.
     """
     try:
-        out = subprocess.check_output(
-            ("git",) + args, cwd=directory, stderr=subprocess.DEVNULL, timeout=10
-        )
+        out = subprocess.check_output(("git",) + args, cwd=directory, stderr=subprocess.DEVNULL, timeout=10)
     except Exception:  # noqa: BLE001 - not a checkout, no git, or a timeout
         return None
     return out.decode("utf-8", "replace").strip()
@@ -211,9 +209,7 @@ def source_state(source: str) -> SourceState:
     if sha is None:
         return SourceState()
 
-    dirty = bool(
-        _git(path, "status", "--porcelain", "--", ".", f":(exclude){BUILD_SUBDIR}")
-    )
+    dirty = bool(_git(path, "status", "--porcelain", "--", ".", f":(exclude){BUILD_SUBDIR}"))
     described = _git(path, "describe", "--tags", "--always") or UNKNOWN_VERSION_STRING
     version = f"{described}-dirty" if dirty else described
     return SourceState(sha=sha, dirty=dirty, version=version)
@@ -228,9 +224,7 @@ def expand_args(cmake_args: str, state: SourceState) -> list[str]:
     if not cmake_args.strip():
         return []
     version = state.version or UNKNOWN_VERSION_STRING
-    return [
-        arg.replace(GIT_DESCRIBE_TOKEN, version) for arg in shlex.split(cmake_args)
-    ]
+    return [arg.replace(GIT_DESCRIBE_TOKEN, version) for arg in shlex.split(cmake_args)]
 
 
 #: Where the configure step puts the build tree, relative to `source:`.
@@ -306,9 +300,7 @@ def fresh_bin(source: str, cmake_target: str) -> str | None:
 def _run(argv: list[str], cwd: str) -> str | None:
     """Capture a short command's stdout, or None if it could not answer."""
     try:
-        out = subprocess.check_output(
-            argv, cwd=cwd, stderr=subprocess.DEVNULL, timeout=30
-        )
+        out = subprocess.check_output(argv, cwd=cwd, stderr=subprocess.DEVNULL, timeout=30)
     except Exception:  # noqa: BLE001 - no cmake, an unconfigured tree, a timeout
         return None
     return out.decode("utf-8", "replace")
@@ -391,10 +383,7 @@ def source_problem(target: CmakeType, *, probe_targets: bool = True) -> str | No
     """
     source = os.path.expanduser(target.source or "")
     if not source:
-        return (
-            f"'{target.name}' has no source tree configured - set 'source:' on "
-            f"its firmware family."
-        )
+        return f"'{target.name}' has no source tree configured - set 'source:' on its firmware family."
     if not os.path.isdir(source):
         return f"source directory {source} not found for '{target.name}'."
     if not os.path.isfile(os.path.join(source, "CMakeLists.txt")):
@@ -775,9 +764,7 @@ def staged(paths: Paths, type_name: str, family: firmware.FirmwareFamily) -> Sta
     )
 
 
-def artifact_status(
-    paths: Paths, target: CmakeType, state: SourceState
-) -> ArtifactStatus:
+def artifact_status(paths: Paths, target: CmakeType, state: SourceState) -> ArtifactStatus:
     """Does the staged image match the source subtree?
 
     Both comparisons are subtree-scoped. The repo-wide `version` is recorded
@@ -833,10 +820,7 @@ class Cmake:
     label = "CMake"
 
     def targets(self, install: Install) -> list[BuildTarget]:
-        return [
-            BuildTarget(self.name, name, entry.firmware)
-            for name, entry in install.cmake.items()
-        ]
+        return [BuildTarget(self.name, name, entry.firmware) for name, entry in install.cmake.items()]
 
     def blocked(self, install: Install, target: BuildTarget) -> str | None:
         entry = install.cmake.get(target.name)

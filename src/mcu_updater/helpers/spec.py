@@ -42,9 +42,7 @@ class BootselRequester(Protocol):
 
     name: str
 
-    def request_bootsel(
-        self, bench: Bench, *, serial: str, chipset: str, ctx: Any
-    ) -> BootselHandoff: ...
+    def request_bootsel(self, bench: Bench, *, serial: str, chipset: str, ctx: Any) -> BootselHandoff: ...
 
     def wait_ready(
         self,

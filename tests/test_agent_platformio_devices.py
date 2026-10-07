@@ -208,8 +208,7 @@ def test_a_family_with_no_lister_lists_nothing_and_names_itself(paths, fake_root
 
     assert row["devices"] == []
     assert row["devices_note"] == (
-        "No devices are listed for this type: [firmware plainfw] names no "
-        "helper that can list them."
+        "No devices are listed for this type: [firmware plainfw] names no helper that can list them."
     )
     assert api.platformio_devices() == ({}, True)
 
@@ -257,9 +256,7 @@ def test_fw_device_list_is_gone(api):
 
 
 def test_a_device_reaches_status_as_its_generic_fields_only(api):
-    api._call = serve_klipper(
-        {"fake_dev t0": {"path": "/dev/a", "present": True, "private": 7}}
-    )
+    api._call = serve_klipper({"fake_dev t0": {"path": "/dev/a", "present": True, "private": 7}})
 
     device = api.platformio_status()[0]["devices"][0]
 
@@ -355,9 +352,7 @@ def test_an_undiscovered_device_id_section_is_a_blocked_row_not_a_missing_one(pa
     assert flash["blocked"]["code"] == Api.BLOCKED_NO_DEVICE
 
 
-@pytest.mark.parametrize(
-    ("up", "state"), [(True, "online"), (False, "silent"), (None, "reachable")]
-)
+@pytest.mark.parametrize(("up", "state"), [(True, "online"), (False, "silent"), (None, "reachable")])
 def test_a_present_devices_state_is_whether_it_answers(api, up, state):
     """A port that opens is not a device that answers, and an unknown answer
     must not read as a fault."""

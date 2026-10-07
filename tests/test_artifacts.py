@@ -106,9 +106,7 @@ def test_recorded_hashes_drops_a_none_hash():
 
 
 def test_recorded_hashes_tolerates_a_malformed_artifacts_field():
-    assert recorded_hashes({"bin_sha256": "legacy", "artifacts": "not a dict"}) == frozenset(
-        {"legacy"}
-    )
+    assert recorded_hashes({"bin_sha256": "legacy", "artifacts": "not a dict"}) == frozenset({"legacy"})
 
 
 # --- kconfig -----------------------------------------------------------------
@@ -168,9 +166,7 @@ def test_kconfig_stages_a_listed_uf2_with_its_hash(paths):
 
     staged = build.staged(paths, "pico", KLIPPER)
 
-    assert staged.first_of((KIND_UF2,)) == Artifact(
-        KIND_UF2, paths.uf2_file("pico", "klipper"), _sha(b"uf2")
-    )
+    assert staged.first_of((KIND_UF2,)) == Artifact(KIND_UF2, paths.uf2_file("pico", "klipper"), _sha(b"uf2"))
 
 
 def test_kconfig_stages_nothing_when_nothing_was_built(paths):
@@ -286,9 +282,7 @@ def test_an_unbuilt_platformio_env_is_still_staged(paths, tmp_path, monkeypatch)
 
     staged = pio.staged(paths, "knomi", KNOMI)
 
-    assert staged == Staged(
-        fw="knomi", artifacts=(Artifact(KIND_PIO_ENV, pio.firmware_bin(display), None),)
-    )
+    assert staged == Staged(fw="knomi", artifacts=(Artifact(KIND_PIO_ENV, pio.firmware_bin(display), None),))
 
 
 def test_a_platformio_type_that_is_not_configured_stages_nothing(paths, monkeypatch):

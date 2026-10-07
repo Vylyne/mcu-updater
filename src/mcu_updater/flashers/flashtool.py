@@ -58,9 +58,7 @@ class Flashtool:
         names the fix; a CAN board's liveness is often unknown and has always
         been written anyway.
         """
-        return device.kind in (KIND_SERIAL, KIND_CANBUS) and chipset_matches(
-            self, device.chipset
-        )
+        return device.kind in (KIND_SERIAL, KIND_CANBUS) and chipset_matches(self, device.chipset)
 
     def target(
         self,
@@ -86,15 +84,11 @@ class Flashtool:
         return target_for(board, stop_services=stop_services, artifact=artifact)
 
     @contextlib.contextmanager
-    def prepared(
-        self, bench: Bench, targets: list[FlashTarget], ctx: Any
-    ) -> Iterator[None]:
+    def prepared(self, bench: Bench, targets: list[FlashTarget], ctx: Any) -> Iterator[None]:
         """Nothing to set up. Katapult answers on the board's own node."""
         yield None
 
-    def write(
-        self, bench: Bench, session: Any, target: FlashTarget, ctx: Any
-    ) -> dict[str, Any]:
+    def write(self, bench: Bench, session: Any, target: FlashTarget, ctx: Any) -> dict[str, Any]:
         from .flash import flash_katapult, flash_katapult_can
 
         if "uuid" in target.detail:

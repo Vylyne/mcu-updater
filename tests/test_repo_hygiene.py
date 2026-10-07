@@ -40,9 +40,7 @@ def _tracked_modes() -> dict[str, str]:
     if git is None:
         return {}
     try:
-        out = subprocess.run(
-            [git, "ls-files", "-s"], cwd=REPO_ROOT, capture_output=True, timeout=60
-        )
+        out = subprocess.run([git, "ls-files", "-s"], cwd=REPO_ROOT, capture_output=True, timeout=60)
     except (OSError, subprocess.SubprocessError):
         return {}
     if out.returncode != 0:
@@ -214,13 +212,9 @@ def test_the_declared_system_dependencies_file_is_where_the_conf_says():
     first symptom is display discovery failing on a fresh host for want of
     pyserial.
     """
-    conf = (REPO_ROOT / "scripts" / "moonraker-update-manager.conf").read_text(
-        encoding="utf-8"
-    )
+    conf = (REPO_ROOT / "scripts" / "moonraker-update-manager.conf").read_text(encoding="utf-8")
     declared = [
-        line.split(":", 1)[1].strip()
-        for line in conf.splitlines()
-        if line.startswith("system_dependencies:")
+        line.split(":", 1)[1].strip() for line in conf.splitlines() if line.startswith("system_dependencies:")
     ]
     assert len(declared) == 1, "exactly one system_dependencies key"
     assert (REPO_ROOT / declared[0]).is_file(), f"{declared[0]} does not exist"
@@ -235,13 +229,9 @@ def test_pyserial_is_declared_because_discovery_shells_out_for_it():
     """
     import json
 
-    conf = (REPO_ROOT / "scripts" / "moonraker-update-manager.conf").read_text(
-        encoding="utf-8"
-    )
+    conf = (REPO_ROOT / "scripts" / "moonraker-update-manager.conf").read_text(encoding="utf-8")
     declared = next(
-        line.split(":", 1)[1].strip()
-        for line in conf.splitlines()
-        if line.startswith("system_dependencies:")
+        line.split(":", 1)[1].strip() for line in conf.splitlines() if line.startswith("system_dependencies:")
     )
     with open(REPO_ROOT / declared, encoding="utf-8") as fh:
         deps = json.load(fh)
@@ -281,9 +271,7 @@ def test_the_bootsel_rule_version_marker_agrees_across_rule_installer_and_python
     """
     import re
 
-    rule = (
-        REPO_ROOT / "scripts" / "udev.d-mcu-updater-bootsel.rules"
-    ).read_text(encoding="utf-8")
+    rule = (REPO_ROOT / "scripts" / "udev.d-mcu-updater-bootsel.rules").read_text(encoding="utf-8")
     install_sh = (REPO_ROOT / "install.sh").read_text(encoding="utf-8")
 
     assert re.search(r"mcu-updater-bootsel-rule-version: [0-9]+", rule), (
@@ -319,8 +307,7 @@ def test_install_sh_prints_through_its_output_helpers():
         if re.match(r'\s+(echo|printf) +"\[', line)
     ]
     assert not offenders, (
-        "install.sh prints a bracketed tag directly instead of using its "
-        f"output helpers: {offenders}"
+        f"install.sh prints a bracketed tag directly instead of using its output helpers: {offenders}"
     )
 
 
@@ -332,9 +319,7 @@ def test_the_ui_update_manager_conf_agrees_with_install_sh_defaults():
     a fork's release, and the failure is silent - `path` just does not exist,
     or the update never matches what nginx is showing.
     """
-    conf = (
-        REPO_ROOT / "scripts" / "moonraker-update-manager-ui.conf"
-    ).read_text(encoding="utf-8")
+    conf = (REPO_ROOT / "scripts" / "moonraker-update-manager-ui.conf").read_text(encoding="utf-8")
     install_sh = (REPO_ROOT / "install.sh").read_text(encoding="utf-8")
 
     assert 'UI_PATH="${UI_PATH:-${HOME}/mcu-updater-ui}"' in install_sh

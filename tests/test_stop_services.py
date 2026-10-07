@@ -105,11 +105,7 @@ def test_for_cmake_uses_type_then_family_then_updater_precedence(paths):
         firmware="roadrunner",
         stop_services=["type-service"],
     )
-    families = {
-        "roadrunner": FirmwareFamily(
-            name="roadrunner", stop_services=["family-service"]
-        )
-    }
+    families = {"roadrunner": FirmwareFamily(name="roadrunner", stop_services=["family-service"])}
     settings = Settings(stop_services=["updater-service"])
 
     assert for_cmake(paths, target, settings, families) == ("type-service",)
@@ -128,8 +124,6 @@ def test_for_platformio_falls_back_to_the_platformio_default(paths):
 
 def test_for_platformio_honours_a_type_level_override(paths):
     write_main_config(paths, "[firmware knomi_serial]\nsource: ~/knomi_serial\nbuilder: platformio\n")
-    display = PioType(
-        name="knomi", env="knomi", firmware="knomi_serial", stop_services=["klipper"]
-    )
+    display = PioType(name="knomi", env="knomi", firmware="knomi_serial", stop_services=["klipper"])
     settings = Settings()
     assert for_platformio(paths, display, settings) == ("klipper",)

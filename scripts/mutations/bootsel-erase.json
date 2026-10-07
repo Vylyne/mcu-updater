@@ -28,13 +28,13 @@
     },
     {
       "name": "erase pages are 0xff",
-      "find": "        (flags, page, b\"\\xff\" * PAGE_SIZE, family)",
-      "replace": "        (flags, page, b\"\\x00\" * PAGE_SIZE, family)"
+      "find": "    erased = [(flags, page, b\"\\xff\" * PAGE_SIZE, family) for page in range(address, end, PAGE_SIZE)]",
+      "replace": "    erased = [(flags, page, b\"\\x00\" * PAGE_SIZE, family) for page in range(address, end, PAGE_SIZE)]"
     },
     {
       "name": "erase pages carry the image's family id",
-      "find": "        (flags, page, b\"\\xff\" * PAGE_SIZE, family)",
-      "replace": "        (flags, page, b\"\\xff\" * PAGE_SIZE, 0)"
+      "find": "    erased = [(flags, page, b\"\\xff\" * PAGE_SIZE, family) for page in range(address, end, PAGE_SIZE)]",
+      "replace": "    erased = [(flags, page, b\"\\xff\" * PAGE_SIZE, 0) for page in range(address, end, PAGE_SIZE)]"
     },
     {
       "name": "blocks are emitted in address order",
@@ -53,18 +53,18 @@
     },
     {
       "name": "start magic is checked",
-      "find": "            magic0 != UF2_MAGIC_START0",
-      "replace": "            False"
+      "find": "        if magic0 != UF2_MAGIC_START0 or magic1 != UF2_MAGIC_START1 or magic_end != UF2_MAGIC_END:",
+      "replace": "        if False or magic1 != UF2_MAGIC_START1 or magic_end != UF2_MAGIC_END:"
     },
     {
       "name": "second start magic is checked",
-      "find": "            or magic1 != UF2_MAGIC_START1",
-      "replace": "            or False"
+      "find": "        if magic0 != UF2_MAGIC_START0 or magic1 != UF2_MAGIC_START1 or magic_end != UF2_MAGIC_END:",
+      "replace": "        if magic0 != UF2_MAGIC_START0 or False or magic_end != UF2_MAGIC_END:"
     },
     {
       "name": "end magic is checked",
-      "find": "            or magic_end != UF2_MAGIC_END",
-      "replace": "            or False"
+      "find": "        if magic0 != UF2_MAGIC_START0 or magic1 != UF2_MAGIC_START1 or magic_end != UF2_MAGIC_END:",
+      "replace": "        if magic0 != UF2_MAGIC_START0 or magic1 != UF2_MAGIC_START1 or False:"
     },
     {
       "name": "an oversized payload is refused",

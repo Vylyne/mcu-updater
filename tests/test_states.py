@@ -179,9 +179,9 @@ def test_every_device_reason_has_words_for_a_human(reason):
 def test_no_label_is_just_the_reason_code_wearing_a_hat(reason):
     """`no_provenance` is precise and unreadable. Guards against someone
     "adding a label" by handing back the code with the underscores swapped."""
-    labels = [
-        ArtifactStatus(r).label for r in (None,) + states.ARTIFACT_REASONS
-    ] + [DeviceStatus(r).label for r in (None,) + states.DEVICE_REASONS]
+    labels = [ArtifactStatus(r).label for r in (None,) + states.ARTIFACT_REASONS] + [
+        DeviceStatus(r).label for r in (None,) + states.DEVICE_REASONS
+    ]
     for label in labels:
         assert "_" not in label
         assert label != reason

@@ -145,16 +145,12 @@ def parse_tree(fw_dir: str, config: str | None = None) -> tuple[ModuleType, Any]
     module = load_kconfiglib(fw_dir)
     rel = os.path.join("src", "Kconfig")
     if not os.path.isfile(os.path.join(fw_dir, rel)):
-        raise KconfigError(
-            f"no {rel} in {fw_dir}. Is that a firmware source tree?", path=fw_dir
-        )
+        raise KconfigError(f"no {rel} in {fw_dir}. Is that a firmware source tree?", path=fw_dir)
     with _srctree(fw_dir):
         try:
             kconf = module.Kconfig(rel, warn_to_stderr=False)
         except Exception as exc:  # noqa: BLE001 - a parse failure is fatal here
-            raise KconfigError(
-                f"could not parse {rel} in {fw_dir}: {exc}", path=fw_dir
-            ) from exc
+            raise KconfigError(f"could not parse {rel} in {fw_dir}: {exc}", path=fw_dir) from exc
 
     if config is not None:
         try:
@@ -304,11 +300,7 @@ def minimal_answers(kconf: Any, fw_dir: str) -> list[str]:
         out = os.path.join(tmp, "min.config")
         write_min_config(kconf, fw_dir, out)
         with open(out, encoding="utf-8") as fh:
-            return [
-                line.strip()
-                for line in fh
-                if line.strip() and not line.lstrip().startswith("#")
-            ]
+            return [line.strip() for line in fh if line.strip() and not line.lstrip().startswith("#")]
 
 
 def prompts(fw_dir: str, names: Iterable[str]) -> dict[str, str]:
@@ -518,11 +510,7 @@ class Serializer:
         out: list[tuple[str, str]] = []
         child = node.list
         while child:
-            if (
-                self.is_symbol(child)
-                and getattr(child.item, "name", None)
-                and child.item.visibility > 0
-            ):
+            if self.is_symbol(child) and getattr(child.item, "name", None) and child.item.visibility > 0:
                 out.append((child.item.name, child.prompt[0] if child.prompt else ""))
             child = child.next
         return out
@@ -651,6 +639,7 @@ def help_for(node: Any) -> str:
 # editing
 # --------------------------------------------------------------------------
 
+
 def save_config(kconf: Any, fw_dir: str, path: str) -> str | None:
     """Write a parsed configuration out, never leaving a truncated file behind.
 
@@ -714,9 +703,7 @@ class KconfigSession:
     up sharing one Kconfig object and overwriting each other's edits.
     """
 
-    def __init__(
-        self, session_id: str, paths: Paths, mcu_type: str, fw: str, chipset: str = ""
-    ) -> None:
+    def __init__(self, session_id: str, paths: Paths, mcu_type: str, fw: str, chipset: str = "") -> None:
         self.id = session_id
         self.paths = paths
         self.mcu_type = mcu_type
@@ -930,8 +917,7 @@ class KconfigSession:
             detail = f" (it is still {actual!r})" if accepted is not False else ""
             suffix = f" Allowed range: {rng['min']}..{rng['max']}." if rng else ""
             raise KconfigError(
-                f"{self.serializer.node_id(node)} would not accept {wanted!r}"
-                f"{detail}.{suffix}",
+                f"{self.serializer.node_id(node)} would not accept {wanted!r}{detail}.{suffix}",
                 node=self.serializer.node_id(node),
                 requested=wanted,
                 actual=actual,

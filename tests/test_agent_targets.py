@@ -23,7 +23,7 @@ import time
 
 import pytest
 
-from mcu_updater import device_info, firmware, inventory, uf2
+from mcu_updater import device_info, firmware, flashers, inventory, uf2
 from mcu_updater.agent.methods import Api
 from mcu_updater.agent.rpc import RpcError
 from mcu_updater.build import FlashLog
@@ -65,9 +65,7 @@ def _config_opens(paths, monkeypatch) -> list[str]:
     opened: list[str] = []
 
     def spy(file, *args, **kwargs):
-        if isinstance(file, (str, os.PathLike)) and os.fspath(file) == os.fspath(
-            paths.main_config
-        ):
+        if isinstance(file, (str, os.PathLike)) and os.fspath(file) == os.fspath(paths.main_config):
             opened.append(" <- ".join(f.name for f in reversed(traceback.extract_stack(limit=5))))
         return real(file, *args, **kwargs)
 
@@ -437,9 +435,7 @@ def test_a_screen_addressed_by_port_still_reports_its_port(api, paths, fake_root
     assert _targets(api, "platformio")[ENV]["devices"][0]["id"] == port
 
 
-def test_a_screens_flash_action_carries_the_identity_its_row_reports(
-    api, paths, fake_root
-):
+def test_a_screens_flash_action_carries_the_identity_its_row_reports(api, paths, fake_root):
     """`devices[].id` exists to be handed straight back. An action carrying a
     different value than the row reports would defeat that for exactly the
     sections whose path is the least trustworthy thing about them.
@@ -555,9 +551,7 @@ def test_flash_is_blocked_with_something_built_but_nothing_connected(paths, live
     assert target["devices"][0]["id"] in per_device["message"]
 
 
-def test_a_type_that_staged_only_a_uf2_is_built_for_its_flash_actions(
-    paths, live_registry_text
-):
+def test_a_type_that_staged_only_a_uf2_is_built_for_its_flash_actions(paths, live_registry_text):
     """An offset-less RP2040 Klipper build stages a `.uf2` and no `.bin`. The
     flash action must not say "build it first" - the panel's bulk path drops
     any type blocked on `no_artifact`."""
@@ -763,10 +757,12 @@ def test_every_fact_in_the_old_keys_survives_the_projection(api, paths, fake_roo
         assert target["firmware"] == legacy["firmware"]
         assert target["source"] == legacy["source"]
         assert target["needs_flash"] in (legacy["needs_flash"], True, None)
-        assert [d["id"] for d in target["devices"]] == [
-            s["serial"] for s in legacy["serials"]
-        ] + [can["uuid"] for can in legacy["canbus"]]
-        for device, serial in zip(target["devices"][: len(legacy["serials"])], legacy["serials"], strict=True):
+        assert [d["id"] for d in target["devices"]] == [s["serial"] for s in legacy["serials"]] + [
+            can["uuid"] for can in legacy["canbus"]
+        ]
+        for device, serial in zip(
+            target["devices"][: len(legacy["serials"])], legacy["serials"], strict=True
+        ):
             assert device["needs_flash"] == serial["needs_flash"]
             assert device["reason"] == serial["reason"]
             assert device["state"] == serial["state"]
@@ -851,12 +847,8 @@ def test_firmware_families_carries_cmake_args(paths):
     with open(paths.main_config, "w", encoding="utf-8", newline="\n") as fh:
         fh.write(doc.render())
 
-    families = {
-        f["name"]: f for f in Api(paths).dispatch("fw.status")["firmware_families"]
-    }
-    assert families["roadrunner"]["cmake_args"] == (
-        "-DROADRUNNER_FIRMWARE_VERSION=${git_describe}"
-    )
+    families = {f["name"]: f for f in Api(paths).dispatch("fw.status")["firmware_families"]}
+    assert families["roadrunner"]["cmake_args"] == ("-DROADRUNNER_FIRMWARE_VERSION=${git_describe}")
 
 
 def test_firmware_families_are_listed_in_sorted_order(api):
@@ -1052,9 +1044,7 @@ def test_a_cmake_type_gets_a_row_in_targets(paths, tmp_path):
     assert row["devices_note"] == "No serial devices are tracked for this type yet."
 
 
-def test_a_helper_backed_cmake_type_projects_real_serial_devices(
-    paths, tmp_path, fake_root
-):
+def test_a_helper_backed_cmake_type_projects_real_serial_devices(paths, tmp_path, fake_root):
     serial = "RR-5K3DNTFCR1B3C9D0RZMYA3Y720"
     _cmake_config(paths, tmp_path, helper=True, serial=serial)
     write_settings(paths, enable_flashing="true")
@@ -1085,9 +1075,7 @@ def test_a_helper_backed_cmake_type_projects_real_serial_devices(
     assert _action(device, "untrack")["method"] == "fw.serial.remove"
 
 
-def test_a_helper_backed_cmake_row_offers_the_bulk_flash_its_type_answers_to(
-    paths, tmp_path, fake_root
-):
+def test_a_helper_backed_cmake_row_offers_the_bulk_flash_its_type_answers_to(paths, tmp_path, fake_root):
     """`fw.flash_all {name}` and `fw.update_all {name}` both took a cmake type
     long before the row said so: two Roadrunners on the bus, and the only way
     to flash them from the panel was one device at a time."""
@@ -1117,9 +1105,7 @@ def test_a_helper_backed_cmake_row_offers_the_bulk_flash_its_type_answers_to(
     }
 
 
-def test_a_cmake_row_with_nothing_built_blocks_flash_but_not_build_and_flash(
-    paths, tmp_path, fake_root
-):
+def test_a_cmake_row_with_nothing_built_blocks_flash_but_not_build_and_flash(paths, tmp_path, fake_root):
     serial = "RR-5K3DNTFCR1B3C9D0RZMYA3Y720"
     _cmake_config(paths, tmp_path, helper=True, serial=serial)
     write_settings(paths, enable_flashing="true")
@@ -1131,9 +1117,7 @@ def test_a_cmake_row_with_nothing_built_blocks_flash_but_not_build_and_flash(
     assert _action(row, "update")["blocked"] is None
 
 
-def test_a_cmake_row_with_no_board_connected_blocks_both_bulk_actions(
-    paths, tmp_path
-):
+def test_a_cmake_row_with_no_board_connected_blocks_both_bulk_actions(paths, tmp_path):
     serial = "RR-5K3DNTFCR1B3C9D0RZMYA3Y720"
     _cmake_config(paths, tmp_path, helper=True, serial=serial)
     write_settings(paths, enable_flashing="true")
@@ -1214,9 +1198,7 @@ def test_a_cmake_device_projects_its_reported_image_verdict_and_record(
     assert device["reason"] == "unexpected_image"
 
 
-def test_a_stale_cmake_sidecar_cannot_prove_its_old_image_current(
-    paths, tmp_path, fake_root, monkeypatch
-):
+def test_a_stale_cmake_sidecar_cannot_prove_its_old_image_current(paths, tmp_path, fake_root, monkeypatch):
     """Our own sidecar naming bytes that are not on disk is positive evidence
     somebody rebuilt behind us, even when the board still reports the image
     that sidecar names. Unprovable either way - the label is the difference."""
@@ -1322,9 +1304,7 @@ def test_a_provenance_valid_cmake_sidecar_can_prove_a_matching_image_current(
     assert device["needs_flash"] is False
 
 
-def test_an_offline_helper_backed_cmake_device_carries_the_normal_block(
-    paths, tmp_path
-):
+def test_an_offline_helper_backed_cmake_device_carries_the_normal_block(paths, tmp_path):
     serial = "RR-5K3DNTFCR1B3C9D0RZMYA3Y720"
     _cmake_config(paths, tmp_path, helper=True, serial=serial)
     write_settings(paths, enable_flashing="true")
@@ -1332,17 +1312,13 @@ def test_an_offline_helper_backed_cmake_device_carries_the_normal_block(
     with open(paths.uf2_file("roadrunner", "roadrunner"), "wb") as fh:
         fh.write(b"UF2")
 
-    device = _targets(Api(paths, runner=_runner()), "cmake")["roadrunner"][
-        "devices"
-    ][0]
+    device = _targets(Api(paths, runner=_runner()), "cmake")["roadrunner"]["devices"][0]
 
     assert device["present"] is False
     assert _action(device, "flash")["blocked"]["code"] == Api.BLOCKED_NO_DEVICE
 
 
-def test_a_cmake_type_without_a_helper_does_not_advertise_device_actions(
-    paths, tmp_path
-):
+def test_a_cmake_type_without_a_helper_does_not_advertise_device_actions(paths, tmp_path):
     serial = "RR-5K3DNTFCR1B3C9D0RZMYA3Y720"
     _cmake_config(paths, tmp_path, serial=serial)
     write_settings(paths, enable_flashing="true")
@@ -1355,9 +1331,7 @@ def test_a_cmake_type_without_a_helper_does_not_advertise_device_actions(
     assert _ids(row).isdisjoint({"flash", "update"})
 
 
-def test_a_misspelled_helper_blocks_its_own_row_not_the_whole_panel(
-    paths, tmp_path, fake_root
-):
+def test_a_misspelled_helper_blocks_its_own_row_not_the_whole_panel(paths, tmp_path, fake_root):
     """One typo used to blank every MCU in the panel.
 
     `helpers.for_name` raises `ConfigCorruptError` for a name no registered
@@ -1438,9 +1412,7 @@ def test_target_get_answers_for_a_cmake_type(paths, tmp_path):
     """It used to raise "unknown provider: cmake" for a row fw.status listed."""
     _cmake_config(paths, tmp_path)
 
-    got = Api(paths).dispatch(
-        "fw.target.get", {"name": "roadrunner", "provider": "cmake"}
-    )
+    got = Api(paths).dispatch("fw.target.get", {"name": "roadrunner", "provider": "cmake"})
 
     assert got["provider"] == "cmake"
     assert got["target"]["cmake_target"] == "roadrunner_v1_i2c_rgb"
@@ -1544,17 +1516,26 @@ def test_every_row_says_how_a_bare_board_of_it_is_set_up(api):
         "fw": "katapult",
         "flasher": "dfu_util",
         "reason": None,
+        "hint": flashers.by_name("dfu_util").candidate_hint,
     }
-    knomi = targets["knomi"]["first_install"]
-    assert knomi["flasher"] is None
-    assert "can scan for a new board" in knomi["reason"]
+    assert targets["knomi"]["first_install"] == {
+        "fw": "knomi_serial",
+        "flasher": "platformio",
+        "reason": None,
+        "hint": flashers.by_name("platformio").candidate_hint,
+    }
     assert all("first_install" in t for t in targets.values())
 
 
 def test_a_cmake_rp2040_row_is_set_up_over_bootsel(paths, tmp_path):
     _cmake_config(paths, tmp_path)
     row = {t["name"]: t for t in Api(paths).dispatch("fw.status")["targets"]}["roadrunner"]
-    assert row["first_install"] == {"fw": "roadrunner", "flasher": "bootsel", "reason": None}
+    assert row["first_install"] == {
+        "fw": "roadrunner",
+        "flasher": "bootsel",
+        "reason": None,
+        "hint": flashers.by_name("bootsel").candidate_hint,
+    }
 
 
 def test_a_row_first_install_cannot_answer_still_renders(paths, tmp_path):
@@ -1652,9 +1633,7 @@ def test_every_cmake_row_has_the_uniform_keys(paths, tmp_path, serial):
     _assert_uniform(_targets(Api(paths), "cmake")["roadrunner"])
 
 
-def test_an_mcu_rows_source_is_its_application_tree_not_its_bootloaders(
-    api, paths, monkeypatch
-):
+def test_an_mcu_rows_source_is_its_application_tree_not_its_bootloaders(api, paths, monkeypatch):
     """The tree whose commit a board is judged against. A katapult checkout
     beside it would be a second, wrong answer."""
     monkeypatch.setattr("mcu_updater.build.git_head", lambda d, **_: f"head:{d}")
@@ -1676,9 +1655,7 @@ def test_an_mcu_row_with_no_checkout_has_no_source(api, monkeypatch):
     assert _targets(api)["bttebb36"]["source"] is None
 
 
-def test_a_cmake_rows_source_is_what_its_staleness_check_compares(
-    paths, tmp_path, monkeypatch
-):
+def test_a_cmake_rows_source_is_what_its_staleness_check_compares(paths, tmp_path, monkeypatch):
     source = _cmake_config(paths, tmp_path)
     monkeypatch.setattr(
         cmake,

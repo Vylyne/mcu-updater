@@ -56,9 +56,7 @@ _DEFAULT_SYS_CLASS_NET = "/sys/class/net"
 #: reformatting, tightly enough to not fire on unrelated output -
 #: `docs/backlog.md` already flags flashtool's output as human-readable only,
 #: never machine-readable, so this is a defensive parse, not a trusted one.
-_QUERY_LINE_RE = re.compile(
-    r"Detected UUID:\s*([0-9a-fA-F]+),\s*Application:\s*(Klipper|Katapult|Unknown)"
-)
+_QUERY_LINE_RE = re.compile(r"Detected UUID:\s*([0-9a-fA-F]+),\s*Application:\s*(Klipper|Katapult|Unknown)")
 
 #: The success sentinel: query-unassigned admin requests take a fixed timeout
 #: to be sure nothing else is going to answer, so flashtool prints this once
@@ -205,9 +203,7 @@ def query(
     """
     flashtool = find_flashtool(paths, settings)
     if not os.path.exists(flashtool):
-        raise FileNotFoundError(
-            f"flashtool.py not found at {flashtool}. Is katapult installed?"
-        )
+        raise FileNotFoundError(f"flashtool.py not found at {flashtool}. Is katapult installed?")
 
     transcript: list[str] = []
 
@@ -226,9 +222,7 @@ def query(
         fake_delay=0.0,
     )
     if returncode != 0:
-        raise CanQueryError(
-            CanQueryFailure(interface, "flashtool exited unsuccessfully", returncode)
-        )
+        raise CanQueryError(CanQueryFailure(interface, "flashtool exited unsuccessfully", returncode))
     if not any(QUERY_COMPLETE_RE.search(line) for line in transcript):
         raise CanQueryError(CanQueryFailure(interface, "completion sentinel missing", returncode))
     return parse_query_output(transcript, interface)

@@ -118,4 +118,37 @@ describe("JobPanel", () => {
     expect(buttonLabels).not.toContain("Cancel");
     expect(wrapper.text()).toContain("Cancelling…");
   });
+
+  const addedBoard: Job = {
+    ...runningBuild,
+    kind: "add_mcu",
+    state: "succeeded",
+    progress: null,
+  };
+
+  it("says what the agent says is left to do after a first install by write", () => {
+    // Nothing re-enumerates under a serial, so both lists are empty - which
+    // without `note` reads as "No board appeared" for a write that worked.
+    state.job = {
+      ...addedBoard,
+      result: {
+        type: "knomi",
+        candidates: [],
+        already_tracked: [],
+        note: "knomi_serial is on the device at /dev/ttyUSB2, which reports id abc123.",
+      },
+    };
+    const wrapper = mount(JobPanel);
+    expect(wrapper.text()).toContain("which reports id abc123");
+    expect(wrapper.text()).not.toContain("No board appeared");
+  });
+
+  it("still says no board appeared when a ROM install's board never came back", () => {
+    state.job = {
+      ...addedBoard,
+      result: { type: "bttebb36", candidates: [], already_tracked: [] },
+    };
+    const wrapper = mount(JobPanel);
+    expect(wrapper.text()).toContain("No board appeared");
+  });
 });

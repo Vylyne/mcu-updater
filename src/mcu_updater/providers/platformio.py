@@ -46,10 +46,7 @@ def source_problem(target: pio_mod.PioType) -> str | None:
     """
     source = os.path.expanduser(target.source or "")
     if not source:
-        return (
-            f"'{target.name}' has no source tree configured - set 'source:' on its "
-            f"firmware family."
-        )
+        return f"'{target.name}' has no source tree configured - set 'source:' on its firmware family."
     if not os.path.isdir(source):
         return f"source directory {source} not found for '{target.name}'."
     return None
@@ -62,10 +59,7 @@ class PlatformIO:
     label = "PlatformIO"
 
     def targets(self, install: Install) -> list[BuildTarget]:
-        return [
-            BuildTarget(self.name, name, entry.firmware)
-            for name, entry in install.platformio.items()
-        ]
+        return [BuildTarget(self.name, name, entry.firmware) for name, entry in install.platformio.items()]
 
     def blocked(self, install: Install, target: BuildTarget) -> str | None:
         """Is there a tree to build in?
@@ -83,9 +77,7 @@ class PlatformIO:
 
     def artifact_status(self, install: Install, target: BuildTarget) -> ArtifactStatus:
         entry = install.platformio[target.name]
-        return pio_mod.artifact_status(
-            install.paths, entry, pio_mod.source_state(entry.source)
-        )
+        return pio_mod.artifact_status(install.paths, entry, pio_mod.source_state(entry.source))
 
     def build(
         self,

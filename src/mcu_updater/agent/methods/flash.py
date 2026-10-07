@@ -118,8 +118,7 @@ class FlashMixin(_Base):
         present = find_device(self.paths, mcu.chipset, serial)
         if present is None:
             raise RpcError(
-                f"{serial} is not attached (looked for chipset {mcu.chipset}). "
-                f"Is it plugged in and powered?",
+                f"{serial} is not attached (looked for chipset {mcu.chipset}). Is it plugged in and powered?",
                 data={
                     "code": "device_not_found",
                     "message": "board is not on the bus",
@@ -272,14 +271,10 @@ class FlashMixin(_Base):
                 state_holder["klippy_state"] = self._await_klippy_ready(reporter)
 
             settings_now = self.settings()
-            result = flashers.write_all(
-                self._bench(settings_now), [target], ctx, on_ready=on_ready
-            )
+            result = flashers.write_all(self._bench(settings_now), [target], ctx, on_ready=on_ready)
 
             if result["failures"]:
-                raise FlashError(
-                    result["failures"][0]["error"], type=mcu_type, serial=serial
-                )
+                raise FlashError(result["failures"][0]["error"], type=mcu_type, serial=serial)
 
             return {
                 "type": mcu_type,
@@ -291,9 +286,7 @@ class FlashMixin(_Base):
         job = runner.submit("flash", {"name": mcu_type, "serial": serial}, run)
         return {"job_id": job.id, "job": job.to_dict()}
 
-    def _flash_can(
-        self, args: dict, uuid: str, name: Any, runner: Any, settings: Settings
-    ) -> dict[str, Any]:
+    def _flash_can(self, args: dict, uuid: str, name: Any, runner: Any, settings: Settings) -> dict[str, Any]:
         """`fw.flash {uuid}` - the CAN identity form.
 
         Same refusal ordering as the serial path above, up to where a uuid's
@@ -371,11 +364,7 @@ class FlashMixin(_Base):
                 type=mcu_type,
                 id=uuid,
                 chipset=mcu.chipset,
-                state=(
-                    "klipper"
-                    if cross is not None and cross.get("version") is not None
-                    else "unknown"
-                ),
+                state=("klipper" if cross is not None and cross.get("version") is not None else "unknown"),
                 fw=application,
                 kind=flashers.KIND_CANBUS,
                 detail=board,
@@ -399,16 +388,12 @@ class FlashMixin(_Base):
             def on_ready(reporter: Any) -> None:
                 state_holder["klippy_state"] = self._await_klippy_ready(reporter)
 
-            result = flashers.write_all(
-                self._bench(self.settings()), [target], ctx, on_ready=on_ready
-            )
+            result = flashers.write_all(self._bench(self.settings()), [target], ctx, on_ready=on_ready)
             if result["failures"]:
                 # A batch reports failures rather than raising per-device -
                 # right for a fleet sweep, wrong for a job that promised its
                 # caller a single board's own success or failure.
-                raise FlashError(
-                    result["failures"][0]["error"], type=mcu_type, uuid=uuid
-                )
+                raise FlashError(result["failures"][0]["error"], type=mcu_type, uuid=uuid)
             return {
                 "type": mcu_type,
                 "uuid": uuid,
@@ -448,8 +433,11 @@ class FlashMixin(_Base):
         if name not in types:
             raise RpcError(
                 f"no PlatformIO type '{name}' is configured.",
-                data={"code": "unknown_type", "message": "no such type",
-                      "data": {"name": name, "known": sorted(types)}},
+                data={
+                    "code": "unknown_type",
+                    "message": "no such type",
+                    "data": {"name": name, "known": sorted(types)},
+                },
             )
         entry = types[name]
 
@@ -650,22 +638,76 @@ class FlashMixin(_Base):
             self._changed()
         return adopted
 
-    def _tracked_boards(self) -> list[flashers.TrackedBoard]:
+    def _tracked_boards(self, *, ports_for: str | None = None) -> list[flashers.TrackedBoard]:
         """Every tracked serial in the type list, of every builder - what a
         scan names its finds by. Lenient: a scan is a diagnosis, and a config
-        problem is reported elsewhere."""
+        problem is reported elsewhere.
+
+        `ports_for` - the type a scan is about - adds the devices that are
+        tracked by a printer.cfg section rather than a serial, each with the
+        port it sits on: the only thing that tells a configured one from a new
+        one when the bus shows no serial for either. Asked for only by a scan
+        about a type, and only for a flasher that reads them (`_scan`): they
+        come from Klipper, and no other scan has a use for the trip. An
+        unreachable Klipper adds none, so its devices then read as new.
+
+        One board per port, and the scanned type's own before another's:
+        every type of a family lists all of that family's sections, so a port
+        would otherwise have as many owners as its family has types.
+        """
         from ... import typelist
         from ...flashers import TrackedBoard
 
         entries, _families = typelist.read_config(self.paths)
-        return [TrackedBoard(e.name, s, e.chipset) for e in entries for s in e.serials]
+        boards = [TrackedBoard(e.name, s, e.chipset) for e in entries for s in e.serials]
+        if ports_for is not None:
+            chipsets = {e.name: e.chipset for e in entries}
+            try:
+                listed, _reachable = self.platformio_devices()
+            except UpdaterError:
+                listed = {}
+            seen: set[tuple[str, str]] = set()
+            # `sorted` is stable: the scanned type leads, the rest keep their order.
+            for name in sorted(listed, key=lambda name: name != ports_for):
+                for device in listed[name]:
+                    where = (device.resolved_path or "", device.section)
+                    if not device.resolved_path or where in seen:
+                        continue
+                    seen.add(where)
+                    boards.append(
+                        TrackedBoard(
+                            name,
+                            device.configured_id or device.reported_id or "",
+                            chipsets.get(name, ""),
+                            path=device.resolved_path,
+                            label=device.label,
+                        )
+                    )
+        return boards
 
-    def _candidate_report(self, scanner: flashers.CandidateScanner) -> dict[str, Any]:
-        """One `CandidateScanner`'s scan, as its wire result."""
-        scan = scanner.scan_candidates(
-            self.paths, tracked=self._tracked_boards(), reporter=self._log_reporter
+    def _scan(
+        self, scanner: flashers.CandidateScanner, type_name: str | None = None
+    ) -> flashers.CandidateScan:
+        """One `CandidateScanner`'s scan, about `type_name` when there is one.
+
+        Configured ports are gathered only for a flasher that sets a device
+        up by writing a port (`FirstWriter`), because only its candidates are
+        ports a configured device also sits on. A ROM scan names its finds by
+        serial, and is not made to wait on Klipper for a list it never reads.
+        """
+        by_port = type_name is not None and isinstance(scanner, flashers.FirstWriter)
+        return scanner.scan_candidates(
+            self.paths,
+            tracked=self._tracked_boards(ports_for=type_name if by_port else None),
+            reporter=self._log_reporter,
+            type_name=type_name,
         )
-        return scan.to_json()
+
+    def _candidate_report(
+        self, scanner: flashers.CandidateScanner, type_name: str | None = None
+    ) -> dict[str, Any]:
+        """One `CandidateScanner`'s scan, as its wire result."""
+        return self._scan(scanner, type_name).to_json()
 
     @staticmethod
     def _scanner_named(name: str) -> flashers.CandidateScanner:
@@ -713,10 +755,21 @@ class FlashMixin(_Base):
         identity to adopt yet, so the bus is snapshotted first and diffed
         afterwards, rather than taking a serial as an argument.
 
-        **Klipper is not stopped.** A board that is not in printer.cfg is not held
-        by Klipper, so there is no port contention and no reason for an outage -
-        the CLI's add-mcu has never stopped it either. The exclusive lock is still
-        taken, so this cannot run beside a build or a flash.
+        **Klipper is not stopped** for a board in its ROM bootloader. A board
+        that is not in printer.cfg is not held by Klipper, so there is no port
+        contention and no reason for an outage - the CLI's add-mcu has never
+        stopped it either. The exclusive lock is still taken, so this cannot
+        run beside a build or a flash.
+
+        **A flasher whose first install is an ordinary write of its own**
+        (`flashers.FirstWriter` - PlatformIO) is the exception to both
+        paragraphs above, and takes `_add_by_write` instead: it stops what its
+        type's writes always stop, behind the print gate, and reports the
+        device it wrote rather than waiting on the bus for a serial.
+
+        `pick` names one of several scanned devices, by the key the scan
+        itself declares (`pick` on its result). `dfu_serial` is the older,
+        DFU-only spelling of the same thing and is kept.
         """
         runner = self._require_runner()
         settings = self.settings()
@@ -746,9 +799,7 @@ class FlashMixin(_Base):
         entries = {e.name: e for e in typelist.load(self.paths)}
         entry = entries.get(name)
         if entry is None:
-            raise UnknownTypeError(
-                f"MCU type '{name}' does not exist.", type=name, known=sorted(entries)
-            )
+            raise UnknownTypeError(f"MCU type '{name}' does not exist.", type=name, known=sorted(entries))
         families = firmware.load(self.paths)
         choice = flashers.first_install(entry, families)
         if choice.flasher is None:
@@ -761,9 +812,7 @@ class FlashMixin(_Base):
                         "type": name,
                         "chipset": entry.chipset,
                         "fw": choice.fw or None,
-                        "flashers": (
-                            list(families[choice.fw].flashers) if choice.fw in families else []
-                        ),
+                        "flashers": (list(families[choice.fw].flashers) if choice.fw in families else []),
                     },
                 },
             )
@@ -807,10 +856,7 @@ class FlashMixin(_Base):
                     f"{install} for {name} once."
                 )
             elif family.bootloader:
-                advice = (
-                    "Build it first - this flow installs the bootloader, so the "
-                    "bootloader has to exist."
-                )
+                advice = "Build it first - this flow installs the bootloader, so the bootloader has to exist."
             elif kconfig and kind == KIND_UF2 and any(a.kind == KIND_BIN for a in staged.artifacts):
                 # An RP2040 Klipper build makes a .bin only for an offset, so
                 # building again as configured makes the same .bin again.
@@ -864,9 +910,7 @@ class FlashMixin(_Base):
 
         # Which board, decided here rather than in the job, so an ambiguous bus is
         # a synchronous refusal the caller can act on instead of a job that dies.
-        scan_result = scanner.scan_candidates(
-            self.paths, tracked=self._tracked_boards(), reporter=self._log_reporter
-        )
+        scan_result = self._scan(scanner, name)
         scan = scan_result.to_json()
         target = args.get("dfu_serial")
         if target is not None:
@@ -888,6 +932,28 @@ class FlashMixin(_Base):
             # unlike the implicit pick below.
             port: str | None = chosen.get("port") or None
             bootsel_id: str | None = chosen.get("id") or None
+        elif args.get("pick") is not None:
+            # The scan says what its devices are named by; a flasher that
+            # declares nothing writes whatever is ready and cannot be aimed.
+            wanted = str(args["pick"])
+            key = scan_result.pick
+            named = [d for d in scan["devices"] if key is not None and str(d.get(key) or "") == wanted]
+            if len(named) != 1:
+                raise RpcError(
+                    f"no {scanner.name} device is at {wanted}."
+                    if key is not None
+                    else f"{scanner.name} cannot be told which device to write.",
+                    data={
+                        "code": "device_not_found",
+                        "message": "the named device is not among the ones scanned",
+                        "data": {"pick": wanted, "key": key, "devices": scan["devices"]},
+                    },
+                )
+            # Named by the caller, so trustworthy regardless of count - as
+            # for a named DFU device above.
+            chosen = named[0]
+            port = chosen.get("port") or None
+            bootsel_id = chosen.get("id") or None
         elif not scan["ready"]:
             raise RpcError(
                 scan["message"] or f"no board is ready for {scanner.name}.",
@@ -910,6 +976,19 @@ class FlashMixin(_Base):
         # a `serial`, a BOOTSEL one an `id`, and each is null for the other.
         dfu_serial: str | None = chosen.get("serial") or None
 
+        writer = flashers.first_writer(flasher)
+        if writer is not None:
+            return self._add_by_write(
+                args,
+                name=name,
+                chipset=entry.chipset,
+                install=install,
+                families=families,
+                writer=writer,
+                scan=scan_result,
+                found=chosen,
+            )
+
         # Every serial actually on the bus right now - NOT "everything untracked".
         #
         # The distinction matters: a board being re-bootloadered is often already
@@ -928,9 +1007,7 @@ class FlashMixin(_Base):
             if scan_result.ready and scan_result.message:
                 # A ready scan's message is a warning it could not settle.
                 ctx.reporter("warn", scan_result.message)
-            ctx.step(
-                f"Flashing {install} onto the {choice.state.upper()} board for {name}", 0, 2
-            )
+            ctx.step(f"Flashing {install} onto the {choice.state.upper()} board for {name}", 0, 2)
             flash_initial_bootloader(
                 self.paths,
                 self.settings(),
@@ -992,8 +1069,7 @@ class FlashMixin(_Base):
             for device in already:
                 ctx.reporter(
                     "info",
-                    f"{device.serial} is back {where} and already tracked - "
-                    f"nothing to adopt.{then}",
+                    f"{device.serial} is back {where} and already tracked - nothing to adopt.{then}",
                 )
             if not appeared:
                 # Not raised: the write may well have succeeded and the board may
@@ -1016,15 +1092,11 @@ class FlashMixin(_Base):
                 "port": port,
                 "dfu_serial": dfu_serial,
                 "bootsel_id": bootsel_id,
-                "candidates": [
-                    {"serial": d.serial, "path": d.path, "state": d.state} for d in candidates
-                ],
+                "candidates": [{"serial": d.serial, "path": d.path, "state": d.state} for d in candidates],
                 # Appeared, but the type list already tracks it - the
                 # re-bootloader case. Distinct from an empty result, which
                 # means nothing came back at all.
-                "already_tracked": [
-                    {"serial": d.serial, "path": d.path, "state": d.state} for d in already
-                ],
+                "already_tracked": [{"serial": d.serial, "path": d.path, "state": d.state} for d in already],
             }
 
         job = runner.submit(
@@ -1036,6 +1108,109 @@ class FlashMixin(_Base):
             "type": name,
             "dfu_serial": dfu_serial,
             "bootsel_id": bootsel_id,
+        }
+
+    def _add_by_write(
+        self,
+        args: dict,
+        *,
+        name: str,
+        chipset: str,
+        install: str,
+        families: dict[str, firmware.FirmwareFamily],
+        writer: flashers.FirstWriter,
+        scan: flashers.CandidateScan,
+        found: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        """`fw.add_mcu.start` for a flasher that sets a new device up with an
+        ordinary write of its own.
+
+        Everything a write of that type goes through, because it is one: the
+        print gate before a job exists, the type's resolved stop list, and the
+        same batch of one `fw.flash` runs. What differs from the ROM path is
+        what there is to report. No board reboots onto the bus under a new
+        serial, so nothing is waited for and `candidates` is always empty;
+        instead `written` says where the image went and what the device then
+        said it was, and `note` says what is left to do.
+        """
+        from ...service import assert_printer_idle
+
+        runner = self._require_runner()
+        settings = self.settings()
+        if not found:
+            # A ready scan that cannot say which device it means has nothing
+            # to hand a writer that is aimed at one.
+            raise RpcError(
+                f"{writer.name} found no single device to write.",
+                data={
+                    "code": "device_not_found",
+                    "message": "the scan named no device",
+                    "data": {"devices": scan.devices},
+                },
+            )
+        device, units = writer.first_write(self.paths, settings, name, install, found)
+        target = flashers.select_device(self.paths, families, device, stop_services=units)
+        assert_printer_idle(
+            settings,
+            activity=self._printer_activity,
+            force=bool(args.get("force")),
+            reporter=self._log_reporter,
+        )
+
+        def run(ctx) -> dict[str, Any]:
+            if scan.ready and scan.message:
+                ctx.reporter("warn", scan.message)
+            failed: list[UpdaterError] = []
+            result = flashers.write_all(
+                self._bench(self.settings()),
+                [target],
+                ctx,
+                on_ready=self._await_klippy_ready,
+                errors=failed,
+            )
+            if failed:
+                # One device, so its own error with its own code - not a
+                # batch that "succeeded" with a failure listed in it.
+                raise failed[0]
+            wrote = result["flashed"][0] if result["flashed"] else {}
+            reported = wrote.get("reported_id") or None
+            where = wrote.get("port") or device.id
+            if self.settings().dry_run:
+                note = f"[dry-run] would have written {install} to the device at {where}."
+            elif reported:
+                note = (
+                    f"{install} is on the device at {where}, which reports id {reported}. "
+                    f"Add a section for it to printer.cfg to start using it."
+                )
+            else:
+                note = (
+                    f"{install} is on the device at {where}. It did not say which device it "
+                    f"is, so configure it in printer.cfg by its port."
+                )
+            ctx.reporter("info", note)
+            return {
+                "type": name,
+                "chipset": chipset,
+                "fw": install,
+                "flasher": writer.name,
+                "port": found.get("port") or None,
+                "dfu_serial": None,
+                "bootsel_id": None,
+                # Nothing re-enumerates under a serial to adopt: the device is
+                # configured in printer.cfg, by what `written` says.
+                "candidates": [],
+                "already_tracked": [],
+                "written": {"path": where, "reported_id": reported, "chip": wrote.get("chip")},
+                "note": note,
+            }
+
+        job = runner.submit("add_mcu", {"name": name, "dfu_serial": None, "bootsel_id": None}, run)
+        return {
+            "job_id": job.id,
+            "job": job.to_dict(),
+            "type": name,
+            "dfu_serial": None,
+            "bootsel_id": None,
         }
 
     def add_mcu_scan(self, args: dict) -> dict[str, Any]:
@@ -1057,11 +1232,7 @@ class FlashMixin(_Base):
                 known=sorted(e.name for e in entries),
             )
         choice = flashers.first_install(entry, families)
-        scanner = (
-            flashers.candidate_scanner(flashers.by_name(choice.flasher))
-            if choice.flasher
-            else None
-        )
+        scanner = flashers.candidate_scanner(flashers.by_name(choice.flasher)) if choice.flasher else None
         if scanner is None:
             return {
                 "devices": [],
@@ -1071,4 +1242,4 @@ class FlashMixin(_Base):
                 "message": choice.reason,
                 "flasher": None,
             }
-        return {**self._candidate_report(scanner), "flasher": scanner.name}
+        return {**self._candidate_report(scanner, name), "flasher": scanner.name}

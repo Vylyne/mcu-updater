@@ -101,9 +101,7 @@ def test_offline_device_raises_device_not_found(paths, ready):
 def test_device_already_in_bootloader_is_flashed_directly(paths, ready, fake_root):
     make_device(fake_root / "bus", "katapult", "chipA", "S1")
     events: list[tuple[str, str]] = []
-    flash_katapult(
-        paths, ready, "board", "chipA", "S1", reporter=lambda s, line: events.append((s, line))
-    )
+    flash_katapult(paths, ready, "board", "chipA", "S1", reporter=lambda s, line: events.append((s, line)))
     flags = [t for c in (cmd_tokens(x) for x in _cmds(events)) for t in c]
     assert "-f" in flags
     # No bootloader request needed - it is already there.
@@ -114,9 +112,7 @@ def test_device_already_in_bootloader_is_flashed_directly(paths, ready, fake_roo
 def test_device_running_klipper_is_flashed_without_a_separate_reboot(paths, ready, fake_root):
     make_device(fake_root / "bus", "klipper", "chipA", "S1")  # lowercase on purpose
     events: list[tuple[str, str]] = []
-    flash_katapult(
-        paths, ready, "board", "chipA", "S1", reporter=lambda s, line: events.append((s, line))
-    )
+    flash_katapult(paths, ready, "board", "chipA", "S1", reporter=lambda s, line: events.append((s, line)))
     per_cmd = [cmd_tokens(c) for c in _cmds(events)]
     assert all("-r" not in toks for toks in per_cmd)
     assert any("-f" in toks for toks in per_cmd)
@@ -237,9 +233,7 @@ def test_agreeing_addresses_proceed_to_write(paths, ready, fake_root, monkeypatc
     )
 
     events: list[tuple[str, str]] = []
-    flash_katapult(
-        paths, ready, "board", "chipA", "S1", reporter=lambda s, line: events.append((s, line))
-    )
+    flash_katapult(paths, ready, "board", "chipA", "S1", reporter=lambda s, line: events.append((s, line)))
 
     assert not [line for stream, line in events if stream in ("error", "warn")]
     assert len(calls) == 2  # probe, then the write
@@ -276,9 +270,7 @@ def _reboots_into_katapult(monkeypatch, bus_dir, chipset, serial, probe_lines, w
 _REQUEST = "Requesting USB bootloader for /dev/serial/by-id/usb-Klipper_chipA_S1..."
 
 
-def test_the_write_addresses_the_path_the_probe_left_the_board_on(
-    paths, ready, fake_root, monkeypatch
-):
+def test_the_write_addresses_the_path_the_probe_left_the_board_on(paths, ready, fake_root, monkeypatch):
     """The 2026-09-05 hardware failure. The probe rebooted an OctopusMAXEZ
     running Klipper into katapult, and the write was still addressed to the
     Klipper by-id path the probe had been handed - which no longer existed:
@@ -302,14 +294,10 @@ def test_the_write_addresses_the_path_the_probe_left_the_board_on(
     probe_path = calls[0][calls[0].index("-d") + 1]
     write_path = calls[1][calls[1].index("-d") + 1]
     assert "Klipper" in probe_path, "the probe is addressed to the board as found"
-    assert "katapult" in write_path, (
-        f"the write must follow the board into its bootloader, got {write_path}"
-    )
+    assert "katapult" in write_path, f"the write must follow the board into its bootloader, got {write_path}"
 
 
-def test_a_board_that_never_reappears_after_the_probe_refuses_to_write(
-    paths, ready, fake_root, monkeypatch
-):
+def test_a_board_that_never_reappears_after_the_probe_refuses_to_write(paths, ready, fake_root, monkeypatch):
     """No fallback to the stale path - that fallback *is* the bug. Raised as
     `bootloader_timeout` rather than `device_not_found`: the board was seen,
     and was rebooted by us; "it never came back in its bootloader" is what
@@ -339,9 +327,7 @@ def test_a_board_that_never_reappears_after_the_probe_refuses_to_write(
     assert "katapult" in str(exc.value) and "re-run" in str(exc.value)
 
 
-def test_a_probe_that_fails_after_rebooting_the_board_says_where_it_is(
-    paths, ready, fake_root, monkeypatch
-):
+def test_a_probe_that_fails_after_rebooting_the_board_says_where_it_is(paths, ready, fake_root, monkeypatch):
     """The reconnect is the flakiest step in the sequence, and it happens
     *after* the board has already been rebooted. A non-zero exit there is the
     failure most likely to be read as "my board is gone" - so the exit-code
@@ -358,9 +344,7 @@ def test_a_probe_that_fails_after_rebooting_the_board_says_where_it_is(
     assert "katapult now" in str(exc.value)
 
 
-def test_a_probe_that_did_not_move_the_board_keeps_its_path(
-    paths, ready, fake_root, monkeypatch
-):
+def test_a_probe_that_did_not_move_the_board_keeps_its_path(paths, ready, fake_root, monkeypatch):
     """A board already in its bootloader is not rebooted by the probe, so
     there is nothing to re-resolve - and no re-enumeration wait to sit
     through."""
@@ -413,14 +397,10 @@ def test_a_lingering_klipper_symlink_is_not_mistaken_for_the_rebooted_board(
     flash_katapult(paths, ready, "board", "chipA", "S1")
 
     write_path = calls[1][calls[1].index("-d") + 1]
-    assert "katapult" in write_path, (
-        f"the stale Klipper entry was taken as the rebooted board: {write_path}"
-    )
+    assert "katapult" in write_path, f"the stale Klipper entry was taken as the rebooted board: {write_path}"
 
 
-def test_the_re_resolve_poll_does_not_re_run_the_listen_pass(
-    paths, ready, fake_root, monkeypatch
-):
+def test_the_re_resolve_poll_does_not_re_run_the_listen_pass(paths, ready, fake_root, monkeypatch):
     """`device_for` defaults to the full `SOURCES` sweep, and `Listen.sight`
     in that sweep opens serial ports - a real pass per display family. One of
     those up front is the price of confirming identity at write time; running
@@ -457,9 +437,7 @@ def test_the_re_resolve_poll_does_not_re_run_the_listen_pass(
     )
 
 
-def test_a_refusal_after_a_reboot_says_where_the_board_is(
-    paths, ready, fake_root, monkeypatch
-):
+def test_a_refusal_after_a_reboot_says_where_the_board_is(paths, ready, fake_root, monkeypatch):
     """Refusing is right, but the probe already moved the board to ask. The
     message has to account for that."""
     ready.dry_run = False
@@ -477,9 +455,7 @@ def test_a_refusal_after_a_reboot_says_where_the_board_is(
         flash_katapult(paths, ready, "board", "chipA", "S1")
 
     assert "0x8004000" in str(exc.value) and "0x8000" in str(exc.value)
-    assert "katapult now" in str(exc.value), (
-        "the board was rebooted to ask and left there - say so"
-    )
+    assert "katapult now" in str(exc.value), "the board was rebooted to ask and left there - say so"
 
 
 def test_a_real_flash_reports_unique_bus_id_confidence(paths, ready, fake_root, monkeypatch):
@@ -542,9 +518,7 @@ def test_an_unreadable_probe_refuses_before_writing(paths, ready, fake_root, mon
     assert "-s" in calls[0]
 
 
-def test_force_downgrades_the_refusal_to_a_warning_and_still_writes(
-    paths, ready, fake_root, monkeypatch
-):
+def test_force_downgrades_the_refusal_to_a_warning_and_still_writes(paths, ready, fake_root, monkeypatch):
     ready.dry_run = False
     make_device(fake_root / "bus", "katapult", "chipA", "S1")
     _write_sidecar(paths, "board", "klipper", app_address=0x08004000)
@@ -571,9 +545,7 @@ def test_force_downgrades_the_refusal_to_a_warning_and_still_writes(
     assert any("Flashed S1 successfully" in line for _, line in events)
 
 
-def test_a_board_that_changes_between_probe_and_write_is_still_caught(
-    paths, ready, fake_root, monkeypatch
-):
+def test_a_board_that_changes_between_probe_and_write_is_still_caught(paths, ready, fake_root, monkeypatch):
     """The probe agreed, but -f's own handshake - moments later - does not:
     the second line of defence, since the write already happened by then and
     cannot be un-done."""
@@ -587,9 +559,7 @@ def test_a_board_that_changes_between_probe_and_write_is_still_caught(
     )
 
     events: list[tuple[str, str]] = []
-    flash_katapult(
-        paths, ready, "board", "chipA", "S1", reporter=lambda s, line: events.append((s, line))
-    )
+    flash_katapult(paths, ready, "board", "chipA", "S1", reporter=lambda s, line: events.append((s, line)))
 
     errors = [line for stream, line in events if stream == "error"]
     assert any("0x8004000" in line and "0x8000" in line for line in errors)
@@ -597,9 +567,7 @@ def test_a_board_that_changes_between_probe_and_write_is_still_caught(
     assert any("Flashed S1 successfully" in line for _, line in events)
 
 
-def test_an_unparseable_write_handshake_is_still_warned_about(
-    paths, ready, fake_root, monkeypatch
-):
+def test_an_unparseable_write_handshake_is_still_warned_about(paths, ready, fake_root, monkeypatch):
     """The probe agreed, but -f's own handshake - moments later - didn't parse:
     same second-line-of-defence reasoning as the mismatch case above, just for
     the 'the check itself went blind' half of it."""
@@ -613,9 +581,7 @@ def test_an_unparseable_write_handshake_is_still_warned_about(
     )
 
     events: list[tuple[str, str]] = []
-    flash_katapult(
-        paths, ready, "board", "chipA", "S1", reporter=lambda s, line: events.append((s, line))
-    )
+    flash_katapult(paths, ready, "board", "chipA", "S1", reporter=lambda s, line: events.append((s, line)))
 
     warnings = [line for stream, line in events if stream == "warn"]
     assert any("could not read" in line for line in warnings)
@@ -633,16 +599,12 @@ def test_the_minimum_width_hex_quirk_is_tolerated(paths, ready, fake_root, monke
     _fake_run_streamed_once(monkeypatch, 0, ["Application Start: 0x 800"])
 
     events: list[tuple[str, str]] = []
-    flash_katapult(
-        paths, ready, "board", "chipA", "S1", reporter=lambda s, line: events.append((s, line))
-    )
+    flash_katapult(paths, ready, "board", "chipA", "S1", reporter=lambda s, line: events.append((s, line)))
 
     assert not [line for stream, line in events if stream in ("error", "warn")]
 
 
-def test_nothing_is_reported_without_a_recorded_app_address(
-    paths, ready, fake_root, monkeypatch
-):
+def test_nothing_is_reported_without_a_recorded_app_address(paths, ready, fake_root, monkeypatch):
     """An older build, or a family that never defines the symbol - nothing of
     ours to compare against, so not a finding, and no probe is even attempted."""
     ready.dry_run = False
@@ -651,9 +613,7 @@ def test_nothing_is_reported_without_a_recorded_app_address(
     calls = _fake_run_streamed_by_call(monkeypatch, write=(0, ["Application Start: 0x8000"]))
 
     events: list[tuple[str, str]] = []
-    flash_katapult(
-        paths, ready, "board", "chipA", "S1", reporter=lambda s, line: events.append((s, line))
-    )
+    flash_katapult(paths, ready, "board", "chipA", "S1", reporter=lambda s, line: events.append((s, line)))
 
     assert not [line for stream, line in events if stream in ("error", "warn")]
     assert len(calls) == 1  # the write only - no sidecar address, so no probe
@@ -714,9 +674,7 @@ def test_exactly_one_dfu_device_is_flashed(paths, ready, monkeypatch):
     )
     per_cmd = [cmd_tokens(c) for c in _cmds(events)]
     assert any(
-        toks
-        and os.path.basename(toks[0]) == "dfu-util"
-        and any("mass-erase" in t for t in toks)
+        toks and os.path.basename(toks[0]) == "dfu-util" and any("mass-erase" in t for t in toks)
         for toks in per_cmd
     )
 
@@ -762,8 +720,15 @@ def test_rp2040_dispatches_to_bootsel_when_a_uf2_was_built(paths, settings, tmp_
     uf2, cfg = _katapult_uf2(tmp_path)
 
     flash_initial_bootloader(
-        rp_paths, settings, "rp2040", "unused.bin", fw="katapult", mcu_type="board", state="bootsel",
-        uf2_bin=uf2, katapult_config=cfg
+        rp_paths,
+        settings,
+        "rp2040",
+        "unused.bin",
+        fw="katapult",
+        mcu_type="board",
+        state="bootsel",
+        uf2_bin=uf2,
+        katapult_config=cfg,
     )
 
     assert (vol / "katapult.uf2").exists()
@@ -802,9 +767,7 @@ def _katapult_uf2(tmp_path, *, address="0x10004000"):
     """A one-page Katapult image at the start of flash, and its `.config`."""
     import struct
 
-    block = struct.pack(
-        "<8I", 0x0A324655, 0x9E5D5157, 0x2000, 0x10000000, 256, 0, 1, 0xE48BFF56
-    )
+    block = struct.pack("<8I", 0x0A324655, 0x9E5D5157, 0x2000, 0x10000000, 256, 0, 1, 0xE48BFF56)
     block += b"\xaa" * 256 + b"\0" * 220 + struct.pack("<I", 0x0AB16F30)
     uf2 = tmp_path / "katapult.uf2"
     uf2.write_bytes(block)
@@ -816,9 +779,7 @@ def _katapult_uf2(tmp_path, *, address="0x10004000"):
     return str(uf2), str(cfg)
 
 
-def test_bootsel_copies_katapult_with_the_application_sector_erased(
-    paths, settings, tmp_path
-):
+def test_bootsel_copies_katapult_with_the_application_sector_erased(paths, settings, tmp_path):
     """Parity with DFU's mass-erase. Without it a board that last ran other
     firmware keeps that image at the application address, Katapult chain-loads
     it, and the board never comes back as Katapult."""
@@ -835,8 +796,15 @@ def test_bootsel_copies_katapult_with_the_application_sector_erased(
         original = fh.read()
 
     flash_initial_bootloader(
-        rp_paths, settings, "rp2040", "unused.bin", fw="katapult", mcu_type="board", state="bootsel",
-        uf2_bin=uf2, katapult_config=cfg
+        rp_paths,
+        settings,
+        "rp2040",
+        "unused.bin",
+        fw="katapult",
+        mcu_type="board",
+        state="bootsel",
+        uf2_bin=uf2,
+        katapult_config=cfg,
     )
 
     assert (vol / "katapult.uf2").read_bytes() == with_erased_sector(original, 0x10004000)
@@ -845,9 +813,7 @@ def test_bootsel_copies_katapult_with_the_application_sector_erased(
 
 
 @pytest.mark.parametrize("address", [None, "nonsense"], ids=["absent", "unreadable"])
-def test_bootsel_refuses_without_an_application_address(
-    paths, settings, tmp_path, address
-):
+def test_bootsel_refuses_without_an_application_address(paths, settings, tmp_path, address):
     """No address, no erase - and no silent fallback to copying Katapult alone,
     which is exactly the write that leaves a board chain-loading old firmware."""
     seed_base_firmwares(paths)
@@ -860,8 +826,15 @@ def test_bootsel_refuses_without_an_application_address(
 
     with pytest.raises(FlashError) as exc:
         flash_initial_bootloader(
-            rp_paths, settings, "rp2040", "unused.bin", fw="katapult", mcu_type="board", state="bootsel",
-            uf2_bin=uf2, katapult_config=cfg
+            rp_paths,
+            settings,
+            "rp2040",
+            "unused.bin",
+            fw="katapult",
+            mcu_type="board",
+            state="bootsel",
+            uf2_bin=uf2,
+            katapult_config=cfg,
         )
     assert "LAUNCH_APP_ADDRESS" in str(exc.value)
     assert not (vol / "katapult.uf2").exists()
@@ -872,7 +845,13 @@ def test_bootsel_refuses_with_no_katapult_config(paths, settings, tmp_path):
     uf2, _cfg = _katapult_uf2(tmp_path)
     with pytest.raises(FlashError) as exc:
         flash_initial_bootloader(
-            paths, settings, "rp2040", "unused.bin", fw="katapult", mcu_type="board", state="bootsel",
+            paths,
+            settings,
+            "rp2040",
+            "unused.bin",
+            fw="katapult",
+            mcu_type="board",
+            state="bootsel",
             uf2_bin=uf2,
         )
     assert "LAUNCH_APP_ADDRESS" in str(exc.value)
@@ -887,8 +866,15 @@ def test_bootsel_refuses_a_uf2_it_cannot_extend(paths, settings, tmp_path):
     bad.write_bytes(b"\0" * 8)
     with pytest.raises(FlashError) as exc:
         flash_initial_bootloader(
-            paths, settings, "rp2040", "unused.bin", fw="katapult", mcu_type="board", state="bootsel",
-            uf2_bin=str(bad), katapult_config=cfg
+            paths,
+            settings,
+            "rp2040",
+            "unused.bin",
+            fw="katapult",
+            mcu_type="board",
+            state="bootsel",
+            uf2_bin=str(bad),
+            katapult_config=cfg,
         )
     assert "UF2" in str(exc.value)
 
@@ -899,8 +885,15 @@ def test_bootsel_reports_a_missing_uf2_as_a_flash_error(paths, settings, tmp_pat
     missing = str(tmp_path / "nope.uf2")
     with pytest.raises(FlashError) as exc:
         flash_initial_bootloader(
-            paths, settings, "rp2040", "unused.bin", fw="katapult", mcu_type="board", state="bootsel",
-            uf2_bin=missing, katapult_config=cfg
+            paths,
+            settings,
+            "rp2040",
+            "unused.bin",
+            fw="katapult",
+            mcu_type="board",
+            state="bootsel",
+            uf2_bin=missing,
+            katapult_config=cfg,
         )
     assert missing in str(exc.value)
 
@@ -935,7 +928,13 @@ def test_dfu_refuses_with_no_bin_built(paths, settings):
     seed_base_firmwares(paths)
     with pytest.raises(FlashError) as exc:
         flash_initial_bootloader(
-            paths, settings, "stm32f072xb", None, fw="katapult", mcu_type="board", state="dfu",
+            paths,
+            settings,
+            "stm32f072xb",
+            None,
+            fw="katapult",
+            mcu_type="board",
+            state="dfu",
             uf2_bin="x.uf2",
         )
     assert ".bin" in str(exc.value)
@@ -944,9 +943,7 @@ def test_dfu_refuses_with_no_bin_built(paths, settings):
 def test_an_unknown_chipset_is_reported_clearly(paths, ready):
     seed_base_firmwares(paths)
     with pytest.raises(UnsupportedChipsetError) as exc:
-        flash_initial_bootloader(
-            paths, ready, "esp32", "x.bin", fw="katapult", mcu_type="board", state="dfu"
-        )
+        flash_initial_bootloader(paths, ready, "esp32", "x.bin", fw="katapult", mcu_type="board", state="dfu")
     assert exc.value.data["chipset"] == "esp32"
 
 
@@ -964,8 +961,15 @@ def test_first_install_writes_only_with_what_katapult_lists(paths, settings, tmp
 
     with pytest.raises(UnsupportedChipsetError) as exc:
         flash_initial_bootloader(
-            paths, settings, "rp2040", "unused.bin", fw="katapult", mcu_type="board", state="bootsel",
-            uf2_bin=uf2, katapult_config=cfg
+            paths,
+            settings,
+            "rp2040",
+            "unused.bin",
+            fw="katapult",
+            mcu_type="board",
+            state="bootsel",
+            uf2_bin=uf2,
+            katapult_config=cfg,
         )
     assert exc.value.data["chipset"] == "rp2040"
 
@@ -982,8 +986,7 @@ def _klipper_writes_bare_boards(paths) -> None:
         fh.write(
             text.replace(
                 section,
-                "[firmware klipper]\nsource: ~/klipper\n"
-                "flashers: flashtool, bootsel, dfu_util\n",
+                "[firmware klipper]\nsource: ~/klipper\nflashers: flashtool, bootsel, dfu_util\n",
             )
         )
 
@@ -999,7 +1002,13 @@ def test_a_first_application_image_is_copied_as_built(paths, settings, tmp_path)
     uf2.write_bytes(image)
 
     flash_initial_bootloader(
-        rp_paths, settings, "rp2040", None, fw="klipper", mcu_type="board", state="bootsel",
+        rp_paths,
+        settings,
+        "rp2040",
+        None,
+        fw="klipper",
+        mcu_type="board",
+        state="bootsel",
         uf2_bin=str(uf2),
     )
 
@@ -1019,7 +1028,13 @@ def test_a_first_application_uf2_built_for_an_offset_is_refused(paths, settings,
 
     with pytest.raises(BareImageOffsetError) as exc:
         flash_initial_bootloader(
-            rp_paths, settings, "rp2040", None, fw="klipper", mcu_type="board", state="bootsel",
+            rp_paths,
+            settings,
+            "rp2040",
+            None,
+            fw="klipper",
+            mcu_type="board",
+            state="bootsel",
             uf2_bin=str(uf2),
         )
 
@@ -1029,9 +1044,7 @@ def test_a_first_application_uf2_built_for_an_offset_is_refused(paths, settings,
     assert not (vol / "klipper.uf2").exists()
 
 
-def test_a_first_application_bin_is_checked_against_its_build_record(
-    paths, settings, monkeypatch
-):
+def test_a_first_application_bin_is_checked_against_its_build_record(paths, settings, monkeypatch):
     """A .bin carries no address of its own, so the sidecar's app_address has to
     say 0x08000000 - the address DFU writes at."""
     import json
@@ -1040,9 +1053,7 @@ def test_a_first_application_bin_is_checked_against_its_build_record(
 
     _klipper_writes_bare_boards(paths)
     written: list[str] = []
-    monkeypatch.setattr(
-        flash_mod, "flash_dfu_stm32", lambda p, s, fw_bin, **kw: written.append(fw_bin)
-    )
+    monkeypatch.setattr(flash_mod, "flash_dfu_stm32", lambda p, s, fw_bin, **kw: written.append(fw_bin))
     os.makedirs(paths.artifact_dir("board"), exist_ok=True)
     fw_bin = paths.bin_file("board", "klipper")
     with open(fw_bin, "wb") as fh:
@@ -1071,9 +1082,7 @@ def test_a_bootloader_first_image_is_not_offset_checked(paths, settings, monkeyp
     the check is for an application with nothing below it, not for this."""
     seed_base_firmwares(paths)
     written: list[str] = []
-    monkeypatch.setattr(
-        flash_mod, "flash_dfu_stm32", lambda p, s, fw_bin, **kw: written.append(fw_bin)
-    )
+    monkeypatch.setattr(flash_mod, "flash_dfu_stm32", lambda p, s, fw_bin, **kw: written.append(fw_bin))
 
     flash_initial_bootloader(
         paths, settings, "stm32g0b1xx", "katapult.bin", fw="katapult", mcu_type="board", state="dfu"
@@ -1089,7 +1098,13 @@ def test_no_bare_board_writer_on_the_family_names_the_line_to_add(paths, setting
 
     with pytest.raises(UnsupportedChipsetError) as exc:
         flash_initial_bootloader(
-            paths, settings, "rp2040", None, fw="klipper", mcu_type="board", state="bootsel",
+            paths,
+            settings,
+            "rp2040",
+            None,
+            fw="klipper",
+            mcu_type="board",
+            state="bootsel",
             uf2_bin=str(uf2),
         )
 
@@ -1153,9 +1168,7 @@ def _volume_that_dies(monkeypatch, *, error, after_bytes):
             # incomplete image - becomes indistinguishable from the board
             # resetting after the last block. Every test using this fake fails
             # the moment that stops being true, which is the point.
-            assert os.path.getsize(self._path) == self._landed, (
-                "the destination handle must stay unbuffered"
-            )
+            assert os.path.getsize(self._path) == self._landed, "the destination handle must stay unbuffered"
 
         def write(self, data):
             if after_bytes is None:
@@ -1178,9 +1191,7 @@ def _volume_that_dies(monkeypatch, *, error, after_bytes):
             if after_bytes is None:
                 raise error
 
-    monkeypatch.setattr(
-        flashers.bootsel, "_open_dest", lambda dest: Handle(real_open(dest), dest)
-    )
+    monkeypatch.setattr(flashers.bootsel, "_open_dest", lambda dest: Handle(real_open(dest), dest))
 
 
 def test_a_volume_that_vanishes_after_the_last_byte_is_a_successful_write(
@@ -1199,29 +1210,19 @@ def test_a_volume_that_vanishes_after_the_last_byte_is_a_successful_write(
     uf2 = tmp_path / "katapult.uf2"
     image = _fake_uf2(b"every-byte-of-this-image")
     uf2.write_bytes(image)
-    _volume_that_dies(
-        monkeypatch, error=OSError(5, "Input/output error"), after_bytes=None
-    )
+    _volume_that_dies(monkeypatch, error=OSError(5, "Input/output error"), after_bytes=None)
     events: list[tuple[str, str]] = []
-    bench = flashers.Bench(
-        paths=rp_paths, settings=settings, controller=lambda name=None: None
-    )
+    bench = flashers.Bench(paths=rp_paths, settings=settings, controller=lambda name=None: None)
     target = flashers.bootsel.target_for(str(uf2), chipset="rp2040")
 
-    result = flashers.Bootsel().write(
-        bench, None, target, flashers.PlainContext(lambda *a: events.append(a))
-    )
+    result = flashers.Bootsel().write(bench, None, target, flashers.PlainContext(lambda *a: events.append(a)))
 
     assert result == {"mount": str(vol)}
     assert (vol / "katapult.uf2").read_bytes() == image
-    assert any(
-        level == "info" and "Input/output error" in text for level, text in events
-    )
+    assert any(level == "info" and "Input/output error" in text for level, text in events)
 
 
-def test_a_vanished_volume_reaches_flashed_so_provenance_can_record(
-    paths, settings, tmp_path, monkeypatch
-):
+def test_a_vanished_volume_reaches_flashed_so_provenance_can_record(paths, settings, tmp_path, monkeypatch):
     """`write_all` records the `FlashLog` off a successful write, so the batch
     has to count this one as one - a failure row would silence the ledger for
     the most common successful ending there is."""
@@ -1229,26 +1230,18 @@ def test_a_vanished_volume_reaches_flashed_so_provenance_can_record(
     rp_paths = dataclasses.replace(paths, bootsel_root=str(root))
     uf2 = tmp_path / "katapult.uf2"
     uf2.write_bytes(_fake_uf2(b"image"))
-    _volume_that_dies(
-        monkeypatch, error=OSError(5, "Input/output error"), after_bytes=None
-    )
-    bench = flashers.Bench(
-        paths=rp_paths, settings=settings, controller=lambda name=None: None
-    )
+    _volume_that_dies(monkeypatch, error=OSError(5, "Input/output error"), after_bytes=None)
+    bench = flashers.Bench(paths=rp_paths, settings=settings, controller=lambda name=None: None)
     target = flashers.bootsel.target_for(str(uf2), chipset="rp2040")
 
-    result = flashers.write_all(
-        bench, [target], flashers.PlainContext(lambda *a: None)
-    )
+    result = flashers.write_all(bench, [target], flashers.PlainContext(lambda *a: None))
 
     assert len(result["flashed"]) == 1
     assert result["failures"] == []
     assert result["flashed"][0]["mount"] == str(vol)
 
 
-def test_a_copy_that_dies_partway_through_the_data_is_still_a_failure(
-    paths, settings, tmp_path, monkeypatch
-):
+def test_a_copy_that_dies_partway_through_the_data_is_still_a_failure(paths, settings, tmp_path, monkeypatch):
     """The other side of the same boundary: bytes that never landed are a
     genuine failure however few are missing, and must not be excused by the
     reset-at-the-end rule."""
@@ -1257,18 +1250,12 @@ def test_a_copy_that_dies_partway_through_the_data_is_still_a_failure(
     uf2 = tmp_path / "katapult.uf2"
     image = _fake_uf2(b"half-written-image")
     uf2.write_bytes(image)
-    _volume_that_dies(
-        monkeypatch, error=OSError(28, "No space left on device"), after_bytes=4
-    )
-    bench = flashers.Bench(
-        paths=rp_paths, settings=settings, controller=lambda name=None: None
-    )
+    _volume_that_dies(monkeypatch, error=OSError(28, "No space left on device"), after_bytes=4)
+    bench = flashers.Bench(paths=rp_paths, settings=settings, controller=lambda name=None: None)
     target = flashers.bootsel.target_for(str(uf2), chipset="rp2040")
 
     with pytest.raises(FlashError) as exc:
-        flashers.Bootsel().write(
-            bench, None, target, flashers.PlainContext(lambda *a: None)
-        )
+        flashers.Bootsel().write(bench, None, target, flashers.PlainContext(lambda *a: None))
 
     assert exc.value.code == "flash_failed"
     assert "No space left" in str(exc.value)
@@ -1319,17 +1306,11 @@ def test_a_multi_chunk_image_is_copied_whole(paths, settings, tmp_path, monkeypa
             sizes.append(len(data))
             return self._fh.write(data)
 
-    monkeypatch.setattr(
-        flashers.bootsel, "_open_dest", lambda dest: Counting(real_open(dest))
-    )
-    bench = flashers.Bench(
-        paths=rp_paths, settings=settings, controller=lambda name=None: None
-    )
+    monkeypatch.setattr(flashers.bootsel, "_open_dest", lambda dest: Counting(real_open(dest)))
+    bench = flashers.Bench(paths=rp_paths, settings=settings, controller=lambda name=None: None)
     target = flashers.bootsel.target_for(str(uf2), chipset="rp2040")
 
-    flashers.Bootsel().write(
-        bench, None, target, flashers.PlainContext(lambda *a: None)
-    )
+    flashers.Bootsel().write(bench, None, target, flashers.PlainContext(lambda *a: None))
 
     assert (vol / "katapult.uf2").read_bytes() == image
     assert len(sizes) > 1
@@ -1363,24 +1344,16 @@ def test_a_short_write_resumes_where_it_stopped(paths, settings, tmp_path, monke
         def write(self, data):
             return self._fh.write(bytes(data)[:7])
 
-    monkeypatch.setattr(
-        flashers.bootsel, "_open_dest", lambda dest: ShortWriter(real_open(dest))
-    )
-    bench = flashers.Bench(
-        paths=rp_paths, settings=settings, controller=lambda name=None: None
-    )
+    monkeypatch.setattr(flashers.bootsel, "_open_dest", lambda dest: ShortWriter(real_open(dest)))
+    bench = flashers.Bench(paths=rp_paths, settings=settings, controller=lambda name=None: None)
     target = flashers.bootsel.target_for(str(uf2), chipset="rp2040")
 
-    flashers.Bootsel().write(
-        bench, None, target, flashers.PlainContext(lambda *a: None)
-    )
+    flashers.Bootsel().write(bench, None, target, flashers.PlainContext(lambda *a: None))
 
     assert (vol / "katapult.uf2").read_bytes() == image
 
 
-def test_a_copy_onto_the_image_itself_is_refused_before_it_is_destroyed(
-    paths, settings, tmp_path
-):
+def test_a_copy_onto_the_image_itself_is_refused_before_it_is_destroyed(paths, settings, tmp_path):
     """`shutil.copy2` refused this; the explicit copy has to as well.
 
     Opening one inode for reading and for writing truncates it, the read then
@@ -1394,24 +1367,18 @@ def test_a_copy_onto_the_image_itself_is_refused_before_it_is_destroyed(
     uf2 = vol / "katapult.uf2"
     image = _fake_uf2(b"the-only-copy-of-this-image")
     uf2.write_bytes(image)
-    bench = flashers.Bench(
-        paths=rp_paths, settings=settings, controller=lambda name=None: None
-    )
+    bench = flashers.Bench(paths=rp_paths, settings=settings, controller=lambda name=None: None)
     target = flashers.bootsel.target_for(str(uf2), chipset="rp2040")
 
     with pytest.raises(FlashError) as exc:
-        flashers.Bootsel().write(
-            bench, None, target, flashers.PlainContext(lambda *a: None)
-        )
+        flashers.Bootsel().write(bench, None, target, flashers.PlainContext(lambda *a: None))
 
     assert exc.value.code == "flash_failed"
     assert "onto itself" in str(exc.value)
     assert uf2.read_bytes() == image
 
 
-def test_a_copy_that_dies_mid_write_is_a_structured_flash_failure(
-    paths, settings, tmp_path, monkeypatch
-):
+def test_a_copy_that_dies_mid_write_is_a_structured_flash_failure(paths, settings, tmp_path, monkeypatch):
     """The volume can go away underneath the copy.
 
     Unplugged mid-write, a full FAT volume, an I/O error on a board that reset
@@ -1425,38 +1392,26 @@ def test_a_copy_that_dies_mid_write_is_a_structured_flash_failure(
     uf2 = tmp_path / "katapult.uf2"
     uf2.write_bytes(_fake_uf2(b"image"))
 
-    _volume_that_dies(
-        monkeypatch, error=OSError(5, "Input/output error"), after_bytes=0
-    )
-    bench = flashers.Bench(
-        paths=rp_paths, settings=settings, controller=lambda name=None: None
-    )
+    _volume_that_dies(monkeypatch, error=OSError(5, "Input/output error"), after_bytes=0)
+    bench = flashers.Bench(paths=rp_paths, settings=settings, controller=lambda name=None: None)
     target = flashers.bootsel.target_for(str(uf2), chipset="rp2040")
 
     with pytest.raises(FlashError) as exc:
-        flashers.Bootsel().write(
-            bench, None, target, flashers.PlainContext(lambda *a: None)
-        )
+        flashers.Bootsel().write(bench, None, target, flashers.PlainContext(lambda *a: None))
 
     assert exc.value.code == "flash_failed"
     assert "Input/output error" in str(exc.value)
     assert exc.value.data["mount"] == str(vol)
 
 
-def test_a_copy_failure_still_reaches_the_klipper_readiness_gate(
-    paths, settings, tmp_path, monkeypatch
-):
+def test_a_copy_failure_still_reaches_the_klipper_readiness_gate(paths, settings, tmp_path, monkeypatch):
     root, vol = mounted_bootsel_volume(tmp_path)
     rp_paths = dataclasses.replace(paths, bootsel_root=str(root))
     uf2 = tmp_path / "katapult.uf2"
     uf2.write_bytes(_fake_uf2(b"image"))
 
-    _volume_that_dies(
-        monkeypatch, error=OSError(28, "No space left on device"), after_bytes=0
-    )
-    bench = flashers.Bench(
-        paths=rp_paths, settings=settings, controller=lambda name=None: None
-    )
+    _volume_that_dies(monkeypatch, error=OSError(28, "No space left on device"), after_bytes=0)
+    bench = flashers.Bench(paths=rp_paths, settings=settings, controller=lambda name=None: None)
     target = flashers.bootsel.target_for(str(uf2), chipset="rp2040")
     ready: list[object] = []
 
@@ -1484,9 +1439,7 @@ def test_bootsel_dry_run_copies_nothing(paths, settings, tmp_path):
     events: list = []
     bench = flashers.Bench(paths=rp_paths, settings=settings, controller=lambda name=None: None)
     target = flashers.bootsel.target_for(str(uf2), chipset="rp2040")
-    result = flashers.Bootsel().write(
-        bench, None, target, flashers.PlainContext(lambda *a: events.append(a))
-    )
+    result = flashers.Bootsel().write(bench, None, target, flashers.PlainContext(lambda *a: events.append(a)))
 
     assert result == {"mount": None}
     assert not (vol / "katapult.uf2").exists()
@@ -1587,9 +1540,7 @@ def test_bootsel_refuses_more_than_one_mounted_volume(paths, settings, tmp_path,
     assert len(exc.value.data["mounts"]) == 2
 
 
-def test_bootsel_handoff_requests_handoff_then_copies_only_to_matching_mount(
-    paths, settings, tmp_path
-):
+def test_bootsel_handoff_requests_handoff_then_copies_only_to_matching_mount(paths, settings, tmp_path):
     root = tmp_path / "bootsel_root"
     by_path = root / "BOOTSEL" / "by-path"
     matching = by_path / "platform-x_usb-usb-0_1_3_1_0-scsi-0_0_0_0"
@@ -1610,9 +1561,7 @@ def test_bootsel_handoff_requests_handoff_then_copies_only_to_matching_mount(
             calls.append((serial, chipset))
             return BootselHandoff(topology="platform-x.usb-usb-0:1.3:1.0")
 
-    bench = flashers.Bench(
-        paths=rp_paths, settings=settings, controller=lambda name=None: None
-    )
+    bench = flashers.Bench(paths=rp_paths, settings=settings, controller=lambda name=None: None)
     target = flashers.bootsel.target_for(
         str(uf2),
         type_name="roadrunner",
@@ -1622,9 +1571,7 @@ def test_bootsel_handoff_requests_handoff_then_copies_only_to_matching_mount(
         stop_services=("klipper",),
     )
 
-    result = flashers.Bootsel().write(
-        bench, None, target, flashers.PlainContext(lambda *a: None)
-    )
+    result = flashers.Bootsel().write(bench, None, target, flashers.PlainContext(lambda *a: None))
 
     assert calls == [("RR-0123456789ABCDEFGHJKMNPQRS", "rp2040")]
     assert (matching / "roadrunner.uf2").read_bytes() == image
@@ -1658,9 +1605,7 @@ class _ApplyClock:
 
 
 def _real_apply_wait(monkeypatch, leaves=None):
-    monkeypatch.setattr(
-        flashers.bootsel, "_volume_still_mounted", _REAL_VOLUME_STILL_MOUNTED
-    )
+    monkeypatch.setattr(flashers.bootsel, "_volume_still_mounted", _REAL_VOLUME_STILL_MOUNTED)
     clock = _ApplyClock(leaves or {})
     monkeypatch.setattr(flashers.bootsel, "time", clock)
     return clock
@@ -1671,15 +1616,11 @@ def _bootsel_bench_and_target(paths, settings, tmp_path, image=None):
     rp_paths = dataclasses.replace(paths, bootsel_root=str(root))
     uf2 = tmp_path / "katapult.uf2"
     uf2.write_bytes(image if image is not None else _fake_uf2(b"image"))
-    bench = flashers.Bench(
-        paths=rp_paths, settings=settings, controller=lambda name=None: None
-    )
+    bench = flashers.Bench(paths=rp_paths, settings=settings, controller=lambda name=None: None)
     return bench, flashers.bootsel.target_for(str(uf2), chipset="rp2040"), vol
 
 
-def test_a_clean_copy_waits_for_the_board_to_take_the_image(
-    paths, settings, tmp_path, monkeypatch
-):
+def test_a_clean_copy_waits_for_the_board_to_take_the_image(paths, settings, tmp_path, monkeypatch):
     """The copy returning only means the host has the bytes. Whatever waits
     for the board to re-enumerate runs after `write`, so `write` must not
     return until the volume has gone - on the bench that took most of a
@@ -1688,9 +1629,7 @@ def test_a_clean_copy_waits_for_the_board_to_take_the_image(
     clock = _real_apply_wait(monkeypatch, {vol / "INFO_UF2.TXT": 45.0})
     events: list[tuple[str, str]] = []
 
-    result = flashers.Bootsel().write(
-        bench, None, target, flashers.PlainContext(lambda *a: events.append(a))
-    )
+    result = flashers.Bootsel().write(bench, None, target, flashers.PlainContext(lambda *a: events.append(a)))
 
     assert result == {"mount": str(vol)}
     assert clock.now >= 45.0
@@ -1708,29 +1647,20 @@ def test_a_volume_that_never_goes_warns_after_the_full_wait_but_is_still_flashed
     clock = _real_apply_wait(monkeypatch)
     events: list[tuple[str, str]] = []
 
-    result = flashers.write_all(
-        bench, [target], flashers.PlainContext(lambda *a: events.append(a))
-    )
+    result = flashers.write_all(bench, [target], flashers.PlainContext(lambda *a: events.append(a)))
 
     assert len(result["flashed"]) == 1
     assert result["failures"] == []
     assert 60.0 <= clock.now < 61.0
-    assert any(
-        level == "warn" and "still mounted 60s" in text and str(vol) in text
-        for level, text in events
-    )
+    assert any(level == "warn" and "still mounted 60s" in text and str(vol) in text for level, text in events)
 
 
-def test_the_image_is_synced_to_the_volume_before_the_wait(
-    paths, settings, tmp_path, monkeypatch
-):
+def test_the_image_is_synced_to_the_volume_before_the_wait(paths, settings, tmp_path, monkeypatch):
     """Without the `fsync` the image can sit in the page cache for the
     kernel's writeback delay, and the apply wait would be timing that instead
     of the board."""
     image = _fake_uf2(b"every-byte-of-this-image")
-    bench, target, vol = _bootsel_bench_and_target(
-        paths, settings, tmp_path, image=image
-    )
+    bench, target, vol = _bootsel_bench_and_target(paths, settings, tmp_path, image=image)
     clock = _real_apply_wait(monkeypatch, {vol / "INFO_UF2.TXT": 1.0})
     synced: list[tuple[int, float]] = []
     monkeypatch.setattr(
@@ -1739,9 +1669,7 @@ def test_the_image_is_synced_to_the_volume_before_the_wait(
         lambda fd: synced.append((os.fstat(fd).st_size, clock.now)),
     )
 
-    flashers.Bootsel().write(
-        bench, None, target, flashers.PlainContext(lambda *a: None)
-    )
+    flashers.Bootsel().write(bench, None, target, flashers.PlainContext(lambda *a: None))
 
     assert synced == [(len(image), 0.0)]
 
@@ -1761,16 +1689,12 @@ def test_an_fsync_error_after_every_byte_is_judged_by_the_volume_going(
     monkeypatch.setattr(flashers.bootsel.os, "fsync", fsync)
     events: list[tuple[str, str]] = []
 
-    result = flashers.Bootsel().write(
-        bench, None, target, flashers.PlainContext(lambda *a: events.append(a))
-    )
+    result = flashers.Bootsel().write(bench, None, target, flashers.PlainContext(lambda *a: events.append(a)))
 
     assert result == {"mount": str(vol)}
     assert clock.now >= 3.0
     assert not any(level == "warn" for level, _text in events)
-    assert any(
-        level == "info" and "Input/output error" in text for level, text in events
-    )
+    assert any(level == "info" and "Input/output error" in text for level, text in events)
 
 
 def test_a_late_error_with_the_volume_still_there_warns_after_the_short_wait(
@@ -1788,22 +1712,16 @@ def test_a_late_error_with_the_volume_still_there_warns_after_the_short_wait(
     monkeypatch.setattr(flashers.bootsel.os, "fsync", fsync)
     events: list[tuple[str, str]] = []
 
-    flashers.Bootsel().write(
-        bench, None, target, flashers.PlainContext(lambda *a: events.append(a))
-    )
+    flashers.Bootsel().write(bench, None, target, flashers.PlainContext(lambda *a: events.append(a)))
 
     assert 10.0 <= clock.now < 11.0
     assert any(
-        level == "warn"
-        and "still mounted 10s" in text
-        and "Input/output error" in text
+        level == "warn" and "still mounted 10s" in text and "Input/output error" in text
         for level, text in events
     )
 
 
-def test_bootsel_handoff_waits_for_its_own_volume_not_a_bystander(
-    paths, settings, tmp_path, monkeypatch
-):
+def test_bootsel_handoff_waits_for_its_own_volume_not_a_bystander(paths, settings, tmp_path, monkeypatch):
     root = tmp_path / "bootsel_root"
     by_path = root / "BOOTSEL" / "by-path"
     matching = by_path / "platform-x_usb-usb-0_1_3_1_0-scsi-0_0_0_0"
@@ -1835,9 +1753,7 @@ def test_bootsel_handoff_waits_for_its_own_volume_not_a_bystander(
     )
     events: list[tuple[str, str]] = []
 
-    flashers.Bootsel().write(
-        bench, None, target, flashers.PlainContext(lambda *a: events.append(a))
-    )
+    flashers.Bootsel().write(bench, None, target, flashers.PlainContext(lambda *a: events.append(a)))
 
     assert 5.0 <= clock.now < 6.0
     assert not any(level == "warn" for level, _text in events)
@@ -1862,9 +1778,7 @@ def test_bootsel_handoff_targets_require_services_stopped(tmp_path):
     assert flashers.needs_services_stopped(bare) is False
 
 
-def test_bootsel_handoff_waits_for_helper_before_service_restart(
-    paths, settings, tmp_path
-):
+def test_bootsel_handoff_waits_for_helper_before_service_restart(paths, settings, tmp_path):
     root = tmp_path / "bootsel_root"
     by_path = root / "BOOTSEL" / "by-path"
     matching = by_path / "platform-x_usb-usb-0_1_3_1_0-scsi-0_0_0_0"
@@ -1895,9 +1809,7 @@ def test_bootsel_handoff_waits_for_helper_before_service_restart(
             order.append("ready")
 
     service = Service()
-    bench = flashers.Bench(
-        paths=rp_paths, settings=settings, controller=lambda _name=None: service
-    )
+    bench = flashers.Bench(paths=rp_paths, settings=settings, controller=lambda _name=None: service)
     target = flashers.bootsel.target_for(
         str(uf2),
         type_name="roadrunner",
@@ -1907,18 +1819,14 @@ def test_bootsel_handoff_waits_for_helper_before_service_restart(
         stop_services=("klipper",),
     )
 
-    result = flashers.write_all(
-        bench, [target], flashers.PlainContext(lambda *a: None)
-    )
+    result = flashers.write_all(bench, [target], flashers.PlainContext(lambda *a: None))
 
     assert order == ["stop", "request", "ready", "start"]
     assert len(result["flashed"]) == 1
     assert result["failures"] == []
 
 
-def test_a_whole_batch_still_succeeds_when_post_copy_readiness_fails(
-    paths, settings, tmp_path
-):
+def test_a_whole_batch_still_succeeds_when_post_copy_readiness_fails(paths, settings, tmp_path):
     """The end-to-end shape of the ruling: real Bootsel handoff, real write_all,
     a helper whose readiness wait raises. A completed copy is reported as
     flashed, nothing lands in failures, and the operator gets a warning."""
@@ -1945,9 +1853,7 @@ def test_a_whole_batch_still_succeeds_when_post_copy_readiness_fails(
             )
 
     events: list[tuple[str, str]] = []
-    bench = flashers.Bench(
-        paths=rp_paths, settings=settings, controller=lambda _name=None: NullService()
-    )
+    bench = flashers.Bench(paths=rp_paths, settings=settings, controller=lambda _name=None: NullService())
     target = flashers.bootsel.target_for(
         str(uf2),
         type_name="roadrunner",
@@ -1969,9 +1875,7 @@ def test_a_whole_batch_still_succeeds_when_post_copy_readiness_fails(
     assert ("warn", "More than one Roadrunner matched that serial") in events
 
 
-def test_bootsel_handoff_settled_warns_when_helper_readiness_times_out(
-    paths, settings
-):
+def test_bootsel_handoff_settled_warns_when_helper_readiness_times_out(paths, settings):
     class Helper:
         name = "test"
 
@@ -1989,9 +1893,7 @@ def test_bootsel_handoff_settled_warns_when_helper_readiness_times_out(
         helper=Helper(),
     )
     events: list[tuple[str, str]] = []
-    bench = flashers.Bench(
-        paths=paths, settings=settings, controller=lambda _name=None: None
-    )
+    bench = flashers.Bench(paths=paths, settings=settings, controller=lambda _name=None: None)
 
     flashers.Bootsel().settled(
         bench,
@@ -2010,9 +1912,7 @@ def test_bootsel_handoff_settled_warns_when_helper_readiness_times_out(
         FlashError("could not read serial by-path topology"),
     ],
 )
-def test_bootsel_handoff_settled_warns_on_non_timeout_roadrunner_errors(
-    paths, settings, error
-):
+def test_bootsel_handoff_settled_warns_on_non_timeout_roadrunner_errors(paths, settings, error):
     """The UF2 is already on the board by the time `settled` runs.
 
     The spec's error list is entirely pre-copy or at-copy; there is no
@@ -2038,13 +1938,9 @@ def test_bootsel_handoff_settled_warns_on_non_timeout_roadrunner_errors(
         helper=Helper(),
     )
     events: list[tuple[str, str]] = []
-    bench = flashers.Bench(
-        paths=paths, settings=settings, controller=lambda _name=None: None
-    )
+    bench = flashers.Bench(paths=paths, settings=settings, controller=lambda _name=None: None)
 
-    flashers.Bootsel().settled(
-        bench, target, flashers.PlainContext(lambda *event: events.append(event))
-    )
+    flashers.Bootsel().settled(bench, target, flashers.PlainContext(lambda *event: events.append(event)))
 
     assert events == [("warn", str(error))]
 
@@ -2068,19 +1964,13 @@ def test_bootsel_handoff_settled_still_honours_cancellation(paths, settings):
         chipset="rp2040",
         helper=Helper(),
     )
-    bench = flashers.Bench(
-        paths=paths, settings=settings, controller=lambda _name=None: None
-    )
+    bench = flashers.Bench(paths=paths, settings=settings, controller=lambda _name=None: None)
 
     with pytest.raises(OperationCancelled):
-        flashers.Bootsel().settled(
-            bench, target, flashers.PlainContext(lambda *a: None)
-        )
+        flashers.Bootsel().settled(bench, target, flashers.PlainContext(lambda *a: None))
 
 
-def test_a_failed_settle_is_never_counted_as_both_flashed_and_failed(
-    paths, settings, tmp_path, monkeypatch
-):
+def test_a_failed_settle_is_never_counted_as_both_flashed_and_failed(paths, settings, tmp_path, monkeypatch):
     """M1: a target appended to `flashed` must not also appear in `failures`.
 
     A consumer that sums both - as the panel's counts do - would report two
@@ -2109,18 +1999,12 @@ def test_a_failed_settle_is_never_counted_as_both_flashed_and_failed(
         def settled(self, bench, target, ctx):
             raise FlashError("the board came back slowly")
 
-    target = flashers.FlashTarget(
-        flasher="late", type="rp2040", id="board-1", detail={"uf2_file": str(uf2)}
-    )
-    bench = flashers.Bench(
-        paths=paths, settings=settings, controller=lambda _name=None: None
-    )
+    target = flashers.FlashTarget(flasher="late", type="rp2040", id="board-1", detail={"uf2_file": str(uf2)})
+    bench = flashers.Bench(paths=paths, settings=settings, controller=lambda _name=None: None)
     events: list[tuple[str, str]] = []
 
     monkeypatch.setitem(flasher_registry._BY_NAME, "late", Late())
-    result = flashers.write_all(
-        bench, [target], flashers.PlainContext(lambda *event: events.append(event))
-    )
+    result = flashers.write_all(bench, [target], flashers.PlainContext(lambda *event: events.append(event)))
 
     assert len(result["flashed"]) == 1
     assert result["failures"] == []
@@ -2147,20 +2031,14 @@ def test_bootsel_handoff_settled_skips_helper_readiness_in_dry_run(paths, settin
         chipset="rp2040",
         helper=Helper(),
     )
-    bench = flashers.Bench(
-        paths=paths, settings=settings, controller=lambda _name=None: None
-    )
+    bench = flashers.Bench(paths=paths, settings=settings, controller=lambda _name=None: None)
 
-    flashers.Bootsel().settled(
-        bench, target, flashers.PlainContext(lambda *a: None)
-    )
+    flashers.Bootsel().settled(bench, target, flashers.PlainContext(lambda *a: None))
 
     assert waits == []
 
 
-def test_bootsel_handoff_dry_run_does_not_request_or_copy(
-    paths, settings, tmp_path
-):
+def test_bootsel_handoff_dry_run_does_not_request_or_copy(paths, settings, tmp_path):
     settings.dry_run = True
     uf2 = tmp_path / "roadrunner.uf2"
     uf2.write_bytes(_fake_uf2(b"road-runner"))
@@ -2181,9 +2059,7 @@ def test_bootsel_handoff_dry_run_does_not_request_or_copy(
         helper=Helper(),
     )
     events: list[tuple[str, str]] = []
-    bench = flashers.Bench(
-        paths=paths, settings=settings, controller=lambda name=None: None
-    )
+    bench = flashers.Bench(paths=paths, settings=settings, controller=lambda name=None: None)
 
     result = flashers.Bootsel().write(
         bench, None, target, flashers.PlainContext(lambda *event: events.append(event))
@@ -2194,9 +2070,7 @@ def test_bootsel_handoff_dry_run_does_not_request_or_copy(
     assert any("dry-run" in line for _level, line in events)
 
 
-def test_bootsel_handoff_refuses_a_missing_uf2_before_requesting_bootsel(
-    paths, settings, tmp_path
-):
+def test_bootsel_handoff_refuses_a_missing_uf2_before_requesting_bootsel(paths, settings, tmp_path):
     requested: list[object] = []
 
     class Helper:
@@ -2213,14 +2087,10 @@ def test_bootsel_handoff_refuses_a_missing_uf2_before_requesting_bootsel(
         chipset="rp2040",
         helper=Helper(),
     )
-    bench = flashers.Bench(
-        paths=paths, settings=settings, controller=lambda name=None: None
-    )
+    bench = flashers.Bench(paths=paths, settings=settings, controller=lambda name=None: None)
 
     with pytest.raises(FlashError, match="firmware image not found"):
-        flashers.Bootsel().write(
-            bench, None, target, flashers.PlainContext(lambda *a: None)
-        )
+        flashers.Bootsel().write(bench, None, target, flashers.PlainContext(lambda *a: None))
 
     assert requested == []
 
@@ -2286,15 +2156,17 @@ def test_a_single_board_is_therefore_flashable(paths, ready, monkeypatch):
 
 def test_two_real_boards_are_still_refused(monkeypatch):
     """Dedup must not go so far as to merge genuinely distinct boards."""
-    second = _REAL_ONE_BOARD.replace('devnum=51', 'devnum=52').replace(
-        'path="6-1.6.6.1.3"', 'path="6-1.6.6.1.4"'
-    ).replace('serial="3941335F3434"', 'serial="OTHERSERIAL1"')
+    second = (
+        _REAL_ONE_BOARD.replace("devnum=51", "devnum=52")
+        .replace('path="6-1.6.6.1.3"', 'path="6-1.6.6.1.4"')
+        .replace('serial="3941335F3434"', 'serial="OTHERSERIAL1"')
+    )
     _fake_dfu_util(monkeypatch, _REAL_ONE_BOARD + second)
     assert len(flash_mod.list_dfu_devices()) == 2
 
 
 def test_permission_denied_is_not_reported_as_no_device(monkeypatch):
-    """"Hold BOOT0 and replug" is the worst possible advice here - the jumper was
+    """ "Hold BOOT0 and replug" is the worst possible advice here - the jumper was
     already right and nothing the user does at the board will help."""
     from mcu_updater.errors import DfuPermissionError
 
@@ -2378,9 +2250,7 @@ def test_a_real_dfu_failure_still_raises(paths, ready, monkeypatch):
         flash_dfu_stm32(paths, ready, str(paths.bin_file("board", "klipper")))
 
 
-def test_a_download_that_succeeds_then_fails_unrecognisably_still_raises(
-    paths, ready, monkeypatch
-):
+def test_a_download_that_succeeds_then_fails_unrecognisably_still_raises(paths, ready, monkeypatch):
     """Being permissive only for the known leave artifact: an unfamiliar error
     after a good download is not something to wave through."""
     _fake_dfu_util(monkeypatch, _REAL_ONE_BOARD)

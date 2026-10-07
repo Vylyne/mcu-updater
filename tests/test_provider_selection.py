@@ -85,9 +85,7 @@ def test_resolves_a_platformio_display(paths, live_registry_text):
     _seed_registry(paths, live_registry_text)
     _declare_display(paths)
 
-    assert (
-        providers.provider_of(paths, "knomi_toolchanger") == providers.PlatformIO.name
-    )
+    assert providers.provider_of(paths, "knomi_toolchanger") == providers.PlatformIO.name
 
 
 def test_unknown_name_raises_rather_than_defaulting(paths, live_registry_text):
@@ -120,9 +118,7 @@ def test_cmake_is_asked_before_the_registry(paths, live_registry_text, monkeypat
     silently. This fails instead.
     """
     _seed_registry(paths, live_registry_text)
-    monkeypatch.setattr(
-        selection, "_declared_builders", lambda _p: {"bttebb36": "cmake"}
-    )
+    monkeypatch.setattr(selection, "_declared_builders", lambda _p: {"bttebb36": "cmake"})
 
     assert providers.provider_of(paths, "bttebb36") == providers.Cmake.name
 
@@ -130,9 +126,7 @@ def test_cmake_is_asked_before_the_registry(paths, live_registry_text, monkeypat
 def test_platformio_is_asked_before_both(paths, live_registry_text, monkeypatch):
     """The same forced collision, one rung higher."""
     _seed_registry(paths, live_registry_text)
-    monkeypatch.setattr(
-        selection, "_declared_builders", lambda _p: {"bttebb36": "platformio"}
-    )
+    monkeypatch.setattr(selection, "_declared_builders", lambda _p: {"bttebb36": "platformio"})
 
     assert providers.provider_of(paths, "bttebb36") == providers.PlatformIO.name
 
@@ -150,9 +144,7 @@ def test_known_names_span_every_provider(paths, fake_root, live_registry_text):
     assert known == sorted(set(known))
 
 
-def test_resolution_reflects_a_type_added_after_first_call(
-    paths, fake_root, live_registry_text
-):
+def test_resolution_reflects_a_type_added_after_first_call(paths, fake_root, live_registry_text):
     """No caching: `fw.type.add` has to work without restarting the agent."""
     _seed_registry(paths, live_registry_text)
 
@@ -162,9 +154,9 @@ def test_resolution_reflects_a_type_added_after_first_call(
     _declare_cmake(paths, fake_root)
 
     assert providers.provider_of(paths, "roadrunner") == providers.Cmake.name
-def test_a_malformed_foreign_section_does_not_break_resolution(
-    paths, fake_root, live_registry_text
-):
+
+
+def test_a_malformed_foreign_section_does_not_break_resolution(paths, fake_root, live_registry_text):
     """Selection answers "whose is this name", not "is this config good".
 
     `cmake.load()` raises for a cmake type that names no `cmake_target:`, and

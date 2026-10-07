@@ -88,9 +88,7 @@ def dfu_devices(*, reporter: Reporter = null_reporter) -> list[dict[str, str | N
     identity it has until it re-enumerates as Katapult.
     """
     try:
-        res = subprocess.run(
-            ["dfu-util", "-l"], capture_output=True, text=True, timeout=20
-        )
+        res = subprocess.run(["dfu-util", "-l"], capture_output=True, text=True, timeout=20)
     except FileNotFoundError as exc:
         raise ToolMissingError(
             "dfu-util is not installed. Try: sudo apt install dfu-util", tool="dfu-util"

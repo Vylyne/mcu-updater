@@ -35,9 +35,7 @@ class _Fake:
     needs_services_stopped = False
     accepts: tuple[str, ...] = ("bin",)
 
-    def __init__(
-        self, record=None, *, fails=(), record_fails=(), settled_raises=False, extra=None
-    ):
+    def __init__(self, record=None, *, fails=(), record_fails=(), settled_raises=False, extra=None):
         self.record_value = record
         self.fails = set(fails)
         self.record_fails = set(record_fails)
@@ -50,8 +48,11 @@ class _Fake:
 
     def target(self, paths, device, helper, artifact, *, stop_services):
         return flashers.FlashTarget(
-            flasher=self.name, type=device.type, id=device.id,
-            stop_services=stop_services, artifact=artifact,
+            flasher=self.name,
+            type=device.type,
+            id=device.id,
+            stop_services=stop_services,
+            artifact=artifact,
         )
 
     def prepared(self, bench, targets, ctx):
@@ -89,9 +90,7 @@ RECORD = flashers.FlashRecord(
 
 @pytest.fixture
 def bench(paths, settings):
-    return flashers.Bench(
-        paths=paths, settings=settings, controller=lambda name=None: None
-    )
+    return flashers.Bench(paths=paths, settings=settings, controller=lambda name=None: None)
 
 
 def _target(flasher, id: str) -> flashers.FlashTarget:
@@ -100,9 +99,7 @@ def _target(flasher, id: str) -> flashers.FlashTarget:
 
 def _run(bench, flasher, targets, monkeypatch) -> dict:
     monkeypatch.setitem(flashers.registry._BY_NAME, flasher.name, flasher)
-    return flashers.write_all(
-        bench, targets, flashers.PlainContext(lambda *a: None)
-    )
+    return flashers.write_all(bench, targets, flashers.PlainContext(lambda *a: None))
 
 
 def test_the_loop_writes_the_record_a_flasher_describes(bench, monkeypatch):
@@ -141,9 +138,7 @@ def test_a_flasher_with_nothing_to_file_records_nothing(bench, monkeypatch):
     assert FlashLog(bench.paths).all() == {}
 
 
-def test_confidence_rides_the_write_result_and_leaves_the_wire_alone(
-    bench, monkeypatch
-):
+def test_confidence_rides_the_write_result_and_leaves_the_wire_alone(bench, monkeypatch):
     """How the board was identified is known inside the write and nowhere else,
     so it comes back with the result - and comes straight back off it again.
     `flashed[]` is on the wire; the ledger is not."""
@@ -151,9 +146,7 @@ def test_confidence_rides_the_write_result_and_leaves_the_wire_alone(
 
     result = _run(bench, flasher, [_target(flasher, "S1")], monkeypatch)
 
-    assert result["flashed"] == [
-        {"type": "ebb36", "id": "S1", "flasher": "fake", "serial": "S1"}
-    ]
+    assert result["flashed"] == [{"type": "ebb36", "id": "S1", "flasher": "fake", "serial": "S1"}]
     assert FlashLog(bench.paths).all()["S1"]["confidence"] == "unique_bus_id"
 
 
@@ -163,9 +156,7 @@ def test_a_written_board_is_recorded_before_a_later_device_fails(bench, monkeypa
     image to the same board again."""
     flasher = _Fake(RECORD, fails={"S2"})
 
-    result = _run(
-        bench, flasher, [_target(flasher, "S1"), _target(flasher, "S2")], monkeypatch
-    )
+    result = _run(bench, flasher, [_target(flasher, "S1"), _target(flasher, "S2")], monkeypatch)
 
     assert [f["id"] for f in result["failures"]] == ["S2"]
     assert sorted(FlashLog(bench.paths).all()) == ["S1"]
@@ -192,9 +183,7 @@ def test_nothing_after_the_copy_can_lose_its_record(bench, monkeypatch):
             bench,
             [_target(flasher, "S1")],
             flashers.PlainContext(lambda *a: None),
-            on_ready=lambda reporter: (_ for _ in ()).throw(
-                UpdaterError("readiness failed")
-            ),
+            on_ready=lambda reporter: (_ for _ in ()).throw(UpdaterError("readiness failed")),
         )
 
     assert "S1" in FlashLog(bench.paths).all()
@@ -216,8 +205,7 @@ def test_a_record_failure_does_not_abort_the_batch(bench, monkeypatch):
     assert reports == [
         (
             "warn",
-            "S1: flashed, but its ledger record could not be filed: "
-            "the ledger entry could not be built",
+            "S1: flashed, but its ledger record could not be filed: the ledger entry could not be built",
         )
     ]
     assert sorted(FlashLog(bench.paths).all()) == ["S2"]
@@ -272,9 +260,7 @@ def test_the_record_describes_the_bytes_staged_when_it_is_filed(bench, paths):
     target = flashers.select(
         paths,
         firmware.resolve(paths, "klipper"),
-        flashers.Device(
-            type="ebb36", id="S1", chipset="stm32g0b1xx", state=STATE_KLIPPER, fw="klipper"
-        ),
+        flashers.Device(type="ebb36", id="S1", chipset="stm32g0b1xx", state=STATE_KLIPPER, fw="klipper"),
         None,
         stop_services=("klipper",),
     )
@@ -449,4 +435,3 @@ def test_a_hardware_id_files_under_its_own_prefix():
     from mcu_updater.build import hardware_id_key
 
     assert hardware_id_key("AAA111") == "hwid:aaa111"
-

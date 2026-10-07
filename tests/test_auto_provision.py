@@ -82,9 +82,7 @@ class _TrackableOnly:
         return helpers.TrackVerdict(ok=False, remedy="provision")
 
 
-def _family(
-    paths, *, auto: str, name: str = "roadrunner", helper: str = "roadrunner"
-) -> None:
+def _family(paths, *, auto: str, name: str = "roadrunner", helper: str = "roadrunner") -> None:
     with open(paths.main_config, "a", encoding="utf-8") as fh:
         fh.write(
             f"\n[firmware {name}]\n"
@@ -113,12 +111,7 @@ def test_a_family_that_did_not_ask_provisions_nothing(paths, rr):
 
     _family(paths, auto="")
 
-    assert (
-        provisioning.auto_provision(
-            paths, _sweep(UNPROVISIONED), may_provision=True
-        )
-        is False
-    )
+    assert provisioning.auto_provision(paths, _sweep(UNPROVISIONED), may_provision=True) is False
     assert rr.calls == []
 
 
@@ -158,9 +151,7 @@ def test_a_verdict_with_an_unknown_remedy_is_not_actionable(paths, monkeypatch):
     monkeypatch.setitem(helpers_registry._BY_NAME, "roadrunner", helper)
     _family(paths, auto="auto_provision: true\n")
 
-    provisioning.auto_provision(
-        paths, _sweep(UNPROVISIONED), may_provision=True
-    )
+    provisioning.auto_provision(paths, _sweep(UNPROVISIONED), may_provision=True)
 
     assert helper.calls == []
 
@@ -172,9 +163,7 @@ def test_auto_provision_requires_both_helper_capabilities(paths, monkeypatch, he
     monkeypatch.setitem(helpers_registry._BY_NAME, "roadrunner", helper)
     _family(paths, auto="auto_provision: true\n")
 
-    provisioning.auto_provision(
-        paths, _sweep(UNPROVISIONED), may_provision=True
-    )
+    provisioning.auto_provision(paths, _sweep(UNPROVISIONED), may_provision=True)
 
     assert getattr(helper, "calls", []) == []
 
@@ -189,17 +178,13 @@ def test_a_held_lock_is_skipped_and_asked_for_again(paths, rr, monkeypatch):
     monkeypatch.setattr(lock, "exclusive", _busy)
     _family(paths, auto="auto_provision: true\n")
 
-    retry = provisioning.auto_provision(
-        paths, _sweep(UNPROVISIONED), may_provision=True
-    )
+    retry = provisioning.auto_provision(paths, _sweep(UNPROVISIONED), may_provision=True)
 
     assert retry is True
     assert rr.calls == []
 
 
-def test_a_board_that_refuses_its_probe_is_reported_and_not_retried(
-    paths, monkeypatch
-):
+def test_a_board_that_refuses_its_probe_is_reported_and_not_retried(paths, monkeypatch):
     from mcu_updater import provisioning
 
     helper = _FakeRoadrunner(error=RoadrunnerError("INFO did not confirm the device"))
@@ -223,9 +208,7 @@ def test_one_board_is_provisioned_exactly_once(paths, rr):
 
     _family(paths, auto="auto_provision: true\n")
 
-    provisioning.auto_provision(
-        paths, _sweep(UNPROVISIONED), may_provision=True
-    )
+    provisioning.auto_provision(paths, _sweep(UNPROVISIONED), may_provision=True)
     provisioning.auto_provision(paths, _sweep(PROVISIONED), may_provision=True)
 
     assert rr.calls == [UNPROVISIONED]
@@ -242,9 +225,7 @@ def test_one_sweep_provisions_a_shared_helper_serial_once(paths, rr):
     assert rr.calls == [UNPROVISIONED]
 
 
-def test_one_sweep_provisions_a_serial_claimed_by_different_helpers_once(
-    paths, rr, monkeypatch
-):
+def test_one_sweep_provisions_a_serial_claimed_by_different_helpers_once(paths, rr, monkeypatch):
     from mcu_updater import provisioning
 
     other = _FakeRoadrunner()
@@ -322,8 +303,7 @@ def test_the_provisioning_helper_list_matches_both_capabilities():
     assert set(firmware.PROVISIONING_HELPERS) == {
         helper.name
         for helper in HELPERS
-        if helpers.provisioner(helper) is not None
-        and helpers.trackable(helper) is not None
+        if helpers.provisioner(helper) is not None and helpers.trackable(helper) is not None
     }
 
 
@@ -349,9 +329,7 @@ def _watcher(paths, monkeypatch, found, handler=None):
     from mcu_updater.agent.events import BusWatcher
 
     monkeypatch.setattr("mcu_updater.devices.scan", lambda p: found)
-    return BusWatcher(
-        paths, _Emitter(), serialize=lambda devices: [], on_change=handler
-    )
+    return BusWatcher(paths, _Emitter(), serialize=lambda devices: [], on_change=handler)
 
 
 def test_the_watcher_hands_the_handler_the_sweep_it_found(paths, monkeypatch):
@@ -364,14 +342,10 @@ def test_the_watcher_hands_the_handler_the_sweep_it_found(paths, monkeypatch):
 
     watcher._poll()
 
-    assert [sorted(sweep) for sweep in seen] == [
-        sorted(device.serial for device in found)
-    ]
+    assert [sorted(sweep) for sweep in seen] == [sorted(device.serial for device in found)]
 
 
-def test_a_handler_asking_for_a_retry_runs_again_on_an_unchanged_bus(
-    paths, monkeypatch
-):
+def test_a_handler_asking_for_a_retry_runs_again_on_an_unchanged_bus(paths, monkeypatch):
     calls: list[dict] = []
 
     def handler(devices):
@@ -387,9 +361,7 @@ def test_a_handler_asking_for_a_retry_runs_again_on_an_unchanged_bus(
     assert len(calls) == 2, "asked again once, then left alone"
 
 
-def test_an_unchanged_bus_emits_nothing_even_when_the_handler_reran(
-    paths, monkeypatch
-):
+def test_an_unchanged_bus_emits_nothing_even_when_the_handler_reran(paths, monkeypatch):
     watcher = _watcher(paths, monkeypatch, [_Dev("S1")], lambda devices: True)
 
     watcher._poll()

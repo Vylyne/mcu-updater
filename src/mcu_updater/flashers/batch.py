@@ -149,8 +149,7 @@ def write_all(
                     except UpdaterError as exc:
                         ctx.reporter(
                             "warn",
-                            f"{target.id}: flashed, but its ledger record could not "
-                            f"be filed: {exc}",
+                            f"{target.id}: flashed, but its ledger record could not be filed: {exc}",
                         )
                     flashed.append({**target.to_json(), **extra})
                     # After the write and after it is recorded: a device that

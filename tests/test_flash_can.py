@@ -122,9 +122,7 @@ def test_succeeds_on_the_second_interface_after_the_first_times_out(paths, ready
     calls = _script_run_streamed(monkeypatch, {("can1", "write"): (0, [])})
 
     events: list[tuple[str, str]] = []
-    flash_katapult_can(
-        ready_paths, ready, "board", UUID, reporter=lambda s, line: events.append((s, line))
-    )
+    flash_katapult_can(ready_paths, ready, "board", UUID, reporter=lambda s, line: events.append((s, line)))
 
     interfaces_tried = [c[c.index("-i") + 1] for c in calls]
     assert interfaces_tried == ["can0", "can1"]
@@ -152,9 +150,7 @@ def test_uses_dash_i_dash_u_instead_of_dash_d(paths, ready, fake_root, monkeypat
     assert calls[0][calls[0].index("-u") + 1] == UUID
 
 
-def test_a_configured_interface_is_used_without_trying_other_buses(
-    paths, ready, fake_root, monkeypatch
-):
+def test_a_configured_interface_is_used_without_trying_other_buses(paths, ready, fake_root, monkeypatch):
     """A printer.cfg mapping is authoritative for this write, so a failed
     configured bus must not fall through and flash the same UUID elsewhere."""
     ready_paths = _with_interfaces(paths, fake_root, ["can0", "can1"])
@@ -174,9 +170,7 @@ def test_a_configured_interface_is_used_without_trying_other_buses(
 def test_native_node_probe_mismatch_refuses_before_writing(paths, ready, fake_root, monkeypatch):
     ready_paths = _with_interfaces(paths, fake_root, ["can0"])
     _write_sidecar(paths, "board", "klipper", app_address=0x08004000)
-    calls = _script_run_streamed(
-        monkeypatch, {("can0", "probe"): (0, ["Application Start: 0x8000"])}
-    )
+    calls = _script_run_streamed(monkeypatch, {("can0", "probe"): (0, ["Application Start: 0x8000"])})
 
     with pytest.raises(OffsetMismatchError) as exc:
         flash_katapult_can(ready_paths, ready, "board", UUID)
@@ -187,9 +181,7 @@ def test_native_node_probe_mismatch_refuses_before_writing(paths, ready, fake_ro
     assert "-s" in calls[0]
 
 
-def test_a_native_node_refusal_says_the_probe_left_it_in_katapult(
-    paths, ready, fake_root, monkeypatch
-):
+def test_a_native_node_refusal_says_the_probe_left_it_in_katapult(paths, ready, fake_root, monkeypatch):
     """The path bug the USB side had is CAN-proof - `-i <iface> -u <uuid>`
     addresses the board either way - but the *reboot* is not: `-s` shares
     `-f`'s handshake and has no finish step, so refusing here leaves a native
@@ -224,9 +216,7 @@ def test_native_node_agreeing_addresses_proceed_to_write(paths, ready, fake_root
     )
 
     events: list[tuple[str, str]] = []
-    flash_katapult_can(
-        ready_paths, ready, "board", UUID, reporter=lambda s, line: events.append((s, line))
-    )
+    flash_katapult_can(ready_paths, ready, "board", UUID, reporter=lambda s, line: events.append((s, line)))
 
     assert not [line for stream, line in events if stream in ("error", "warn")]
     assert len(calls) == 2  # probe, then the write - same interface both times
@@ -330,9 +320,7 @@ def test_an_unanswered_probe_falls_through_to_the_write_loop(paths, ready, fake_
     assert all("-s" not in calls[i] for i in (2, 3))
 
 
-def test_a_known_native_node_never_writes_after_every_probe_fails(
-    paths, ready, fake_root, monkeypatch
-):
+def test_a_known_native_node_never_writes_after_every_probe_fails(paths, ready, fake_root, monkeypatch):
     ready_paths = _with_interfaces(paths, fake_root, ["can0", "can1"])
     _write_sidecar(paths, "board", "klipper", app_address=0x08004000)
     calls = _script_run_streamed(monkeypatch, {("can1", "write"): (0, [])})
@@ -381,9 +369,7 @@ def test_flashtool_writes_a_can_target_and_returns_its_uuid(paths, ready, fake_r
         {"type": "board", "uuid": UUID, "chipset": "stm32g431xx", "fw": "klipper"},
         artifact=Artifact(KIND_BIN, paths.bin_file("board", "klipper")),
     )
-    result = flashers.Flashtool().write(
-        bench, None, target, flashers.PlainContext(lambda *a: None)
-    )
+    result = flashers.Flashtool().write(bench, None, target, flashers.PlainContext(lambda *a: None))
     assert result == {"uuid": UUID, "confidence": "canbus_uuid"}
 
 

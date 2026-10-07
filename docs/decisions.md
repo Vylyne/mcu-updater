@@ -633,10 +633,12 @@ branch in a caller, it works, and moving it onto `pick` is a wire change with
 nothing to show for it.
 
 A PlatformIO first install ends by *saying* which port and id to put in
-`printer.cfg`, and stops there. mcu-updater reads `printer.cfg` and never
-writes it: that file is the user's and Klipper's, and a tool that holds the
-flash lock is not also the thing that edits the config Klipper boots from. Do
-not add "adopt it for me" to close the loop.
+`printer.cfg`, and stops there. Building, flashing and setting a device up
+read `printer.cfg` and never write it: that file is the user's and Klipper's,
+and the day-to-day tool that holds the flash lock is not also the thing that
+edits the config Klipper boots from. Do not add "adopt it for me" to close the
+loop. (`install.sh` is a different question - a one-time, interactive setup
+step may yet offer to; nothing in the agent or the CLI's operations does.)
 
 ### One selection per identity, every builder
 

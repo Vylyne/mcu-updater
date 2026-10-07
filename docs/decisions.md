@@ -172,10 +172,9 @@ So, going forward:
   in config on the `[firmware ...]` family, reached through `helpers/spec.py`.
 
 This is a rule about *new* code. Migrating what already exists - Cartographer's
-version handling in particular - needs its own design and plan; see the
-`## TODO` entry in [README.md](../README.md). The seam answers a narrower
-question today than discovery and version reporting need, so it likely has to
-widen before anything moves.
+version handling in particular - needs its own design and plan. The seam
+answers a narrower question today than discovery and version reporting need,
+so it likely has to widen before anything moves.
 
 ### Auto-provisioning is opt in, watcher-inline, and deployment-gated
 
@@ -276,7 +275,7 @@ old spelling is refused with the new one named, never read under both.
 
 ### Do not spell the stop-list key `managed_services:`
 
-`docs/backlog.md` sketched `managed_services:`, borrowed from Moonraker's
+The backlog once sketched `managed_services:`, borrowed from Moonraker's
 `[update_manager] managed_services:` next door in the same file. Rejected when
 the list actually landed, for two reasons.
 

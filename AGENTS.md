@@ -15,9 +15,11 @@ proposing anything it covers**, and before undoing something that looks
 half-finished. The ground-rules table below is what to check *before every
 commit*; that file is what to check *before starting work*.
 
-`docs/backlog.md` exists — unscheduled work and upstream issues. **Do not read
-it unless I name it.** It is deliberately outside default context; nothing in it
-is live.
+Open work is tracked in [GitHub issues](https://github.com/Vylyne/mcu-updater/issues)
+— README's `## TODO` only points there, and `docs/backlog.md` is gone. **Do not
+list or read issues unless I name one or ask.** They are deliberately outside
+default context; an issue is not live until it is picked up. A change that
+resolves an issue says so in its PR (`Closes #N`).
 
 ## Ground rules
 

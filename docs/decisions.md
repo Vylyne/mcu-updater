@@ -523,10 +523,11 @@ save stops on it. It used to load, and a batch wrote that board once per type.
 - **Serials and uuids are compared within their own key.** They are separate
   identities (see `canbus_uuids`); the same text under each is two devices.
   Compared as written, the way every other lookup matches them.
-- **The lenient half still sees the duplicate.** `typelist.read` and the scans
-  built on it never raise, so `name_tracked` keeps its "two owners names
-  neither" rule: it is what a candidate scan does with a file the strict load
-  is refusing.
+- **The lenient half still sees the duplicate.** `typelist.read` never raises,
+  so a scan built on it (`fw.bootsel.scan`) still answers on a file the strict
+  load is refusing, and `name_tracked` names no owner for that device. That
+  rule is not only for broken files: two different serials can derive to one
+  DFU serial in a config that is valid.
 
 ### The batch loop is the only writer of the flash ledger
 

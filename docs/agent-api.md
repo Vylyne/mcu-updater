@@ -136,12 +136,13 @@ kind, present only when that kind has a duplicate:
 ```
 
 `fw.serial.add` and `fw.canbus.add` already refuse an identifier another type
-holds, so only an edit by hand produces this. `fw.status` and every build and
-flash method refuse with it until the file is fixed; no write will save such a
-config either. The candidate scans read the file leniently and still answer,
-naming no owner for that device. `ambiguous_serial` and `ambiguous_uuid` stay
-in the list above, but a caller no longer sees them: the config is refused
-before a serial is resolved.
+holds, so only an edit by hand produces this. Anything that loads the type
+list strictly refuses with it until the file is fixed - `fw.status`, `fw.flash`,
+`fw.build_all`, `fw.flash_all`, `fw.update_all` and `fw.canbus.scan` among
+them - and no write will save such a config. `fw.bootsel.scan` reads the file
+leniently and still answers, naming no owner for that device.
+`ambiguous_serial` and `ambiguous_uuid` stay in the list above, but a caller
+no longer sees them: the config is refused before a serial is resolved.
 
 JSON-RPC codes: `-32601` unknown method, `-32602` bad params, `-32000`
 application error (see `data.code`), `-32603` internal.

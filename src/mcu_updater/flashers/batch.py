@@ -98,7 +98,7 @@ def refuse_shared(targets: Sequence[FlashTarget]) -> tuple[list[FlashTarget], li
                 "error": (
                     f"this is the same device as {named}: each resolves to {target.resolved_path}. "
                     f"Writing each entry would leave it with whichever image came last, "
-                    f"so none of them is written. Remove all but one from the config."
+                    f"so none of them is written. Change the config so only one entry names this device."
                 ),
             }
         )

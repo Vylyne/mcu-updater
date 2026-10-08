@@ -1223,7 +1223,7 @@ and writing each would leave the device with whichever image came last:
 
 ```json
 {"type": "bttebb36", "id": "2900...", "flasher": "flashtool",
- "error": "this is the same device as /dev/ttyACM8 (knomi_toolchanger): each resolves to /dev/ttyACM8. Writing each entry would leave it with whichever image came last, so none of them is written. Remove all but one from the config."}
+ "error": "this is the same device as /dev/ttyACM8 (knomi_toolchanger): each resolves to /dev/ttyACM8. Writing each entry would leave it with whichever image came last, so none of them is written. Change the config so only one entry names this device."}
 {"type": "knomi_toolchanger", "id": "/dev/ttyACM8", "flasher": "platformio",
  "error": "this is the same device as 2900... (bttebb36): each resolves to /dev/ttyACM8. ..."}
 ```

@@ -488,9 +488,13 @@ An entry is its `(type, id)`: the same one listed twice is a repeat, not a
 conflict, and is left alone.
 
 What it does not cover: a CAN board has no node, so two types claiming one uuid
-are not caught here. A single-device `fw.flash` has nothing to collide with and
-writes the entry it was given. And `fw.status` does not flag the conflict - the
-panel shows both rows as writable until a batch refuses them.
+are not caught here. An `fw.flash` that names one device has nothing to collide
+with and writes the entry it was given - but `fw.flash` on a whole PlatformIO
+type is a batch of that type's devices, and refuses like any other. The
+`platformio` flasher asks its devices where they are again once the ports are
+free, so what is compared is where each was listed, not where the write lands.
+And `fw.status` does not flag the conflict - the panel shows both rows as
+writable until a batch refuses them.
 
 ### The batch loop is the only writer of the flash ledger
 

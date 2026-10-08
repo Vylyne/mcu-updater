@@ -31,6 +31,9 @@ def _board_request(board: dict) -> tuple[flashers.Device, tuple[str, ...]]:
     returns it) and flashtool's target is built from it. Branches on which
     identity key the dict carries, `uuid` or `serial`, since the two selections
     never overlap for one board.
+
+    `path` is where the selection found the board, for the batch's one-device
+    check. A CAN board has no node and carries none.
     """
     can = "uuid" in board
     return (
@@ -42,6 +45,7 @@ def _board_request(board: dict) -> tuple[flashers.Device, tuple[str, ...]]:
             fw=board["fw"],
             kind=flashers.KIND_CANBUS if can else flashers.KIND_SERIAL,
             detail=board,
+            path=board.get("path"),
         ),
         tuple(board.get("stop_services") or ()),
     )
@@ -139,7 +143,7 @@ class BulkMixin(_Base):
             # disagree with the row the panel painted.
             built_version = sidecar.get("version")
             for serial in mcu.serials:
-                state, _ = device_state(self.paths, mcu.chipset, serial)
+                state, path = device_state(self.paths, mcu.chipset, serial)
                 if state == STATE_OFFLINE:
                     continue
                 info = self.flash_state(
@@ -163,6 +167,7 @@ class BulkMixin(_Base):
                             "fw": application,
                             "stop_services": list(units),
                             "state": state,
+                            "path": path,
                             "reason": info["reason"] if scope != "all" else "forced",
                         }
                     )
@@ -314,6 +319,7 @@ class BulkMixin(_Base):
                         "fw": payload["firmware"],
                         "stop_services": list(units),
                         "state": device["state"],
+                        "path": device["path"],
                         "reason": ("forced" if scope == "all" else device["status"].reason),
                     }
                 )
@@ -371,6 +377,7 @@ class BulkMixin(_Base):
                                 **port_detail(entry, device),
                                 "reason": "forced" if scope == "all" else status.reason,
                             },
+                            path=device["resolved_path"],
                         ),
                         units,
                     )

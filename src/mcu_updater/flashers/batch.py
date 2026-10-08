@@ -56,6 +56,55 @@ class PlainContext:
         """No progress bar to drive - the CLI is watching the stream itself."""
 
 
+def refuse_shared(targets: Sequence[FlashTarget]) -> tuple[list[FlashTarget], list[dict[str, Any]]]:
+    """Take out every target that shares its device with another entry:
+    (the targets left to write, a `failures[]` entry for each one removed).
+
+    Two entries can be one physical device - a configured `/dev/ttyACM8`
+    beside a board whose by-id link points at it, two types whose helpers list
+    the same section, a hand-made link. Written in turn, the device ends up
+    with whichever image came last and both writes report success.
+
+    **All of them are refused, not all but one.** Nothing here knows which
+    entry is right, and writing the first is the same bug with a different
+    winner - the rule `name_tracked` already follows for a board two types
+    claim. The rest of the batch is untouched.
+
+    An entry is its `(type, id)`. The same one listed twice is a repeat, not a
+    conflict - it is one image either way - and is left alone.
+    """
+    sharing: dict[str, list[FlashTarget]] = {}
+    for target in targets:
+        if target.resolved_path:
+            sharing.setdefault(target.resolved_path, []).append(target)
+
+    kept: list[FlashTarget] = []
+    refused: list[dict[str, Any]] = []
+    for target in targets:
+        others = sorted(
+            {
+                (other.type, other.id)
+                for other in sharing.get(target.resolved_path or "", [])
+                if (other.type, other.id) != (target.type, target.id)
+            }
+        )
+        if not others:
+            kept.append(target)
+            continue
+        named = ", ".join(f"{id} ({type})" for type, id in others)
+        refused.append(
+            {
+                **target.to_json(),
+                "error": (
+                    f"this is the same device as {named}: each resolves to {target.resolved_path}. "
+                    f"Writing each entry would leave it with whichever image came last, "
+                    f"so none of them is written. Change the config so only one entry names this device."
+                ),
+            }
+        )
+    return kept, refused
+
+
 def write_all(
     bench: Bench,
     targets: list[FlashTarget],
@@ -91,10 +140,17 @@ def write_all(
     device without saying why. `errors`, when given, collects each write's
     exception as raised: a single-device job re-raises it with its own code,
     which a `failures` string has lost.
+
+    **One device, one write.** Two targets that resolve to the same node are
+    refused before anything stops (`refuse_shared`). Here and not in selection,
+    because every caller selects each identity kind separately and joins the
+    lists - the two entries only ever meet in this one.
     """
     from ..build import FlashLog
     from ..service import services_stopped
 
+    targets, shared = refuse_shared(targets)
+    refused = [*refused, *shared]
     stopped, free = group_by_stop(targets)
 
     flashed: list[dict[str, Any]] = []
@@ -187,4 +243,4 @@ def write_all(
     return {"flashed": flashed, "failures": failures}
 
 
-__all__ = ["PlainContext", "ReadyCheck", "write_all"]
+__all__ = ["PlainContext", "ReadyCheck", "refuse_shared", "write_all"]

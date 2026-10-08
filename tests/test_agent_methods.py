@@ -353,6 +353,21 @@ def test_a_corrupt_registry_surfaces_as_a_typed_error(api, paths):
     assert exc.value.data["code"] == "config_corrupt"
 
 
+def test_a_serial_under_two_types_surfaces_as_a_config_error(api, paths):
+    """Only a hand edit gets a serial under two types, and the panel's first
+    call says so - naming the serial and both types - rather than listing a
+    board twice and writing it once for each."""
+    with open(paths.main_config, "a", encoding="utf-8", newline="\n") as fh:
+        fh.write("\n[type twin]\nchipset: stm32g0b1xx\nfirmware: klipper, katapult\n")
+        fh.write("serials:\n    54321098765432109876\n")
+
+    with pytest.raises(RpcError) as exc:
+        api.dispatch("fw.status")
+
+    assert exc.value.data["code"] == "config_corrupt"
+    assert exc.value.data["data"]["shared"] == {"serial": {"54321098765432109876": ["bttebb36", "twin"]}}
+
+
 # --------------------------------------------------------------------------
 # Moonraker enrichment, which must never be load-bearing
 # --------------------------------------------------------------------------

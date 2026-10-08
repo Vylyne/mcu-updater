@@ -373,7 +373,9 @@ never decides who builds them.
 
 `typelist.read` never raises and `typelist.validate` is strict. Anything that
 answers a question about one name (`providers.selection`) uses the lenient
-half, so one malformed section cannot break another type.
+half, so one malformed section cannot break another type. `validate` is also
+where a rule about the list as a whole lives - an identifier two types both
+track (see "One identifier, one type").
 
 ### Presence comes from the inventory
 
@@ -455,6 +457,77 @@ bootloader family, or its application family when it has none - and keeps its
 `unsupported_chipset` refusal, naming that family's `flashers:` line. The
 serial `fw.flash` job collects its write's exception (`write_all(errors=...)`)
 and re-raises it, because the job's error code was already on the wire.
+
+### One device, one write
+
+Two entries can be one physical device: a configured `/dev/ttyACM8` beside a
+board whose by-id link points at it, two types whose helpers list the same
+section, a hand-made link or udev rule. A batch that wrote each in turn left
+the device with whichever image came last, and reported two successes.
+
+`flashers.batch.write_all` refuses every target that shares its resolved node
+with a different entry (`refuse_shared`). Each becomes a `failures[]` entry
+naming the others and the node; the rest of the batch is written. Four things
+about that are deliberate:
+
+- **All of them are refused, not all but one.** Nothing knows which entry is
+  right, and writing the first is the same bug with a different winner. It is
+  the rule `name_tracked` already follows for a board two types claim.
+- **In the batch, not in selection.** Every caller selects each identity kind
+  on its own and joins the lists (see "One selection per identity"), so a board
+  and a PlatformIO device for one node never meet inside `select_each`.
+- **The path is the lister's, the resolving is selection's.** Whoever lists a
+  device hands over where it found it (`Device.path`, any spelling); `select`
+  follows the links onto `FlashTarget.resolved_path`. No flasher's `target()`
+  sets it. A selection that leaves the path off is silently unprotected, which
+  is why each one has a "reaches the batch with where it is" test - add one
+  with any new selection.
+- **This is not per-port tracking.** The node is resolved for one batch,
+  compared and dropped. It is not on the wire and not in the ledger, so nothing
+  can address a later write to a remembered port.
+
+An entry is its `(type, id)`: the same one listed twice is a repeat, not a
+conflict, and is left alone.
+
+What it does not cover: a CAN board has no node, so nothing is compared for
+one - a uuid two types claim is refused when the config loads instead (see "One
+identifier, one type"). An `fw.flash` that names one device has nothing to collide
+with and writes the entry it was given - but `fw.flash` on a whole PlatformIO
+type is a batch of that type's devices, and refuses like any other. The
+`platformio` flasher asks its devices where they are again once the ports are
+free, so what is compared is where each was listed, not where the write lands.
+And `fw.status` does not flag the conflict - the panel shows both rows as
+writable until a batch refuses them.
+
+With what ships today this is a backstop. The case that prompted it - a
+board's by-id link and a `knomi_serial` section's `/dev/ttyUSB0` naming one
+port - is already refused by that firmware's own Klipper extra. It matters for
+a firmware that finds its devices the same way and does not check. Do not grow
+it - a status flag, a per-device `fw.flash` check - until one exists.
+
+### One identifier, one type
+
+A serial or CAN uuid listed under two `[type]` sections is a config error:
+`typelist.validate` refuses the file (`config_corrupt`, `data.shared` naming
+each identifier and every type that lists it), so every strict load and every
+save stops on it. It used to load, and a batch wrote that board once per type.
+
+- **Only a hand edit gets there.** `tracking.add_serial` and the uuid add
+  already refuse an identifier another type holds; there is no UI or CLI path
+  to a duplicate. So there is nothing to disambiguate and no "which did you
+  mean" prompt - `ambiguous_serial` and `ambiguous_uuid` are still raised by
+  `Registry.resolve_*`, but a loaded file can no longer reach them.
+- **It is a whole-file refusal, like any other strict rule here.** The panel
+  shows the config error rather than the boards, and the message lists every
+  duplicate at once so one edit fixes it.
+- **Serials and uuids are compared within their own key.** They are separate
+  identities (see `canbus_uuids`); the same text under each is two devices.
+  Compared as written, the way every other lookup matches them.
+- **The lenient half still sees the duplicate.** `typelist.read` never raises,
+  so a scan built on it (`fw.bootsel.scan`) still answers on a file the strict
+  load is refusing, and `name_tracked` names no owner for that device. That
+  rule is not only for broken files: two different serials can derive to one
+  DFU serial in a config that is valid.
 
 ### The batch loop is the only writer of the flash ledger
 

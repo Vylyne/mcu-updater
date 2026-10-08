@@ -70,12 +70,35 @@ def test_read_never_refuses():
     ]
 
 
+def _type(name: str, firmware: str = "klipper", *, serials=(), uuids=()) -> str:
+    text = f"[type {name}]\nchipset: x\nfirmware: {firmware}\n"
+    for key, values in (("serials", serials), ("canbus_uuids", uuids)):
+        if values:
+            text += f"{key}:\n" + "".join(f"    {value}\n" for value in values)
+    return text + "\n"
+
+
 REFUSALS = [
     pytest.param(
         FAMILIES + "[type board]\nchipset: stm32f072xb\n", "declares no firmware: key", id="no-firmware"
     ),
     pytest.param(FAMILIES + "[type board]\nfirmware: klipperr\n", "not a known family", id="unknown"),
     pytest.param(FAMILIES + "[type board]\nfirmware: klipper, roadrunner\n", "different tools", id="mixed"),
+    pytest.param(
+        FAMILIES + _type("a", serials=["S1"]) + _type("b", serials=["S1"]),
+        "serial S1 -> a, b",
+        id="shared-serial",
+    ),
+    pytest.param(
+        FAMILIES + _type("a", uuids=["a9b8c7d6e5f4"]) + _type("b", uuids=["a9b8c7d6e5f4"]),
+        "CAN uuid a9b8c7d6e5f4 -> a, b",
+        id="shared-uuid",
+    ),
+    pytest.param(
+        FAMILIES + _type("a", serials=["S1"]) + _type("rr", "roadrunner", serials=["S1"]),
+        "serial S1 -> a, rr",
+        id="shared-across-builders",
+    ),
 ]
 
 
@@ -85,6 +108,56 @@ def test_the_strict_load_refuses(paths, load, text, needle):
     write_main_config(paths, text)
     with pytest.raises(ConfigCorruptError, match=needle):
         load(paths)
+
+
+def test_every_shared_identifier_is_reported_at_once(paths):
+    """One refusal for the whole file, so a hand edit is fixed in one pass
+    rather than one identifier per reload."""
+    write_main_config(
+        paths,
+        FAMILIES
+        + _type("a", serials=["S1", "S2"], uuids=["u1"])
+        + _type("b", serials=["S2", "S3"])
+        + _type("c", serials=["S1", "S2"], uuids=["u1"]),
+    )
+    with pytest.raises(ConfigCorruptError) as exc:
+        typelist.load(paths)
+
+    assert exc.value.data["shared"] == {
+        "serial": {"S1": ["a", "c"], "S2": ["a", "b", "c"]},
+        "can_uuid": {"u1": ["a", "c"]},
+    }
+    assert (exc.value.data["type"], exc.value.data["value"]) == ("a", "S1")
+    for line in ("serial S1 -> a, c", "serial S2 -> a, b, c", "CAN uuid u1 -> a, c"):
+        assert line in str(exc.value)
+    assert "S3" not in str(exc.value)
+
+
+def test_one_type_listing_an_identifier_twice_is_not_two_types(paths):
+    write_main_config(paths, FAMILIES + _type("a", serials=["S1", "S1"], uuids=["u1", "u1"]))
+    assert [entry.name for entry in typelist.load(paths)] == ["a"]
+
+
+def test_a_serial_and_a_uuid_that_read_alike_are_not_one_identifier(paths):
+    """They are separate keys naming separate things: a uuid is never looked
+    up among serials, so the same text under each tracks two devices."""
+    write_main_config(
+        paths, FAMILIES + _type("a", serials=["a9b8c7d6e5f4"]) + _type("b", uuids=["a9b8c7d6e5f4"])
+    )
+    assert [entry.name for entry in typelist.load(paths)] == ["a", "b"]
+
+
+def test_a_write_that_would_share_an_identifier_is_refused_and_leaves_the_file(paths):
+    """Tracking refuses the add long before this. This is what stops any other
+    write from saving a config the next load would refuse."""
+    write_main_config(paths, FAMILIES + _type("a", serials=["S1"]) + _type("b"))
+    before = read_main_config(paths)
+
+    with pytest.raises(ConfigCorruptError, match="serial S1 -> a, b"):
+        with Registry.mutate(paths, "test") as live:
+            live.get("b").serials.append("S1")
+
+    assert read_main_config(paths) == before
 
 
 def test_no_config_file_is_an_empty_list(paths):

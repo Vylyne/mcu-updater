@@ -27,6 +27,7 @@ from mcu_updater.config import Registry
 from mcu_updater.discovery import canbus
 from mcu_updater.errors import (
     BusyError,
+    ConfigCorruptError,
     NoFlasherError,
     SerialTrackedElsewhereError,
     UnprovisionedSerialError,
@@ -240,6 +241,28 @@ def test_flashing_a_type_hands_its_boards_to_the_batch(c, paths, captured, monke
     assert {t.flasher for t in captured[0]} == {"flashtool"}
 
 
+def test_a_board_reaches_the_batch_with_where_it_is(c, paths, fake_root, captured, monkeypatch):
+    """The batch refuses two entries for one node, and can only compare what a
+    selection hands it. The CLI's selections are its own, so each is pinned."""
+    import os
+
+    reg = Registry.load(paths)
+    reg.add_serial("board", "0123456789")
+    save_registry(reg, paths)
+    entry = make_device(fake_root / "bus", "Klipper", "stm32f072xb", "0123456789")
+    _stage_board_bin(paths)
+    monkeypatch.setattr(cli, "_confirm", lambda prompt: True)
+
+    with pytest.raises(SystemExit):
+        cli.flash_fw_cmd(argparse.Namespace(type="board", serial=None, yes=True))
+
+    # The fixture's own board is on no bus, so there is nowhere to say it is.
+    assert {t.id: t.resolved_path for t in captured[0]} == {
+        "AAAA-if00": None,
+        "0123456789": os.path.realpath(entry),
+    }
+
+
 def test_a_whole_type_never_carries_force_even_if_one_board_would(c, paths, captured, monkeypatch):
     """A blanket override across a fleet is exactly what the offset check
     exists to prevent - --force only ever reaches a single-device flash."""
@@ -315,6 +338,20 @@ def test_flashing_a_platformio_type_uses_the_watcher_map(c, pio_type, captured, 
 
     assert len(captured) == 1
     assert {t.flasher for t in captured[0]} == {"platformio"}
+
+
+def test_a_platformio_device_reaches_the_batch_with_where_it_is(
+    c, pio_type, captured, fake_root, monkeypatch
+):
+    import os
+
+    _device_map(c.paths, pio_type, aaa111=str(fake_root / "ttyUSB0"))
+    monkeypatch.setattr(cli, "_confirm", lambda prompt: True)
+
+    with pytest.raises(SystemExit):
+        cli.flash_fw_cmd(argparse.Namespace(type=ENV, serial=None, yes=True))
+
+    assert [t.resolved_path for t in captured[0]] == [os.path.realpath(fake_root / "ttyUSB0")]
 
 
 def test_flashing_a_platformio_screen_matches_its_id_case_insensitively(
@@ -651,6 +688,20 @@ def test_flashing_a_cmake_serial_alone_routes_to_the_helper(c, cmake_flashable, 
     assert captured[0][0].type == "roadrunner"
 
 
+def test_a_cmake_board_reaches_the_batch_with_where_it_is(
+    c, cmake_flashable, fake_root, captured, monkeypatch
+):
+    import os
+
+    entry = make_device(fake_root / "bus", "Klipper", "rp2040", RR_SERIAL)
+    monkeypatch.setattr(cli, "_confirm", lambda prompt: True)
+
+    with pytest.raises(SystemExit):
+        cli.flash_fw_cmd(argparse.Namespace(type=None, serial=RR_SERIAL, yes=True, force=False))
+
+    assert [t.resolved_path for t in captured[0]] == [os.path.realpath(entry)]
+
+
 def test_flashing_a_cmake_serial_with_its_type_routes_the_same_way(c, cmake_flashable, captured, monkeypatch):
     """The printer's failing command, verbatim. `-t` named the type correctly;
     the CLI took "not in the registry" to mean the PlatformIO branch."""
@@ -932,20 +983,23 @@ def test_a_serial_tracked_under_another_provider_is_refused_with_its_name(
     assert captured == []
 
 
-def test_an_ambiguous_serial_still_asks_for_a_type(c, cmake_flashable, monkeypatch):
-    """One serial under two types, one of them CMake: the same disambiguation
-    prompt, now reachable across providers rather than within one."""
-    from mcu_updater.errors import AmbiguousSerialError
-
-    reg = Registry.load(c.paths)
-    reg.add_serial("board", RR_SERIAL)
-    save_registry(reg, c.paths)
+def test_a_serial_under_two_types_is_a_config_error_not_a_prompt(c, cmake_flashable, captured, monkeypatch):
+    """One serial under two types, one of them CMake. It used to ask which was
+    meant; nothing but a hand edit can produce it, so the config is refused and
+    nothing is offered for writing - with or without `-t`."""
+    with open(c.paths.main_config, encoding="utf-8") as fh:
+        text = fh.read()
+    assert text.count("AAAA-if00") == 1
+    with open(c.paths.main_config, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(text.replace("AAAA-if00", f"AAAA-if00\n    {RR_SERIAL}"))
     monkeypatch.setattr(cli, "_confirm", lambda prompt: True)
 
-    with pytest.raises(AmbiguousSerialError) as exc:
-        cli.flash_fw_cmd(argparse.Namespace(type=None, serial=RR_SERIAL, yes=True, force=False))
+    for named in (None, "roadrunner"):
+        with pytest.raises(ConfigCorruptError) as exc:
+            cli.flash_fw_cmd(argparse.Namespace(type=named, serial=RR_SERIAL, yes=True, force=False))
+        assert exc.value.data["shared"] == {"serial": {RR_SERIAL: ["board", "roadrunner"]}}
 
-    assert sorted(exc.value.data["tracked_under"]) == ["board", "roadrunner"]
+    assert captured == []
 
 
 def _declare_roadrunner(paths, serial: str, *, helper: bool = False) -> None:

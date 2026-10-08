@@ -124,6 +124,26 @@ the PlatformIO flasher's port scan - whichever scan the type's install family
 chose (`fw.add_mcu.scan`) - documented where each is raised rather than
 repeated here.
 
+A serial or CAN uuid listed under more than one `[type]` is `config_corrupt`,
+with `data.shared` naming every one and every type that lists it - a key per
+kind, present only when that kind has a duplicate:
+
+```json
+{"code": "config_corrupt",
+ "data": {"path": "…/mcu-updater.cfg", "type": "bttebb36", "value": "54321098765432109876",
+          "shared": {"serial": {"54321098765432109876": ["bttebb36", "twin"]},
+                     "can_uuid": {"a9b8c7d6e5f4": ["mmb_can", "twin"]}}}}
+```
+
+`fw.serial.add` and `fw.canbus.add` already refuse an identifier another type
+holds, so only an edit by hand produces this. Anything that loads the type
+list strictly refuses with it until the file is fixed - `fw.status`, `fw.flash`,
+`fw.build_all`, `fw.flash_all`, `fw.update_all` and `fw.canbus.scan` among
+them - and no write will save such a config. `fw.bootsel.scan` reads the file
+leniently and still answers, naming no owner for that device.
+`ambiguous_serial` and `ambiguous_uuid` stay in the list above, but a caller
+no longer sees them: the config is refused before a serial is resolved.
+
 JSON-RPC codes: `-32601` unknown method, `-32602` bad params, `-32000`
 application error (see `data.code`), `-32603` internal.
 
@@ -884,7 +904,8 @@ real explanation instead of a job that dies a second later. In order:
 | --- | --- |
 | capability gate | `flashing_disabled` |
 | `serial` present | `-32602` |
-| serial resolves to a type | `unknown_serial` / `ambiguous_serial` / `serial_tracked_elsewhere` |
+| config loads - one serial under two types stops here | `config_corrupt` |
+| serial resolves to a type | `unknown_serial` / `serial_tracked_elsewhere` |
 | firmware has been built - anything staged, `.bin` or `.uf2` | `no_artifact` |
 | board is on the bus | `device_not_found` |
 | the family's `flashers:` can write it | `no_flasher` |
@@ -896,9 +917,9 @@ A failed write fails the job with the write's own error (`offset_mismatch`,
 For a `builder: cmake` type, the same `fw.flash {name?, serial, force?}` method
 uses the type's declared serial identity, and the firmware family's
 `flashers:` list picks the writer. Resolution spans all configured providers:
-an unknown serial, a duplicate declaration, or a `name` that points at a
-different owner fails as `unknown_serial`/`ambiguous_serial`/
-`serial_tracked_elsewhere` before a job is created. The named type must have a
+an unknown serial or a `name` that points at a different owner fails as
+`unknown_serial`/`serial_tracked_elsewhere` before a job is created, and a
+serial declared under two types is `config_corrupt` before either. The named type must have a
 staged UF2, and a family whose flashers cannot write the board (for Roadrunner,
 `flashers: bootsel` with `helper: roadrunner`) fails with `no_flasher`, whose
 `data` carries `family`, `flashers`, `type`, `id`, `chipset`, `state`
@@ -1216,6 +1237,22 @@ would have to stage for a listed flasher to take it:
 {"type": "pico", "id": "E661...", "flasher": null, "missing": ["uf2"],
  "error": "bootsel could write pico E661... while it is klipper, but [firmware klipper] staged no uf2 - build it first."}
 ```
+
+Two entries that are one physical device are refused the same way, both of
+them. A configured port and a board's by-id link can resolve to the same node,
+and writing each would leave the device with whichever image came last:
+
+```json
+{"type": "bttebb36", "id": "2900...", "flasher": "flashtool",
+ "error": "this is the same device as /dev/ttyACM8 (knomi_toolchanger): each resolves to /dev/ttyACM8. Writing each entry would leave it with whichever image came last, so none of them is written. Change the config so only one entry names this device."}
+{"type": "knomi_toolchanger", "id": "/dev/ttyACM8", "flasher": "platformio",
+ "error": "this is the same device as 2900... (bttebb36): each resolves to /dev/ttyACM8. ..."}
+```
+
+The `flasher` is the one that would have written it, and there is no `missing`:
+both entries could be written, which is the problem. The comparison is made
+when the batch starts, on every device that has a node - a CAN board has none.
+`fw.status` does not show the conflict.
 
 Every refusal ends up in the job's own `failures[]`, board or PlatformIO
 device alike - there is no separate preview list for it to be missing from any
@@ -1972,7 +2009,8 @@ This runs the same batch machinery `fw.flash_all` does — one flasher, one stop
 the watcher paused and the devices rediscovered inside it — and projects the
 result back onto the shape above. `flashed` gained the uniform `type`/`id`/
 `flasher` slots; `failures` is unchanged. A device its family's `flashers:`
-cannot write is listed here too, with the refusal as its `error`.
+cannot write is listed here too, with the refusal as its `error` - and so are
+two sections whose ports resolve to one node, neither of which is written.
 
 **Which device is on which port is not tracked**, deliberately. It used to be:
 every upload recorded the eFuse MAC esptool prints against the port it wrote to,

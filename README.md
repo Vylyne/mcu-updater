@@ -263,6 +263,11 @@ install.sh writes those two with the source paths it finds. A config missing
 one is refused with the exact lines to add. Within a section every key is
 optional: no `source:` means `~/<name>`.
 
+A serial or CAN uuid belongs to one type. The panel and the CLI refuse to track
+one a second type already holds, so two sections listing the same one only
+comes from editing the file - and the config is then refused when it loads,
+naming the identifier and every type that lists it. Remove it from all but one.
+
 `builder:` takes three values: `kconfig_make` (the default, above), `platformio`
 (see [PlatformIO devices](#platformio-devices)) and `cmake` (see
 [RP2040 cmake trees](#rp2040-cmake-trees)); any other value refuses the config
@@ -603,6 +608,13 @@ confidence and a warning that nothing could confirm which device that is.
 
 `platformio_bin` in `[updater]` points at `pio` if
 neither the `PATH` nor `~/.platformio/penv/bin/pio` finds it.
+
+A device is reached at the port Klipper's section gives it, and nothing stops
+that port from also being a board a `[type]` tracks by serial - `/dev/ttyACM8`
+and a `/dev/serial/by-id/` link can be the same node. A batch (`flash`,
+`update-all`, Flash All) refuses to write either entry when that happens and
+names both, rather than writing the device twice and leaving whichever image
+came last. Remove the entry that is wrong.
 
 | Key | Meaning |
 | --- | --- |

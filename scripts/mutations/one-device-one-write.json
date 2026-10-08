@@ -1,0 +1,117 @@
+{
+  "_comment": "Two entries that resolve to one device node are one physical device, and a batch writes neither: the batch makes the check and reports what it refused, every entry sharing the node is refused rather than all but one, a device with no node never collides, the same entry listed twice is not a conflict, selection follows links before anything is compared, and every selection - the agent's and the CLI's, for each identity kind - hands the batch where it found the device.",
+  "file": "src/mcu_updater/flashers/batch.py",
+  "command": [
+    "python",
+    "-m",
+    "pytest",
+    "tests/test_one_device_one_write.py",
+    "tests/test_agent_platformio_flash.py",
+    "tests/test_agent_bulk.py",
+    "tests/test_cli.py",
+    "-q"
+  ],
+  "mutations": [
+    {
+      "name": "the batch refuses entries that share a device",
+      "find": "    targets, shared = refuse_shared(targets)",
+      "replace": "    targets, shared = list(targets), []"
+    },
+    {
+      "name": "what the batch refused is reported with the failures",
+      "find": "    refused = [*refused, *shared]",
+      "replace": "    refused = [*refused]"
+    },
+    {
+      "name": "every entry sharing the node is refused, not all but one",
+      "find": "        if not others:\n            kept.append(target)\n            continue",
+      "replace": "        if not others or not kept:\n            kept.append(target)\n            continue"
+    },
+    {
+      "name": "a device with no node never collides",
+      "find": "        if target.resolved_path:\n            sharing.setdefault(target.resolved_path, []).append(target)",
+      "replace": "        if True:\n            sharing.setdefault(target.resolved_path or \"\", []).append(target)"
+    },
+    {
+      "name": "the same entry listed twice is a repeat, not a conflict",
+      "find": "                if (other.type, other.id) != (target.type, target.id)",
+      "replace": "                if other is not target"
+    },
+    {
+      "name": "an entry is its type and its id, not its id alone",
+      "find": "                if (other.type, other.id) != (target.type, target.id)",
+      "replace": "                if other.id != target.id"
+    },
+    {
+      "name": "a refusal names the node the entries share",
+      "find": "                    f\"this is the same device as {named}: each resolves to {target.resolved_path}. \"",
+      "replace": "                    f\"this is the same device as {named}. \""
+    },
+    {
+      "name": "selection hands the target where the device was listed",
+      "file": "src/mcu_updater/flashers/registry.py",
+      "find": "    return dataclasses.replace(target, resolved_path=os.path.realpath(device.path) if device.path else None)",
+      "replace": "    return target"
+    },
+    {
+      "name": "selection follows links before anything is compared",
+      "file": "src/mcu_updater/flashers/registry.py",
+      "find": "    return dataclasses.replace(target, resolved_path=os.path.realpath(device.path) if device.path else None)",
+      "replace": "    return dataclasses.replace(target, resolved_path=device.path if device.path else None)"
+    },
+    {
+      "name": "a device listed nowhere resolves to nothing, not the working directory",
+      "file": "src/mcu_updater/flashers/registry.py",
+      "find": "    return dataclasses.replace(target, resolved_path=os.path.realpath(device.path) if device.path else None)",
+      "replace": "    return dataclasses.replace(target, resolved_path=os.path.realpath(device.path or \"\"))"
+    },
+    {
+      "name": "a tracked board's selection says where the bus has it",
+      "file": "src/mcu_updater/agent/methods/bulk.py",
+      "find": "                            \"path\": path,",
+      "replace": "                            \"path\": None,"
+    },
+    {
+      "name": "a cmake board's selection says where the inventory has it",
+      "file": "src/mcu_updater/agent/methods/bulk.py",
+      "find": "                        \"path\": device[\"path\"],",
+      "replace": "                        \"path\": None,"
+    },
+    {
+      "name": "a board's path rides from its selection onto its device",
+      "file": "src/mcu_updater/agent/methods/bulk.py",
+      "find": "            path=board.get(\"path\"),",
+      "replace": "            path=None,"
+    },
+    {
+      "name": "a fleet flash says where each PlatformIO device is",
+      "file": "src/mcu_updater/agent/methods/bulk.py",
+      "find": "                            path=device[\"resolved_path\"],",
+      "replace": "                            path=None,"
+    },
+    {
+      "name": "flashing one PlatformIO type says where each device is",
+      "file": "src/mcu_updater/agent/methods/flash.py",
+      "find": "                        path=d.resolved_path,",
+      "replace": "                        path=None,"
+    },
+    {
+      "name": "the CLI says where a tracked board is",
+      "file": "src/mcu_updater/cli.py",
+      "find": "                    path=path,",
+      "replace": "                    path=None,"
+    },
+    {
+      "name": "the CLI says where a cmake board is",
+      "file": "src/mcu_updater/cli.py",
+      "find": "                    path=present.path if present is not None else None,",
+      "replace": "                    path=None,"
+    },
+    {
+      "name": "the CLI says where a PlatformIO device is",
+      "file": "src/mcu_updater/cli.py",
+      "find": "                    path=device.port,",
+      "replace": "                    path=None,"
+    }
+  ]
+}

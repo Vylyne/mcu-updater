@@ -563,16 +563,16 @@ def _board_targets(
     families = firmware.load(c.paths)
     application = mcu.application(families)
     units = stop_services.for_mcu(c.paths, mcu, c.settings, families)
-    return flashers.select_each(
-        c.paths,
-        families,
-        [
+    requests = []
+    for serial in serials:
+        state, path = device_state(c.paths, mcu.chipset, serial)
+        requests.append(
             (
                 flashers.Device(
                     type=mcu_type,
                     id=serial,
                     chipset=mcu.chipset,
-                    state=device_state(c.paths, mcu.chipset, serial)[0],
+                    state=state,
                     fw=application,
                     detail={
                         "type": mcu_type,
@@ -581,12 +581,12 @@ def _board_targets(
                         "fw": application,
                         "force": force,
                     },
+                    path=path,
                 ),
                 units,
             )
-            for serial in serials
-        ],
-    )
+        )
+    return flashers.select_each(c.paths, families, requests)
 
 
 def _canbus_targets(c: Context, mcu_type: str, uuids: list[str]) -> tuple[list, list]:
@@ -673,6 +673,7 @@ def _cmake_targets(c: Context, mcu_type: str, serial: str) -> tuple[list, list]:
                     chipset=target_type.chipset,
                     state=present.state if present is not None else STATE_OFFLINE,
                     fw=family.name,
+                    path=present.path if present is not None else None,
                 ),
                 stop_services.for_cmake(c.paths, target_type, c.settings, families),
             ),
@@ -760,6 +761,7 @@ def _pio_targets(
                         "name": device.device_id,
                         "section": f"{entry.klipper_section} {device.device_id}",
                     },
+                    path=device.port,
                 ),
                 units,
             )

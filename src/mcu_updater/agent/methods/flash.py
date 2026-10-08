@@ -503,6 +503,7 @@ class FlashMixin(_Base):
                         fw=entry.firmware,
                         kind=flashers.KIND_PORT,
                         detail=port_detail(entry, d.to_json()),
+                        path=d.resolved_path,
                     ),
                     units,
                 )

@@ -302,6 +302,32 @@ def test_an_unknown_scope_is_refused_rather_than_treated_as_stale(bulk):
     assert exc.value.code == ERR_INVALID_PARAMS
 
 
+@pytest.mark.parametrize(
+    "method,params",
+    [
+        ("fw.build_all", {"scope": "all"}),
+        ("fw.flash_all", {"scope": "all"}),
+        ("fw.update_all", {"scope": "all"}),
+        ("fw.flash", {"serial": "54321098765432109876"}),
+        ("fw.flash", {"name": "twin", "serial": "54321098765432109876"}),
+    ],
+)
+def test_nothing_starts_on_a_config_that_tracks_one_serial_twice(bulk, paths, method, params):
+    """A board under two types would be written once for each. Only a hand edit
+    gets it there, and the config is refused before any job exists - whether
+    or not the caller names which type it meant."""
+    with open(paths.main_config, "a", encoding="utf-8", newline="\n") as fh:
+        fh.write("\n[type twin]\nchipset: stm32g0b1xx\nfirmware: klipper, katapult\n")
+        fh.write("serials:\n    54321098765432109876\n")
+
+    with pytest.raises(RpcError) as exc:
+        bulk.dispatch(method, params)
+
+    assert exc.value.data["code"] == "config_corrupt"
+    assert exc.value.data["data"]["shared"] == {"serial": {"54321098765432109876": ["bttebb36", "twin"]}}
+    assert bulk.runner.current() is None
+
+
 def test_scope_defaults_to_stale(bulk):
     assert bulk._scope({}) == "stale"
     assert bulk._scope({"scope": None}) == "stale"
@@ -1230,6 +1256,37 @@ def test_a_cmake_board_is_handed_its_staged_uf2_by_selection(bulk, paths, fake_r
     assert refused == []
     assert targets[0].artifact is not None
     assert targets[0].artifact.path == paths.uf2_file(RR, RR)
+
+
+def test_a_cmake_board_reaches_the_batch_with_where_it_is(bulk, paths, fake_root):
+    """So the batch can tell it from another entry for the same node. The dict
+    carries where the inventory saw it and selection resolves that."""
+    _declare_cmake(paths, fake_root, serials=[RR_SERIAL], helper=True, staged=True)
+    entry = make_device(fake_root / "bus", "Klipper", RR_CHIPSET, RR_SERIAL)
+
+    [board] = bulk._cmake_boards_to_flash("all")
+    targets, _refused = flashers.select_each(paths, firmware.load(paths), [_board_request(board)])
+
+    assert targets[0].resolved_path == os.path.realpath(entry)
+
+
+def test_a_tracked_board_reaches_the_batch_with_where_it_is(bulk, paths, fake_root):
+    entry = make_device(fake_root / "bus", "Klipper", EBB_CHIPSET, EBB_A)
+    _stage_artifact(paths, EBB)
+
+    [board] = bulk._boards_to_flash(Registry.load(paths), "all", EBB)
+    targets, _refused = flashers.select_each(paths, firmware.load(paths), [_board_request(board)])
+
+    assert targets[0].resolved_path == os.path.realpath(entry)
+
+
+def test_a_can_board_has_no_node_to_compare():
+    """A uuid is not a path, and two CAN boards must never look like one device."""
+    device, _units = _board_request(
+        {"type": EBB, "uuid": "aabbccddeeff", "chipset": EBB_CHIPSET, "fw": "klipper", "state": "unknown"}
+    )
+
+    assert device.path is None
 
 
 def test_an_absent_cmake_board_is_never_selected(bulk, paths, fake_root):

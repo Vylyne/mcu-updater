@@ -242,13 +242,15 @@ def test_two_known_boards_sharing_an_id_name_neither(api, fake_root):
     api.dispatch("fw.type.add", {"name": "pico2", "chipset": PICO_CHIPSET})
     api.dispatch("fw.serial.add", {"name": PICO, "serial": "ABCDEF123456"})
     # A second type cannot claim the same serial through fw.serial.add (that is
-    # serial_tracked_elsewhere's job), so the collision is only reachable by
-    # two registry entries sharing one literal serial - construct that invalid
-    # configuration directly.
-    from mcu_updater.config import Registry
-
-    with Registry.mutate(api.paths, "test setup") as live:
-        live.get("pico2").serials.append("ABCDEF123456")
+    # serial_tracked_elsewhere's job), and no write will save one either, so the
+    # collision is only reachable by editing the file by hand. Every strict load
+    # refuses that config; the scan reads leniently, so it still has to hold.
+    empty = "[type pico2]\nchipset: rp2040\nserials:\n"
+    with open(api.paths.main_config, encoding="utf-8") as fh:
+        text = fh.read()
+    assert text.count(empty) == 1
+    with open(api.paths.main_config, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(text.replace(empty, empty + "    ABCDEF123456\n"))
 
     root, _vol = mounted_bootsel_volume(fake_root)
     bootsel_device_node(root, serial="ABCDEF123456")

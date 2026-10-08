@@ -240,6 +240,28 @@ def test_flashing_a_type_hands_its_boards_to_the_batch(c, paths, captured, monke
     assert {t.flasher for t in captured[0]} == {"flashtool"}
 
 
+def test_a_board_reaches_the_batch_with_where_it_is(c, paths, fake_root, captured, monkeypatch):
+    """The batch refuses two entries for one node, and can only compare what a
+    selection hands it. The CLI's selections are its own, so each is pinned."""
+    import os
+
+    reg = Registry.load(paths)
+    reg.add_serial("board", "0123456789")
+    save_registry(reg, paths)
+    entry = make_device(fake_root / "bus", "Klipper", "stm32f072xb", "0123456789")
+    _stage_board_bin(paths)
+    monkeypatch.setattr(cli, "_confirm", lambda prompt: True)
+
+    with pytest.raises(SystemExit):
+        cli.flash_fw_cmd(argparse.Namespace(type="board", serial=None, yes=True))
+
+    # The fixture's own board is on no bus, so there is nowhere to say it is.
+    assert {t.id: t.resolved_path for t in captured[0]} == {
+        "AAAA-if00": None,
+        "0123456789": os.path.realpath(entry),
+    }
+
+
 def test_a_whole_type_never_carries_force_even_if_one_board_would(c, paths, captured, monkeypatch):
     """A blanket override across a fleet is exactly what the offset check
     exists to prevent - --force only ever reaches a single-device flash."""
@@ -315,6 +337,20 @@ def test_flashing_a_platformio_type_uses_the_watcher_map(c, pio_type, captured, 
 
     assert len(captured) == 1
     assert {t.flasher for t in captured[0]} == {"platformio"}
+
+
+def test_a_platformio_device_reaches_the_batch_with_where_it_is(
+    c, pio_type, captured, fake_root, monkeypatch
+):
+    import os
+
+    _device_map(c.paths, pio_type, aaa111=str(fake_root / "ttyUSB0"))
+    monkeypatch.setattr(cli, "_confirm", lambda prompt: True)
+
+    with pytest.raises(SystemExit):
+        cli.flash_fw_cmd(argparse.Namespace(type=ENV, serial=None, yes=True))
+
+    assert [t.resolved_path for t in captured[0]] == [os.path.realpath(fake_root / "ttyUSB0")]
 
 
 def test_flashing_a_platformio_screen_matches_its_id_case_insensitively(
@@ -649,6 +685,20 @@ def test_flashing_a_cmake_serial_alone_routes_to_the_helper(c, cmake_flashable, 
     assert [t.flasher for t in captured[0]] == ["bootsel"]
     assert [t.id for t in captured[0]] == [RR_SERIAL]
     assert captured[0][0].type == "roadrunner"
+
+
+def test_a_cmake_board_reaches_the_batch_with_where_it_is(
+    c, cmake_flashable, fake_root, captured, monkeypatch
+):
+    import os
+
+    entry = make_device(fake_root / "bus", "Klipper", "rp2040", RR_SERIAL)
+    monkeypatch.setattr(cli, "_confirm", lambda prompt: True)
+
+    with pytest.raises(SystemExit):
+        cli.flash_fw_cmd(argparse.Namespace(type=None, serial=RR_SERIAL, yes=True, force=False))
+
+    assert [t.resolved_path for t in captured[0]] == [os.path.realpath(entry)]
 
 
 def test_flashing_a_cmake_serial_with_its_type_routes_the_same_way(c, cmake_flashable, captured, monkeypatch):

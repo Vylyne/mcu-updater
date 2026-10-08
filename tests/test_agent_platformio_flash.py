@@ -14,6 +14,7 @@ two of them on the printer, with no way for the user to know which it took.
 
 from __future__ import annotations
 
+import os
 import pathlib
 
 import pytest
@@ -24,7 +25,7 @@ from mcu_updater.jobs import JobRunner
 from mcu_updater.providers import pio as pio_mod
 from mcu_updater.service import NullService
 
-from .conftest import display_objects, serve_klipper, write_settings
+from .conftest import display_objects, make_device, serve_klipper, write_settings
 
 ENV = "knomi_toolchanger"
 
@@ -1050,6 +1051,97 @@ def test_a_fleet_flash_writes_boards_and_screens_under_one_stop(
     assert [f["flasher"] for f in job.result["flashed"]] == ["platformio", "platformio"]
     # Stopped once for the batch, not once per device.
     assert made["klipper"].actions == ["stop", "start"]
+
+
+# --------------------------------------------------------------------------
+# one physical device, one write
+#
+# Each identity kind is selected on its own and the lists are joined, so two
+# entries for one device only meet in the batch. These go through the real
+# methods rather than `write_all` with hand-built targets: what is being pinned
+# is that every selection *hands the batch the path*, which is the half a
+# caller can forget without anything else failing.
+# --------------------------------------------------------------------------
+
+EBB = "bttebb36"
+EBB_CHIPSET = "stm32g0b1xx"
+EBB_SERIAL = "123456789012345678901"
+
+
+def _api_seeing(api, paths, sections: dict) -> Api:
+    """`api` again, with Klipper reporting `sections` instead."""
+    agent = Api(paths, runner=api.runner, call=_moonraker(sections))
+    agent.KLIPPY_READY_TIMEOUT = 2.0
+    agent.KLIPPY_RESTART_TIMEOUT = 2.0
+    agent.KLIPPY_POLL_INTERVAL = 0.05
+    return agent
+
+
+def _one_port_spelled_twice(fake_root, screens) -> dict:
+    """Both sections, naming t0's port: one outright and one the long way round."""
+    port = screens_port(screens, "t0")
+    (fake_root / "by-path").mkdir()
+    roundabout = os.path.join(str(fake_root), "by-path", "..", os.path.basename(port))
+    return {
+        "knomi_serial t0_knomi": {"serial": port},
+        "knomi_serial t1_knomi": {"serial": roundabout},
+    }
+
+
+def _uploads(calls: list[list[str]]) -> list[list[str]]:
+    return [cmd for cmd in calls if "upload" in cmd]
+
+
+def test_a_fleet_flash_refuses_a_board_and_a_screen_that_are_one_device(
+    api, paths, fake_root, no_pio, screens
+):
+    """The case from the printer: a `[type]` tracks the board by serial while a
+    PlatformIO section names the same node as its port. Two kinds, two
+    selections - and the device would have been written by each in turn."""
+    board = make_device(fake_root / "bus", "Klipper", EBB_CHIPSET, EBB_SERIAL)
+    os.makedirs(paths.artifact_dir(EBB), exist_ok=True)
+    pathlib.Path(paths.bin_file(EBB, "klipper")).write_bytes(b"\0" * 1024)
+    _built(api, paths, fake_root)
+    agent = _api_seeing(api, paths, {**screens, "knomi_serial t0_knomi": {"serial": str(board)}})
+
+    res = agent.dispatch("fw.flash_all", {"scope": "all"})
+    assert agent.runner.wait(timeout=60)
+    result = agent.runner.get(res["job_id"]).result
+
+    # The screen nobody else claims is still written.
+    assert [f["id"] for f in result["flashed"]] == [screens_port(screens, "t1")]
+    assert len(_uploads(no_pio)) == 1
+    assert sorted((f["type"], f["id"]) for f in result["failures"]) == sorted(
+        [(EBB, EBB_SERIAL), (ENV, str(board))]
+    )
+    assert all("same device" in f["error"] for f in result["failures"])
+
+
+def test_flashing_a_type_refuses_two_sections_that_name_one_port(api, paths, fake_root, no_pio, screens):
+    agent = _api_seeing(api, paths, _one_port_spelled_twice(fake_root, screens))
+
+    res = agent.dispatch("fw.flash", {"name": ENV})
+    assert agent.runner.wait(timeout=60)
+    result = agent.runner.get(res["job_id"]).result
+
+    assert result["flashed"] == []
+    assert _uploads(no_pio) == []
+    assert len(result["failures"]) == 2
+    assert all("same device" in f["error"] for f in result["failures"])
+
+
+def test_an_update_all_refuses_them_too(api, paths, fake_root, no_pio, screens):
+    """It selects after its build, through the same two methods."""
+    _built(api, paths, fake_root)
+    agent = _api_seeing(api, paths, _one_port_spelled_twice(fake_root, screens))
+
+    res = agent.dispatch("fw.update_all", {"scope": "all", "name": ENV})
+    assert agent.runner.wait(timeout=60)
+    flash = agent.runner.get(res["job_id"]).result["flash"]
+
+    assert flash["flashed"] == []
+    assert _uploads(no_pio) == []
+    assert len(flash["failures"]) == 2
 
 
 # --------------------------------------------------------------------------

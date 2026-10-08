@@ -10,6 +10,7 @@ has NOPASSWD `systemctl` for Klipper. The tuple is the seam.
 from __future__ import annotations
 
 import dataclasses
+import os
 from collections.abc import Iterable, Sequence
 from typing import TYPE_CHECKING, Any, Protocol
 
@@ -285,7 +286,11 @@ def select(
     if choice is None:
         raise _refusal_error(family, device, _unstaged(family, device, helper), staged, helper)
     flasher, artifact = choice
-    return flasher.target(paths, device, helper, artifact, stop_services=stop_services)
+    target = flasher.target(paths, device, helper, artifact, stop_services=stop_services)
+    # Resolved here rather than by each caller or each flasher: a by-id link
+    # and the node it points at only compare equal once both are followed, and
+    # one place cannot forget to.
+    return dataclasses.replace(target, resolved_path=os.path.realpath(device.path) if device.path else None)
 
 
 def select_device(

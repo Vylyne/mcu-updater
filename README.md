@@ -604,6 +604,13 @@ confidence and a warning that nothing could confirm which device that is.
 `platformio_bin` in `[updater]` points at `pio` if
 neither the `PATH` nor `~/.platformio/penv/bin/pio` finds it.
 
+A device is reached at the port Klipper's section gives it, and nothing stops
+that port from also being a board a `[type]` tracks by serial - `/dev/ttyACM8`
+and a `/dev/serial/by-id/` link can be the same node. A batch (`flash`,
+`update-all`, Flash All) refuses to write either entry when that happens and
+names both, rather than writing the device twice and leaving whichever image
+came last. Remove the entry that is wrong.
+
 | Key | Meaning |
 | --- | --- |
 | `platformio_env` | The PlatformIO env to build. **Required, no default.** |

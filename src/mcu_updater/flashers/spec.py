@@ -103,6 +103,11 @@ class Device:
     flasher writes is selection's answer (`FlashTarget.artifact`), read from
     what the family's builder staged, so no caller can hand a flasher a file
     of a kind it cannot write.
+
+    `path` is where the device is right now, as whoever listed it found it: a
+    by-id link, a configured port, a bare node. Any spelling will do, because
+    selection resolves it (`FlashTarget.resolved_path`). None for a device with
+    no node - a CAN uuid - or one its lister could not place.
     """
 
     type: str
@@ -112,6 +117,7 @@ class Device:
     fw: str
     kind: str = KIND_SERIAL
     detail: Mapping[str, Any] = dataclasses.field(default_factory=dict)
+    path: str | None = None
 
 
 @dataclasses.dataclass(frozen=True)
@@ -161,6 +167,12 @@ class FlashTarget:
     #: `None` only for a target built by hand in a test. Read the path through
     #: `artifact_path`, which names the problem instead of an AttributeError.
     artifact: Artifact | None = None
+    #: The real device node this write lands on, every link followed, or None
+    #: when the device has none or its lister could not say. Set by `select`
+    #: from `Device.path`, never by a flasher, and compared by `write_all`: two
+    #: entries that resolve to one node are one device. Good for one batch and
+    #: never stored - a node's name is whatever the kernel handed out this time.
+    resolved_path: str | None = None
 
     def to_json(self) -> dict[str, Any]:
         """The uniform slice. `detail` never goes on the wire - it holds live

@@ -1217,6 +1217,22 @@ would have to stage for a listed flasher to take it:
  "error": "bootsel could write pico E661... while it is klipper, but [firmware klipper] staged no uf2 - build it first."}
 ```
 
+Two entries that are one physical device are refused the same way, both of
+them. A configured port and a board's by-id link can resolve to the same node,
+and writing each would leave the device with whichever image came last:
+
+```json
+{"type": "bttebb36", "id": "2900...", "flasher": "flashtool",
+ "error": "this is the same device as /dev/ttyACM8 (knomi_toolchanger): each resolves to /dev/ttyACM8. Writing each entry would leave it with whichever image came last, so none of them is written. Remove all but one from the config."}
+{"type": "knomi_toolchanger", "id": "/dev/ttyACM8", "flasher": "platformio",
+ "error": "this is the same device as 2900... (bttebb36): each resolves to /dev/ttyACM8. ..."}
+```
+
+The `flasher` is the one that would have written it, and there is no `missing`:
+both entries could be written, which is the problem. The comparison is made
+when the batch starts, on every device that has a node - a CAN board has none.
+`fw.status` does not show the conflict.
+
 Every refusal ends up in the job's own `failures[]`, board or PlatformIO
 device alike - there is no separate preview list for it to be missing from any
 more. A batch made only of refusals stops no service.
@@ -1972,7 +1988,8 @@ This runs the same batch machinery `fw.flash_all` does — one flasher, one stop
 the watcher paused and the devices rediscovered inside it — and projects the
 result back onto the shape above. `flashed` gained the uniform `type`/`id`/
 `flasher` slots; `failures` is unchanged. A device its family's `flashers:`
-cannot write is listed here too, with the refusal as its `error`.
+cannot write is listed here too, with the refusal as its `error` - and so are
+two sections whose ports resolve to one node, neither of which is written.
 
 **Which device is on which port is not tracked**, deliberately. It used to be:
 every upload recorded the eFuse MAC esptool prints against the port it wrote to,

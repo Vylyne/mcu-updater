@@ -456,6 +456,42 @@ bootloader family, or its application family when it has none - and keeps its
 serial `fw.flash` job collects its write's exception (`write_all(errors=...)`)
 and re-raises it, because the job's error code was already on the wire.
 
+### One device, one write
+
+Two entries can be one physical device: a configured `/dev/ttyACM8` beside a
+board whose by-id link points at it, two types whose helpers list the same
+section, a hand-made link or udev rule. A batch that wrote each in turn left
+the device with whichever image came last, and reported two successes.
+
+`flashers.batch.write_all` refuses every target that shares its resolved node
+with a different entry (`refuse_shared`). Each becomes a `failures[]` entry
+naming the others and the node; the rest of the batch is written. Four things
+about that are deliberate:
+
+- **All of them are refused, not all but one.** Nothing knows which entry is
+  right, and writing the first is the same bug with a different winner. It is
+  the rule `name_tracked` already follows for a board two types claim.
+- **In the batch, not in selection.** Every caller selects each identity kind
+  on its own and joins the lists (see "One selection per identity"), so a board
+  and a PlatformIO device for one node never meet inside `select_each`.
+- **The path is the lister's, the resolving is selection's.** Whoever lists a
+  device hands over where it found it (`Device.path`, any spelling); `select`
+  follows the links onto `FlashTarget.resolved_path`. No flasher's `target()`
+  sets it. A selection that leaves the path off is silently unprotected, which
+  is why each one has a "reaches the batch with where it is" test - add one
+  with any new selection.
+- **This is not per-port tracking.** The node is resolved for one batch,
+  compared and dropped. It is not on the wire and not in the ledger, so nothing
+  can address a later write to a remembered port.
+
+An entry is its `(type, id)`: the same one listed twice is a repeat, not a
+conflict, and is left alone.
+
+What it does not cover: a CAN board has no node, so two types claiming one uuid
+are not caught here. A single-device `fw.flash` has nothing to collide with and
+writes the entry it was given. And `fw.status` does not flag the conflict - the
+panel shows both rows as writable until a batch refuses them.
+
 ### The batch loop is the only writer of the flash ledger
 
 Ruling 12. `Flasher.record` describes what was written; `flashers.batch.

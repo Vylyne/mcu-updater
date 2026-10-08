@@ -1232,6 +1232,37 @@ def test_a_cmake_board_is_handed_its_staged_uf2_by_selection(bulk, paths, fake_r
     assert targets[0].artifact.path == paths.uf2_file(RR, RR)
 
 
+def test_a_cmake_board_reaches_the_batch_with_where_it_is(bulk, paths, fake_root):
+    """So the batch can tell it from another entry for the same node. The dict
+    carries where the inventory saw it and selection resolves that."""
+    _declare_cmake(paths, fake_root, serials=[RR_SERIAL], helper=True, staged=True)
+    entry = make_device(fake_root / "bus", "Klipper", RR_CHIPSET, RR_SERIAL)
+
+    [board] = bulk._cmake_boards_to_flash("all")
+    targets, _refused = flashers.select_each(paths, firmware.load(paths), [_board_request(board)])
+
+    assert targets[0].resolved_path == os.path.realpath(entry)
+
+
+def test_a_tracked_board_reaches_the_batch_with_where_it_is(bulk, paths, fake_root):
+    entry = make_device(fake_root / "bus", "Klipper", EBB_CHIPSET, EBB_A)
+    _stage_artifact(paths, EBB)
+
+    [board] = bulk._boards_to_flash(Registry.load(paths), "all", EBB)
+    targets, _refused = flashers.select_each(paths, firmware.load(paths), [_board_request(board)])
+
+    assert targets[0].resolved_path == os.path.realpath(entry)
+
+
+def test_a_can_board_has_no_node_to_compare():
+    """A uuid is not a path, and two CAN boards must never look like one device."""
+    device, _units = _board_request(
+        {"type": EBB, "uuid": "aabbccddeeff", "chipset": EBB_CHIPSET, "fw": "klipper", "state": "unknown"}
+    )
+
+    assert device.path is None
+
+
 def test_an_absent_cmake_board_is_never_selected(bulk, paths, fake_root):
     _declare_cmake(paths, fake_root, serials=[RR_SERIAL], helper=True, staged=True)
 

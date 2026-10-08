@@ -1,0 +1,55 @@
+{
+  "_comment": "A serial or CAN uuid belongs to one type, checked when the config loads and before it is saved. Tracking refuses the add, so two types sharing one only ever comes from an edit by hand - and a batch would write that board once for each. Both kinds of identifier are checked, each against its own kind only; one type listing an identifier twice is not two types; and the refusal names every shared identifier and every owner at once, in its message and in its data.",
+  "file": "src/mcu_updater/typelist.py",
+  "command": [
+    "python",
+    "-m",
+    "pytest",
+    "tests/test_typelist.py",
+    "tests/test_agent_methods.py",
+    "tests/test_cli.py",
+    "-q"
+  ],
+  "mutations": [
+    {
+      "name": "a config that shares an identifier between types is refused",
+      "find": "    _refuse_shared_identifiers(entries, path=path)",
+      "replace": "    pass"
+    },
+    {
+      "name": "a CAN uuid is checked, not only a serial",
+      "find": "    for key, label in ((\"serials\", \"serial\"), (\"canbus_uuids\", \"CAN uuid\")):",
+      "replace": "    for key, label in ((\"serials\", \"serial\"),):"
+    },
+    {
+      "name": "a serial is checked, not only a CAN uuid",
+      "find": "    for key, label in ((\"serials\", \"serial\"), (\"canbus_uuids\", \"CAN uuid\")):",
+      "replace": "    for key, label in ((\"canbus_uuids\", \"CAN uuid\"),):"
+    },
+    {
+      "name": "a serial and a CAN uuid that read alike are not one identifier",
+      "find": "        owners: dict[str, list[str]] = {}",
+      "replace": "        owners: dict[str, list[str]] = locals().get(\"owners\", {})"
+    },
+    {
+      "name": "one type listing an identifier twice is not two types",
+      "find": "            for identifier in dict.fromkeys(getattr(entry, key)):",
+      "replace": "            for identifier in getattr(entry, key):"
+    },
+    {
+      "name": "an identifier only one type tracks is not shared",
+      "find": "        claimed = {identifier: names for identifier, names in owners.items() if len(names) > 1}",
+      "replace": "        claimed = {identifier: names for identifier, names in owners.items() if len(names) > 0}"
+    },
+    {
+      "name": "every shared identifier is reported, not the first",
+      "find": "            shared[label] = claimed",
+      "replace": "            shared[label] = dict(list(claimed.items())[:1])"
+    },
+    {
+      "name": "the refusal's data names each identifier and its owners",
+      "find": "        shared={label.replace(\" \", \"_\").lower(): claimed for label, claimed in shared.items()},",
+      "replace": "        shared={},"
+    }
+  ]
+}

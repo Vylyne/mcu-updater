@@ -249,6 +249,45 @@ def _refuse_family_keys(families: dict[str, firmware.FirmwareFamily], *, path: s
         )
 
 
+def _refuse_shared_identifiers(entries: list[TypeEntry], *, path: str) -> None:
+    """Refuse a serial or CAN uuid that more than one type tracks.
+
+    A device is one type. Tracking refuses to add an identifier a second type
+    already has, so this only ever comes from an edit by hand - and a batch
+    would write the board once per type, leaving whichever image came last.
+    Compared as written, the way a serial is matched everywhere else. Every
+    one is reported at once.
+    """
+    shared: dict[str, dict[str, list[str]]] = {}
+    for key, label in (("serials", "serial"), ("canbus_uuids", "CAN uuid")):
+        owners: dict[str, list[str]] = {}
+        for entry in entries:
+            # `fromkeys`: one type listing an identifier twice is not two types.
+            for identifier in dict.fromkeys(getattr(entry, key)):
+                owners.setdefault(identifier, []).append(entry.name)
+        claimed = {identifier: names for identifier, names in owners.items() if len(names) > 1}
+        if claimed:
+            shared[label] = claimed
+    if not shared:
+        return
+    lines = [
+        f"  {label} {identifier} -> {', '.join(names)}"
+        for label, claimed in shared.items()
+        for identifier, names in claimed.items()
+    ]
+    first = next(iter(shared.values()))
+    first_identifier, first_names = next(iter(first.items()))
+    raise ConfigCorruptError(
+        f"{path}: tracked under more than one type:\n" + "\n".join(lines) + "\n"
+        "A device is one type, and a batch would write it once for each, leaving "
+        "whichever image came last. Remove it from all but one.",
+        path=path,
+        type=first_names[0],
+        value=first_identifier,
+        shared={label.replace(" ", "_").lower(): claimed for label, claimed in shared.items()},
+    )
+
+
 def validate(
     entries: list[TypeEntry],
     families: dict[str, firmware.FirmwareFamily],
@@ -333,6 +372,7 @@ def validate(
             value=first_fw,
             missing=missing,
         )
+    _refuse_shared_identifiers(entries, path=path)
 
 
 def load(paths: Paths) -> list[TypeEntry]:

@@ -27,6 +27,7 @@ from mcu_updater.config import Registry
 from mcu_updater.discovery import canbus
 from mcu_updater.errors import (
     BusyError,
+    ConfigCorruptError,
     NoFlasherError,
     SerialTrackedElsewhereError,
     UnprovisionedSerialError,
@@ -982,20 +983,23 @@ def test_a_serial_tracked_under_another_provider_is_refused_with_its_name(
     assert captured == []
 
 
-def test_an_ambiguous_serial_still_asks_for_a_type(c, cmake_flashable, monkeypatch):
-    """One serial under two types, one of them CMake: the same disambiguation
-    prompt, now reachable across providers rather than within one."""
-    from mcu_updater.errors import AmbiguousSerialError
-
-    reg = Registry.load(c.paths)
-    reg.add_serial("board", RR_SERIAL)
-    save_registry(reg, c.paths)
+def test_a_serial_under_two_types_is_a_config_error_not_a_prompt(c, cmake_flashable, captured, monkeypatch):
+    """One serial under two types, one of them CMake. It used to ask which was
+    meant; nothing but a hand edit can produce it, so the config is refused and
+    nothing is offered for writing - with or without `-t`."""
+    with open(c.paths.main_config, encoding="utf-8") as fh:
+        text = fh.read()
+    assert text.count("AAAA-if00") == 1
+    with open(c.paths.main_config, "w", encoding="utf-8", newline="\n") as fh:
+        fh.write(text.replace("AAAA-if00", f"AAAA-if00\n    {RR_SERIAL}"))
     monkeypatch.setattr(cli, "_confirm", lambda prompt: True)
 
-    with pytest.raises(AmbiguousSerialError) as exc:
-        cli.flash_fw_cmd(argparse.Namespace(type=None, serial=RR_SERIAL, yes=True, force=False))
+    for named in (None, "roadrunner"):
+        with pytest.raises(ConfigCorruptError) as exc:
+            cli.flash_fw_cmd(argparse.Namespace(type=named, serial=RR_SERIAL, yes=True, force=False))
+        assert exc.value.data["shared"] == {"serial": {RR_SERIAL: ["board", "roadrunner"]}}
 
-    assert sorted(exc.value.data["tracked_under"]) == ["board", "roadrunner"]
+    assert captured == []
 
 
 def _declare_roadrunner(paths, serial: str, *, helper: bool = False) -> None:

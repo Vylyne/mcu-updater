@@ -263,6 +263,11 @@ install.sh writes those two with the source paths it finds. A config missing
 one is refused with the exact lines to add. Within a section every key is
 optional: no `source:` means `~/<name>`.
 
+A serial or CAN uuid belongs to one type. The panel and the CLI refuse to track
+one a second type already holds, so two sections listing the same one only
+comes from editing the file - and the config is then refused when it loads,
+naming the identifier and every type that lists it. Remove it from all but one.
+
 `builder:` takes three values: `kconfig_make` (the default, above), `platformio`
 (see [PlatformIO devices](#platformio-devices)) and `cmake` (see
 [RP2040 cmake trees](#rp2040-cmake-trees)); any other value refuses the config

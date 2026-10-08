@@ -302,6 +302,32 @@ def test_an_unknown_scope_is_refused_rather_than_treated_as_stale(bulk):
     assert exc.value.code == ERR_INVALID_PARAMS
 
 
+@pytest.mark.parametrize(
+    "method,params",
+    [
+        ("fw.build_all", {"scope": "all"}),
+        ("fw.flash_all", {"scope": "all"}),
+        ("fw.update_all", {"scope": "all"}),
+        ("fw.flash", {"serial": "54321098765432109876"}),
+        ("fw.flash", {"name": "twin", "serial": "54321098765432109876"}),
+    ],
+)
+def test_nothing_starts_on_a_config_that_tracks_one_serial_twice(bulk, paths, method, params):
+    """A board under two types would be written once for each. Only a hand edit
+    gets it there, and the config is refused before any job exists - whether
+    or not the caller names which type it meant."""
+    with open(paths.main_config, "a", encoding="utf-8", newline="\n") as fh:
+        fh.write("\n[type twin]\nchipset: stm32g0b1xx\nfirmware: klipper, katapult\n")
+        fh.write("serials:\n    54321098765432109876\n")
+
+    with pytest.raises(RpcError) as exc:
+        bulk.dispatch(method, params)
+
+    assert exc.value.data["code"] == "config_corrupt"
+    assert exc.value.data["data"]["shared"] == {"serial": {"54321098765432109876": ["bttebb36", "twin"]}}
+    assert bulk.runner.current() is None
+
+
 def test_scope_defaults_to_stale(bulk):
     assert bulk._scope({}) == "stale"
     assert bulk._scope({"scope": None}) == "stale"

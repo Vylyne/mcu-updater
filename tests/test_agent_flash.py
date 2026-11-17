@@ -496,6 +496,29 @@ def test_flashing_a_detached_board_is_refused_before_klipper_is_stopped(flashabl
     assert flashable.runner.current() is None
 
 
+def test_a_board_reporting_another_chipset_is_named_not_called_detached(flashable, fake_root):
+    """The board is on the bus under its serial, but its by-id name carries a
+    chipset the type does not declare - a type recorded as `stm32f042` while
+    Katapult enumerates as `stm32f042x6`. Presence is the serial alone
+    (docs/decisions.md "Presence comes from the inventory"), so this is not
+    `device_not_found` and its "is it plugged in?" - it is the type's chipset
+    that needs the edit, and the refusal says which two strings disagree."""
+    for entry in (fake_root / "bus").iterdir():
+        entry.unlink()
+    make_device(fake_root / "bus", "katapult", "stm32g0b1", TRACKED_SERIAL)
+    with pytest.raises(RpcError) as exc:
+        flashable.dispatch("fw.flash", {"serial": TRACKED_SERIAL})
+    assert exc.value.data["code"] == "chipset_mismatch"
+    assert exc.value.data["data"] == {
+        "serial": TRACKED_SERIAL,
+        "type": TRACKED_TYPE,
+        "declared": TRACKED_CHIPSET,
+        "reported": "stm32g0b1",
+    }
+    assert "stm32g0b1" in str(exc.value) and TRACKED_CHIPSET in str(exc.value)
+    assert flashable.runner.current() is None
+
+
 # --------------------------------------------------------------------------
 # the print gate
 # --------------------------------------------------------------------------

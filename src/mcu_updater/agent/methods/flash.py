@@ -112,17 +112,37 @@ class FlashMixin(_Base):
             )
 
         # Fail now if the board isn't on the bus, rather than after stopping
-        # klipper. Katapult means it's already in the bootloader.
+        # klipper. Katapult means it's already in the bootloader. Presence is
+        # the serial alone (docs/decisions.md "Presence comes from the
+        # inventory"); a board that is there but enumerates under another
+        # chipset is told apart, since "is it plugged in?" sends the user
+        # looking at a cable when the fix is the type's `chipset:` line.
         from ...devices import find_device
 
-        present = find_device(self.paths, mcu.chipset, serial)
+        present = find_device(self.paths, "", serial)
         if present is None:
             raise RpcError(
-                f"{serial} is not attached (looked for chipset {mcu.chipset}). Is it plugged in and powered?",
+                f"{serial} is not attached. Is it plugged in and powered?",
                 data={
                     "code": "device_not_found",
                     "message": "board is not on the bus",
                     "data": {"serial": serial, "chipset": mcu.chipset},
+                },
+            )
+        if present.chipset != mcu.chipset:
+            raise RpcError(
+                f"{serial} is attached, but reports chipset {present.chipset!r} and type "
+                f"'{mcu_type}' declares {mcu.chipset!r}. Set the type's chipset to the "
+                f"one the board reports, rebuild, then flash.",
+                data={
+                    "code": "chipset_mismatch",
+                    "message": "board reports a different chipset than its type declares",
+                    "data": {
+                        "serial": serial,
+                        "type": mcu_type,
+                        "declared": mcu.chipset,
+                        "reported": present.chipset,
+                    },
                 },
             )
 

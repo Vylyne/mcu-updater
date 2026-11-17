@@ -106,7 +106,7 @@ API; the prose is not. Most come from `errors.py`: `config_corrupt`,
 `print_in_progress`, `cancelled`, `profile`, `profile_not_found`,
 `profile_customised`, `offset_mismatch`, `kconfig`, `no_session`. A few are
 built inline at the call site rather than from a typed exception -
-`no_artifact`, `nothing_to_do`, `build_blocked` (`fw.build` on a cmake type
+`no_artifact`, `chipset_mismatch` (`fw.flash`, below), `nothing_to_do`, `build_blocked` (`fw.build` on a cmake type
 whose source tree is missing, has no `CMakeLists.txt`, has an uninitialised
 submodule, or does not declare the configured `cmake_target:` - the refusal
 arrives before a job is created), `unknown_job` (`fw.job.get`/`fw.job.cancel`),
@@ -907,7 +907,8 @@ real explanation instead of a job that dies a second later. In order:
 | config loads - one serial under two types stops here | `config_corrupt` |
 | serial resolves to a type | `unknown_serial` / `serial_tracked_elsewhere` |
 | firmware has been built - anything staged, `.bin` or `.uf2` | `no_artifact` |
-| board is on the bus | `device_not_found` |
+| board is on the bus - by serial alone | `device_not_found` |
+| the board's by-id chipset is the type's `chipset:` - `data.{serial, type, declared, reported}` | `chipset_mismatch` |
 | the family's `flashers:` can write it | `no_flasher` |
 | printer idle | `print_in_progress` (bypass with `force: true`) |
 
